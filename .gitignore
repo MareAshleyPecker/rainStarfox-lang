@@ -13,7 +13,6 @@
 # 先按「一律忽略」→「放行目录」→「按扩展名放行文本」三步来，
 # 效果是 build/verify17e、build/verify20、build/tmp17d 下的 .sh/.ps1/.rsf 会被备份，
 # 而 .class/.txt/.out/.log 等运行产物留在工作区（可用脚本随时再生）。
-/build/*
 !/build/verify17e/
 !/build/verify20/
 !/build/tmp17d/
