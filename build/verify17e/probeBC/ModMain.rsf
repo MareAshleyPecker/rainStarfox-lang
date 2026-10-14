@@ -1,0 +1,5 @@
+module "mod"
+
+fun main() {
+    println("mod=" + intToString(modOne() + modTwo()))
+}

@@ -1,0 +1,83 @@
+### Gradle / 构建产物 ###
+.gradle
+# 注意写成 /build/* 而不是 build/：只有「父目录本身没被整体排除」，
+# 下面才能用 ! 放行 build/verify1*/** 里的脚本与探针。
+/build/*
+*.class
+*.jar
+!gradle/wrapper/gradle-wrapper.jar
+!**/src/main/**/build/
+!**/src/test/**/build/
+
+### 验收台（阶段 17e / 20）：脚本与探针要进版本库，编译产物不要 ###
+# 先按「一律忽略」→「放行目录」→「按扩展名放行文本」三步来，
+# 效果是 build/verify17e、build/verify20、build/tmp17d 下的 .sh/.ps1/.rsf 会被备份，
+# 而 .class/.txt/.out/.log 等运行产物留在工作区（可用脚本随时再生）。
+/build/*
+!/build/verify17e/
+!/build/verify20/
+!/build/tmp17d/
+/build/verify17e/**
+!/build/verify17e/**/
+!/build/verify17e/**/*.sh
+!/build/verify17e/**/*.ps1
+!/build/verify17e/**/*.rsf
+/build/verify20/**
+!/build/verify20/**/
+!/build/verify20/**/*.sh
+!/build/verify20/**/*.ps1
+!/build/verify20/**/*.rsf
+/build/tmp17d/**
+!/build/tmp17d/**/
+!/build/tmp17d/**/*.ps1
+!/build/tmp17d/**/*.rsf
+
+### 子工程 ###
+idea-rainstarfox/build/
+idea-rainstarfox/.gradle/
+idea-rainstarfox/.kotlin/
+vscode-rainstarfox/node_modules/
+vscode-rainstarfox/out/
+
+### IntelliJ IDEA ###
+.idea/modules.xml
+.idea/jarRepositories.xml
+.idea/compiler.xml
+.idea/libraries/
+*.iws
+*.iml
+*.ipr
+out/
+!**/src/main/**/out/
+!**/src/test/**/out/
+
+### Kotlin ###
+.kotlin
+
+### Eclipse ###
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+bin/
+!**/src/main/**/bin/
+!**/src/test/**/bin/
+
+### NetBeans ###
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+
+### VS Code ###
+.vscode/
+
+### 本机其它 ###
+.zig-cache/
+@{code=*
+### Mac OS ###
+.DS_Store

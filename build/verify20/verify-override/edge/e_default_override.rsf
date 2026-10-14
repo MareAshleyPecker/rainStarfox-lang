@@ -1,0 +1,20 @@
+public interface Named {
+    fun name() -> string {
+        rtn "n"
+    }
+}
+
+public interface Person : Named {
+    override fun name() -> string {
+        rtn "p"
+    }
+}
+
+class P : Person {
+}
+
+fun main() -> void {
+    var n : Named = new P()
+    println(n.name())
+    rtn
+}

@@ -1,0 +1,8 @@
+public interface Greeter {
+    imutvar name : string = "rex"
+    fun greet() -> string
+}
+
+fun main() -> void {
+    rtn
+}

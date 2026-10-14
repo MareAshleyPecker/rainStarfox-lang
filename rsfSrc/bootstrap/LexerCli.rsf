@@ -1,0 +1,44 @@
+// rainStarfox 阶段 17a：rsf 版词法器的**命令行入口**
+//
+// 词法器本体是旁边的 `Lexer.rsf`（纯库，没有 main）；这里只负责「挑一个输入文件、
+// 打印 token dump」。
+//
+// 跑：rsf build rsfSrc/bootstrap/LexerCli.rsf -o out
+//     java -cp out LexerCli                                   （默认 dump Lexer.rsf 自己）
+//     java -Drsf.lex.file=rsfSrc/lang/main.rsf -cp out LexerCli
+//
+// 输出格式与 Kotlin 版 `rsf lex <file>` **逐字相同**（对拍就是拿这两条命令的输出 diff）。
+//
+// 为什么用系统属性而不是命令行参数：rsf 的 `fun main() -> void` 接不到 args
+// （JVM 的 main(String[]) 没有地方接），这是当前语言的一个缺口，记在 BOOTSTRAP.md 里。
+
+import "Lexer.rsf"
+
+import java.lang.System
+
+// 挑输入：-Drsf.lex.file 给了就用它，没给就 dump 词法器自己的源码
+// （仓库内的相对路径，不写死绝对路径）。
+//
+// 注意 `System.getProperty` 的 rsf 类型是 `string` 但实际可能是 null（属性不存在时），
+// 所以这里用 `?string` 接，再自己兜底——第一次写成 `path.length() == 0` 直接吃了个
+// NullPointerException（编译产物上炸的，解释器那条路反而看不出问题）。
+fun pickPath() -> string {
+    var given : ?string = System.getProperty("rsf.lex.file")
+    var path = given ?: "rsfSrc/bootstrap/Lexer.rsf"
+    rtn path
+}
+
+fun main() -> void {
+    var path = pickPath()
+
+    // 17e 刻意**不接装载器**：`rsf lex` 是纯词法阶段，只认字符流，能不能装载与被
+    // dump 的 token 无关（接上 loadProgram 后，「入口能读、但 import 目标缺失」的
+    // 文件不再 dump token，偏离 Kotlin 版 `rsf lex` 的出口口径）。
+    var tokens : Token[] = lexFile(path) ?: new Token[0]
+    if (tokens.length == 0) {
+        println("词法出错或读不到文件：" + path)
+        rtn
+    }
+    dumpTokens(tokens)
+    rtn
+}

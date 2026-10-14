@@ -1,0 +1,241 @@
+// rainStarfox 阶段 19c 示例：枚举（enum）、短路逻辑运算（&& / ||）、枚举分派（switch）
+//
+// 跑：rsf run rsfSrc/lang/enums.rsf        （解释器）
+//     rsf build rsfSrc/lang/enums.rsf      （字节码：生成 enums.class + TokenKind.class + Lexeme.class）
+// 查：rsf check rsfSrc/lang/enums.rsf
+//
+// 这三样是为了写自举的语法器补的（见 BOOTSTRAP.md）：
+//   * 没有 `&&` / `||` 时，`if (c == '/' && peek(1) == '/')` 只能写成嵌套 if；
+//   * 没有 enum 时，TokenKind 只能靠一串 `static fun xxx() -> string` 拼字符串常量，
+//     写错值名编译器一声不吭；
+//   * 没有 switch 时，按 kind 分派只能写成 if / else-if 长链。
+// 本文件把三者放在一起演示，并且**两条后端（解释器 / 字节码）输出逐字节一致**。
+
+// ---------------------------------------------------------------- 枚举声明
+
+// 值的顺序就是声明顺序；允许尾逗号（写多行时不用为了最后一行删逗号）
+public enum TokenKind {
+    IDENT,
+    INT_LIT,
+    STRING,
+    CHAR,
+    PLUS,
+    MINUS,
+    EOF,
+}
+
+// 枚举可以当参数、返回值、字段、数组元素，可空也没问题（`?TokenKind`）
+public enum Op {
+    ADD,
+    SUB,
+}
+
+// 打印枚举就是打印**值名**：`println(k)` 与 `"kind = " + k` 都是 `IDENT`
+public fun nameOf(k : TokenKind) -> string {
+    switch (k) {
+        case TokenKind.IDENT : rtn "标识符"
+        case TokenKind.INT_LIT : rtn "整数"
+        case TokenKind.STRING : rtn "字符串"
+        case TokenKind.CHAR : rtn "字符"
+        case TokenKind.PLUS : rtn "加号"
+        case TokenKind.MINUS : rtn "减号"
+        case TokenKind.EOF : rtn "文件结束"
+    }
+}
+
+// `switch` 是语句：命中哪一支就只跑哪一支，没有 fallthrough（也不需要写 break）
+public fun describe(k : TokenKind) -> string {
+    var out = ""
+    switch (k) {
+        case TokenKind.IDENT : out = "名字"
+        case TokenKind.INT_LIT : out = "数字"
+        case TokenKind.STRING : out = "一段文本"
+        case TokenKind.CHAR : out = "一个字符"
+        case TokenKind.PLUS : out = "二元运算符"
+        case TokenKind.MINUS : out = "二元运算符"
+        case TokenKind.EOF : out = "到头了"
+    }
+    rtn out
+}
+
+// 带 `else` 的 switch：不必穷尽，剩下的都进 else
+public fun isOperator(k : TokenKind) -> bool {
+    switch (k) {
+        case TokenKind.PLUS : rtn true
+        case TokenKind.MINUS : rtn true
+        else : rtn false
+    }
+}
+
+// 操作符 → 枚举：返回类型是枚举，参数也是枚举
+public fun opOf(k : TokenKind) -> ?Op {
+    switch (k) {
+        case TokenKind.PLUS : rtn Op.ADD
+        case TokenKind.MINUS : rtn Op.SUB
+        else : rtn null
+    }
+}
+
+public fun apply(a : int, b : int, op : Op) -> int {
+    switch (op) {
+        case Op.ADD : rtn a + b
+        case Op.SUB : rtn a - b
+    }
+}
+
+// ---------------------------------------------------------------- 枚举当字段与数组元素
+
+public class Lexeme {
+    var kind : TokenKind = TokenKind.EOF
+    var text : string = ""
+    var ops : Op[] = new Op[2]
+
+    constructor(k : TokenKind, t : string) {
+        kind = k
+        text = t
+    }
+
+    // 枚举比较用 == / !=（枚举值是单例，比的就是「同一个常量」）
+    public fun isIdent() -> bool {
+        rtn kind == TokenKind.IDENT
+    }
+}
+
+// 枚举值的数组：没填过的元素是 null，和枚举常量比较不会命中（两端都是 false）
+public fun countKinds(items : TokenKind[], want : TokenKind) -> int {
+    var n = 0
+    var i = 0
+    while (i < items.length) {
+        var same = items[i] == want
+        if (same) {
+            n = n + 1
+        }
+        i = i + 1
+    }
+    rtn n
+}
+
+// ---------------------------------------------------------------- 短路逻辑
+
+public class Tracer {
+    var calls : int = 0
+    var log : string = ""
+}
+
+// 左边：记一笔调用、返回 false
+public fun no(t : Tracer, tag : string) -> bool {
+    t.calls = t.calls + 1
+    t.log = t.log + tag
+    rtn false
+}
+
+// 右边：记一笔调用、返回 true
+public fun yes(t : Tracer, tag : string) -> bool {
+    t.calls = t.calls + 1
+    t.log = t.log + tag
+    rtn true
+}
+
+// 用短路把「先看边界、再看内容」写在一行里：
+// 下标越界检查放左边，左边为假时右边**根本不会被求值**
+public fun startsWithSlash(s : string, i : int) -> bool {
+    rtn i < s.length() && s.charAt(i) == '/'
+}
+
+// ---------------------------------------------------------------- 入口
+
+fun main() -> void {
+    // ============================================================ 枚举基础
+    var k = TokenKind.IDENT
+    println("k = " + k)                       // IDENT
+    println(k)                                // IDENT
+    println("相等 = " + (k == TokenKind.IDENT))       // true
+    println("不等 = " + (k != TokenKind.EOF))         // true
+    println("不同常量 = " + (TokenKind.PLUS == TokenKind.MINUS))   // false
+    println("名字 = " + nameOf(TokenKind.STRING))     // 字符串
+    println("描述 = " + describe(TokenKind.PLUS))     // 二元运算符
+    println("是运算符吗 = " + isOperator(TokenKind.IDENT) + " / " + isOperator(TokenKind.MINUS))
+
+    // ============================================================ 枚举当字段 / 数组 / 可空
+    var lex = Lexeme(TokenKind.INT_LIT, "42")
+    println("词素 = " + lex.text + " 种类 = " + lex.kind)     // 42 种类 = INT_LIT
+    println("是标识符吗 = " + lex.isIdent())                  // false
+    println("对象整体打印 = " + lex)   // Lexeme(kind=INT_LIT, text=42, ops=...)
+
+    var kinds : TokenKind[] = new TokenKind[5]
+    kinds[0] = TokenKind.IDENT
+    kinds[1] = TokenKind.PLUS
+    kinds[2] = TokenKind.IDENT
+    kinds[3] = TokenKind.EOF
+    println("IDENT 有 " + countKinds(kinds, TokenKind.IDENT) + " 个")   // 2
+    println("EOF 有 " + countKinds(kinds, TokenKind.EOF) + " 个")       // 1
+    println("没填过的那一格 = " + kinds[4])                             // null
+
+    // 可空枚举 + `?:` 兜底 + `!!` 解包
+    var maybe : ?TokenKind = null
+    println("空的兜底 = " + (maybe ?: TokenKind.EOF))     // EOF
+    maybe = TokenKind.CHAR
+    println("解包 = " + maybe!!)                          // CHAR
+
+    var op = opOf(TokenKind.PLUS) ?: Op.SUB
+    println("PLUS 对应 " + op + "，3 + 4 = " + apply(3, 4, op))
+    var noOp = opOf(TokenKind.IDENT) ?: Op.SUB
+    println("IDENT 没有对应算子，兜底成 " + noOp + "，3 - 4 = " + apply(3, 4, noOp))
+
+    // ============================================================ switch 分派
+    var all : TokenKind[] = new TokenKind[7]
+    all[0] = TokenKind.IDENT
+    all[1] = TokenKind.INT_LIT
+    all[2] = TokenKind.STRING
+    all[3] = TokenKind.CHAR
+    all[4] = TokenKind.PLUS
+    all[5] = TokenKind.MINUS
+    all[6] = TokenKind.EOF
+
+    var i = 0
+    while (i < all.length) {
+        // 用的是**有 else** 的 switch（`all` 的元素可能是 null，交给 else 兜住）
+        var tag = "其它"
+        switch (all[i]) {
+            case TokenKind.IDENT : tag = "标识符"
+            case TokenKind.INT_LIT : tag = "整数字面量"
+            case TokenKind.STRING : tag = "字符串字面量"
+            case TokenKind.CHAR : tag = "字符字面量"
+            case TokenKind.PLUS : tag = "加号"
+            case TokenKind.MINUS : tag = "减号"
+            case TokenKind.EOF : tag = "文件结束"
+            else : tag = "空值"
+        }
+        println(i + ": " + all[i] + " = " + tag + "（" + nameOf(all[i]) + "）")
+        i = i + 1
+    }
+
+    // ============================================================ 短路
+    var t = Tracer()
+
+    // `false && yes(...)`：右边**一次都不会跑**（这就是短路）
+    println("假与 = " + (no(t, "L") && yes(t, "R")) + "，跑了 " + t.calls + " 次，轨迹 " + t.log)
+
+    // 重置：rsf 没有清空对象字段的语法，直接换一个对象
+    t = Tracer()
+    // `true || yes(...)`：右边同样一次都不会跑
+    println("真或 = " + (yes(t, "L") || no(t, "R")) + "，跑了 " + t.calls + " 次，轨迹 " + t.log)
+
+    t = Tracer()
+    // 右边真的会被求值的情形
+    println("真与 = " + (yes(t, "L") && no(t, "R")) + "，跑了 " + t.calls + " 次，轨迹 " + t.log)
+
+    t = Tracer()
+    println("假或 = " + (no(t, "L") || yes(t, "R")) + "，跑了 " + t.calls + " 次，轨迹 " + t.log)
+
+    // 优先级：`&&` 比 `||` 紧，`==` 比两者都紧
+    var a = 3
+    var b = 5
+    println("混用 = " + (a == 3 && b == 5) + " / " + (a == 0 || b == 5 && a == 3))
+
+    // 短路挡住了越界访问：i 越界时右边不求值
+    var s = "a/b"
+    println("边界 = " + startsWithSlash(s, 0) + " / " + startsWithSlash(s, 1) + " / " + startsWithSlash(s, 9))
+
+    rtn
+}

@@ -1,0 +1,25 @@
+import java.util.ArrayList
+import java.util.Collections
+import java.util.Comparator
+
+// 跨边界探针：把 rsf 对象**当实参交给 JDK 代码**，让 JDK 回调它。
+// 这一条比 ok_comparator 更狠，两头都要过：
+//   字节码端——JDK 的 Collections.sort 会用**擦除后的** Comparator.compare(Object,Object)
+//             回调，Java 编译器这时靠桥方法顶住；rsf 编译器不发桥就会 AbstractMethodError。
+//   解释器端——RsfObject 不是真的 java.util.Comparator，除非解释器给它套代理。
+class ByValue : Comparator&<string> {
+    public fun compare(a : string, b : string) -> int {
+        var x = parseInt(a) ?: 0
+        var y = parseInt(b) ?: 0
+        rtn x - y
+    }
+}
+
+fun main() -> void {
+    var xs = new ArrayList&<string>()
+    xs.add("5")
+    xs.add("3")
+    Collections.sort(xs, new ByValue())
+    println(xs.get(0) + "," + xs.get(1))
+    rtn
+}

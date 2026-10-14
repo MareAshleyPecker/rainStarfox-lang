@@ -1,0 +1,12 @@
+{
+  "//": "打包 .vsix 时排除的文件。out/ 是编译产物，必须留下。",
+  "**/.vscode/**": true,
+  "**/.vscode-test/**": true,
+  "**/*.vsix": true,
+  "**/.gitignore": true,
+  "**/node_modules/**": true,
+  "**/tools/**": true,
+  "**/src/**": true,
+  "**/tsconfig.json": true,
+  "**/package-lock.json": true
+}

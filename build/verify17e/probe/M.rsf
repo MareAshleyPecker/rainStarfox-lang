@@ -1,0 +1,10 @@
+class Box(v : int) {
+    imutvar v : int = v
+    public fun risky() -> !int {
+        rtn v
+    }
+}
+public fun main() {
+    var b = Box(5)
+    println("x=" + intToString(b.risky() ?: 0))
+}

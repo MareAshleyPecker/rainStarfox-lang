@@ -1,0 +1,448 @@
+package org.example.complie.sema
+
+import org.example.complie.ast.AssignStmt
+import org.example.complie.ast.CallExpr
+import org.example.complie.ast.ClassDecl
+import org.example.complie.ast.EnumDecl
+import org.example.complie.ast.Expr
+import org.example.complie.ast.FuncDecl
+import org.example.complie.ast.InterfaceDecl
+import org.example.complie.ast.MemberAssignStmt
+import org.example.complie.ast.MemberExpr
+import org.example.complie.ast.NewExpr
+import org.example.complie.ast.ThisCallStmt
+import org.example.complie.ast.VarDeclStmt
+import org.example.complie.ast.VarExpr
+import org.example.complie.diag.Diagnostic
+import org.example.complie.diag.Severity
+import org.example.complie.interop.ResolvedMember
+import org.example.complie.interop.ResolvedMethod
+import org.example.complie.ir.LoweredFunction
+import java.util.IdentityHashMap
+
+/** 用户自定义类的成员，解析完的样子。 */
+sealed interface UserMember {
+    /** 字段：[index] 是它在对象字段数组里的下标（按声明顺序）。 */
+    data class Field(val className: String, val index: Int, val type: RsfType) : UserMember
+
+    /** 方法（含构造器）。 */
+    data class Method(
+        val className: String,
+        val decl: FuncDecl,
+        /**
+         * 解析出来的这个方法是不是**接口**声明的（阶段 20）。
+         *
+         * 后端据此决定发什么指令：`INVOKEINTERFACE` 还是 `INVOKEVIRTUAL`。
+         * 判定的依据是**接收者的静态类型**（`g : Greeter` ⇒ true），而不是运行期类型——
+         * 这正是 DESIGN-20 风险 R1 的缓解方式：判定只在 Checker 里做一次并记下来，
+         * 两个后端都只读这一份，不会各自再猜一遍。
+         *
+         * 注意：接口方法通过**类**类型的接收者调用时是 false（`dog.greet(x)` 发
+         * `INVOKEVIRTUAL Dog.greet`），哪怕 Dog 实现了 Greeter，也仍然如此。
+         */
+        val interfaceOwner: Boolean = false,
+    ) : UserMember
+}
+
+/**
+ * 一个类/接口的**已解析**父接口（阶段 20）。
+ *
+ * 后端拼 `ClassWriter.visit(..., interfaces = ...)` 时只该抄这里，不要自己拿
+ * AST 上的名字再解析一遍：`class Dog : Greeter, Runnable` 里哪个是这份程序声明的接口、
+ * 哪个是 classpath 上的 JDK 接口、实参又代换成了什么（`class IntBox : Box&<int>`），
+ * 全都是 Checker 在 declareClasses / declareInterfaceBodies 里定下来的
+ * （D2 的「父类型只能是接口」也是在那一刻判的）。
+ */
+data class SuperInterface(
+    /** 源码里写的名字（rsf 接口是它的名字，JDK 接口是简名如 `Runnable`）。报错用。 */
+    val name: String,
+    /**
+     * JVM 内部名：rsf 接口就是名字本身（rsf 的类都在默认包），
+     * JDK 接口是 `java/lang/Runnable` 这种全名。字节码要的是这个。
+     */
+    val internalName: String,
+    /** `: Box&<int>` 里那串实参（代换后的）；JDK 接口恒为空表（JVM 擦除）。 */
+    val args: List<RsfType> = emptyList(),
+    /** true = classpath 上的接口（JDK）；false = 这份程序里声明的接口。 */
+    val fromClassPath: Boolean = false,
+)
+
+/**
+ * 一条构造器委托边（阶段 18）：`constructor(...) { this(实参) ... }` 里的那句 `this(...)`。
+ *
+ * 存下来是为了让**两个后端拿到同一条已经校验过的边**：解释器据此递归进目标构造器，
+ * 字节码据此发 `ALOAD 0; 实参; INVOKESPECIAL <init>`。实参挂在 [stmt] 上，
+ * 两端都在**委托方自己的帧**里求值（和 Java 一样）。
+ */
+data class CtorDelegation(
+    /** 委托的目标构造器（在 [ClassModel.ctorDelegations] 里按**委托方**索引）。 */
+    val target: FuncDecl,
+    val stmt: ThisCallStmt,
+)
+
+/**
+ * 阶段 12 的类解析产物。
+ *
+ * 为什么要单独一张表：顶层函数与方法**各是一套表**。两边的表都按 [FuncDecl] 索引
+ * （阶段 19d 起顶层函数也支持重载，同名会有好几个 `FuncDecl`，按名字索引会互相覆盖），
+ * 只是分开放，方便后端问「这个 `FuncDecl` 是不是类里的方法」。
+ */
+class ClassModel(
+    /** 类名 → 声明。 */
+    val classes: Map<String, ClassDecl>,
+    /** 方法/构造器 → 它属于哪个类。解释器靠它知道 `this` 是什么。 */
+    val owner: Map<FuncDecl, ClassDecl>,
+    /** 方法/构造器 → 参数绑定（按签名顺序）。 */
+    val methodParams: Map<FuncDecl, List<Binding>>,
+    /** 方法/构造器 → 返回类型。 */
+    val methodReturns: Map<FuncDecl, RsfType>,
+    /** 方法/构造器 → 降级后的指令。 */
+    val methodLowered: Map<FuncDecl, LoweredFunction>,
+    /** 类 → 按声明顺序排好的字段类型（解释器造对象时用）。 */
+    val fieldTypes: Map<ClassDecl, List<RsfType>>,
+    /** `对象.成员` → 解析结果。 */
+    val members: IdentityHashMap<MemberExpr, UserMember>,
+    /** 方法体里裸写的字段名（读）→ 字段。 */
+    val fieldReads: IdentityHashMap<VarExpr, UserMember.Field>,
+    /** 方法体里裸写的字段名（写）→ 字段。 */
+    val bareFieldWrites: IdentityHashMap<AssignStmt, UserMember.Field>,
+    /** `对象.字段 = ...` → 字段。 */
+    val fieldWrites: IdentityHashMap<MemberAssignStmt, UserMember.Field>,
+    /**
+     * 构造点 → 类声明。
+     *
+     * 键是 [Expr] 而不是 [NewExpr]：**省掉 `new` 的写法**（`Point(1, 2)`）在 AST 里
+     * 是一个 [CallExpr]，只有 Checker 做完名字解析才知道它是构造还是函数调用。
+     * 显式 `new Point(1, 2)`（[NewExpr]）与省略写法共用这一个表，两个后端也就
+     * 不需要各写一份「这到底是不是构造」的判断。
+     */
+    val newTargets: IdentityHashMap<Expr, ClassDecl>,
+    /**
+     * 构造点 → **选中的那个构造器**（阶段 18）。
+     *
+     * 查不到（或没有这一项）表示这个类一个构造器都没写 ⇒ 隐式无参构造器：
+     * 只有字段初值要跑，没有构造器体。理由是「选中的构造器」永远非空，
+     * 所以不需要额外区分「没选」和「隐式无参」。
+     */
+    val newCtors: IdentityHashMap<Expr, FuncDecl> = IdentityHashMap(),
+    /** 构造器 → 它的委托边（`this(...)`）；不委托的构造器不在表里。 */
+    val ctorDelegations: IdentityHashMap<FuncDecl, CtorDelegation> = IdentityHashMap(),
+    /**
+     * 类里「按名字直接调本类方法」的调用（隐式 this / 隐式类名）。
+     *
+     * `shift(x, y)` 这种写法在方法体里很自然，但它不是顶层函数调用，
+     * 解释器得知道该带上哪个 this。
+     */
+    val implicitCalls: IdentityHashMap<CallExpr, UserMember.Method>,
+    /**
+     * 接口方法 → 它属于哪个接口（阶段 20）。
+     *
+     * 只装**接口里声明的方法**（抽象方法 + 默认方法都装）：抽象方法没有体、不进
+     * [methodLowered]，但它仍是接口的成员，后端问「这个方法声明在哪个接口上」时
+     * 得答得出来（抽象方法要写 `ACC_ABSTRACT` 且不写 Code，默认方法要写 Code）。
+     * 和 [owner] 分开两张表，而不是把 [owner] 的值类型放宽成 `Node`：读 [owner]
+     * 的后端代码（解释器取 `this` 的类）一行都不用动。
+     */
+    val interfaceOwner: Map<FuncDecl, InterfaceDecl> = emptyMap(),
+) {
+    val isEmpty: Boolean get() = classes.isEmpty()
+
+    fun ownerOf(fn: FuncDecl): ClassDecl? = owner[fn]
+
+    /** 这个方法声明在哪个接口上；不是接口方法就是 null。 */
+    fun interfaceOwnerOf(fn: FuncDecl): InterfaceDecl? = interfaceOwner[fn]
+
+    /** 一个类的构造器，按声明顺序（主构造在前）。没写任何构造器就是空表（隐式无参）。 */
+    fun constructorsOf(decl: ClassDecl): List<FuncDecl> = decl.constructors
+
+    /** 构造点选中的构造器；null = 隐式无参构造器。 */
+    fun ctorOf(expr: Expr): FuncDecl? = newCtors[expr]
+
+    /** 构造器 [ctor] 的委托边；不委托就是 null。 */
+    fun delegationOf(ctor: FuncDecl): CtorDelegation? = ctorDelegations[ctor]
+
+    /**
+     * 这个方法是不是**实例**方法（要 `this`）。
+     *
+     * 构造器算实例方法；类里的 `static` 方法与顶层函数都不算。
+     * 实例方法的 0 号槽固定留给 `this`（JVM 本来也是这么放的），所以 [Lowering]
+     * 给实例方法分配局部槽时从 1 开始。
+     *
+     * 阶段 20 起**接口的默认方法**也算实例方法：它照样要 `this` 才能调到接口的
+     * 其它方法（`fun shout(...) { rtn toUpper(greet(name)) }` 里的 `greet` 就是 this 上的）。
+     */
+    fun isInstance(fn: FuncDecl): Boolean =
+        (owner.containsKey(fn) || interfaceOwner.containsKey(fn)) && !fn.isStatic
+}
+
+/**
+ * 一个枚举常量引用（阶段 19c）：`TokenKind.IDENT` 解析成「哪个枚举的哪个值」。
+ *
+ * 两个后端都只要这两个名字：字节码发 `GETSTATIC TokenKind.IDENT`，解释器取
+ * 常量表里同一个键上的那个单例。**不存 EnumDecl 对象本身**——后端要的只是
+ * 「哪个类、哪个字段」，存字符串能让「这个常量属于谁」一眼看出来，
+ * 也免得后端不小心去读 AST 上的别的信息。
+ */
+data class EnumValueRef(
+    /** 枚举类型名（也是生成出来的那个类的内部名），例如 `TokenKind`。 */
+    val enumName: String,
+    /** 值名（也是那个类的 `public static final` 字段名），例如 `IDENT`。 */
+    val valueName: String,
+)
+
+/**
+ * 语义检查的产物：函数表、类型标注、名字解析结果、降级后的指令，以及分析告警。
+ *
+ * AST 本身保持不可变，一切标注放在这里（用 IdentityHashMap 按引用索引，
+ * 避免结构相同的节点互相串味）。解释器和字节码后端都靠它工作。
+ */
+class SemanticModel(
+    val functions: List<FuncDecl>,
+
+    /**
+     * 顶层函数按**名字**索引 → 这个名字下的全部重载（声明顺序）。
+     *
+     * 阶段 19d 起一个名字可以有多个 `FuncDecl`（重载）。名字到候选的这张表只用来
+     * 「按名字找候选」；**每一次调用具体选中了哪一个**记在 [callTargets] 里，
+     * 两个后端都只读那一份，绝不会各自再解析一遍。
+     */
+    val functionTable: Map<String, List<FuncDecl>>,
+    val exprTypes: IdentityHashMap<Expr, RsfType>,
+
+    /** 变量读取 → 它绑定的那个变量（参数或局部声明）。 */
+    val varRefs: IdentityHashMap<VarExpr, Binding>,
+    /** 赋值语句 → 它写的那个变量。 */
+    val assignRefs: IdentityHashMap<AssignStmt, Binding>,
+    /** 局部声明语句 → 它的绑定。Lowering 靠它找到该分配的槽位。 */
+    val declBindings: IdentityHashMap<VarDeclStmt, Binding>,
+    /** 顶层函数 → 参数绑定（按签名顺序）。阶段 19d 起按 [FuncDecl] 索引（重载需要）。 */
+    val paramBindings: Map<FuncDecl, List<Binding>>,
+    /** 顶层函数 → 参数类型（按签名顺序）。 */
+    val paramTypes: Map<FuncDecl, List<RsfType>>,
+
+    /**
+     * **每一次调用选中的那个 `FuncDecl`**（阶段 19d）。
+     *
+     * 这是重载在两端唯一的分派依据：解释器据此决定调哪个函数的哪段指令，
+     * 字节码据此决定发哪个描述符的 `INVOKESTATIC`/`INVOKEVIRTUAL`。
+     * 选择只发生在 Checker 里一次，两端不再各自解析——这正是「两端逐字节一致」
+     * 在重载上的保证方式。
+     */
+    val callTargets: IdentityHashMap<CallExpr, FuncDecl>,
+    /** 成员访问 → 解析到的 JVM 成员。 */
+    val memberTargets: IdentityHashMap<MemberExpr, ResolvedMember>,
+    /** 顶层函数 → 返回类型。 */
+    val returnTypes: Map<FuncDecl, RsfType>,
+    /** 顶层函数 → 降级后的指令序列。 */
+    val lowered: Map<FuncDecl, LoweredFunction>,
+    /** 结构化诊断（目前只有 warning；error 是抛异常走的）。 */
+    val diagnostics: List<Diagnostic>,
+
+    /** 程序所属的包（`pkg a.b`）；没写就是 null。生成 .class 时它是 JVM 的包。 */
+    val packageName: String? = null,
+
+    /** 阶段 12：用户自定义类的一切解析结果。 */
+    val classModel: ClassModel = ClassModel(
+        classes = emptyMap(),
+        owner = emptyMap(),
+        methodParams = emptyMap(),
+        methodReturns = emptyMap(),
+        methodLowered = emptyMap(),
+        fieldTypes = emptyMap(),
+        members = IdentityHashMap(),
+        fieldReads = IdentityHashMap(),
+        bareFieldWrites = IdentityHashMap(),
+        fieldWrites = IdentityHashMap(),
+        newTargets = IdentityHashMap(),
+        implicitCalls = IdentityHashMap(),
+    ),
+
+    /**
+     * 阶段 15：构造**导入的 JVM 类**（`new ArrayList&<int>()`，或者省掉 `new` 的
+     * `ArrayList&<int>()`）→ 解析到的构造器。
+     *
+     * 用户自定义类的构造记在 [ClassModel.newTargets] 里（那边要类声明），
+     * 这里记的是 JVM 类的构造器：解释器靠它反射 newInstance，字节码后端靠它发
+     * `INVOKESPECIAL <init>`。
+     */
+    val externalNewTargets: IdentityHashMap<Expr, ResolvedMethod> = IdentityHashMap(),
+
+    /**
+     * 阶段 19c：枚举声明，按名字索引。
+     *
+     * 枚举的类型在检查器里和用户类**完全一样**（`RsfType.external(枚举名)`），
+     * 这张表的用处是让后端问得出「这个名字是不是枚举」——
+     * 字节码后端据此生成专门的枚举类（`GETSTATIC` + `<clinit>`），
+     * 解释器据此把值表示成具名单例对象。
+     */
+    val enums: Map<String, EnumDecl> = emptyMap(),
+
+    /** `枚举名.值名`（[MemberExpr]）→ 解析结果。 */
+    val enumValues: IdentityHashMap<MemberExpr, EnumValueRef> = IdentityHashMap(),
+
+    /**
+     * 阶段 20：接口声明，按名字索引。
+     *
+     * 接口的类型在检查器里和用户类是**同一个形状**（`RsfType.external(接口名)`），
+     * 这张表的用处是让后端问得出「这个名字是不是接口」——字节码要按接口的规矩
+     * 生成类头（`ACC_INTERFACE|ACC_ABSTRACT`、无 `<init>`）与抽象方法（无 Code），
+     * 解释器要知道哪些方法只有声明没有体。缺了它，后端只能对着一个
+     * `RsfType.external` 猜——而猜错就是「生成一个没有 `<init>` 却被人 new 的类」
+     * 这种运行期才炸的产物。
+     */
+    val interfaces: Map<String, InterfaceDecl> = emptyMap(),
+
+    /**
+     * 阶段 20：**类名/接口名 → 它的父接口**（已解析：JVM 内部名 + 代换后的实参）。
+     *
+     * 没写 `:` 子句的类不在表里（读的时候用空表兜底）。后端靠它填 `ClassWriter.visit`
+     * 的 `interfaces` 数组，不必也不该自己再解析一遍 AST 上的名字。
+     */
+    val superInterfaces: Map<String, List<SuperInterface>> = emptyMap(),
+) {
+    /** 给命令行用的文本形式。 */
+    val warnings: List<String>
+        get() = diagnostics
+            .filter { it.severity == Severity.WARNING }
+            .map { "${it.file}:${it.line}: ${it.message}" }
+
+    /**
+     * 名为 main 的**无参**顶层函数，用作入口；没有则返回 null。
+     *
+     * 阶段 19d 起 `main(int)` 是合法的重载但**不是入口**（JVM 只认 `main(String[])`）。
+     * 两个无参 `main()` 会在 Checker 里以「入口歧义 + 擦除冲突」报错，所以
+     * 这里取第一个无参候选是安全的。
+     */
+    val entry: FuncDecl? get() = functionsNamed("main").firstOrNull { it.params.isEmpty() }
+
+    /** 这个名字下的全部顶层函数重载（声明顺序）；没有就是空表。 */
+    fun functionsNamed(name: String): List<FuncDecl> = functionTable[name].orEmpty()
+
+    /**
+     * 入口为什么跑不起来；能跑就是 null。
+     *
+     * 单独有这一条是因为阶段 19d 起 `main(a : int)` 也是**合法的重载**，只是当不了入口。
+     * 那种情况下说「没有 main」会把人带偏，要说清是**参数**的问题。
+     */
+    val entryProblem: String?
+        get() {
+            if (entry != null) return null
+            val named = functionsNamed("main")
+            if (named.isEmpty()) return "找不到入口函数：需要 fun main() -> void { ... }"
+            return "入口函数 main 不能有参数（实际有 ${named.first().params.size} 个）：" +
+                "JVM 只认 main(String[])，rsf 里也没有地方给它传参。" +
+                "入口要写成 fun main() -> void { ... }；带参数的 main 仍然是一个普通函数，" +
+                "在 rsf 内部可以照常调用（阶段 19d 起它是重载，只是当不了入口）"
+        }
+
+    fun typeOf(expr: Expr): RsfType =
+        exprTypes[expr] ?: throw IllegalStateException("表达式缺少类型标注: $expr")
+
+    fun bindingOf(decl: VarDeclStmt): Binding =
+        declBindings[decl] ?: throw IllegalStateException("变量声明没有绑定: $decl")
+
+    fun bindingOf(ref: VarExpr): Binding =
+        varRefs[ref] ?: throw IllegalStateException("变量读取没有解析到绑定: $ref")
+
+    fun bindingOf(assign: AssignStmt): Binding =
+        assignRefs[assign] ?: throw IllegalStateException("赋值没有解析到绑定: $assign")
+
+    fun typeOf(decl: VarDeclStmt): RsfType = bindingOf(decl).type
+
+    fun memberOf(expr: MemberExpr): ResolvedMember =
+        memberTargets[expr] ?: throw IllegalStateException("成员访问没有解析到目标: $expr")
+
+    /**
+     * 顶层函数 [fn] 的参数绑定。
+     *
+     * 方法优先按 [FuncDecl] 索引（[ClassModel.methodParams]），其次才是顶层函数那张表
+     * ——两套表不混用，谁也不覆盖谁。
+     */
+    fun paramsOf(fn: FuncDecl): List<Binding> =
+        classModel.methodParams[fn] ?: paramBindings[fn] ?: emptyList()
+
+    fun paramTypesOf(fn: FuncDecl): List<RsfType> =
+        classModel.methodParams[fn]?.map { it.type } ?: paramTypes[fn] ?: emptyList()
+
+    fun returnTypeOf(fn: FuncDecl): RsfType =
+        classModel.methodReturns[fn] ?: returnTypes[fn] ?: RsfType.VOID
+
+    fun loweredOf(fn: FuncDecl): LoweredFunction =
+        classModel.methodLowered[fn]
+            ?: lowered[fn]
+            ?: throw IllegalStateException("函数没有降级结果: ${fn.name}")
+
+    // ------------------------------------------------------------------ 构造点（自动 new）
+
+    /**
+     * 这个表达式是不是一次**构造**：显式 `new X(...)`（[NewExpr]），
+     * 或者省掉 `new` 的 `X(...)`（[CallExpr]，由 Checker 判定）。
+     *
+     * 两个后端的表达式分派都先问这一句：是构造就走构造那条路，否则才当函数调用。
+     * 判断依据只有 Checker 写下的 [ClassModel.newTargets] / [externalNewTargets]，
+     * 所以「省不省 `new`」在两端是同一件事。
+     */
+    fun isConstruction(expr: Expr): Boolean =
+        classModel.newTargets.containsKey(expr) || externalNewTargets.containsKey(expr)
+
+    /**
+     * 构造点的实参表。显式 `new X(...)` 与省略写法是两个不同的节点类型，
+     * 构造函数里要取实参的地方统一走这里，省得两处各写一个 `when`。
+     */
+    fun constructionArgs(expr: Expr): List<Expr> = when (expr) {
+        is NewExpr -> expr.arguments
+        is CallExpr -> expr.arguments
+        else -> emptyList()
+    }
+
+    /** 构造点的类名（报错与查表用；不是构造点时是空串）。 */
+    fun constructionName(expr: Expr): String = when (expr) {
+        is NewExpr -> expr.className
+        is CallExpr -> expr.name
+        else -> ""
+    }
+
+    // ------------------------------------------------------------------ 枚举（阶段 19c）
+
+    /**
+     * 这个类型是不是某个枚举。
+     *
+     * 判据只有「EXTERNAL + 名字在 [enums] 里」——枚举的静态类型和用户类是同一个
+     * 形状，区别只在于名字登记在哪张表里。两端后端都靠这一句分流。
+     */
+    fun isEnumType(t: RsfType): Boolean =
+        t.isExternal && t.externalName != null && enums.containsKey(t.externalName)
+
+    /** 某个枚举的全部值名，按声明顺序；不是枚举就是空表。 */
+    fun enumValueNames(enumName: String): List<String> =
+        enums[enumName]?.values?.map { it.name } ?: emptyList()
+
+    /** 一个枚举常量的解析结果；不是常量引用就是 null。 */
+    fun enumValueOf(expr: Expr): EnumValueRef? = enumValues[expr as? MemberExpr]
+
+    /** 一个枚举常量在 JVM 上的描述符：`TokenKind.IDENT` → `LTokenKind;`。 */
+    fun enumDescriptor(enumName: String): String = "L$enumName;"
+
+    // ------------------------------------------------------------------ 接口（阶段 20）
+
+    /**
+     * 这个类型是不是某个 **rsf 接口**。
+     *
+     * 判据和 [isEnumType] 同型：`EXTERNAL + 名字在 [interfaces] 里`。注意
+     * **JDK 接口**（`Runnable`、`Comparator`）不在这张表里——它们由
+     * `ClassPath.find(...)?.isInterface` 回答，两套判据不能混用：一个是「源码里
+     * 声明过的接口」，一个是「classpath 上的接口」，后端要的答案通常只有其中一个。
+     */
+    fun isInterfaceType(t: RsfType): Boolean =
+        t.isExternal && t.externalName != null && interfaces.containsKey(t.externalName)
+
+    /** 这个名字的接口声明；不是 rsf 接口就是 null。 */
+    fun interfaceOf(name: String): InterfaceDecl? = interfaces[name]
+
+    /**
+     * 这个类/接口的父接口（已解析）；没写 `:` 子句就是空表。
+     *
+     * 参数写类名或接口名都行——两者共用命名空间，键也就是同一个。
+     */
+    fun superInterfacesOf(name: String): List<SuperInterface> = superInterfaces[name].orEmpty()
+}

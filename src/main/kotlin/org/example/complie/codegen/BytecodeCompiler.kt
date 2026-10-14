@@ -1,0 +1,2728 @@
+package org.example.complie.codegen
+
+import org.example.complie.ast.BinaryExpr
+import org.example.complie.ast.BoolLit
+import org.example.complie.ast.CallExpr
+import org.example.complie.ast.CharLit
+import org.example.complie.ast.ClassDecl
+import org.example.complie.ast.ControlType
+import org.example.complie.ast.DoubleLit
+import org.example.complie.ast.ElvisExpr
+import org.example.complie.ast.EnumDecl
+import org.example.complie.ast.Expr
+import org.example.complie.ast.FloatLit
+import org.example.complie.ast.ForceExpr
+import org.example.complie.ast.FuncDecl
+import org.example.complie.ast.IfExpr
+import org.example.complie.ast.IndexExpr
+import org.example.complie.ast.IntLit
+import org.example.complie.ast.InterfaceDecl
+import org.example.complie.ast.LongLit
+import org.example.complie.ast.MemberExpr
+import org.example.complie.ast.NewArrayExpr
+import org.example.complie.ast.NewExpr
+import org.example.complie.ast.Node
+import org.example.complie.ast.NullLit
+import org.example.complie.ast.StringLit
+import org.example.complie.ast.ThisExpr
+import org.example.complie.ast.UnaryExpr
+import org.example.complie.ast.VarExpr
+import org.example.complie.diag.RsfError
+import org.example.complie.ir.ControlFlow
+import org.example.complie.ir.IAssign
+import org.example.complie.ir.IBranch
+import org.example.complie.ir.ICtorDelegate
+import org.example.complie.ir.IExpr
+import org.example.complie.ir.IFail
+import org.example.complie.ir.IFieldAssign
+import org.example.complie.ir.IGoto
+import org.example.complie.ir.IIndexAssign
+import org.example.complie.ir.ILabel
+import org.example.complie.ir.IReturn
+import org.example.complie.ir.ISwitch
+import org.example.complie.ir.IVarDecl
+import org.example.complie.ir.LoweredFunction
+import org.example.complie.interop.ResolvedField
+import org.example.complie.interop.ResolvedMethod
+import org.example.complie.lexing.TokenKind
+import org.example.complie.sema.ArrayRuntime
+import org.example.complie.sema.Builtin
+import org.example.complie.sema.Builtins
+import org.example.complie.sema.EnumRuntime
+import org.example.complie.sema.FileRuntime
+import org.example.complie.sema.ObjectFormat
+import org.example.complie.sema.RsfBase
+import org.example.complie.sema.RsfType
+import org.example.complie.sema.SemanticModel
+import org.example.complie.sema.UserMember
+import org.objectweb.asm.ClassWriter
+import org.objectweb.asm.Handle
+import org.objectweb.asm.Label
+import org.objectweb.asm.MethodVisitor
+import org.objectweb.asm.Opcodes
+import java.io.File
+
+/**
+ * 字节码后端：把检查过的程序编译成一批 .class，可以直接 `java 类名` 跑。
+ *
+ * 控制流直接照着 [LoweredFunction] 的指令表发：`ILabel` → ASM Label，
+ * `IGoto` → GOTO，`IBranch` → 条件跳转。不可达指令整条跳过，产物里不留死代码。
+ *
+ * 约定：
+ * - 每个 rsf 函数编译成程序类上的同名 static 方法；
+ * - 每个用户自定义类编译成自己的 .class（字段 + `<init>` + 方法），内部名 = 类名，
+ *   写了 `pkg` 时跟着程序类一起带上包路径；
+ * - `public` / 缺省 → ACC_PUBLIC，`private` → ACC_PRIVATE；实例方法不加 ACC_STATIC；
+ * - 顶层名为 `main` 的函数自动带上 `String[]` 形参，从而成为合法 JVM 入口
+ *   （类里叫 `main` 的方法只是普通方法，不是入口）；
+ * - 类名 = 源文件主名，所以 `lang/main.rsf` 编译出 `main.class`。
+ */
+class BytecodeCompiler(
+    private val model: SemanticModel,
+    private val sourceName: String,
+) {
+
+    /** 编译中收集到的非致命提示。 */
+    val warnings = ArrayList<String>()
+
+    /**
+     * 程序类的内部名（顶层函数都住在那儿）。
+     *
+     * 用户类的方法要调顶层函数时，调用目标必须是它，而不是当前类——
+     * 这类调用是跨类的，写错了只会在运行期炸成 NoSuchMethodError。
+     */
+    private var programInternalName: String = ""
+
+    /**
+     * 编译整个程序，返回**这一批**写出去的 .class（程序类排第一）。
+     *
+     * [className] 是程序类的内部名（写了 `pkg a.b` 时是 `a/b/主文件名`）。
+     * 用户类跟着程序类的包走：`pkg a.b` 里的 `class Point` → `a/b/Point.class`。
+     */
+    fun compile(className: String, outDir: File): List<File> {
+        programInternalName = className
+        // 先把所有类都生成出来（生成期间可能报错），一个字节都还不落盘；
+        // 全部成功之后再写文件——失败的一次构建不该留下半套产物。
+        val pending = ArrayList<Pair<String, ByteArray>>()
+        pending += className to programClass(className).toByteArray()
+
+        for (decl in model.classModel.classes.values) {
+            val internalName = classInternalName(decl.name)
+            // 程序类名（来自文件名或 -n）和用户类名撞车时，两个 .class 会写到同一个路径上，
+            // 后写的把先写的盖掉——产物直接坏掉，必须在这里拦下。
+            // 比较**不分大小写**：Windows / macOS 的文件系统不区分大小写，
+            // `m.rsf` 里的 `class M` 会正好写到程序类的 `m.class` 上。
+            if (internalName.equals(className, ignoreCase = true)) {
+                val how = if (internalName == className) {
+                    "两者同名"
+                } else {
+                    "两者只差大小写（在不区分大小写的文件系统上就是同一个文件）"
+                }
+                throw RsfError(
+                    "codegen",
+                    "'$internalName' 既是程序类名（来自文件名或 -n），又是这份程序里的一个类名：" +
+                        "$how，会写到同一个 $className.class 上互相覆盖。" +
+                        "用 `-n <别的名字>` 换个程序类名。",
+                    1, 1, null,
+                )
+            }
+            pending += internalName to userClass(internalName, decl).toByteArray()
+        }
+
+        // 接口（阶段 20）：和用户类一样各是一个 .class，也一起做「撞程序类名」的检查。
+        // 顺序同样只由源码声明顺序决定（model.interfaces 是 LinkedHashMap），产物可复现。
+        // 父接口数组**不在这里解析 AST**：Checker 已经把结论（JVM 内部名）放在
+        // model.superInterfacesOf 里了（R1：同一个判定不做两遍）。
+        for (decl in model.interfaces.values) {
+            val internalName = classInternalName(decl.name)
+            if (internalName.equals(className, ignoreCase = true)) {
+                val how = if (internalName == className) {
+                    "两者同名"
+                } else {
+                    "两者只差大小写（在不区分大小写的文件系统上就是同一个文件）"
+                }
+                throw RsfError(
+                    "codegen",
+                    "'$internalName' 既是程序类名（来自文件名或 -n），又是这份程序里的一个接口名：" +
+                        "$how，会写到同一个 $className.class 上互相覆盖。" +
+                        "用 `-n <别的名字>` 换个程序类名。",
+                    1, 1, null,
+                )
+            }
+            pending += internalName to interfaceClass(internalName, decl).toByteArray()
+        }
+
+        // 枚举类（阶段 19c）：和用户类一样各是一个 .class，也一起做「撞程序类名」的检查。
+        // 它们排在用户类后面、程序类**之前**的位置其实无所谓（写盘顺序不影响加载），
+        // 但顺序保持确定：所有 .class 的生成顺序只由源码顺序决定，产物可复现。
+        for (decl in model.enums.values) {
+            val internalName = classInternalName(decl.name)
+            if (internalName.equals(className, ignoreCase = true)) {
+                throw RsfError(
+                    "codegen",
+                    "'$internalName' 既是程序类名（来自文件名或 -n），又是这份程序里的一个枚举名：" +
+                        "两者会写到同一个 $className.class 上互相覆盖。用 `-n <别的名字>` 换个程序类名。",
+                    1, 1, null,
+                )
+            }
+            pending += internalName to enumClass(internalName, decl).toByteArray()
+        }
+
+        if (!outDir.exists() && !outDir.mkdirs()) {
+            throw IllegalStateException("无法创建输出目录: ${outDir.absolutePath}")
+        }
+        return pending.map { (internalName, bytes) -> writeClass(internalName, bytes, outDir) }
+    }
+
+    private fun writeClass(internalName: String, bytes: ByteArray, outDir: File): File {
+        val out = File(outDir, "$internalName.class")
+        // internalName 可能是带包的内部名（`a/b/Main`），目录要先铺出来
+        out.parentFile?.mkdirs()
+        out.writeBytes(bytes)
+        return out
+    }
+
+    private fun newClassWriter(): ClassWriter =
+        object : ClassWriter(ClassWriter.COMPUTE_FRAMES or ClassWriter.COMPUTE_MAXS) {
+            // 我们的引用类型只有 String 和用户自定义类。用户类之间没有继承关系
+            // （都直接继承 java/lang/Object），所以「同一个类型取它自己，否则取 Object」
+            // 就是正确的公共父类——顺带避免了去加载还没写盘的类。
+            override fun getCommonSuperClass(type1: String, type2: String): String =
+                if (type1 == type2) type1 else "java/lang/Object"
+        }
+
+    /** 程序类：顶层函数编译成它的静态方法，文件名主名就是类名。 */
+    private fun programClass(className: String): ClassWriter {
+        val cw = newClassWriter()
+        cw.visit(
+            V17,
+            ACC_PUBLIC or ACC_FINAL or ACC_SUPER,
+            className,
+            null,
+            "java/lang/Object",
+            null,
+        )
+        cw.visitSource(sourceName, null)
+        emitDefaultConstructor(cw)
+
+        for (fn in model.functions) {
+            emitFunction(cw, className, fn)
+        }
+        // 阶段 16：parseInt 的辅助方法（失败要把 Java 的异常换成 rsf 的消息）
+        emitParseIntHelper(cw)
+        // 阶段 16b：四个文件函数的辅助方法（同上：失败换成 rsf 的消息）
+        emitFileHelpers(cw)
+        // 阶段 13：数组的边界检查 / 负数长度检查（两端必须抛同一套消息）
+        emitArrayHelpers(cw)
+        // `?:` 生成的合成方法跟调用点同住一个类（这样私有方法也照样能调）
+        emitOrElseMethods(cw)
+        cw.visitEnd()
+        return cw
+    }
+
+    /**
+     * 程序类上的 `parseInt` 辅助方法（阶段 16）。
+     *
+     * **为什么要有它**：rsf 的 `parseInt` 失败时要把错误消息定成
+     * [Builtins.parseIntFailure] 的格式（解释器抛的 RsfFailure 就是那个格式，
+     * 两端 `catch` 里打出来的必须一字不差），而 `Integer.parseInt` 抛的是
+     * `NumberFormatException` 加它自己的消息。换消息就得 catch 再抛，
+     * 而**调用点不能内联 try/catch**：异常处理器一进去操作数栈就只剩异常对象，
+     * 表达式中间求值时栈上往往还有没消费完的值（`println(parseInt(s))` 里那个
+     * PrintStream），生成出来的类会以 VerifyError 报废——这条经验见 [emitErrorCallElvis]。
+     *
+     * 所以照抄 javac 处理 try-with-resources 的思路：把「调用 + 换异常」放进一个
+     * 独立方法，它的保护范围从空栈开始，天然合法。
+     *
+     * 放在**程序类**上并且是 public 的：用户类里的调用点、以及那些类里为 `?:`
+     * 生成的 `__rsf_orelse$N` 合成方法都要跨类调它。名字里带 `$`，
+     * rsf 的标识符语法写不出这个名字，绝不会跟用户代码撞车。
+     */
+    private fun emitParseIntHelper(cw: ClassWriter) {
+        val mv = cw.visitMethod(
+            ACC_PUBLIC or ACC_STATIC,
+            Builtins.PARSE_INT_HELPER,
+            Builtins.PARSE_INT_HELPER_DESC,
+            null,
+            null,
+        )
+        mv.visitCode()
+        val start = Label()
+        val end = Label()
+        val handler = Label()
+        mv.visitTryCatchBlock(start, end, handler, "java/lang/NumberFormatException")
+        mv.visitLabel(start)
+        mv.visitVarInsn(ALOAD, 0)
+        mv.visitMethodInsn(INVOKESTATIC, "java/lang/Integer", "parseInt", "(Ljava/lang/String;)I", false)
+        mv.visitLabel(end)
+        mv.visitInsn(IRETURN)
+
+        // 失败：throw new RuntimeException(前缀 + 原文 + 后缀)
+        mv.visitLabel(handler)
+        mv.visitTypeInsn(NEW, "java/lang/RuntimeException")
+        mv.visitInsn(DUP)
+        mv.visitLdcInsn(Builtins.PARSE_INT_PREFIX)
+        mv.visitVarInsn(ALOAD, 0)
+        emitConcat(mv)
+        mv.visitLdcInsn(Builtins.PARSE_INT_SUFFIX)
+        emitConcat(mv)
+        mv.visitMethodInsn(
+            INVOKESPECIAL, "java/lang/RuntimeException", "<init>", "(Ljava/lang/String;)V", false,
+        )
+        mv.visitInsn(ATHROW)
+        mv.visitMaxs(0, 0)
+        mv.visitEnd()
+    }
+
+    /**
+     * 数组的两个运行期辅助方法（阶段 13）。
+     *
+     * **为什么不是内联检查**：内联的边界检查要在调用点自己搭 `if` 与 `throw` 的骨架，
+     * 而调用点往往在**表达式中间**（`println(a[i] + 1)` 里栈上还压着 PrintStream），
+     * 一进异常处理器栈上就只剩异常对象了——生成出来的类会以 `VerifyError` 报废
+     * （这条经验见 [emitErrorCallElvis]）。搬进独立方法，保护范围从空栈开始，天然合法。
+     *
+     * **为什么必须有它**：JVM 自己抛的 `ArrayIndexOutOfBoundsException` 消息是
+     * `Index 5 out of bounds for length 3`，而解释器抛的是 rsf 自己那套。两端要在
+     * `try { ... } catch (e : string) { println(e) }` 下打出一模一样的字，就必须都走
+     * 同一套显式检查（消息格式只定义在 [ArrayRuntime] 一处）。
+     *
+     * 两个方法都放在**程序类**上并且是 public：用户类里的下标访问也要跨类调用它们。
+     * 名字带 `$`，rsf 的标识符语法写不出，绝不会跟用户代码撞车。
+     */
+    private fun emitArrayHelpers(cw: ClassWriter) {
+        // __rsf_arrayIndex(int length, int index) -> int
+        // 不越界就把下标原样返回，于是调用点可以写成
+        // 「求长度 → 求下标 → 检查 → 直接用这个下标取元素」，
+        // 数组引用与下标都不需要额外的局部变量（也就不会跟栈帧合并打架）。
+        run {
+            val mv = cw.visitMethod(
+                ACC_PUBLIC or ACC_STATIC,
+                ArrayRuntime.INDEX_HELPER,
+                ArrayRuntime.INDEX_HELPER_DESC,
+                null,
+                null,
+            )
+            mv.visitCode()
+            val bad = Label()
+            mv.visitVarInsn(ILOAD, 1) // index
+            mv.visitJumpInsn(IFLT, bad)
+            mv.visitVarInsn(ILOAD, 1)
+            mv.visitVarInsn(ILOAD, 0) // length
+            mv.visitJumpInsn(IF_ICMPGE, bad)
+            mv.visitVarInsn(ILOAD, 1)
+            mv.visitInsn(IRETURN)
+
+            mv.visitLabel(bad)
+            emitRuntimeExceptionHeader(mv)
+            mv.visitLdcInsn(ArrayRuntime.INDEX_PREFIX)
+            mv.visitVarInsn(ILOAD, 0)
+            emitStringValueOfInt(mv)
+            emitConcat(mv)
+            mv.visitLdcInsn(ArrayRuntime.INDEX_MID)
+            emitConcat(mv)
+            mv.visitVarInsn(ILOAD, 1)
+            emitStringValueOfInt(mv)
+            emitConcat(mv)
+            emitRuntimeExceptionThrow(mv)
+            mv.visitMaxs(0, 0)
+            mv.visitEnd()
+        }
+
+        // __rsf_arrayLength(int length) -> int（负数长度：JVM 会抛
+        // NegativeArraySizeException，而解释器接不住它——两端都自己检查）
+        run {
+            val mv = cw.visitMethod(
+                ACC_PUBLIC or ACC_STATIC,
+                ArrayRuntime.LENGTH_HELPER,
+                ArrayRuntime.LENGTH_HELPER_DESC,
+                null,
+                null,
+            )
+            mv.visitCode()
+            val ok = Label()
+            mv.visitVarInsn(ILOAD, 0)
+            mv.visitJumpInsn(IFGE, ok)
+
+            emitRuntimeExceptionHeader(mv)
+            mv.visitLdcInsn(ArrayRuntime.LENGTH_PREFIX)
+            mv.visitVarInsn(ILOAD, 0)
+            emitStringValueOfInt(mv)
+            emitConcat(mv)
+            emitRuntimeExceptionThrow(mv)
+
+            mv.visitLabel(ok)
+            mv.visitVarInsn(ILOAD, 0)
+            mv.visitInsn(IRETURN)
+            mv.visitMaxs(0, 0)
+            mv.visitEnd()
+        }
+    }
+
+    /**
+     * 四个文件函数的辅助方法（阶段 16b）。
+     *
+     * **为什么必须有它**：rsf 的文件函数失败时要把 Java 的异常换成 rsf 自己的错误消息
+     * （[FileRuntime.failure] 的格式，解释器抛的 `RsfFailure` 就是这个格式，
+     * 两端 `catch (e : string) { println(e) }` 打出来的必须一字不差），而
+     * `Files.readString` 抛的是 `NoSuchFileException` / `AccessDeniedException`。
+     * 换消息就得 catch 再抛，而**调用点不能内联 try/catch**——异常处理器一进去
+     * 操作数栈就只剩异常对象，表达式中间求值时栈上往往还有没消费完的值，
+     * 生成出来的类会以 VerifyError 报废（同 `parseInt`，见 [emitParseIntHelper]）。
+     *
+     * **可变参数不靠 `ClassPath` 解析**（它不认 varargs）：`Paths.get(String, String...)`
+     * 与 `Files.write(Path, byte[], OpenOption...)` 都是 varargs，但字节码里根本没有
+     * 「可变参数」这回事——发调用时按**擦除后的数组描述符**发，再当场造一个空数组
+     * （`ICONST_0` + `ANEWARRAY`）填进去就行，效果和源码里 `Paths.get(path)` 完全一样。
+     *
+     * 四个方法都放在**程序类**上并且是 public：用户类里的方法/字段初值也要跨类调它们。
+     * 名字带 `$`，rsf 源码写不出，绝不会跟用户代码撞车。
+     */
+    private fun emitFileHelpers(cw: ClassWriter) {
+        // readText(path) -> Files.readString(Paths.get(path, new String[0]))
+        emitFileHelper(cw, Builtins.READ_TEXT) { mv ->
+            emitPathFromArg0(mv)
+            mv.visitMethodInsn(
+                INVOKESTATIC, "java/nio/file/Files", "readString",
+                "(Ljava/nio/file/Path;)Ljava/lang/String;", false,
+            )
+        }
+
+        // writeText(path, text) -> Files.write(Paths.get(path, new String[0]),
+        //                                      text.getBytes(UTF_8), new OpenOption[0])
+        emitFileHelper(cw, Builtins.WRITE_TEXT) { mv ->
+            emitPathFromArg0(mv)
+            mv.visitVarInsn(ALOAD, 1)
+            mv.visitFieldInsn(
+                GETSTATIC, "java/nio/charset/StandardCharsets", "UTF_8",
+                "Ljava/nio/charset/Charset;",
+            )
+            mv.visitMethodInsn(
+                INVOKEVIRTUAL, "java/lang/String", "getBytes",
+                "(Ljava/nio/charset/Charset;)[B", false,
+            )
+            emitEmptyOptionArray(mv)
+            mv.visitMethodInsn(
+                INVOKESTATIC, "java/nio/file/Files", "write",
+                "(Ljava/nio/file/Path;[B[Ljava/nio/file/OpenOption;)Ljava/nio/file/Path;", false,
+            )
+            mv.visitInsn(POP) // Files.write 返回的是那个 Path，rsf 的 writeText 是 void
+        }
+
+        // readBytes(path) -> Files.readAllBytes(Paths.get(path, new String[0]))
+        emitFileHelper(cw, Builtins.READ_BYTES) { mv ->
+            emitPathFromArg0(mv)
+            mv.visitMethodInsn(
+                INVOKESTATIC, "java/nio/file/Files", "readAllBytes",
+                "(Ljava/nio/file/Path;)[B", false,
+            )
+        }
+
+        // writeBytes(path, data) -> Files.write(Paths.get(path, new String[0]), data,
+        //                                       new OpenOption[0])
+        emitFileHelper(cw, Builtins.WRITE_BYTES) { mv ->
+            emitPathFromArg0(mv)
+            mv.visitVarInsn(ALOAD, 1)
+            emitEmptyOptionArray(mv)
+            mv.visitMethodInsn(
+                INVOKESTATIC, "java/nio/file/Files", "write",
+                "(Ljava/nio/file/Path;[B[Ljava/nio/file/OpenOption;)Ljava/nio/file/Path;", false,
+            )
+            mv.visitInsn(POP)
+        }
+    }
+
+    /**
+     * 一个文件辅助方法的骨架：
+     *
+     * ```
+     *     try { <core> }  catch (Exception e) { throw new RuntimeException(前缀 + path + 中间 + e.getMessage()) }
+     * ```
+     *
+     * 保护范围从**空栈**开始，处理器里也只有异常对象——这就是它能通过校验的原因。
+     * 返回 `void` 就发 `RETURN`，否则 `ARETURN`（这几条都是引用类型的返回）。
+     *
+     * catch 的上限是 `java/lang/Exception`（不是 `IOException`）：路径本身就非法时
+     * （Windows 下的 `Paths.get("a<b")`）抛的是 `InvalidPathException`，
+     * 它不是 IOException；解释器那边接的范围一样（见 `Interpreter.fileCall`），
+     * 否则会出现「解释器接住、编译产物漏出去」的分歧。
+     */
+    private fun emitFileHelper(cw: ClassWriter, builtin: Builtin, core: (MethodVisitor) -> Unit) {
+        val helper = builtin.helperName
+            ?: throw IllegalStateException("内部错误：'${builtin.name}' 没有辅助方法名")
+        val desc = builtin.helperDesc
+            ?: throw IllegalStateException("内部错误：'${builtin.name}' 没有辅助方法描述符")
+
+        val mv = cw.visitMethod(ACC_PUBLIC or ACC_STATIC, helper, desc, null, null)
+        mv.visitCode()
+        val start = Label()
+        val end = Label()
+        val handler = Label()
+        mv.visitTryCatchBlock(start, end, handler, "java/lang/Exception")
+        mv.visitLabel(start)
+        core(mv)
+        mv.visitLabel(end)
+        if (builtin.ret.isVoid) mv.visitInsn(RETURN) else mv.visitInsn(ARETURN)
+
+        mv.visitLabel(handler)
+        // 形参占几个槽（都是引用类型，各 1 格），异常对象就存到它后面那一格
+        val exSlot = builtin.params.sumOf { it.slots }
+        mv.visitVarInsn(ASTORE, exSlot)
+        emitRuntimeExceptionHeader(mv)
+        mv.visitLdcInsn(builtin.name + FileRuntime.PREFIX_TAIL)
+        mv.visitVarInsn(ALOAD, 0)
+        emitConcat(mv)
+        mv.visitLdcInsn(FileRuntime.PATH_TAIL)
+        emitConcat(mv)
+        mv.visitVarInsn(ALOAD, exSlot)
+        mv.visitMethodInsn(
+            INVOKEVIRTUAL, "java/lang/Throwable", "getMessage", "()Ljava/lang/String;", false,
+        )
+        emitConcat(mv)
+        emitRuntimeExceptionThrow(mv)
+        mv.visitMaxs(0, 0)
+        mv.visitEnd()
+    }
+
+    /** `Paths.get(aload_0, new String[0])` → 栈上得到一个 `Path`（varargs 当面补空数组）。 */
+    private fun emitPathFromArg0(mv: MethodVisitor) {
+        mv.visitVarInsn(ALOAD, 0)
+        mv.visitInsn(ICONST_0)
+        mv.visitTypeInsn(ANEWARRAY, "java/lang/String")
+        mv.visitMethodInsn(
+            INVOKESTATIC, "java/nio/file/Paths", "get",
+            "(Ljava/lang/String;[Ljava/lang/String;)Ljava/nio/file/Path;", false,
+        )
+    }
+
+    /** `new OpenOption[0]`：`Files.write` 的 varargs 参数——空数组就是它的默认行为。 */
+    private fun emitEmptyOptionArray(mv: MethodVisitor) {
+        mv.visitInsn(ICONST_0)
+        mv.visitTypeInsn(ANEWARRAY, "java/nio/file/OpenOption")
+    }
+
+    /** `new RuntimeException(` 的开头：NEW + DUP（后面接消息、再接 [emitRuntimeExceptionThrow]）。 */
+    private fun emitRuntimeExceptionHeader(mv: MethodVisitor) {
+        mv.visitTypeInsn(NEW, "java/lang/RuntimeException")
+        mv.visitInsn(DUP)
+    }
+
+    /** 关掉 `new RuntimeException(消息)` 并把参数压好之后的收尾：`<init>` + ATHROW。 */
+    private fun emitRuntimeExceptionThrow(mv: MethodVisitor) {
+        mv.visitMethodInsn(
+            INVOKESPECIAL, "java/lang/RuntimeException", "<init>", "(Ljava/lang/String;)V", false,
+        )
+        mv.visitInsn(ATHROW)
+    }
+
+    /** 栈顶 int → String（拼错误消息用）。 */
+    private fun emitStringValueOfInt(mv: MethodVisitor) {
+        mv.visitMethodInsn(
+            INVOKESTATIC, "java/lang/String", "valueOf", "(I)Ljava/lang/String;", false,
+        )
+    }
+
+    // ------------------------------------------------------------------ 用户自定义类（阶段 12-C2）
+
+    /** 用户类的内部名：跟着程序类的包走（`pkg a.b` + `P` → `a/b/P`）。 */
+    private fun classInternalName(simpleName: String): String {
+        // 只有**用户自定义类 / 枚举**才跟着程序类的包走；classpath 上的 JVM 类
+        // （`java/util/ArrayList`）内部名本来就是绝对的，不能再加包前缀。
+        // 枚举和类一样在默认包里生成，所以两者都要带上包路径——漏了枚举的话，
+        // `pkg a.b` 里的 `GETSTATIC TokenKind.IDENT` 会指向默认包里的 TokenKind。
+        if (!model.classModel.classes.containsKey(simpleName) && !model.enums.containsKey(simpleName)) {
+            return simpleName
+        }
+        return model.packageName
+            ?.takeIf { it.isNotEmpty() }
+            ?.let { it.replace('.', '/') + "/" + simpleName }
+            ?: simpleName
+    }
+
+    /**
+     * 这个内部名是不是**这份程序里的接口**（阶段 20）。
+     *
+     * 目前只用在一处：`?:` 的合成静态方法 `__rsf_orelse$N` 就挂在当前 owner 上，而
+     * **接口的静态方法必须用 InterfaceMethodref 引用**（`visitMethodInsn` 的 `itf` 传 true），
+     * 否则 JVM 报 `IncompatibleClassChangeError: ... must be InterfaceMethodref constant`。
+     * rsf 的接口不带包前缀（见 [classInternalName]），所以表里的键就是内部名。
+     */
+    private fun isInterfaceInternalName(internalName: String): Boolean =
+        model.interfaces.containsKey(internalName)
+
+    /**
+     * rsf 类型 → JVM 描述符。
+     *
+     * 用户类的类型在检查器里是 `RsfType.external(简单类名)`（那时包名还没参与），
+     * 写了 `pkg` 时要在这里补上包路径，否则描述符会指向默认包里的同名类。
+     */
+    private fun descriptorOfType(type: RsfType): String {
+        // 阶段 13：数组 = 一层 '[' + 元素的描述符，**递归一层**。
+        // （别写成 `"[".repeat(arrayDepth) + descriptorOfType(elementType)`：
+        // elementType 自己还带着剩下的维度，那样 `int[][]` 会算出 `[[[I`。）
+        if (type.isArray) return "[" + descriptorOfType(type.elementType)
+        val name = type.externalName
+        if (type.isExternal && name != null && model.classModel.classes.containsKey(name)) {
+            return "L${classInternalName(name)};"
+        }
+        // 枚举类型同理（阶段 19c）：`TokenKind` 生成出来的类跟着程序类的包走
+        if (type.isExternal && name != null && model.enums.containsKey(name)) {
+            return enumDescriptorOf(name)
+        }
+        return type.descriptor
+    }
+
+    private fun fieldTypesOf(decl: ClassDecl): List<RsfType> =
+        model.classModel.fieldTypes[decl].orEmpty()
+
+    /**
+     * 字段在**类文件里**的类型（未替换类型参数）：`class Pair&<K, V>` 的 `k` 是 `K`，
+     * 擦除后在类文件里就是 `Ljava/lang/Object;`。
+     *
+     * 这个和 [UserMember.Field.type] **不是一回事**：后者把 `K` 替换成了实参类型
+     * （`Pair&<string, int>` 的 `k` 是 `string`），那是「拿到值之后当成什么用」，
+     * 用来插 CHECKCAST / 拆箱；而 `GETFIELD` / `PUTFIELD` 的**描述符必须用擦除后的那个**，
+     * 拿 `Ljava/lang/String;` 去取一个声明为 `Ljava/lang/Object;` 的字段会直接
+     * `NoSuchFieldError`（编译能过、跑起来就炸，而解释器那边完全是好的——
+     * 典型的两端不一致）。
+     */
+    private fun declaredFieldType(className: String, index: Int, fallback: RsfType): RsfType {
+        val decl = model.classModel.classes[className] ?: return fallback
+        return fieldTypesOf(decl).getOrNull(index) ?: fallback
+    }
+
+    /**
+     * 一个用户类：字段 + `<init>` + 方法。
+     *
+     * 字段一律 ACC_PUBLIC：rsf 的字段写法里没有 `<ControlType>` 的槽位，字段是「类可见」的。
+     * 类本身也一律 ACC_PUBLIC——顶层类在 JVM 里根本没有 private/protected 这一说
+     * （那两位只对嵌套类有意义），而 Checker 也没给类级可见性定语义。
+     */
+    private fun userClass(internalName: String, decl: ClassDecl): ClassWriter {
+        val cw = newClassWriter()
+        // 阶段 20：`class Dog : Greeter, Runnable` 的父类型进 **interfaces 数组**（不是父类）。
+        // 这份名单由 Checker 算好（rsf 接口给接口名，JDK 接口给 `java/lang/Runnable` 这种
+        // 内部名），后端照抄，不再自己解析一遍 `:` 子句——R1：同一个判定不做两遍。
+        cw.visit(
+            V17, ACC_PUBLIC or ACC_SUPER, internalName, null, "java/lang/Object",
+            superInterfaceNames(decl.name),
+        )
+        cw.visitSource(sourceName, null)
+
+        val fieldTypes = fieldTypesOf(decl)
+        for ((i, f) in decl.fields.withIndex()) {
+            val type = fieldTypes.getOrElse(i) { RsfType.INT }
+            cw.visitField(ACC_PUBLIC, f.name, descriptorOfType(type), null, null).visitEnd()
+        }
+
+        // 构造器：**写了几个就发几条 `<init>`**（JVM 本来就靠描述符区分重载的构造器）。
+        // 一个都没写 → 一条隐式的无参 `<init>`（等价于 `class P()`）。
+        if (decl.constructors.isEmpty()) {
+            emitUserConstructor(cw, internalName, decl, fieldTypes, null)
+        } else {
+            for (ctor in decl.constructors) {
+                emitUserConstructor(cw, internalName, decl, fieldTypes, ctor)
+            }
+        }
+        for (method in decl.plainMethods) {
+            emitUserMethod(cw, internalName, method)
+        }
+        emitUserToString(cw, internalName, decl, fieldTypes)
+        emitOrElseMethods(cw)
+        cw.visitEnd()
+        return cw
+    }
+
+    /**
+     * 类/接口的父接口内部名数组（阶段 20）。
+     *
+     * 没有 `:` 子句时是空数组——ASM 写出来的 `interfaces_count` 就是 0，和以前传 `null`
+     * 的字节完全一样，所以既有产物一个字节都不会变。
+     */
+    private fun superInterfaceNames(name: String): Array<String> =
+        model.superInterfacesOf(name).map { it.internalName }.toTypedArray()
+
+    /**
+     * 一个接口编译出来的类（阶段 20）。
+     *
+     * 形状（口径写在 [org.example.complie.ast.InterfaceDecl] 的注释里，这里只落到字节码上）：
+     * ```
+     * public interface Greeter {
+     *     public abstract void greet(String);     // 抽象方法：ACC_ABSTRACT，且**没有 Code**
+     *     public void shout(String) { ... }       // 默认方法：照普通方法写 Code
+     * }
+     * ```
+     *
+     * - **不发字段、不发 `<init>`**：接口不能有字段（D3，Parser/Checker 已拦），也不能被实例化；
+     * - 超类写 `java/lang/Object`（JVM 要求）且**不加 ACC_SUPER**：那一位是给类的超方法解析
+     *   规则用的，落在接口头上没有语义；
+     * - 抽象方法发 `ACC_PUBLIC | ACC_ABSTRACT` 之后**直接 visitEnd()**，绝不能调 `visitCode()`
+     *   ——一旦带上 Code 属性，类加载器会以 ClassFormatError 拒绝（abstract/native 方法不许有 Code）；
+     * - 默认方法复用 [emitUserMethod]：接口方法只能 public、不能 static（Checker 拦），
+     *   描述符与调用点走的是同一套规则；
+     * - `?:` 的合成方法也要在这里发（见下）。
+     */
+    private fun interfaceClass(internalName: String, decl: InterfaceDecl): ClassWriter {
+        val cw = newClassWriter()
+        cw.visit(
+            V17,
+            ACC_PUBLIC or ACC_INTERFACE or ACC_ABSTRACT,
+            internalName,
+            null,
+            "java/lang/Object",
+            superInterfaceNames(decl.name),
+        )
+        cw.visitSource(sourceName, null)
+
+        for (method in decl.methods) {
+            if (method.isAbstract) {
+                cw.visitMethod(ACC_PUBLIC or ACC_ABSTRACT, method.name, descriptorOf(method), null, null)
+                    .visitEnd()
+            } else {
+                emitUserMethod(cw, internalName, method)
+            }
+        }
+        // 默认方法体里可能有 `parseInt(s) ?: 0` 这类需要 try/catch 的调用点：那些合成方法
+        // 登记在 [orElseMethods] 里，必须跟着**当前这个接口**的类文件发出去（emitOrElseMethods
+        // 末尾会清空缓冲，所以每个类各发自己那一份，不会串到下一个类上）。
+        // V17 的接口允许 private static 方法（Java 9 起），所以合成方法的可见性不用改。
+        emitOrElseMethods(cw)
+        cw.visitEnd()
+        return cw
+    }
+
+    /**
+     * 用户类的**确定性** `toString()`：`类名(字段=值, 字段=值)`。
+     *
+     * 为什么必须生成：`"p = " + p` 在解释器里走
+     * [org.example.complie.interp.Interpreter.RsfObject] 的 `toString()`，
+     * 在编译产物里走 `String.valueOf(Object)` → 这个（或继承来的）`toString()`。
+     * 不生成的话编译产物拿到的是 `Object.toString()` —— `Point@1a2b3c`，
+     * 那是**身份哈希**，每次跑都不一样，解释器与编译产物不可能对上。
+     *
+     * 格式规则（字段怎么挑、`...` 怎么写、分隔符是什么）全在
+     * [ObjectFormat] 里，**解释器读的是同一段规则**，所以两端逐字节一致。
+     *
+     * 类里自己写了 `toString()` 就不生成（否则同一个类里会出现两条
+     * `toString()Ljava/lang/String;`，类文件直接报废）。
+     *
+     * 生成出来的形状（用 `StringBuilder` 而不是 invokedynamic，是因为要处理
+     * `char` / `bool` / `byte` 各自的 append 重载，见 [ObjectFormat.appendDescriptor]）：
+     * ```
+     * public String toString() {
+     *     return new StringBuilder("Point(x=").append(x).append(", y=").append(y).append(")").toString();
+     * }
+     * ```
+     */
+    private fun emitUserToString(
+        cw: ClassWriter,
+        owner: String,
+        decl: ClassDecl,
+        fieldTypes: List<RsfType>,
+    ) {
+        val userDefined = decl.plainMethods.any { it.name == "toString" && it.params.isEmpty() }
+        if (userDefined) return
+
+        val sb = "java/lang/StringBuilder"
+        val mv = cw.visitMethod(ACC_PUBLIC, "toString", "()Ljava/lang/String;", null, null)
+        mv.visitCode()
+        mv.visitTypeInsn(NEW, sb)
+        mv.visitInsn(DUP)
+        mv.visitMethodInsn(INVOKESPECIAL, sb, "<init>", "()V", false)
+
+        fun appendText(text: String) {
+            mv.visitLdcInsn(text)
+            mv.visitMethodInsn(
+                INVOKEVIRTUAL, sb, "append", "(Ljava/lang/String;)Ljava/lang/StringBuilder;", false,
+            )
+        }
+
+        appendText(ObjectFormat.open(decl.name))
+        for ((i, f) in decl.fields.withIndex()) {
+            if (i > 0) appendText(ObjectFormat.SEP)
+            appendText(ObjectFormat.fieldPrefix(f.name))
+            val type = fieldTypes.getOrElse(i) { RsfType.INT }
+            // 枚举字段是可打印的（阶段 19c）：`append(Object)` 会调到它生成的
+            // `toString()`（返回值名），解释器渲染同一套规则（见 ObjectFormat）
+            val desc = ObjectFormat.appendDescriptor(type, model.isEnumType(type))
+            if (desc == null) {
+                // 数组 / 对象字段：不递归展开，写一个占位（两端同一条规则）
+                appendText(ObjectFormat.SKIPPED)
+            } else {
+                mv.visitVarInsn(ALOAD, 0)
+                mv.visitFieldInsn(GETFIELD, owner, f.name, descriptorOfType(type))
+                mv.visitMethodInsn(INVOKEVIRTUAL, sb, "append", desc, false)
+            }
+        }
+        appendText(ObjectFormat.CLOSE)
+        mv.visitMethodInsn(INVOKEVIRTUAL, sb, "toString", "()Ljava/lang/String;", false)
+        mv.visitInsn(ARETURN)
+        mv.visitMaxs(0, 0)
+        mv.visitEnd()
+    }
+
+    /**
+     * 一条 `<init>`：`super()` 或 `this(...)` → 字段初值 → 构造器体。
+     *
+     * [ctor] 为 null 表示这个类一个构造器都没写（隐式无参构造器：只有字段初值）。
+     *
+     * **阶段 18 的委托**：`constructor(...) { this(实参) ... }` 编译成
+     * ```
+     *     aload_0                 // 未初始化的 this
+     *     实参…
+     *     invokespecial <owner>.<init>(目标描述符)V      // 这一次调用就是「初始化 this」
+     *     委托之后的语句…
+     *     return
+     * ```
+     * 关键是这条 `<init>` **不调 `Object.<init>`、也不跑字段初值**——那两件事由链的根
+     * （一路 this 下去最终落到主构造）做。JVM 的校验器只要求「碰 this/字段之前先初始化
+     * 一次」，而这个 `this(...)` 正好就是那次初始化（javac 生成的委托构造器是同一个形状）。
+     */
+    private fun emitUserConstructor(
+        cw: ClassWriter,
+        owner: String,
+        decl: ClassDecl,
+        fieldTypes: List<RsfType>,
+        ctor: FuncDecl?,
+    ) {
+        val params = if (ctor == null) emptyList() else model.paramsOf(ctor)
+        val descriptor = "(" + params.joinToString("") { descriptorOfType(it.type) } + ")V"
+
+        val mv = cw.visitMethod(ACC_PUBLIC, "<init>", descriptor, null, null)
+        mv.visitCode()
+
+        val delegation = ctor?.let { model.classModel.delegationOf(it) }
+        if (delegation != null && ctor != null) {
+            // 委托构造器：把 this 和实参压好后直接调目标 <init>
+            mv.visitVarInsn(ALOAD, 0)
+            val ctx = ExprCtx(mv, owner, model.loweredOf(ctor), localOffset = 0)
+            val targetParams = model.paramTypesOf(delegation.target)
+            for ((i, arg) in delegation.stmt.arguments.withIndex()) {
+                emitExpr(ctx, arg)
+                emitWiden(mv, model.typeOf(arg), targetParams[i])
+            }
+            mv.visitMethodInsn(
+                INVOKESPECIAL, owner, "<init>", descriptorOf(delegation.target), false,
+            )
+        } else {
+            mv.visitVarInsn(ALOAD, 0)
+            mv.visitMethodInsn(INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false)
+
+            // 字段初值在「this 就是刚分配的这个对象」的上下文里求值：0 号槽正是 this。
+            // 主构造的参数就在 1..n 号槽上，所以 `class P(x0 : int) { var x : int = x0 }`
+            // 的初值表达式能直接用 x0（帧就是主构造的帧，和解释器一致）。
+            val ctx = ExprCtx(mv, owner, ctor?.let { model.loweredOf(it) }, localOffset = 0)
+            for ((i, f) in decl.fields.withIndex()) {
+                val type = fieldTypes.getOrElse(i) { RsfType.INT }
+                mv.visitVarInsn(ALOAD, 0)
+                emitExpr(ctx, f.initializer)
+                emitWiden(mv, model.typeOf(f.initializer), type)
+                mv.visitFieldInsn(PUTFIELD, owner, f.name, descriptorOfType(type))
+            }
+        }
+
+        if (ctor != null) {
+            // 构造器体和普通方法体走同一条生成路径（实例方法，localOffset = 0）；
+            // 体里那句 this(...) 已经在上面发过了，emitBody 会跳过它
+            emitBody(mv, owner, ctor, localOffset = 0, returnType = RsfType.VOID)
+        } else {
+            mv.visitInsn(RETURN)
+        }
+        mv.visitMaxs(0, 0)
+        mv.visitEnd()
+    }
+
+    /**
+     * 用户类的方法。
+     *
+     * 实例方法**不加** ACC_STATIC：0 号槽是 `this`，而 [org.example.complie.ir.Lowering]
+     * 给实例方法分配的局部槽本来就是从 1 起来的，所以 `localOffset = 0`（不能重复加偏移）。
+     * 类里叫 `main` 的方法也只是普通方法——它不带 `String[]` 形参，不是 JVM 入口。
+     */
+    private fun emitUserMethod(cw: ClassWriter, owner: String, fn: FuncDecl) {
+        val access = accessOf(fn) or if (fn.isStatic) ACC_STATIC else 0
+        val mv = cw.visitMethod(access, fn.name, descriptorOf(fn), null, null)
+        mv.visitCode()
+        emitBody(mv, owner, fn, localOffset = 0, returnType = model.returnTypeOf(fn))
+        mv.visitMaxs(0, 0)
+        mv.visitEnd()
+    }
+
+    private fun accessOf(fn: FuncDecl): Int = when (fn.control) {
+        ControlType.PRIVATE -> ACC_PRIVATE
+        ControlType.PROTECTED -> ACC_PROTECTED
+        ControlType.PUBLIC, ControlType.DEFAULT -> ACC_PUBLIC
+    }
+
+    /** 用户类方法的调用指令：static → INVOKESTATIC，private 实例方法 → INVOKESPECIAL，其余虚拟调用。 */
+    private fun callOpcode(fn: FuncDecl): Int = when {
+        fn.isStatic -> INVOKESTATIC
+        fn.control == ControlType.PRIVATE -> INVOKESPECIAL
+        else -> INVOKEVIRTUAL
+    }
+
+    /**
+     * 用户类/接口**成员**的调用指令（阶段 20）：接收者静态类型是接口时一律 `INVOKEINTERFACE`。
+     *
+     * 这一支对**默认方法**同样成立：`var d : Dog = new Dog(); d.shout()` 里 `shout` 声明在
+     * `Greeter` 上，javac 在这里发的也是 `invokeinterface Greeter.shout`（owner 是声明它的
+     * 那个接口，而不是实现类）。
+     */
+    private fun callOpcode(member: UserMember.Method): Int =
+        if (member.interfaceOwner) INVOKEINTERFACE else callOpcode(member.decl)
+
+    /**
+     * 只有实例方法/构造器/字段初值里才有 `this`（槽 0）。
+     *
+     * Checker 目前会放行「static 方法里写裸字段名 / 写 this / 隐式调实例方法」这种写法
+     * （那是它那边待补的一个缺口），解释器跑到那里会抛内部错误。字节码这边如果不拦，
+     * 生成的 `aload 0` 要等到类加载时才炸成一个 JVM 的 VerifyError——不如在这里说清楚。
+     */
+    private fun requireInstanceScope(ctx: ExprCtx, what: String) {
+        // 字段初值跑在 <init> 里，本来就有 this
+        val fn = ctx.body?.function ?: return
+        val owner = model.classModel.ownerOf(fn) ?: return // 顶层函数碰不到这些构造
+        if (!fn.isStatic) return
+        throw RsfError(
+            "codegen",
+            "$what 需要 this，但 '${fn.name}' 是 ${owner.name} 的 static 方法，没有 this。" +
+                "去掉 static 改成实例方法，或者别在这里用当前对象的字段/方法。",
+            fn.at.line, fn.at.column, null,
+        )
+    }
+
+    // ------------------------------------------------------------------ 枚举（阶段 19c）
+
+    /** 枚举类型的描述符：`TokenKind` → `LTokenKind;`（跟着程序类的包走）。 */
+    private fun enumDescriptorOf(enumName: String): String = "L${classInternalName(enumName)};"
+
+    /**
+     * 一个枚举编译出来的类（阶段 19c）——**普通类，不是 JVM 的 `enum`**。
+     *
+     * 生成出来的形状（口径写在 [org.example.complie.ast.EnumDecl] 的注释里）：
+     * ```
+     * public final class TokenKind extends java.lang.Object {
+     *     public static final TokenKind IDENT;      // 每个值一个单例
+     *     public static final TokenKind INT_LIT;
+     *     private final String name;                // 私有的名字字段
+     *     private TokenKind(String name) { super(); this.name = name; }
+     *     public String toString() { return this.name; }
+     *     static {                                  // <clinit>：造出全部单例
+     *         IDENT = new TokenKind("IDENT");
+     *         INT_LIT = new TokenKind("INT_LIT");
+     *     }
+     * }
+     * ```
+     *
+     * 三个决定了形状的取舍：
+     *
+     * 1. **`<clinit>` 而不是「每个字段各自初始化」**：JVM 的静态字段初值本来就统一
+     *    放在 `<clinit>` 里，一条 `PUTSTATIC` 一个值，顺序就是声明顺序。
+     *    这样 `GETSTATIC` 第一次触发类初始化时，那些单例必然已经造好了。
+     * 2. **单例**：值字段是 `public static final`，且构造器是 `private`——外面造不出
+     *    第二个 `TokenKind`，所以引用相等就是「同一个常量」，`==` 在两端都成立。
+     * 3. **`toString()` 返回名字**：这是「打印出值名」和「`"k = " + k` 拼出值名」
+     *    两条路的**同一个落点**——JVM 上 `PrintStream.println(Object)` 与
+     *    `String.valueOf(Object)` 都会调到它。解释器那边对应
+     *    [org.example.complie.interp.Interpreter.RsfEnumValue.toString]，两个
+     *    `toString` 返回的都是 `valueName` 本身，所以文本必然一致。
+     *    （`StringBuilder.append(Object)` 那条也走同一个 `toString()`。）
+     *
+     * 类标记 `ACC_FINAL | ACC_SUPER | ACC_PUBLIC`：`final` 是因为 rsf 里没有继承，
+     * 枚举更不该被继承；加了 `ACC_SUPER` 才是现代 JVM 的常规形态。
+     */
+    private fun enumClass(internalName: String, decl: EnumDecl): ClassWriter {
+        val cw = newClassWriter()
+        cw.visit(V17, ACC_PUBLIC or ACC_FINAL or ACC_SUPER, internalName, null, "java/lang/Object", null)
+        cw.visitSource(sourceName, null)
+
+        val selfDesc = "L$internalName;"
+
+        // 每个值一个 public static final 单例字段
+        for (v in decl.values) {
+            cw.visitField(ACC_PUBLIC or ACC_STATIC or ACC_FINAL, v.name, selfDesc, null, null).visitEnd()
+        }
+        // 私有的名字字段：toString() 返回的就是它
+        cw.visitField(ACC_PRIVATE or ACC_FINAL, ENUM_NAME_FIELD, "Ljava/lang/String;", null, null).visitEnd()
+
+        // private <init>(String name) { super(); this.name = name; }
+        run {
+            val mv = cw.visitMethod(ACC_PRIVATE, "<init>", "(Ljava/lang/String;)V", null, null)
+            mv.visitCode()
+            mv.visitVarInsn(ALOAD, 0)
+            mv.visitMethodInsn(INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false)
+            mv.visitVarInsn(ALOAD, 0)
+            mv.visitVarInsn(ALOAD, 1)
+            mv.visitFieldInsn(PUTFIELD, internalName, ENUM_NAME_FIELD, "Ljava/lang/String;")
+            mv.visitInsn(RETURN)
+            mv.visitMaxs(0, 0)
+            mv.visitEnd()
+        }
+
+        // public String toString() { return this.name; }
+        run {
+            val mv = cw.visitMethod(ACC_PUBLIC, "toString", "()Ljava/lang/String;", null, null)
+            mv.visitCode()
+            mv.visitVarInsn(ALOAD, 0)
+            mv.visitFieldInsn(GETFIELD, internalName, ENUM_NAME_FIELD, "Ljava/lang/String;")
+            mv.visitInsn(ARETURN)
+            mv.visitMaxs(0, 0)
+            mv.visitEnd()
+        }
+
+        // static { IDENT = new TokenKind("IDENT"); ... }：顺序 = 声明顺序
+        run {
+            val mv = cw.visitMethod(ACC_STATIC, "<clinit>", "()V", null, null)
+            mv.visitCode()
+            for (v in decl.values) {
+                mv.visitTypeInsn(NEW, internalName)
+                mv.visitInsn(DUP)
+                mv.visitLdcInsn(v.name)
+                mv.visitMethodInsn(INVOKESPECIAL, internalName, "<init>", "(Ljava/lang/String;)V", false)
+                mv.visitFieldInsn(PUTSTATIC, internalName, v.name, selfDesc)
+            }
+            mv.visitInsn(RETURN)
+            mv.visitMaxs(0, 0)
+            mv.visitEnd()
+        }
+
+        cw.visitEnd()
+        return cw
+    }
+
+    // ------------------------------------------------------------------ 类骨架
+
+    private fun emitDefaultConstructor(cw: ClassWriter) {
+        val mv = cw.visitMethod(ACC_PUBLIC, "<init>", "()V", null, null)
+        mv.visitCode()
+        mv.visitVarInsn(ALOAD, 0)
+        mv.visitMethodInsn(INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false)
+        mv.visitInsn(RETURN)
+        mv.visitMaxs(0, 0)
+        mv.visitEnd()
+    }
+
+    /**
+     * 只有「无参的 main」才当 JVM 入口——带参数的 main 编译成普通静态方法。
+     *
+     * 类里的 `main` 一律不是入口：那是这个类自己的方法，`java 类名` 启动的是
+     * 程序类以及它上面那个签名正确的 main。
+     */
+    private fun isEntry(fn: FuncDecl): Boolean =
+        fn.name == "main" && fn.params.isEmpty() && !model.classModel.owner.containsKey(fn)
+
+    private fun descriptorOf(fn: FuncDecl): String {
+        val ret = model.returnTypeOf(fn)
+        val sb = StringBuilder("(")
+        if (isEntry(fn)) sb.append("[Ljava/lang/String;")
+        for (t in model.paramTypesOf(fn)) sb.append(descriptorOfType(t))
+        sb.append(')').append(descriptorOfType(ret))
+        return sb.toString()
+    }
+
+    private fun emitFunction(cw: ClassWriter, owner: String, fn: FuncDecl) {
+        val returnType = model.returnTypeOf(fn)
+
+        if (isEntry(fn) && returnType != RsfType.VOID) {
+            warnings += "入口函数 main 的返回类型是 ${returnType.rsfName}，" +
+                "JVM 只认 void，这个类不能用 `java` 直接启动（写法：fun main() -> void）"
+        }
+        if (fn.name == "main" && fn.params.isNotEmpty()) {
+            warnings += "main 带了 ${fn.params.size} 个参数，JVM 启动器只认无参的 " +
+                "main(String[])，所以这个类不能用 `java` 直接启动（rsf 内部照样能调用它）"
+        }
+
+        // 顶层函数一律是静态方法（rsf 没有全局对象），<static> 槽在顶层只是把它写出来而已
+        val mv = cw.visitMethod(accessOf(fn) or ACC_STATIC, fn.name, descriptorOf(fn), null, null)
+        mv.visitCode()
+        emitBody(mv, owner, fn, localOffset = if (isEntry(fn)) 1 else 0, returnType = returnType)
+        mv.visitMaxs(0, 0)
+        mv.visitEnd()
+    }
+
+    /**
+     * 一个函数/方法/构造器的函数体。程序类的静态方法、用户类的实例方法、`<init>`
+     * 都走这里——区别只在访问标志、描述符和 [localOffset]。
+     *
+     * [localOffset] 是「rsf 的 0 号局部槽对应 JVM 的几号槽」：入口 main 前面多一个
+     * `String[]`（偏移 1），其余情况都是 0（实例方法的 `this` 正好落在 JVM 的 0 号槽，
+     * 而 Lowering 给它的局部槽本来就从 1 开始）。
+     */
+    private fun emitBody(
+        mv: MethodVisitor,
+        owner: String,
+        fn: FuncDecl,
+        localOffset: Int,
+        returnType: RsfType,
+    ) {
+        val body = model.loweredOf(fn)
+        val cf = ControlFlow(body.instructions, body.labelIndex, body.handlers)
+        val reach = cf.reachable()
+        val ctx = ExprCtx(mv, owner, body, localOffset)
+
+        val labels = HashMap<String, Label>()
+        for (instr in body.instructions) {
+            if (instr is ILabel) labels[instr.label] = Label()
+        }
+
+        // ------------------------------------------------------------------ try/catch（阶段 14）
+        //
+        // 一条 try 对应 JVM 异常表里的一条记录：保护范围 [start, end) 里抛出来的
+        // RuntimeException 跳到 handler，栈上带着那个异常对象。
+        //
+        // 只登记**保护体可达**的那些：不可达的标签根本不会被 visit，而 ASM 在
+        // visitMaxs（COMPUTE_FRAMES）时碰到没访问过的 Label 会直接抛异常。
+        // 保护体不可达 = 这段 try 永远不会执行，不登记也不会有语义差别。
+        val handlerLabels = HashSet<String>()
+        val handlerSlots = HashMap<String, Int>()
+        for (h in body.handlers) {
+            if (!reach[h.startPc]) continue
+            handlerLabels += h.startLabel
+            handlerLabels += h.endLabel
+            handlerLabels += h.handlerLabel
+            handlerSlots[h.handlerLabel] = h.catchSlot
+            mv.visitTryCatchBlock(
+                labels[h.startLabel]!!,
+                labels[h.endLabel]!!,
+                labels[h.handlerLabel]!!,
+                "java/lang/RuntimeException",
+            )
+        }
+
+        for ((i, instr) in body.instructions.withIndex()) {
+            // 处理器用到的三个标签即使落在不可达位置也必须 visit 一次：
+            // `try { rtn 1 } catch (e : string) { ... }` 的 try.end 就在 RETURN 后面，
+            // 不 visit 的话异常表会指着一个没访问过的 Label。
+            val forced = instr is ILabel && instr.label in handlerLabels
+            if (!reach[i] && !forced) continue
+
+            val line = instr.at.line.coerceAtLeast(1)
+            if (instr is ILabel) {
+                val label = labels[instr.label]!!
+                mv.visitLabel(label)
+                mv.visitLineNumber(line, label)
+                // catch 处理体的入口：进这里时栈上正好是异常对象，取出消息写进 catch 变量。
+                // （解释器在查表命中时做同一件事：把错误消息写进同一个槽位。）
+                handlerSlots[instr.label]?.let { slot ->
+                    mv.visitMethodInsn(
+                        INVOKEVIRTUAL, "java/lang/RuntimeException", "getMessage",
+                        "()Ljava/lang/String;", false,
+                    )
+                    storeSlot(mv, RsfType.STRING, slot + localOffset)
+                }
+                continue
+            }
+
+            val here = Label()
+            mv.visitLabel(here)
+            mv.visitLineNumber(line, here)
+
+            when (instr) {
+                is ILabel -> {}
+
+                is IVarDecl -> {
+                    val binding = model.bindingOf(instr.stmt)
+                    emitExpr(ctx, instr.stmt.initializer)
+                    emitWiden(mv, model.typeOf(instr.stmt.initializer), binding.type)
+                    storeSlot(mv, binding.type, binding.slot + localOffset)
+                }
+
+                is IAssign -> {
+                    // 裸字段名赋值（`x = 1`）：目标是字段而不是局部槽，this 在 0 号槽
+                    val field = model.classModel.bareFieldWrites[instr.stmt]
+                    if (field != null) {
+                        requireInstanceScope(ctx, "裸字段名 '${instr.stmt.name}'")
+                        mv.visitVarInsn(ALOAD, 0)
+                        emitExpr(ctx, instr.stmt.value)
+                        val declared = declaredFieldType(field.className, field.index, field.type)
+                        // 往**声明**类型上收敛（泛型字段擦除后是 Object ⇒ 这里要装箱）
+                        emitWiden(mv, model.typeOf(instr.stmt.value), declared)
+                        mv.visitFieldInsn(
+                            PUTFIELD, classInternalName(field.className), instr.stmt.name,
+                            descriptorOfType(declared),
+                        )
+                    } else {
+                        val binding = model.bindingOf(instr.stmt)
+                        emitExpr(ctx, instr.stmt.value)
+                        emitWiden(mv, model.typeOf(instr.stmt.value), binding.type)
+                        storeSlot(mv, binding.type, binding.slot + localOffset)
+                    }
+                }
+
+                // `对象.字段 = ...`：接收者先求值（`this.字段` 的接收者就是 0 号槽），
+                // 再求值右侧，最后 PUTFIELD。
+                is IFieldAssign -> {
+                    val field = model.classModel.fieldWrites[instr.stmt]
+                        ?: throw IllegalStateException(
+                            "内部错误：字段赋值没有解析到字段（${instr.stmt.at.line} 行）",
+                        )
+                    val target = instr.stmt.target
+                    if (target.receiver is ThisExpr) {
+                        requireInstanceScope(ctx, "this.${target.name}")
+                        mv.visitVarInsn(ALOAD, 0)
+                    } else {
+                        emitExpr(ctx, target.receiver)
+                    }
+                    emitExpr(ctx, instr.stmt.value)
+                    val declared = declaredFieldType(field.className, field.index, field.type)
+                    // 往**声明**类型上收敛（泛型字段擦除后是 Object ⇒ 这里要装箱）
+                    emitWiden(mv, model.typeOf(instr.stmt.value), declared)
+                    mv.visitFieldInsn(
+                        PUTFIELD, classInternalName(field.className), target.name,
+                        descriptorOfType(declared),
+                    )
+                }
+
+                is IExpr -> {
+                    // discard：这条语句的结果马上就要 POP 掉，别做泛型互操作的结果收敛——
+                    // `m.put(k, v)` 的返回值（旧值）可能是 null，拆箱会炸，而 Java 里
+                    // 把它当语句写是**不拆箱**的（见 [emitResultCast] 的调用点）
+                    emitExpr(ctx, instr.stmt.expr, discard = true)
+                    val t = model.typeOf(instr.stmt.expr)
+                    if (t != RsfType.VOID) {
+                        mv.visitInsn(if (t.slots == 2) POP2 else POP)
+                    }
+                }
+
+                // `this(实参)` —— 构造器委托（阶段 18）：指令已经在 `<init>` 的序言里发过了
+                // （见 emitUserConstructor），这里什么都不用发，委托之后的语句照常往下走。
+                is ICtorDelegate -> {}
+
+                // `数组[下标] = 值`（阶段 13）。求值顺序与解释器逐字对齐：
+                // 接收者 → 长度 → 下标 → **越界检查** → 右值 → `*ASTORE`。
+                // 右值放在检查之后：越界时右值里的副作用一次都不能发生
+                // （JVM 上越界会直接抛，`a[i] = f()` 里的 f 根本不会跑）。
+                is IIndexAssign -> {
+                    val target = instr.stmt.target
+                    val element = model.typeOf(target)
+                    emitExpr(ctx, target.receiver)
+                    mv.visitInsn(DUP)
+                    mv.visitInsn(ARRAYLENGTH)
+                    emitExpr(ctx, target.index)
+                    emitArrayIndexCheck(mv)
+                    emitExpr(ctx, instr.stmt.value)
+                    emitWiden(mv, model.typeOf(instr.stmt.value), element)
+                    mv.visitInsn(arrayStoreOpcode(element))
+                }
+
+                is IReturn -> {
+                    val value = instr.stmt.value
+                    if (value == null) {
+                        mv.visitInsn(RETURN)
+                    } else if (value is NullLit) {
+                        // 可空返回类型：压 null 再按返回类型的指令返回
+                        mv.visitInsn(ACONST_NULL)
+                        mv.visitInsn(returnInsn(returnType))
+                    } else {
+                        emitExpr(ctx, value)
+                        emitWiden(mv, model.typeOf(value), returnType)
+                        mv.visitInsn(returnInsn(returnType))
+                    }
+                }
+
+                // `fail <消息>`：new RuntimeException(消息) + ATHROW。
+                // 直接用 JDK 现成的异常类型，不新造类——解释器那边抛的 RsfFailure
+                // 也带着同样的消息，两端的可观察行为一致（谁接住、消息是什么）。
+                is IFail -> {
+                    mv.visitTypeInsn(NEW, "java/lang/RuntimeException")
+                    mv.visitInsn(DUP)
+                    emitExpr(ctx, instr.stmt.message)
+                    mv.visitMethodInsn(
+                        INVOKESPECIAL, "java/lang/RuntimeException", "<init>",
+                        "(Ljava/lang/String;)V", false,
+                    )
+                    mv.visitInsn(ATHROW)
+                }
+
+                is IGoto -> mv.visitJumpInsn(GOTO, labels[instr.label]!!)
+
+                is IBranch -> {
+                    emitExpr(ctx, instr.cond)
+                    mv.visitJumpInsn(IFNE, labels[instr.target]!!)
+                }
+
+                // `switch`（阶段 19c）——一条 ISwitch 发一串「取值 + 逐常量比较」：
+                //
+                // ```
+                //     <被分派的值>              ; 只求值一次，结果留在栈上：[v]
+                //     DUP; GETSTATIC E.A; IF_ACMPEQ pad0
+                //     DUP; GETSTATIC E.B; IF_ACMPEQ pad1
+                //     POP                        ; 一个都没命中：[]
+                //     GOTO default  /  throw     ; 没写 else 且穷尽时是 throw（值只能是 null）
+                // pad0: POP; GOTO case0          ; 把比较时留下的 v 弹掉，再进分支体
+                // pad1: POP; GOTO case1
+                // case0: ...                     ; 分支体看到的栈是干净的（[]）
+                // ```
+                //
+                // 两个要点：
+                // - **值只求一次**（`switch (f())` 里的 f 只能跑一次），靠比较之前的
+                //   `DUP` 保住它；`IF_ACMPEQ` 是**引用比较**，和解释器那句
+                //   `subject === enumValue(...)` 是同一种比较（枚举是单例）。
+                // - **必须过一层「弹出跳板」（pad）**：跳转时 v 还在栈上，而分支体
+                //   期望空栈——直接跳到分支体上会得到「栈上有 1 个元素」的帧，
+                //   校验器当场拒绝（VerifyError: Instruction type does not match stack map）。
+                //   跳板只有两条指令（POP; GOTO），但它是让栈在分支入口处干净的关键。
+                is ISwitch -> {
+                    val enumName = model.typeOf(instr.stmt.subject).simpleExternalName
+                    val pads = instr.stmt.cases.map { Label() }
+                    emitExpr(ctx, instr.stmt.subject)
+                    for ((i, c) in instr.stmt.cases.withIndex()) {
+                        mv.visitInsn(DUP)
+                        mv.visitFieldInsn(
+                            GETSTATIC, classInternalName(c.enumName), c.valueName,
+                            enumDescriptorOf(c.enumName),
+                        )
+                        mv.visitJumpInsn(IF_ACMPEQ, pads[i])
+                    }
+                    mv.visitInsn(POP)
+                    val fallback = instr.defaultTarget
+                    if (fallback != null) {
+                        mv.visitJumpInsn(GOTO, labels[fallback]!!)
+                    } else {
+                        // 没写 else 且 case 穷尽：静态上到不了这里（值只可能是 null）。
+                        // 发的形状和 `fail "..."` 一模一样（`throw new RuntimeException(消息)`），
+                        // 解释器那边抛的是同一个消息的 RsfFailure——两端的 catch 与输出因此一致。
+                        mv.visitTypeInsn(NEW, "java/lang/RuntimeException")
+                        mv.visitInsn(DUP)
+                        mv.visitLdcInsn(EnumRuntime.noMatchFailure(enumName))
+                        mv.visitMethodInsn(
+                            INVOKESPECIAL, "java/lang/RuntimeException", "<init>",
+                            "(Ljava/lang/String;)V", false,
+                        )
+                        mv.visitInsn(ATHROW)
+                    }
+                    for ((i, pad) in pads.withIndex()) {
+                        mv.visitLabel(pad)
+                        mv.visitInsn(POP)
+                        mv.visitJumpInsn(GOTO, labels[instr.targets[i]]!!)
+                    }
+                }
+            }
+        }
+
+        // 走到函数末尾：void 函数正常结束；非 void 时 Checker 已经拦住了，这里是防御
+        if (reach[cf.exit]) {
+            if (returnType == RsfType.VOID) {
+                mv.visitInsn(RETURN)
+            } else {
+                mv.visitTypeInsn(NEW, "java/lang/IllegalStateException")
+                mv.visitInsn(DUP)
+                mv.visitLdcInsn("rsf: 函数 '${fn.name}' 缺少 rtn")
+                mv.visitMethodInsn(
+                    INVOKESPECIAL, "java/lang/IllegalStateException", "<init>",
+                    "(Ljava/lang/String;)V", false,
+                )
+                mv.visitInsn(ATHROW)
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------ 表达式
+
+    /**
+     * 表达式生成的上下文。
+     *
+     * [body] 是「这条表达式属于哪个降级函数」，只有生成方法体时有；字段初值不在任何
+     * 函数帧里（它们跑在 `<init>` 里），那时是 null。
+     */
+    private class ExprCtx(
+        val mv: MethodVisitor,
+        val owner: String,
+        val body: LoweredFunction?,
+        val localOffset: Int,
+    )
+
+    private fun emitExpr(ctx: ExprCtx, expr: Expr, discard: Boolean = false) {
+        val mv = ctx.mv
+        when (expr) {
+            is IntLit -> pushInt(mv, expr.value)
+            is LongLit -> mv.visitLdcInsn(expr.value)
+            is FloatLit -> mv.visitLdcInsn(expr.value)
+            is DoubleLit -> mv.visitLdcInsn(expr.value)
+            is StringLit -> mv.visitLdcInsn(expr.value)
+            // 字符字面量：char 在 JVM 栈上就是它的码点（int），压一个整数即可
+            is CharLit -> pushInt(mv, expr.value.code)
+            is BoolLit -> mv.visitInsn(if (expr.value) ICONST_1 else ICONST_0)
+            is NullLit -> mv.visitInsn(ACONST_NULL)
+
+            is VarExpr -> {
+                // 方法体里的裸字段名（`rtn x`）：先看类解析结果，其次才是局部变量槽。
+                // 命中字段时 this 就是 0 号槽。
+                val field = model.classModel.fieldReads[expr]
+                if (field != null) {
+                    requireInstanceScope(ctx, "裸字段名 '${expr.name}'")
+                    mv.visitVarInsn(ALOAD, 0)
+                    mv.visitFieldInsn(
+                        GETFIELD, classInternalName(field.className), expr.name,
+                        descriptorOfType(field.type),
+                    )
+                } else {
+                    val binding = model.bindingOf(expr)
+                    loadSlot(mv, binding.type, binding.slot + ctx.localOffset)
+                }
+            }
+
+            // 阶段 12-C2：用户自定义类
+            is NewExpr -> emitNew(ctx, expr)
+
+            // 阶段 13：数组
+            is NewArrayExpr -> emitNewArray(ctx, expr)
+
+            is IndexExpr -> {
+                val element = model.typeOf(expr)
+                emitExpr(ctx, expr.receiver) // 栈上：[数组]
+                mv.visitInsn(DUP)
+                mv.visitInsn(ARRAYLENGTH) // [数组, 长度]
+                emitExpr(ctx, expr.index) // [数组, 长度, 下标]
+                emitArrayIndexCheck(mv) // [数组, 下标]（越界就抛，不越界原样返回下标）
+                mv.visitInsn(arrayLoadOpcode(element))
+            }
+
+            // 实例方法（含构造器）的 0 号槽就是 this
+            is ThisExpr -> {
+                requireInstanceScope(ctx, "this")
+                mv.visitVarInsn(ALOAD, 0)
+            }
+
+            is CallExpr -> if (model.isConstruction(expr)) emitNew(ctx, expr) else emitCall(ctx, expr)
+
+            is UnaryExpr -> {
+                emitExpr(ctx, expr.operand)
+                when (expr.op) {
+                    TokenKind.MINUS -> mv.visitInsn(
+                        // 操作数在栈上的**实际宽度**由「提升后」的基础类型决定：
+                        // byte / char 在 JVM 栈上就是 int，Checker 也把 `-b` 的结果定成
+                        // 提升后的类型（见 Checker 的 UnaryExpr → `operand.base.promoted()`），
+                        // 所以这里必须先 promoted() 再挑指令。
+                        // 以前直接比 RsfType.INT/LONG/FLOAT/DOUBLE 四种静态类型，
+                        // `-b`（b : byte）会抛「一元减号的操作数不是数值」——
+                        // 而 rsf check 放行、rsf run 正常，三方不一致（2026-10-11 修）。
+                        when (val base = model.typeOf(expr.operand).base.promoted()) {
+                            RsfBase.INT -> INEG
+                            RsfBase.LONG -> LNEG
+                            RsfBase.FLOAT -> FNEG
+                            RsfBase.DOUBLE -> DNEG
+                            else -> throw IllegalStateException("一元减号的操作数不是数值（$base）")
+                        },
+                    )
+                    TokenKind.BANG -> {
+                        // !b  ==  b ^ 1
+                        mv.visitInsn(ICONST_1)
+                        mv.visitInsn(IXOR)
+                    }
+                    else -> throw IllegalStateException("不认识的一元运算符 ${expr.op}")
+                }
+            }
+
+            is BinaryExpr -> emitBinary(ctx, expr)
+
+            is IfExpr -> {
+                // 三目：两条分支各算一遍，宽度统一到表达式静态类型后再汇合，
+                // 保证合流点两侧栈上类型一致（int vs long 混着汇合是校验器不认的）
+                val resultType = model.typeOf(expr)
+                val onTrue = Label()
+                val end = Label()
+                emitExpr(ctx, expr.condition)
+                mv.visitJumpInsn(IFNE, onTrue)
+                emitExpr(ctx, expr.whenFalse)
+                emitWiden(mv, model.typeOf(expr.whenFalse), resultType)
+                mv.visitJumpInsn(GOTO, end)
+                mv.visitLabel(onTrue)
+                emitExpr(ctx, expr.whenTrue)
+                emitWiden(mv, model.typeOf(expr.whenTrue), resultType)
+                mv.visitLabel(end)
+            }
+
+            is ElvisExpr -> emitElvis(ctx, expr)
+
+            is ForceExpr -> {
+                val operandType = model.typeOf(expr.operand)
+                val resultType = model.typeOf(expr)
+                if (isErrorCall(expr.operand)) {
+                    // `f()!!`：只是把错误往上抛，什么都不用发——异常自己会传出去
+                    // （Checker 已经保证本函数/本 try 接得住它）
+                    emitExpr(ctx, expr.operand)
+                    return
+                }
+                val ok = Label()
+                emitExpr(ctx, expr.operand)          // 引用形式（装箱或本来就是引用）
+                mv.visitInsn(DUP)
+                mv.visitJumpInsn(IFNONNULL, ok)
+                mv.visitInsn(POP)
+                mv.visitTypeInsn(NEW, "java/lang/NullPointerException")
+                mv.visitInsn(DUP)
+                mv.visitLdcInsn("rsf: 对 null 使用了 '!!'")
+                mv.visitMethodInsn(
+                    INVOKESPECIAL, "java/lang/NullPointerException", "<init>",
+                    "(Ljava/lang/String;)V", false,
+                )
+                mv.visitInsn(ATHROW)
+                mv.visitLabel(ok)
+                if (resultType.isPrimitive) unboxValue(mv, resultType.base)
+            }
+
+            is MemberExpr -> {
+                // 阶段 19c：枚举常量 `TokenKind.IDENT` → `GETSTATIC TokenKind.IDENT LTokenKind;`。
+                // 它一定是 STATIC 字段：单例是在 `<clinit>` 里造好的（见 [enumClass]），
+                // 所以这条指令本身就是「取那个唯一实例」——两端因此拿到同一个对象，
+                // `==`（引用相等 / Objects.equals）在两端的判等结果必然相同。
+                val enumRef = model.enumValueOf(expr)
+                if (enumRef != null) {
+                    mv.visitFieldInsn(
+                        GETSTATIC, classInternalName(enumRef.enumName), enumRef.valueName,
+                        enumDescriptorOf(enumRef.enumName),
+                    )
+                } else if (isArrayLength(expr)) {
+                    // 阶段 13：数组的 `.length` 是属性（Checker 保证这里只有它，且不带括号）。
+                    // 判断用**静态类型**，解释器读的是同一份语义模型，两端不可能走偏。
+                    emitExpr(ctx, expr.receiver)
+                    mv.visitInsn(ARRAYLENGTH)
+                } else {
+                    // 用户自定义类的成员先查——它跟 JVM 反射那条路是两张互斥的表
+                    val user = model.classModel.members[expr]
+                    if (user != null) {
+                        emitUserMember(ctx, expr, user, discard)
+                    } else {
+                        when (val target = model.memberOf(expr)) {
+                            is ResolvedField -> {
+                                val f = target.field
+                                if (f.isStatic) {
+                                    mv.visitFieldInsn(GETSTATIC, f.owner, f.name, f.descriptor)
+                                } else {
+                                    emitExpr(ctx, expr.receiver)
+                                    mv.visitFieldInsn(GETFIELD, f.owner, f.name, f.descriptor)
+                                }
+                            }
+
+                            is ResolvedMethod -> {
+                                val m = target.method
+                                if (!m.isStatic) emitExpr(ctx, expr.receiver)
+                                for ((i, arg) in expr.arguments.orEmpty().withIndex()) {
+                                    emitExpr(ctx, arg)
+                                    emitWiden(mv, model.typeOf(arg), m.paramTypes[i])
+                                }
+                                // owner 是接口（`Iterator` / `List` / `Comparator`…）只能发 INVOKEINTERFACE：
+                                // 发 INVOKEVIRTUAL 会在运行期抛 IncompatibleClassChangeError（Find interface ...,
+                                // but class was expected），而解释器那条路照常能跑——两端就背离了。
+                                // 判定由 Checker 解析时写进 ResolvedMethod，后端只照做。
+                                mv.visitMethodInsn(
+                                    when {
+                                        m.isStatic -> INVOKESTATIC
+                                        target.interfaceOwner -> INVOKEINTERFACE
+                                        else -> INVOKEVIRTUAL
+                                    },
+                                    m.owner, m.name, m.descriptor, target.interfaceOwner,
+                                )
+                                // 泛型集合：`get()` 擦除后返回 Object，静态类型是元素类型。
+                                // **结果被丢弃时不做这一步**（见 [emitExpr] 的 discard）：
+                                // `m.put(k, v)` 返回的是旧值，可能为 null，白白拆箱会在
+                                // 空表上 NPE——Java 里 `map.put(...)` 当语句写也不会炸。
+                                if (!discard) emitResultCast(mv, m.returnType, model.typeOf(expr))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * `接收者.length` 里接收者是不是数组（阶段 13）。
+     *
+     * 用 `exprTypes` 的**查表**而不是 `model.typeOf`：静态成员访问（`Math.max(...)`）
+     * 的接收者是一个类名，Checker 从不给它标注类型——`typeOf` 会在那里直接抛
+     * 「表达式缺少类型标注」。查表拿不到就说明它不是数组，正常走后面的分支。
+     */
+    private fun isArrayLength(expr: MemberExpr): Boolean =
+        expr.arguments == null &&
+            expr.name == "length" &&
+            model.exprTypes[expr.receiver]?.isArray == true
+
+    /**
+     * 数组的创建（阶段 13）：`new T[n]` / `new T[n][m]`。
+     *
+     * 长度的求值次序就是压栈次序（一维一个），和解释器逐字对齐；每一维都过一遍
+     * 负数检查（JVM 的 `NegativeArraySizeException` 解释器接不住）。
+     *
+     * 指令的选择：
+     * - 一维 + 基本类型 → `NEWARRAY <atype>`（`int[]` 是 `T_INT`）
+     * - 一维 + 引用类型 → `ANEWARRAY <组件类型>`
+     * - 多维 → `MULTIANEWARRAY <数组描述符>, 维数`（`new int[3][4]` → `[[I`，
+     *   一次分配出「3 个长度为 4 的 int 数组」，正好就是「数组的数组」）
+     */
+    private fun emitNewArray(ctx: ExprCtx, expr: NewArrayExpr) {
+        val mv = ctx.mv
+        val resultType = model.typeOf(expr)
+        val component = resultType.elementType
+
+        for (dim in expr.dimensions) {
+            emitExpr(ctx, dim)
+            mv.visitMethodInsn(
+                INVOKESTATIC, programInternalName,
+                ArrayRuntime.LENGTH_HELPER, ArrayRuntime.LENGTH_HELPER_DESC, false,
+            )
+        }
+
+        if (expr.dimensions.size == 1) {
+            if (component.isPrimitive) {
+                mv.visitIntInsn(NEWARRAY, primitiveArrayType(component.base))
+            } else {
+                mv.visitTypeInsn(ANEWARRAY, internalNameOf(component))
+            }
+        } else {
+            mv.visitMultiANewArrayInsn(descriptorOfType(resultType), expr.dimensions.size)
+        }
+    }
+
+    /**
+     * 越界检查：栈上是 `[数组, 长度, 下标]`，调用辅助方法之后变成 `[数组, 下标]`。
+     *
+     * 辅助方法 `(int length, int index) -> int` 不越界就把下标原样还回来，
+     * 所以调用点不用额外的局部变量来存数组或下标。
+     */
+    private fun emitArrayIndexCheck(mv: MethodVisitor) {
+        mv.visitMethodInsn(
+            INVOKESTATIC, programInternalName,
+            ArrayRuntime.INDEX_HELPER, ArrayRuntime.INDEX_HELPER_DESC, false,
+        )
+    }
+
+    /**
+     * 取数组元素的指令：**按元素类型选**，跟 javac 完全一致。
+     *
+     * `byte[]` 用 `BALOAD`、`char[]` 用 `CALOAD`、`bool[]` 用 `BALOAD`
+     * （JVM 规范里 `baload` 同时管 boolean 与 byte）、`int[]` 用 `IALOAD`；
+     * 引用类型（含**数组的数组**——`int[][]` 的元素是 `int[]`）用 `AALOAD`。
+     */
+    private fun arrayLoadOpcode(element: RsfType): Int = when {
+        element.isArray || !element.base.isPrimitive || element.nullable -> AALOAD
+        element.base == RsfBase.BOOL || element.base == RsfBase.BYTE -> BALOAD
+        element.base == RsfBase.CHAR -> CALOAD
+        element.base == RsfBase.INT -> IALOAD
+        element.base == RsfBase.LONG -> LALOAD
+        element.base == RsfBase.FLOAT -> FALOAD
+        else -> DALOAD
+    }
+
+    /** 存数组元素的指令：与 [arrayLoadOpcode] 一一对应。 */
+    private fun arrayStoreOpcode(element: RsfType): Int = when {
+        element.isArray || !element.base.isPrimitive || element.nullable -> AASTORE
+        element.base == RsfBase.BOOL || element.base == RsfBase.BYTE -> BASTORE
+        element.base == RsfBase.CHAR -> CASTORE
+        element.base == RsfBase.INT -> IASTORE
+        element.base == RsfBase.LONG -> LASTORE
+        element.base == RsfBase.FLOAT -> FASTORE
+        else -> DASTORE
+    }
+
+    /** `NEWARRAY` 的 atype：每种基本类型一个固定编号。 */
+    private fun primitiveArrayType(base: RsfBase): Int = when (base) {
+        RsfBase.BOOL -> T_BOOLEAN
+        RsfBase.BYTE -> T_BYTE
+        RsfBase.CHAR -> T_CHAR
+        RsfBase.INT -> T_INT
+        RsfBase.LONG -> T_LONG
+        RsfBase.FLOAT -> T_FLOAT
+        RsfBase.DOUBLE -> T_DOUBLE
+        else -> throw IllegalStateException("不能建数组的基本类型: $base")
+    }
+
+    /**
+     * 一个构造点：显式 `new 类名(实参)`，或者**省掉 `new`** 的 `类名(实参)`
+     * （AST 上后者是 [CallExpr]，但 Checker 已经把它判定成构造了）。
+     *
+     * 发的是 `NEW` + `DUP` + 实参 + `<init>`；两种写法的指令序列**一模一样**。
+     */
+    private fun emitNew(ctx: ExprCtx, expr: Expr) {
+        val mv = ctx.mv
+        val args = model.constructionArgs(expr)
+
+        // 构造导入的 JVM 类（`new ArrayList&<int>()` / `ArrayList&<int>()`）：
+        // 直接 NEW + INVOKESPECIAL <init>
+        model.externalNewTargets[expr]?.let { target ->
+            val m = target.method
+            mv.visitTypeInsn(NEW, m.owner)
+            mv.visitInsn(DUP)
+            for ((i, arg) in args.withIndex()) {
+                emitExpr(ctx, arg)
+                emitWiden(mv, model.typeOf(arg), m.paramTypes[i])
+            }
+            mv.visitMethodInsn(INVOKESPECIAL, m.owner, "<init>", m.descriptor, false)
+            return
+        }
+
+        val decl = model.classModel.newTargets[expr]
+            ?: throw IllegalStateException(
+                "内部错误：构造没有解析到类 '${model.constructionName(expr)}'",
+            )
+        val owner = classInternalName(decl.name)
+
+        mv.visitTypeInsn(NEW, owner)
+        mv.visitInsn(DUP)
+
+        // 用哪一个构造器是 Checker 挑好的（constructor 重载）；null = 隐式无参构造器
+        val ctor = model.classModel.ctorOf(expr)
+        val params = if (ctor == null) emptyList() else model.paramTypesOf(ctor)
+        for ((i, arg) in args.withIndex()) {
+            emitExpr(ctx, arg)
+            emitWiden(mv, model.typeOf(arg), params[i])
+        }
+        mv.visitMethodInsn(
+            INVOKESPECIAL, owner, "<init>",
+            "(" + params.joinToString("") { descriptorOfType(it) } + ")V", false,
+        )
+    }
+
+    /** 用户类的成员访问：字段走 GETFIELD，方法按 static/private 选调用指令。 */
+    private fun emitUserMember(ctx: ExprCtx, expr: MemberExpr, member: UserMember, discard: Boolean = false) {
+        val mv = ctx.mv
+
+        when (member) {
+            is UserMember.Field -> {
+                // rsf 没有静态字段，所以字段访问一定有一个实例接收者
+                if (expr.receiver is ThisExpr) {
+                    requireInstanceScope(ctx, "this.${expr.name}")
+                    mv.visitVarInsn(ALOAD, 0)
+                } else {
+                    emitExpr(ctx, expr.receiver)
+                }
+                // 描述符用**声明**类型（泛型字段擦除后是 Object），取回来之后再按
+                // 替换后的类型收敛（CHECKCAST / 拆箱）——见 [declaredFieldType]
+                val declared = declaredFieldType(member.className, member.index, member.type)
+                mv.visitFieldInsn(
+                    GETFIELD, classInternalName(member.className), expr.name,
+                    descriptorOfType(declared),
+                )
+                // `var value : T` 擦除后是 Object：按接收者的实参类型收敛回来
+                // （结果被丢弃时就别转了：`Box&<int>` 的值可能是 null，拆箱会炸，
+                //   而 Java 里写 `box.value;` 这种语句是不拆箱的）
+                if (!discard) emitResultCast(mv, declared, model.typeOf(expr))
+            }
+
+            is UserMember.Method -> {
+                val owner = classInternalName(member.className)
+                val decl = member.decl
+                if (!decl.isStatic) emitExpr(ctx, expr.receiver)
+                val params = model.paramTypesOf(decl)
+                for ((i, arg) in expr.arguments.orEmpty().withIndex()) {
+                    emitExpr(ctx, arg)
+                    emitWiden(mv, model.typeOf(arg), params[i])
+                }
+                // 阶段 20：接收者的静态类型是接口 → 发 INVOKEINTERFACE（`itf` 参数必须为 true）。
+                // 拿着接口的 owner 发 INVOKEVIRTUAL 会在运行期抛 IncompatibleClassChangeError
+                // （Found interface Greeter, but class was expected），而解释器那条路照常能跑。
+                // 继承来的**默认方法**也是这一支：owner 是**声明**它的那个接口，方法表在运行期
+                // 按接收者的真实类解析（实现类没覆盖就落到接口的默认实现上）。
+                mv.visitMethodInsn(callOpcode(member), owner, decl.name, descriptorOf(decl), member.interfaceOwner)
+                // `fun get() -> T` 擦除后返回 Object，静态类型来自类型实参
+                // （结果被丢弃时不转，理由同上面那条：值可能为 null）
+                if (!discard) emitResultCast(mv, model.returnTypeOf(decl), model.typeOf(expr))
+            }
+        }
+    }
+
+    /**
+     * 泛型互操作的结果收敛。
+     *
+     * JVM 没有泛型：`Box&<int>.get()` 与 `ArrayList&<int>.get()` 声明返回的都是擦除后的
+     * `Object`，而 rsf 的静态类型（来自类型实参）是 `int`。所以这里补一条
+     * `CHECKCAST`（基本类型再 `intValue()` 拆箱），解释器那边靠
+     * `coerceGenericResult` 做同一件事——两端因此表现一致。
+     */
+    private fun emitResultCast(mv: MethodVisitor, declared: RsfType, want: RsfType) {
+        if (declared == want || want.isVoid || want.isNullLiteral) return
+        // 类体内部：`T` 本来就是 Object，不需要转。但 `T[]` **要**转——
+        // 它擦除后是 `[Ljava/lang/Object;`，是有自己的描述的
+        if (want.isTypeParam && !want.isArray) return
+        when {
+            want.isPrimitive -> {
+                want.base.wrapper?.let { mv.visitTypeInsn(CHECKCAST, it) }
+                unboxValue(mv, want.base)
+            }
+            want.nullable && want.base.isPrimitive ->
+                want.base.wrapper?.let { mv.visitTypeInsn(CHECKCAST, it) }
+            else -> mv.visitTypeInsn(CHECKCAST, internalNameOf(want))
+        }
+    }
+
+    /**
+     * 一条 `CHECKCAST` 要的内部名。
+     *
+     * ASM 的 `visitTypeInsn` 收的是**内部名**（`java/lang/String`），不是描述符
+     * （`Ljava/lang/String;`）——两者混用会在类加载时报
+     * `ClassFormatError: Illegal class name`。
+     */
+    private fun internalNameOf(type: RsfType): String {
+        // 阶段 13：数组——ASM 的 visitTypeInsn / ANEWARRAY 收的是「内部名**或者**
+        // 数组描述符」，数组给描述符即可（`[I`、`[Ljava/lang/String;`）
+        if (type.isArray) return descriptorOfType(type)
+        // 类型参数擦除到 Object（`new T[3]` 建出来的就是 Object[]）
+        if (type.isTypeParam) return "java/lang/Object"
+        // 可空的基本类型在 JVM 上是包装类（`?int[]` 的元素是 Integer）
+        if (type.nullable && type.base.isPrimitive) return type.base.wrapper!!
+        val name = type.externalName
+        if (type.isExternal && name != null) {
+            // 用户类要跟着程序类的包走；classpath 上的 JVM 类原样用内部名
+            return if (model.classModel.classes.containsKey(name)) classInternalName(name) else name
+        }
+        if (type.base == RsfBase.STRING) return "java/lang/String"
+        throw IllegalStateException("不能 CHECKCAST 到 $type")
+    }
+
+    /**
+     * `a ?: b`。
+     *
+     * 难点是两条分支压在栈上的表示必须一致：左边是可空类型（引用形式：引用类型就是它自己，
+     * 基本类型是包装类），右边是结果类型。所以让**两条路都汇成「结果的装箱引用」**，
+     * 汇合之后再按需要拆箱。左边的基础类型和结果基础类型不同时（`?int ?: 0L`），
+     * 在非空分支里拆箱→加宽→重新装箱。
+     */
+    private fun emitElvis(ctx: ExprCtx, expr: ElvisExpr) {
+        val mv = ctx.mv
+        // 阶段 14：`f() ?: 兜底`——左边是 !T 调用时按「出错取右边」生成，不是 null 判断
+        if (isErrorCall(expr.left)) {
+            emitErrorCallElvis(ctx, expr)
+            return
+        }
+        val leftType = model.typeOf(expr.left)
+        val rightType = model.typeOf(expr.right)
+        val resultType = model.typeOf(expr)
+
+        val have = Label()
+        val end = Label()
+
+        emitExpr(ctx, expr.left)
+        mv.visitInsn(DUP)
+        mv.visitJumpInsn(IFNONNULL, have)
+        mv.visitInsn(POP)
+        emitExpr(ctx, expr.right)
+        emitWiden(mv, rightType, resultType)
+        if (resultType.isPrimitive) boxValue(mv, resultType.base)
+        mv.visitJumpInsn(GOTO, end)
+
+        mv.visitLabel(have)
+        if (resultType.isPrimitive) {
+            // 栈上是 Boxed<leftBase>，换算成 Boxed<resultBase>
+            unboxValue(mv, leftType.base)
+            if (leftType.base != resultType.base) {
+                mv.visitInsn(widenInsn(leftType.base, resultType.base))
+            }
+            boxValue(mv, resultType.base)
+        }
+        mv.visitLabel(end)
+
+        if (resultType.isPrimitive) unboxValue(mv, resultType.base)
+    }
+
+    /**
+     * `f() ?: 兜底`（f 是 `!T` 调用，阶段 14）：出错就取右边的值。
+     *
+     * **为什么不用内联的 try/catch**：JVM 的异常处理器一进去，操作数栈就只有那个异常对象了
+     * ——而表达式中间求值时，调用方往往还有没消费完的栈值（`println(f() ?: 1)` 里已经压好的
+     * PrintStream）。内联的处理器没法把那些值「放回去」，生成出来的类会在类加载时
+     * 以 `VerifyError: Instruction type does not match stack map` 直接报废。
+     *
+     * 所以这里学 javac 处理 try-with-resources 的做法：把「调用 + 捕获」搬进一个**合成静态
+     * 方法**（[OrElse]），它的保护范围从空栈开始，天然合法。调用点变成：
+     * ```
+     *     接收者、实参…        （实参照常在调用点求值，于是实参抛的错不算这次调用出错）
+     *     invokestatic __rsf_orelse$N(...)Ljava/lang/Object;
+     *     dup / ifnonnull 正常  // 失败时返回 null
+     *     失败：pop，求兜底值
+     * ```
+     * 用 null 当失败标记是安全的：`!T` 的正常结果不可能是 null（返回类型非空，
+     * 可空 + !T 的组合已经在 Checker 里拦下了）。
+     */
+    private fun emitErrorCallElvis(ctx: ExprCtx, expr: ElvisExpr) {
+        val mv = ctx.mv
+        val resultType = model.typeOf(expr)
+        val helper = emitOrElseCall(ctx, expr.left)
+
+        // 合成方法也是当前 owner 上的静态方法。阶段 20：owner 是**接口**时（默认方法体里的
+        // `?:`），它得按 InterfaceMethodref 引用——接口的静态方法不能用 Class 引用去 invoke，
+        // 否则 `IncompatibleClassChangeError: Method '... Fetcher.__rsf_orelse$0(...)'
+        // must be InterfaceMethodref constant`。
+        mv.visitMethodInsn(
+            INVOKESTATIC, ctx.owner, helper.name, helper.descriptor, isInterfaceInternalName(ctx.owner),
+        )
+
+        val ok = Label()
+        val done = Label()
+        mv.visitInsn(DUP)
+        mv.visitJumpInsn(IFNONNULL, ok)
+        mv.visitInsn(POP)
+        emitExpr(ctx, expr.right)
+        emitWiden(mv, model.typeOf(expr.right), resultType)
+        mv.visitJumpInsn(GOTO, done)
+        mv.visitLabel(ok)
+        emitResultCast(mv, RsfType.OBJECT, resultType)
+        mv.visitLabel(done)
+    }
+
+    /**
+     * 一个 `?:` 调用点用的合成静态方法：调用目标，出错返回 null。
+     *
+     * [params] 就是合成方法的形参（接收者 + 目标方法的形参）；结果统一按 `Object` 返回
+     * （基本类型装箱，调用点再按静态类型收敛回来）。
+     */
+    private class OrElse(
+        val name: String,
+        val descriptor: String,
+        /** 调用目标用的指令：INVOKESTATIC / INVOKEVIRTUAL / INVOKESPECIAL / INVOKEINTERFACE。 */
+        val opcode: Int,
+        val owner: String,
+        val target: String,
+        val targetDescriptor: String,
+        val params: List<RsfType>,
+        /** 目标方法的返回类型（`!void` 不会走到这里）。 */
+        val result: RsfType,
+        /** 目标是入口 main：要补一个 String[] 实参。 */
+        val entryArg: Boolean,
+        /** 目标的 owner 是接口：`INVOKEINTERFACE` 的最后一个实参 `itf`（阶段 20）。 */
+        val itf: Boolean = false,
+    )
+
+    private val orElseMethods = ArrayList<OrElse>()
+    private var orElseCounter = 0
+
+    /** 登记一个合成方法并返回它的名字（同名的不合并：玩具语言里不值得为此建索引）。 */
+    private fun registerOrElse(
+        opcode: Int,
+        owner: String,
+        target: String,
+        targetDescriptor: String,
+        params: List<RsfType>,
+        result: RsfType,
+        entryArg: Boolean,
+        itf: Boolean = false,
+    ): OrElse {
+        val name = "__rsf_orelse$" + orElseCounter++
+        val descriptor = "(" + params.joinToString("") { descriptorOfType(it) } + ")Ljava/lang/Object;"
+        val spec = OrElse(
+            name, descriptor, opcode, owner, target, targetDescriptor, params, result, entryArg, itf,
+        )
+        orElseMethods.add(spec)
+        return spec
+    }
+
+    /**
+     * 把 `?:` 左边那次「可能失败的调用」拆开：接收者与实参**照常在调用点求值**并压栈
+     * （它们就是合成方法的形参），返回登记好的合成方法描述。
+     */
+    private fun emitOrElseCall(ctx: ExprCtx, expr: Expr): OrElse {
+        val mv = ctx.mv
+
+        if (expr is CallExpr) {
+            // 阶段 16：`parseInt(s) ?: 兜底`；阶段 16b：`readText(p) ?: 兜底`——
+            // 内置函数没有 FuncDecl，合成方法里直接调程序类上的辅助方法（名字/描述符
+            // 登记在 Builtin 上）。实参照常在这里求值，所以「实参自己抛的错」不算这次调用失败（两端一致）。
+            Builtins[expr.name]?.takeIf { it.mayError }?.let { builtin ->
+                val builtinParams = ArrayList<RsfType>()
+                for ((i, arg) in expr.arguments.withIndex()) {
+                    emitExpr(ctx, arg)
+                    emitWiden(mv, model.typeOf(arg), builtin.params[i])
+                    builtinParams.add(builtin.params[i])
+                }
+                return registerOrElse(
+                    INVOKESTATIC, programInternalName,
+                    builtin.helperName
+                        ?: throw IllegalStateException("内部错误：'${builtin.name}' 没有辅助方法名"),
+                    builtin.helperDesc
+                        ?: throw IllegalStateException("内部错误：'${builtin.name}' 没有辅助方法描述符"),
+                    builtinParams, builtin.ret, entryArg = false,
+                )
+            }
+
+            // 类里按名字直接调本类方法（隐式 this / 隐式类名）
+            val implicit = model.classModel.implicitCalls[expr]
+            if (implicit != null) {
+                val decl = implicit.decl
+                val owner = classInternalName(implicit.className)
+                val params = ArrayList<RsfType>()
+                if (!decl.isStatic) {
+                    requireInstanceScope(ctx, "'${expr.name}(...)'（隐式 this 调用）")
+                    mv.visitVarInsn(ALOAD, 0)
+                    params.add(RsfType.external(owner))
+                }
+                val declared = model.paramTypesOf(decl)
+                for ((i, arg) in expr.arguments.withIndex()) {
+                    emitExpr(ctx, arg)
+                    emitWiden(mv, model.typeOf(arg), declared[i])
+                    params.add(declared[i])
+                }
+                return registerOrElse(
+                    callOpcode(implicit), owner, decl.name, descriptorOf(decl), params,
+                    model.returnTypeOf(decl), entryArg = false, itf = implicit.interfaceOwner,
+                )
+            }
+
+            val target = model.callTargets[expr]
+                ?: throw IllegalStateException("内部错误：?: 左边的调用没有解析到函数 '${expr.name}'")
+            val declared = model.paramTypesOf(target)
+            val params = ArrayList<RsfType>()
+            for ((i, arg) in expr.arguments.withIndex()) {
+                emitExpr(ctx, arg)
+                emitWiden(mv, model.typeOf(arg), declared[i])
+                params.add(declared[i])
+            }
+            return registerOrElse(
+                INVOKESTATIC, programInternalName, target.name, descriptorOf(target), params,
+                model.returnTypeOf(target), entryArg = isEntry(target),
+            )
+        }
+
+        if (expr is MemberExpr) {
+            val member = model.classModel.members[expr] as? UserMember.Method
+                ?: throw IllegalStateException(
+                    "内部错误：?: 左边的成员调用没有解析到方法 '${expr.name}'",
+                )
+            val decl = member.decl
+            val owner = classInternalName(member.className)
+            val params = ArrayList<RsfType>()
+            if (!decl.isStatic) {
+                if (expr.receiver is ThisExpr) {
+                    requireInstanceScope(ctx, "this.${expr.name}")
+                    mv.visitVarInsn(ALOAD, 0)
+                } else {
+                    emitExpr(ctx, expr.receiver)
+                }
+                params.add(RsfType.external(owner))
+            }
+            val declared = model.paramTypesOf(decl)
+            for ((i, arg) in expr.arguments.orEmpty().withIndex()) {
+                emitExpr(ctx, arg)
+                emitWiden(mv, model.typeOf(arg), declared[i])
+                params.add(declared[i])
+            }
+            return registerOrElse(
+                callOpcode(member), owner, decl.name, descriptorOf(decl), params,
+                model.returnTypeOf(decl), entryArg = false, itf = member.interfaceOwner,
+            )
+        }
+
+        throw IllegalStateException("内部错误：?: 的左边不是一次可能失败的调用")
+    }
+
+    /** 把登记下来的合成方法写进当前类（每个类生成完之后调用一次）。 */
+    private fun emitOrElseMethods(cw: ClassWriter) {
+        for (m in orElseMethods) {
+            val mv = cw.visitMethod(ACC_PRIVATE or ACC_STATIC, m.name, m.descriptor, null, null)
+            mv.visitCode()
+            val start = Label()
+            val end = Label()
+            val handler = Label()
+            // 保护范围从**空栈**开始，handler 里也只有异常对象——这就是它能通过校验的原因
+            mv.visitTryCatchBlock(start, end, handler, "java/lang/RuntimeException")
+            mv.visitLabel(start)
+            if (m.entryArg) mv.visitInsn(ACONST_NULL)
+            var slot = 0
+            for (p in m.params) {
+                loadSlot(mv, p, slot)
+                slot += p.slots
+            }
+            mv.visitMethodInsn(m.opcode, m.owner, m.target, m.targetDescriptor, m.itf)
+            if (m.result.isPrimitive) boxValue(mv, m.result.base)
+            mv.visitLabel(end)
+            mv.visitInsn(ARETURN)
+
+            mv.visitLabel(handler)
+            mv.visitInsn(ACONST_NULL)
+            mv.visitInsn(ARETURN)
+            mv.visitMaxs(0, 0)
+            mv.visitEnd()
+        }
+        orElseMethods.clear()
+    }
+
+    /**
+     * 这个表达式是不是一次「可能失败」的调用（`!T` 函数 / `!T` 方法）。
+     *
+     * 判据就是语义模型里已经解析好的那几张表——解释器用的是同一份，两端
+     * 对「这里要不要按错误处理」的判断因此不会走偏。
+     */
+    private fun isErrorCall(expr: Expr): Boolean {
+        // 阶段 16：内置函数里可能失败的（parseInt）也要走「出错取兜底值」这条路。
+        // 它没有 FuncDecl 可以查，按名字查 Builtins（用户函数不允许占用内置函数名）。
+        if (expr is CallExpr) {
+            Builtins[expr.name]?.let { return it.mayError }
+        }
+        val fn = when (expr) {
+            is CallExpr -> model.callTargets[expr] ?: model.classModel.implicitCalls[expr]?.decl
+            is MemberExpr -> (model.classModel.members[expr] as? UserMember.Method)?.decl
+            else -> null
+        } ?: return false
+        return fn.ret.mayError
+    }
+
+    private fun emitCall(ctx: ExprCtx, expr: CallExpr) {
+        val mv = ctx.mv
+
+        if (expr.name == "print" || expr.name == "println") {
+            mv.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;")
+            if (expr.arguments.isEmpty()) {
+                mv.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", expr.name, "()V", false)
+            } else {
+                val arg = expr.arguments[0]
+                val argType = model.typeOf(arg)
+                emitExpr(ctx, arg)
+                // 可空的基本类型装箱后是 Object；null 字面量按 String 走
+                val desc = when {
+                    argType.isNullLiteral -> "(Ljava/lang/String;)V"
+                    argType.nullable && argType.base.isPrimitive -> "(Ljava/lang/Object;)V"
+                    else -> argType.printDescriptor
+                }
+                mv.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", expr.name, desc, false)
+            }
+            return
+        }
+
+        // 阶段 16：带签名的内置函数（toByte / toChar / charToInt / parseInt / isDigit…）
+        Builtins[expr.name]?.let { builtin ->
+            emitBuiltinCall(ctx, expr, builtin)
+            return
+        }
+
+        // 类里按名字直接调本类方法（隐式 this / 隐式类名）
+        val implicit = model.classModel.implicitCalls[expr]
+        if (implicit != null) {
+            val decl = implicit.decl
+            // 实例方法的接收者就是当前对象：0 号槽
+            if (!decl.isStatic) {
+                requireInstanceScope(ctx, "'${expr.name}(...)'（隐式 this 调用）")
+                mv.visitVarInsn(ALOAD, 0)
+            }
+            val params = model.paramTypesOf(decl)
+            for ((i, arg) in expr.arguments.withIndex()) {
+                emitExpr(ctx, arg)
+                emitWiden(mv, model.typeOf(arg), params[i])
+            }
+            // 阶段 20：隐式调用也可能落在**接口**上——默认方法体里写 `greet(n)` 调的就是
+            // 同一个接口里的另一个方法，它必须发成 INVOKEINTERFACE（而不是 INVOKEVIRTUAL），
+            // 否则类加载/首次执行时报 `IncompatibleClassChangeError: Found interface Greeter,
+            // but class was expected`。
+            mv.visitMethodInsn(
+                callOpcode(implicit), classInternalName(implicit.className), decl.name,
+                descriptorOf(decl), implicit.interfaceOwner,
+            )
+            return
+        }
+
+        val target = model.callTargets[expr]
+            ?: throw IllegalStateException("内部错误：未解析的函数调用 '${expr.name}'")
+
+        // 入口函数额外带一个 String[] 形参，rsf 里调用它时补个 null
+        if (isEntry(target)) mv.visitInsn(ACONST_NULL)
+
+        // 实参按签名顺序压栈；宽度不够的先加宽
+        val paramTypes = model.paramTypesOf(target)
+        for ((i, arg) in expr.arguments.withIndex()) {
+            emitExpr(ctx, arg)
+            emitWiden(mv, model.typeOf(arg), paramTypes[i])
+        }
+
+        // 顶层函数都住在**程序类**里，不是当前类：在用户类的方法/字段初值里调顶层函数时，
+        // 用 ctx.owner（当前类）会生成 INVOKESTATIC P.note(...)，运行时 NoSuchMethodError
+        mv.visitMethodInsn(INVOKESTATIC, programInternalName, target.name, descriptorOf(target), false)
+    }
+
+    /**
+     * 内置函数调用（阶段 16）。
+     *
+     * 实参先按签名加宽（`toByte(b)` 里 byte 参数不用做任何事——它在栈上就是 int），
+     * 再发实现指令。每一行都对应解释器里 `Interpreter.callBuiltin` 的同一行。
+     *
+     * `charToInt` 是**空实现**：char 在 JVM 栈上就是它的码点，取码点不需要指令。
+     * 这一点和解释器不同（那边 Char 是个对象，要 `.code`），但可观察的结果一样。
+     */
+    private fun emitBuiltinCall(ctx: ExprCtx, expr: CallExpr, builtin: Builtin) {
+        val mv = ctx.mv
+        for ((i, arg) in expr.arguments.withIndex()) {
+            emitExpr(ctx, arg)
+            emitWiden(mv, model.typeOf(arg), builtin.params[i])
+        }
+        when (builtin.name) {
+            // 截断 / 转换：对应 Java 的 (byte) 与 (char)
+            "toByte" -> mv.visitInsn(I2B)
+            "toChar" -> mv.visitInsn(I2C)
+            "charToInt" -> {} // 见上面的说明：什么都不用发
+
+            "intToString" -> mv.visitMethodInsn(
+                INVOKESTATIC, "java/lang/String", "valueOf",
+                "(I)Ljava/lang/String;", false,
+            )
+
+            // 失败的语义要自己给：辅助方法体里把 NumberFormatException 换成
+            // 带 rsf 消息的 RuntimeException（和解释器的 RsfFailure 一字不差）
+            "parseInt" -> mv.visitMethodInsn(
+                INVOKESTATIC, programInternalName,
+                Builtins.PARSE_INT_HELPER, Builtins.PARSE_INT_HELPER_DESC, false,
+            )
+
+            // 分类与大小写：直接调 java.lang.Character，和解释器调的是同一个方法
+            "isDigit" -> characterCall(mv, "isDigit", "(C)Z")
+            "isLetter" -> characterCall(mv, "isLetter", "(C)Z")
+            "isWhitespace" -> characterCall(mv, "isWhitespace", "(C)Z")
+            "toUpper" -> characterCall(mv, "toUpperCase", "(C)C")
+            "toLower" -> characterCall(mv, "toLowerCase", "(C)C")
+
+            // 四个文件函数（阶段 16b）：调程序类上的辅助方法。方法体里发的是
+            // 「Paths.get + Files.readXxx / write」那一串，失败换成 rsf 的消息
+            // （和解释器一字不差）；签名与名字都登记在 Builtin.helperName 上。
+            "readText", "writeText", "readBytes", "writeBytes" -> mv.visitMethodInsn(
+                INVOKESTATIC, programInternalName,
+                builtin.helperName
+                    ?: throw IllegalStateException("内部错误：'${builtin.name}' 没有辅助方法名"),
+                builtin.helperDesc
+                    ?: throw IllegalStateException("内部错误：'${builtin.name}' 没有辅助方法描述符"),
+                false,
+            )
+
+            else -> throw IllegalStateException("内部错误：没实现的内置函数 '${builtin.name}'")
+        }
+    }
+
+    private fun characterCall(mv: MethodVisitor, name: String, descriptor: String) {
+        mv.visitMethodInsn(INVOKESTATIC, "java/lang/Character", name, descriptor, false)
+    }
+
+    private fun emitBinary(ctx: ExprCtx, expr: BinaryExpr) {
+        val mv = ctx.mv
+        val op = expr.op
+        val leftType = model.typeOf(expr.left)
+        val rightType = model.typeOf(expr.right)
+        val resultType = model.typeOf(expr)
+
+        // `&&` / `||`（阶段 19c）：**短路**，用标签实现。
+        // 关键是右边**根本不在直路上**——它被夹在一条条件跳转和一条 GOTO 之间，
+        // 而不是「两边都算完再合并」。这样 `false && g()` 里的 g 一次都不会被调用，
+        // 和解释器完全一致（那边是 if (!left) return false）。
+        //
+        // 非空 bool 在栈上就是 int（0/1），所以条件跳转用 IFEQ / IFNE 就够：
+        //   a && b:  算 a; IFEQ 假; 算 b; GOTO 结束; 假: ICONST_0; 结束:
+        //   a || b:  算 a; IFNE 真; 算 b; GOTO 结束; 真: ICONST_1; 结束:
+        // 注意 `a && b` 的真分支**直接就是 b 的值**（不必再归一化）——
+        // b 的类型已经被 Checker 钉死成 bool，栈上必然是 0 或 1。
+        if (op == TokenKind.ANDAND || op == TokenKind.OROR) {
+            val branchLabel = Label()
+            val endLabel = Label()
+            emitExpr(ctx, expr.left)
+            mv.visitJumpInsn(if (op == TokenKind.ANDAND) IFEQ else IFNE, branchLabel)
+            emitExpr(ctx, expr.right)
+            mv.visitJumpInsn(GOTO, endLabel)
+            mv.visitLabel(branchLabel)
+            mv.visitInsn(if (op == TokenKind.ANDAND) ICONST_0 else ICONST_1)
+            mv.visitLabel(endLabel)
+            return
+        }
+
+        if (op == TokenKind.PLUS && resultType == RsfType.STRING) {
+            emitExpr(ctx, expr.left)
+            emitToString(mv, leftType)
+            emitExpr(ctx, expr.right)
+            emitToString(mv, rightType)
+            emitConcat(mv)
+            return
+        }
+
+        if (op in COMPARISONS) {
+            emitComparison(ctx, expr, leftType, rightType)
+            return
+        }
+
+        emitExpr(ctx, expr.left)
+        emitWiden(mv, leftType, resultType)
+        emitExpr(ctx, expr.right)
+        emitWiden(mv, rightType, resultType)
+
+        val insn = when (resultType) {
+            RsfType.INT -> when (op) {
+                TokenKind.PLUS -> IADD
+                TokenKind.MINUS -> ISUB
+                TokenKind.STAR -> IMUL
+                TokenKind.SLASH -> IDIV
+                TokenKind.PERCENT -> IREM
+                else -> throw IllegalStateException("不是算术运算符 $op")
+            }
+            RsfType.LONG -> when (op) {
+                TokenKind.PLUS -> LADD
+                TokenKind.MINUS -> LSUB
+                TokenKind.STAR -> LMUL
+                TokenKind.SLASH -> LDIV
+                TokenKind.PERCENT -> LREM
+                else -> throw IllegalStateException("不是算术运算符 $op")
+            }
+            RsfType.FLOAT -> when (op) {
+                TokenKind.PLUS -> FADD
+                TokenKind.MINUS -> FSUB
+                TokenKind.STAR -> FMUL
+                TokenKind.SLASH -> FDIV
+                TokenKind.PERCENT -> FREM
+                else -> throw IllegalStateException("不是算术运算符 $op")
+            }
+            RsfType.DOUBLE -> when (op) {
+                TokenKind.PLUS -> DADD
+                TokenKind.MINUS -> DSUB
+                TokenKind.STAR -> DMUL
+                TokenKind.SLASH -> DDIV
+                TokenKind.PERCENT -> DREM
+                else -> throw IllegalStateException("不是算术运算符 $op")
+            }
+            else -> throw IllegalStateException("算术结果类型不对: $resultType")
+        }
+        mv.visitInsn(insn)
+    }
+
+    /** 比较运算：产生 JVM 的 int（0/1），rsf 里当作 bool。 */
+    private fun emitComparison(ctx: ExprCtx, expr: BinaryExpr, leftType: RsfType, rightType: RsfType) {
+        val mv = ctx.mv
+        val op = expr.op
+        val trueLabel = Label()
+        val endLabel = Label()
+
+        val numericPair = leftType.isArithmetic && rightType.isArithmetic
+        val boolPair = leftType.base == RsfBase.BOOL && rightType.base == RsfBase.BOOL &&
+            !leftType.nullable && !rightType.nullable
+
+        if (!numericPair) {
+            if (boolPair) {
+                // 非空 bool 在栈上就是 int
+                emitExpr(ctx, expr.left)
+                emitExpr(ctx, expr.right)
+                mv.visitJumpInsn(if (op == TokenKind.EQ) IF_ICMPEQ else IF_ICMPNE, trueLabel)
+            } else {
+                // 引用语义：字符串按内容、可空装箱值按 equals、null 按引用。
+                // 可空基本类型在栈上已经是包装类，所以这里两边都是引用。
+                emitExpr(ctx, expr.left)
+                emitExpr(ctx, expr.right)
+                mv.visitMethodInsn(
+                    INVOKESTATIC, "java/util/Objects", "equals",
+                    "(Ljava/lang/Object;Ljava/lang/Object;)Z", false,
+                )
+                mv.visitJumpInsn(if (op == TokenKind.EQ) IFNE else IFEQ, trueLabel)
+            }
+        } else {
+            val common = RsfType.promote(leftType, rightType)
+                ?: throw IllegalStateException("比较运算的类型不对: $leftType / $rightType")
+            emitExpr(ctx, expr.left)
+            emitWiden(mv, leftType, common)
+            emitExpr(ctx, expr.right)
+            emitWiden(mv, rightType, common)
+
+            when (common.base) {
+                // byte / char 也走 int 比较：它们在栈上就是 int（`b1 == b2` 时
+                // promote 会把共同类型原样给回来，所以这两支必须列上）
+                RsfBase.INT, RsfBase.BOOL, RsfBase.BYTE, RsfBase.CHAR -> mv.visitJumpInsn(
+                    when (op) {
+                        TokenKind.EQ -> IF_ICMPEQ
+                        TokenKind.NE -> IF_ICMPNE
+                        TokenKind.LT -> IF_ICMPLT
+                        TokenKind.GT -> IF_ICMPGT
+                        TokenKind.LE -> IF_ICMPLE
+                        TokenKind.GE -> IF_ICMPGE
+                        else -> throw IllegalStateException("不是比较运算符 $op")
+                    },
+                    trueLabel,
+                )
+
+                RsfBase.LONG -> {
+                    mv.visitInsn(LCMP)
+                    mv.visitJumpInsn(cmpJump(op), trueLabel)
+                }
+
+                RsfBase.FLOAT -> {
+                    // NaN 语义：< 和 <= 用 cmpg（NaN → 1 → 判假），> 和 >= 用 cmpl
+                    mv.visitInsn(if (op == TokenKind.LT || op == TokenKind.LE) FCMPG else FCMPL)
+                    mv.visitJumpInsn(cmpJump(op), trueLabel)
+                }
+
+                RsfBase.DOUBLE -> {
+                    mv.visitInsn(if (op == TokenKind.LT || op == TokenKind.LE) DCMPG else DCMPL)
+                    mv.visitJumpInsn(cmpJump(op), trueLabel)
+                }
+
+                else -> throw IllegalStateException("不能比较 $common")
+            }
+        }
+
+        mv.visitInsn(ICONST_0)
+        mv.visitJumpInsn(GOTO, endLabel)
+        mv.visitLabel(trueLabel)
+        mv.visitInsn(ICONST_1)
+        mv.visitLabel(endLabel)
+    }
+
+    private fun cmpJump(op: TokenKind): Int = when (op) {
+        TokenKind.EQ -> IFEQ
+        TokenKind.NE -> IFNE
+        TokenKind.LT -> IFLT
+        TokenKind.GT -> IFGT
+        TokenKind.LE -> IFLE
+        TokenKind.GE -> IFGE
+        else -> throw IllegalStateException("不是比较运算符 $op")
+    }
+
+    // ------------------------------------------------------------------ 指令工具
+
+    /**
+     * 拼接字符串时把栈顶的值转成 `String`。
+     *
+     * **对象一律走 `String.valueOf(Ljava/lang/Object;)`**——这个重载存在，它会调对象的
+     * `toString()`。以前非 String 的外部类/用户类走的是 `String.valueOf(LXxx;)`，
+     * 那个重载**根本不存在**（JDK 的 `String.valueOf` 只有 Object / char[] / 基本类型
+     * 那几个），于是 `"p = " + p` 编译能过、运行期 `NoSuchMethodError`；
+     * 而解释器那边能正常打出文本——两端不一致，破了「逐字节一致」的硬承诺。
+     * 用户自定义类的 `toString()` 由 [emitUserToString] 生成，解释器按
+     * [org.example.complie.sema.ObjectFormat] 渲染同一套格式，所以两边文本相同。
+     */
+    private fun emitToString(mv: MethodVisitor, type: RsfType) {
+        // 引用类型里的 string（含 ?string）本来就是 String，直接拼；null 直接拼成 "null"
+        if (type.base == RsfBase.STRING || type.isNullLiteral) return
+        // 不是基本类型的一律按 Object 走：数组、外部类、用户类、类型参数占位（擦除成 Object），
+        // 以及**可空的基本类型**（栈上已经是包装类，null 会拼成 "null"）。
+        // `String.valueOf(Ljava/lang/Object;)` 对它们都存在，且都会调到各自的 toString()。
+        if (!type.isPrimitive) {
+            mv.visitMethodInsn(
+                INVOKESTATIC, "java/lang/String", "valueOf",
+                "(Ljava/lang/Object;)Ljava/lang/String;", false,
+            )
+            return
+        }
+        // byte 没有 valueOf(byte) 这个重载（只有 valueOf(int)），而它在栈上本来就是
+        // int，所以按 int 转成字符串——`"b=" + b` 得到 "b=5"，跟解释器的渲染一致。
+        // char 有 valueOf(char)，直接用它，拼出来是字符本身（"c=x"）。
+        val desc = if (type.base == RsfBase.BYTE) "(I)Ljava/lang/String;" else "(${type.descriptor})Ljava/lang/String;"
+        mv.visitMethodInsn(
+            INVOKESTATIC, "java/lang/String", "valueOf",
+            desc, false,
+        )
+    }
+
+    private fun emitConcat(mv: MethodVisitor) {
+        mv.visitInvokeDynamicInsn(
+            "makeConcatWithConstants",
+            "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;",
+            Handle(
+                H_INVOKESTATIC,
+                "java/lang/invoke/StringConcatFactory",
+                "makeConcatWithConstants",
+                "(Ljava/lang/invoke/MethodHandles\$Lookup;Ljava/lang/String;" +
+                    "Ljava/lang/invoke/MethodType;Ljava/lang/String;" +
+                    "[Ljava/lang/Object;)Ljava/lang/invoke/CallSite;",
+                false,
+            ),
+            "\u0001\u0001",
+        )
+    }
+
+    private fun emitWiden(mv: MethodVisitor, from: RsfType, to: RsfType) {
+        if (from == to) return
+        if (from.isNullLiteral) return // null 字面量本身就是引用
+
+        // 基本类型 -> 引用类型（对象参数、可空同类型）：装箱
+        if (!to.isPrimitive && to.base != RsfBase.NULL && from.isPrimitive) {
+            // 目标是「可空的基本类型」（`?byte` / `?char` / `?long`…）而且基础类型不一样时，
+            // 必须**先按目标基础类型转换再装箱**：`var b : ?byte = 5` 要装成 Byte、
+            // `var n : ?long = 1` 要装成 Long。少了这一步会装成 Integer，
+            // 槽位里躺着 Integer、后面拆箱时发 Byte.byteValue() / Long.longValue()，
+            // 类加载直接 VerifyError。
+            if (to.nullable && to.base.isPrimitive && from.base != to.base) {
+                mv.visitInsn(widenInsn(from.base, to.base))
+                boxValue(mv, to.base)
+                return
+            }
+            boxValue(mv, from.base)
+            return
+        }
+
+        if (to.nullable && to.base.isPrimitive) {
+            // 非空基本类型 -> 可空同一类型：先加宽到目标基础类型，再装箱
+            if (from.nullable) throw IllegalStateException("可空的 $from 不能当 $to 用")
+            if (from.base != to.base) mv.visitInsn(widenInsn(from.base, to.base))
+            boxValue(mv, to.base)
+            return
+        }
+
+        if (from.nullable) throw IllegalStateException("可空的 $from 不能当非空的 $to 用")
+        // 引用类型之间不需要转换指令：子类型关系（String → CharSequence、类 → Object）
+        // 在检查阶段已经确认过了，栈上本来就都是对象引用
+        if (!from.isPrimitive && !to.isPrimitive && to.base != RsfBase.NULL) return
+        // 引用类型之间同基础类型就是同一个东西；数值之间按宽度加宽
+        if (from.base == to.base) return
+        mv.visitInsn(widenInsn(from.base, to.base))
+    }
+
+    /**
+     * 两个基础类型之间的转换指令（阶段 16 起含 byte / char）。
+     *
+     * `byte` 和 `char` 在 JVM 栈上**就是 int**，所以「提升成 int」不需要任何指令，
+     * 这里返回 [NOP] 而不是 null：有几个调用点（`?:` 的类型收敛、装箱前的加宽）
+     * 直接写 `visitInsn(widenInsn(...))`，返回 null 会在那儿变成 NPE；
+     * 发一条空指令永远合法，语义上等于什么都没做。
+     */
+    private fun widenInsn(from: RsfBase, to: RsfBase): Int = when {
+        // 窄化 / char 与 int 之间的转换：**必须**显式发指令（Java 的 (byte) / (char)）。
+        // 正常代码路径上 Checker 已经拦住了隐式的情况，这几条是内置函数
+        // toByte / toChar 的实现，以及「0..127 字面量赋给 byte」那条特例落下来的地方。
+        from == RsfBase.BYTE && to == RsfBase.INT -> NOP // 栈上本来就是 int
+        from == RsfBase.CHAR && to == RsfBase.INT -> NOP
+        from == RsfBase.INT && to == RsfBase.BYTE -> I2B
+        from == RsfBase.INT && to == RsfBase.CHAR -> I2C
+        from == RsfBase.BYTE && to == RsfBase.CHAR -> I2C
+        from == RsfBase.CHAR && to == RsfBase.BYTE -> I2B
+        from == RsfBase.BYTE && to == RsfBase.LONG -> I2L
+        from == RsfBase.BYTE && to == RsfBase.FLOAT -> I2F
+        from == RsfBase.BYTE && to == RsfBase.DOUBLE -> I2D
+        from == RsfBase.CHAR && to == RsfBase.LONG -> I2L
+        from == RsfBase.CHAR && to == RsfBase.FLOAT -> I2F
+        from == RsfBase.CHAR && to == RsfBase.DOUBLE -> I2D
+        from == RsfBase.INT && to == RsfBase.LONG -> I2L
+        from == RsfBase.INT && to == RsfBase.FLOAT -> I2F
+        from == RsfBase.INT && to == RsfBase.DOUBLE -> I2D
+        from == RsfBase.LONG && to == RsfBase.FLOAT -> L2F
+        from == RsfBase.LONG && to == RsfBase.DOUBLE -> L2D
+        from == RsfBase.FLOAT && to == RsfBase.DOUBLE -> F2D
+        else -> throw IllegalStateException("不支持的类型转换 $from -> $to")
+    }
+
+    /** 基本类型装箱：`Integer.valueOf(I)Ljava/lang/Integer;` 之类。 */
+    private fun boxValue(mv: MethodVisitor, base: RsfBase) {
+        val wrapper = base.wrapper ?: return
+        mv.visitMethodInsn(
+            INVOKESTATIC, wrapper, "valueOf",
+            "(${base.descriptor})${base.boxedDescriptor}", false,
+        )
+    }
+
+    /** 装箱类型拆箱。 */
+    private fun unboxValue(mv: MethodVisitor, base: RsfBase) {
+        val wrapper = base.wrapper ?: return
+        mv.visitMethodInsn(
+            INVOKEVIRTUAL, wrapper, base.unboxMethod!!, "()${base.descriptor}", false,
+        )
+    }
+
+    /**
+     * 取局部变量用的指令。可空的基本类型在 JVM 上已经装箱成引用，所以走 ALOAD/ASTORE。
+     */
+    private fun slotOpcode(type: RsfType, primitive: Int, wide: Int, floatOp: Int, doubleOp: Int, ref: Int): Int {
+        if (type.base == RsfBase.VOID || type.base == RsfBase.NULL) {
+            throw IllegalStateException("${type.rsfName} 不能做局部变量")
+        }
+        // 阶段 13：数组是引用（占一格、走 ALOAD/ASTORE）——这一条必须在按 base 分派
+        // **之前**，否则 `long[]` 会因为 base 是 LONG 而被当成两格的 long
+        if (type.isArray) return ref
+        if (type.nullable && type.base.isPrimitive) return ref
+        return when (type.base) {
+            // byte / char 在栈上和局部变量槽里都是 int（JVM 的校验类型不区分它们）
+            RsfBase.BOOL, RsfBase.BYTE, RsfBase.CHAR, RsfBase.INT -> primitive
+            RsfBase.LONG -> wide
+            RsfBase.FLOAT -> floatOp
+            RsfBase.DOUBLE -> doubleOp
+            RsfBase.STRING, RsfBase.EXTERNAL -> ref
+            // 类型参数（`var value : T`）擦除到 Object，占一格引用
+            RsfBase.TYPE_PARAM -> ref
+            RsfBase.VOID, RsfBase.NULL -> throw IllegalStateException("unreachable")
+        }
+    }
+
+    private fun loadSlot(mv: MethodVisitor, type: RsfType, slot: Int) {
+        mv.visitVarInsn(slotOpcode(type, ILOAD, LLOAD, FLOAD, DLOAD, ALOAD), slot)
+    }
+
+    private fun storeSlot(mv: MethodVisitor, type: RsfType, slot: Int) {
+        mv.visitVarInsn(slotOpcode(type, ISTORE, LSTORE, FSTORE, DSTORE, ASTORE), slot)
+    }
+
+    private fun returnInsn(type: RsfType): Int {
+        if (type.isVoid) return RETURN
+        // 数组是引用，用 ARETURN 返回（`fun make() -> int[]`）
+        if (type.isArray) return ARETURN
+        if (type.nullable && type.base.isPrimitive) return ARETURN
+        return when (type.base) {
+            RsfBase.VOID -> RETURN
+            // byte / char 用 IRETURN 返回（JVM 把 byte/char/boolean 都当 int 返回）
+            RsfBase.BOOL, RsfBase.BYTE, RsfBase.CHAR, RsfBase.INT -> IRETURN
+            RsfBase.LONG -> LRETURN
+            RsfBase.FLOAT -> FRETURN
+            RsfBase.DOUBLE -> DRETURN
+            RsfBase.STRING, RsfBase.NULL, RsfBase.EXTERNAL -> ARETURN
+            RsfBase.TYPE_PARAM -> ARETURN
+        }
+    }
+
+    private fun pushInt(mv: MethodVisitor, value: Int) {
+        when {
+            value in -1..5 -> mv.visitInsn(ICONST_0 + value)
+            value in Byte.MIN_VALUE..Byte.MAX_VALUE -> mv.visitIntInsn(BIPUSH, value)
+            value in Short.MIN_VALUE..Short.MAX_VALUE -> mv.visitIntInsn(SIPUSH, value)
+            else -> mv.visitLdcInsn(value)
+        }
+    }
+
+    // ------------------------------------------------------------------ Opcodes 别名
+    //
+    // ASM 的常量都在 Opcodes 接口里；这里显式列出用到的，避免整文件 Opcodes. 前缀。
+
+    private companion object {
+        const val ACC_PUBLIC = Opcodes.ACC_PUBLIC
+        const val ACC_PRIVATE = Opcodes.ACC_PRIVATE
+        const val ACC_PROTECTED = Opcodes.ACC_PROTECTED
+        const val ACC_STATIC = Opcodes.ACC_STATIC
+        const val ACC_FINAL = Opcodes.ACC_FINAL
+        const val ACC_SUPER = Opcodes.ACC_SUPER
+        // 阶段 20：接口的头与抽象方法的头（`ACC_INTERFACE | ACC_ABSTRACT`）。
+        const val ACC_INTERFACE = Opcodes.ACC_INTERFACE
+        const val ACC_ABSTRACT = Opcodes.ACC_ABSTRACT
+
+        // Java 17：既支持 StringConcatFactory 的 invokedynamic（Java 9+），也不至于太新
+        const val V17 = Opcodes.V17
+
+        const val ACONST_NULL = Opcodes.ACONST_NULL
+        const val CHECKCAST = Opcodes.CHECKCAST
+        const val ICONST_0 = Opcodes.ICONST_0
+        const val ICONST_1 = Opcodes.ICONST_1
+        const val BIPUSH = Opcodes.BIPUSH
+        const val SIPUSH = Opcodes.SIPUSH
+
+        const val ILOAD = Opcodes.ILOAD
+        const val LLOAD = Opcodes.LLOAD
+        const val FLOAD = Opcodes.FLOAD
+        const val DLOAD = Opcodes.DLOAD
+        const val ALOAD = Opcodes.ALOAD
+        const val ISTORE = Opcodes.ISTORE
+        const val LSTORE = Opcodes.LSTORE
+        const val FSTORE = Opcodes.FSTORE
+        const val DSTORE = Opcodes.DSTORE
+        const val ASTORE = Opcodes.ASTORE
+
+        const val POP = Opcodes.POP
+        const val POP2 = Opcodes.POP2
+        const val DUP = Opcodes.DUP
+
+        const val IADD = Opcodes.IADD
+        const val ISUB = Opcodes.ISUB
+        const val IMUL = Opcodes.IMUL
+        const val IDIV = Opcodes.IDIV
+        const val IREM = Opcodes.IREM
+        const val INEG = Opcodes.INEG
+        const val LADD = Opcodes.LADD
+        const val LSUB = Opcodes.LSUB
+        const val LMUL = Opcodes.LMUL
+        const val LDIV = Opcodes.LDIV
+        const val LREM = Opcodes.LREM
+        const val LNEG = Opcodes.LNEG
+        const val FADD = Opcodes.FADD
+        const val FSUB = Opcodes.FSUB
+        const val FMUL = Opcodes.FMUL
+        const val FDIV = Opcodes.FDIV
+        const val FREM = Opcodes.FREM
+        const val FNEG = Opcodes.FNEG
+        const val DADD = Opcodes.DADD
+        const val DSUB = Opcodes.DSUB
+        const val DMUL = Opcodes.DMUL
+        const val DDIV = Opcodes.DDIV
+        const val DREM = Opcodes.DREM
+        const val DNEG = Opcodes.DNEG
+        const val IXOR = Opcodes.IXOR
+
+        /**
+         * 枚举类里那个**私有名字字段**的字段名（阶段 19c）。
+         *
+         * 为什么叫 `$name` 而不是 `name`：rsf 的标识符只允许「字母 / 数字 / 下划线」
+         * （见 `Lexer.isIdentStart`），**永远写不出 `$`**，所以这个名字与任何
+         * 枚举值名都不可能撞车——`enum E { name }` 这种写法在 rsf 里是合法的，
+         * 若私有字段也叫 `name`，生成的类里就会有两个同名字段，类文件直接报废。
+         * 用 `$` 前缀把「编译器内部字段」和「用户写的值名」彻底分开，
+         * 比在 Checker 里加一条「值名不能叫 name」的限制干净。
+         */
+        const val ENUM_NAME_FIELD = "\$name"
+
+        const val I2L = Opcodes.I2L
+        const val I2F = Opcodes.I2F
+        const val I2D = Opcodes.I2D
+        const val L2F = Opcodes.L2F
+        const val L2D = Opcodes.L2D
+        const val F2D = Opcodes.F2D
+        // 阶段 16：byte / char 的截断（Java 的 (byte) / (char)）
+        const val I2B = Opcodes.I2B
+        const val I2C = Opcodes.I2C
+        const val NOP = Opcodes.NOP
+
+        const val LCMP = Opcodes.LCMP
+        const val FCMPL = Opcodes.FCMPL
+        const val FCMPG = Opcodes.FCMPG
+        const val DCMPL = Opcodes.DCMPL
+        const val DCMPG = Opcodes.DCMPG
+
+        const val IFEQ = Opcodes.IFEQ
+        const val IFNE = Opcodes.IFNE
+        const val IFNONNULL = Opcodes.IFNONNULL
+        const val IFLT = Opcodes.IFLT
+        const val IFGE = Opcodes.IFGE
+        const val IFGT = Opcodes.IFGT
+        const val IFLE = Opcodes.IFLE
+        const val IF_ICMPEQ = Opcodes.IF_ICMPEQ
+        const val IF_ICMPNE = Opcodes.IF_ICMPNE
+        // 阶段 19c：枚举分派的引用比较（`switch` 逐常量比）
+        const val IF_ACMPEQ = Opcodes.IF_ACMPEQ
+        const val IF_ICMPLT = Opcodes.IF_ICMPLT
+        const val IF_ICMPGE = Opcodes.IF_ICMPGE
+        const val IF_ICMPGT = Opcodes.IF_ICMPGT
+        const val IF_ICMPLE = Opcodes.IF_ICMPLE
+        const val GOTO = Opcodes.GOTO
+
+        const val IRETURN = Opcodes.IRETURN
+        const val LRETURN = Opcodes.LRETURN
+        const val FRETURN = Opcodes.FRETURN
+        const val DRETURN = Opcodes.DRETURN
+        const val ARETURN = Opcodes.ARETURN
+        const val RETURN = Opcodes.RETURN
+
+        const val GETSTATIC = Opcodes.GETSTATIC
+        const val GETFIELD = Opcodes.GETFIELD
+        const val PUTFIELD = Opcodes.PUTFIELD
+        // 阶段 19c：枚举类的 <clinit> 用它把单例写进静态字段
+        const val PUTSTATIC = Opcodes.PUTSTATIC
+        const val INVOKEVIRTUAL = Opcodes.INVOKEVIRTUAL
+        const val INVOKESPECIAL = Opcodes.INVOKESPECIAL
+        const val INVOKESTATIC = Opcodes.INVOKESTATIC
+        // 阶段 20 M0：owner 是接口的成员调用必须用它（否则运行期 IncompatibleClassChangeError）
+        const val INVOKEINTERFACE = Opcodes.INVOKEINTERFACE
+        const val NEW = Opcodes.NEW
+        const val ATHROW = Opcodes.ATHROW
+
+        // ---- 阶段 13：数组 ----
+        const val ARRAYLENGTH = Opcodes.ARRAYLENGTH
+        const val NEWARRAY = Opcodes.NEWARRAY
+        const val ANEWARRAY = Opcodes.ANEWARRAY
+        const val IALOAD = Opcodes.IALOAD
+        const val LALOAD = Opcodes.LALOAD
+        const val FALOAD = Opcodes.FALOAD
+        const val DALOAD = Opcodes.DALOAD
+        const val AALOAD = Opcodes.AALOAD
+        const val BALOAD = Opcodes.BALOAD
+        const val CALOAD = Opcodes.CALOAD
+        const val IASTORE = Opcodes.IASTORE
+        const val LASTORE = Opcodes.LASTORE
+        const val FASTORE = Opcodes.FASTORE
+        const val DASTORE = Opcodes.DASTORE
+        const val AASTORE = Opcodes.AASTORE
+        const val BASTORE = Opcodes.BASTORE
+        const val CASTORE = Opcodes.CASTORE
+
+        // NEWARRAY 的 atype（JVM 规范里写死的编号）
+        const val T_BOOLEAN = Opcodes.T_BOOLEAN
+        const val T_BYTE = Opcodes.T_BYTE
+        const val T_CHAR = Opcodes.T_CHAR
+        const val T_INT = Opcodes.T_INT
+        const val T_LONG = Opcodes.T_LONG
+        const val T_FLOAT = Opcodes.T_FLOAT
+        const val T_DOUBLE = Opcodes.T_DOUBLE
+
+        const val H_INVOKESTATIC = Opcodes.H_INVOKESTATIC
+
+        val COMPARISONS = setOf(
+            TokenKind.EQ, TokenKind.NE, TokenKind.LT, TokenKind.GT, TokenKind.LE, TokenKind.GE,
+        )
+    }
+}

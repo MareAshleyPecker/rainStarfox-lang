@@ -1,0 +1,15 @@
+class Base {
+    public fun id() -> int {
+        rtn 1
+    }
+}
+
+class Child : Base {
+    public fun name() -> string {
+        rtn "c"
+    }
+}
+
+fun main() -> void {
+    rtn
+}

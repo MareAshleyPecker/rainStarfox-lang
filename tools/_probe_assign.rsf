@@ -1,0 +1,11 @@
+// 临时：验证擦除后靠 typeArgs 拦赋值
+public class Box&<T> {
+    var T value = 0
+}
+
+fun main() -> void {
+    var Box&<int> a = new Box&<int>()
+    var Box&<string> b = new Box&<string>()
+    b = a
+    rtn
+}

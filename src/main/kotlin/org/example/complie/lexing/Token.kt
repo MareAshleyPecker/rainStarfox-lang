@@ -1,0 +1,236 @@
+package org.example.complie.lexing
+
+enum class TokenKind(val text: String) {
+    // ---- 字面量 ----
+    INT_LIT("整数字面量"),
+    LONG_LIT("long 字面量"),
+    FLOAT_LIT("float 字面量"),
+    DOUBLE_LIT("double 字面量"),
+    STRING_LIT("字符串字面量"),
+    /** 字符字面量：单引号包一个字符（`'a'`、`'\n'`、`'\u0041'`），阶段 16。 */
+    CHAR_LIT("字符字面量"),
+
+    // ---- 标识符 ----
+    IDENT("标识符"),
+
+    // ---- 关键字 ----
+    KW_FUN("fun"),
+    KW_RTN("rtn"),
+    KW_RETURN("return"),
+    KW_IMPORT("import"),
+    KW_MODULE("module"),
+    /** 包声明：`pkg 名字`（以当前目录为准，段之间用 . 或 \ 或 / 都行）。 */
+    KW_PKG("pkg"),
+    KW_VAR("var"),
+    KW_IMUTVAR("imutvar"),
+    /** 旧关键字，保留只为给出迁移提示。 */
+    KW_LET("let"),
+    KW_PUBLIC("public"),
+    KW_PRIVATE("private"),
+    KW_PROTECTED("protected"),
+    /** 静态修饰词：控制「怎么调用」（类名.方法 还是 对象.方法）。 */
+    KW_STATIC("static"),
+    /**
+     * `override` 修饰词（阶段 20 的追加件）：只对**类/接口里的方法**有意义。
+     *
+     * 语义照 Java 的 `@Override`——**可写可不写**：写它是给编译器一句断言
+     * （必须在父类型里覆盖到同名同参的方法，否则报错），不写照样能覆盖。
+     * 所以它是**硬关键字**：当作标识符用的旧代码本来就没有，收进来不会撞。
+     */
+    KW_OVERRIDE("override"),
+    /** 类声明（阶段 12）。 */
+    KW_CLASS("class"),
+    /**
+     * 枚举声明（阶段 19c）：`public enum TokenKind { IDENT, INT_LIT }`。
+     *
+     * 编译口径见 [org.example.complie.ast.EnumDecl]：生成为一个**普通类**，
+     * 不是 JVM 的 `enum`（那种类文件里带 `ACC_ENUM`、还继承 `java.lang.Enum`，
+     * 两头都得跟着长一套特殊处理；我们要的只是「一组具名单例 + 打印出名字」）。
+     */
+    KW_ENUM("enum"),
+    /**
+     * 接口声明（阶段 20）：`public interface Greeter { fun greet(name: string) -> string }`。
+     *
+     * 注意与阶段 21 的 `@interface`（注解类型，JVM 侧 `ACC_ANNOTATION|ACC_INTERFACE`）
+     * 是**两回事**：那是个带 `@` 前缀的独立记号/独立节点，别把这条关键字复用过去。
+     * 本阶段只做「普通接口」：编译产物是 JVM 接口，`ACC_INTERFACE|ACC_ABSTRACT`，
+     * 没有 `<init>`，也不产生对象。
+     */
+    KW_INTERFACE("interface"),
+    /**
+     * 次构造（阶段 18）：`constructor(参数) { ... }`，只能写在类体里。
+     *
+     * 主构造写在类头的括号里（`class P(int x0)`），次构造用这个关键字——
+     * 两者都不写返回类型，也**不能**用「名字等于类名的方法」冒充（那个现在直接报错）。
+     */
+    KW_CONSTRUCTOR("constructor"),
+    /** `new 类名(实参)`。 */
+    KW_NEW("new"),
+    /** 当前对象：只在类的方法里有效。 */
+    KW_THIS("this"),
+    KW_IF("if"),
+    KW_ELSE("else"),
+    /**
+     * 枚举分派（阶段 19c）：`switch (kind) { case TokenKind.IDENT : ... else : ... }`。
+     *
+     * **默认分支用 `else`**（跟 `if` 的 else 同一个关键字、同一个记号），不是
+     * Java 的 `default`——语言里已经有一个「都不是就走这里」的关键字了，
+     * 再引一个 `default` 只会让人多记一个词。
+     */
+    KW_SWITCH("switch"),
+    /** `case 枚举名.值名 : 语句`。**只接受枚举常量**，不支持区间/字面量。 */
+    KW_CASE("case"),
+    KW_WHILE("while"),
+    KW_FOR("for"),
+    KW_IN("in"),
+    KW_BREAK("break"),
+    KW_CONTINUE("continue"),
+    KW_GOTO("goto"),
+    /** 抛出一个错误：`fail "消息"`（阶段 14）。 */
+    KW_FAIL("fail"),
+    /** 捕获错误：`try { ... } catch (e : string) { ... }`（阶段 14；老写法 `catch (e string)` 也收）。 */
+    KW_TRY("try"),
+    KW_CATCH("catch"),
+    KW_TRUE("true"),
+    KW_FALSE("false"),
+    KW_NULL("null"),
+
+    // ---- 类型关键字 ----
+    KW_VOID("void"),
+    KW_INT("int"),
+    KW_LONG("long"),
+    KW_FLOAT("float"),
+    KW_DOUBLE("double"),
+    KW_STRING("string"),
+    KW_BOOL("bool"),
+    /** 8 位有符号整数（阶段 16）：JVM 描述符 `B`。 */
+    KW_BYTE("byte"),
+    /** 16 位无符号字符（阶段 16）：JVM 描述符 `C`。 */
+    KW_CHAR("char"),
+
+    // ---- 标点与运算符 ----
+    LPAREN("("),
+    RPAREN(")"),
+    LBRACE("{"),
+    RBRACE("}"),
+    /**
+     * 方括号（阶段 13）：数组。三种用法——
+     * 类型后缀（`int[]`）、下标访问（`a[0]`）、数组创建（`new int[5]`）。
+     */
+    LBRACKET("["),
+    RBRACKET("]"),
+    COMMA(","),
+    SEMI(";"),
+    ARROW("->"),
+    COLON(":"),
+    DOUBLE_COLON("::"),
+    QUESTION("?"),
+    ELVIS("?:"),
+    RANGE(".."),
+    DOT("."),
+    ASSIGN("="),
+    EQ("=="),
+    NE("!="),
+    LT("<"),
+    GT(">"),
+    LE("<="),
+    GE(">="),
+    PLUS("+"),
+    MINUS("-"),
+    STAR("*"),
+    SLASH("/"),
+    /** 反斜杠：只用在包名分隔与路径里（`pkg a\b`），不是运算符。 */
+    BACKSLASH("\\"),
+    PERCENT("%"),
+    BANG("!"),
+    /**
+     * `&`：**只**用来引入泛型的类型实参表 `&<int>`。
+     *
+     * 逻辑与是单独一个记号 [ANDAND]（阶段 19c 起），所以这里的 `&` 只可能出现在
+     * `&<...>` 里；反过来 `&` 也**必须**紧跟 `<` 才有意义，
+     * 这样单独的 `<` 仍然只表示「小于」（比较运算），两者不会打架。
+     *
+     * 选择「`&` 单独成记号、由 parser 要求后面跟 `<`」而不是合成一个 `AMP_LT`：
+     * 少了 `&` 后面跟别的字符时能报出更准确的错（“'&' 后面缺少 '<'”），
+     * 而不会让 `&` 在词法阶段就变成一个别人看不懂的记号。
+     */
+    AMP("&"),
+
+    /**
+     * `&&`：逻辑与（**短路**），阶段 19c 起。
+     *
+     * 和 [AMP] 是**两个不同的记号**，这一点是刻意的：`&` 只用来引出泛型实参表
+     * `&<int>`，而 `&&` 是逻辑运算。词法上按「两个字符」先认 `&&`，剩下孤零零的
+     * 一个 `&` 才当 [AMP]——所以 `Box&<int>` 与 `a && b` 在同一行里也不会打架
+     * （有测试守着这条）。
+     */
+    ANDAND("&&"),
+    /**
+     * `||`：逻辑或（**短路**），阶段 19c 起。
+     *
+     * rsf 里**没有按位或**，所以单独的 `|` 不是记号：词法阶段看到孤零零的 `|`
+     * 直接报「逻辑或要写两个竖线」，免得它一路跑到 parser 变成一句看不懂的错。
+     */
+    OROR("||"),
+
+    EOF("文件结束"),
+    ;
+
+    /** 类型关键字集合，供 parser 快速判断。 */
+    val isTypeKeyword: Boolean
+        get() = this == KW_VOID || this == KW_INT || this == KW_LONG || this == KW_FLOAT ||
+            this == KW_DOUBLE || this == KW_STRING || this == KW_BOOL ||
+            this == KW_BYTE || this == KW_CHAR
+
+    /** 函数定义关键字（目前只有 fun 一个）。 */
+    val isFunKeyword: Boolean
+        get() = this == KW_FUN
+
+    /** 返回语句关键字（rtn 与 return 共存）。 */
+    val isReturnKeyword: Boolean
+        get() = this == KW_RTN || this == KW_RETURN
+
+    /** 变量声明关键字：var 可变，imutvar 不可变。 */
+    val isVarKeyword: Boolean
+        get() = this == KW_VAR || this == KW_IMUTVAR
+
+    /** 访问控制修饰符（<ControlType>）。 */
+    val isControlKeyword: Boolean
+        get() = this == KW_PUBLIC || this == KW_PRIVATE || this == KW_PROTECTED
+
+    /** 静态修饰符（<static>），写在 <ControlType> 和 fun 之间。 */
+    val isStaticKeyword: Boolean
+        get() = this == KW_STATIC
+
+    /**
+     * 方法修饰词：`fun` 前面那串能按**任意顺序**写的词
+     * （`public` / `private` / `protected` / `static` / `override`）。
+     *
+     * 拿来「数一数 fun 前面到底排了几个修饰词」，好让 Parser 在
+     * `override public fun` 和 `public override fun` 两种写法上看到同一个 `fun`。
+     */
+    val isModifierKeyword: Boolean
+        get() = isControlKeyword || isStaticKeyword || this == KW_OVERRIDE
+}
+
+data class Token(
+    val kind: TokenKind,
+    val lexeme: String,
+    val at: SourceLine,
+    /** 字面量的实际值：Int / Long / Float / Double / String / Char / Boolean / null */
+    val literal: Any? = null,
+) {
+    val line: Int get() = at.line
+    val column: Int get() = at.column
+
+    /** 给报错用的可读描述。 */
+    fun describe(): String = when (kind) {
+        TokenKind.EOF -> "文件结束"
+        TokenKind.IDENT -> "标识符 '$lexeme'"
+        TokenKind.INT_LIT, TokenKind.LONG_LIT, TokenKind.FLOAT_LIT,
+        TokenKind.DOUBLE_LIT, TokenKind.STRING_LIT, TokenKind.CHAR_LIT -> lexeme
+        else -> "'${kind.text}'"
+    }
+
+    override fun toString(): String = "$kind($lexeme)@${at.line}:${at.column}"
+}

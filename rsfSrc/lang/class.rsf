@@ -1,0 +1,124 @@
+// rainStarfox 阶段 12 示例：类、字段、方法、构造器、静态方法、对象互操作
+//
+// 跑：rsf run rsfSrc/lang/class.rsf        （解释器）
+//     rsf build rsfSrc/lang/class.rsf      （字节码：会生成 class.class + Point.class + Holder.class）
+// 查：rsf check rsfSrc/lang/class.rsf
+
+// ---------------------------------------------------------------- 基本类
+
+public class Point {
+    var x : int = 0
+    var y : int = 0
+    imutvar label : string = "point"   // 不可变字段：声明时定值，之后不能改
+
+    // 次构造：constructor(参数) { ... }，不写返回类型、不能写 static、可以按参数写多个
+    constructor(x0 : int, y0 : int) {
+        x = x0
+        y = y0
+    }
+
+    public fun sum() -> int {
+        rtn x + y
+    }
+
+    // 方法体里可以直接写字段名（裸字段名）；和参数重名时才必须写 this.
+    public fun shift(dx : int, dy : int) -> void {
+        x = x + dx
+        y = y + dy
+    }
+
+    public fun describe() -> string {
+        rtn label + "(" + x + ", " + y + ")"
+    }
+
+    // 实例方法里直接调另一个实例方法（隐式 this）
+    public fun doubleBoth() -> void {
+        shift(x, y)
+    }
+
+    // private 方法只能在类内部用；外面要通过公开方法访问
+    private fun secret() -> int {
+        rtn 42
+    }
+
+    public fun reveal() -> int {
+        rtn secret()
+    }
+
+    // 静态方法：用「类名.方法()」调，不能用对象调
+    public static fun origin() -> Point {
+        rtn new Point(0, 0)
+    }
+}
+
+// ---------------------------------------------------------------- 可空类字段
+
+public class Holder {
+    var held : ?Point = null          // 可空的自定义类字段
+
+    public fun keep(p : Point) -> void {
+        held = p
+    }
+
+    public fun has() -> bool {
+        rtn held != null
+    }
+
+    public fun sumOrZero() -> int {
+        // 注意：三目要带 if —— 写法是 `if 条件 ? 甲 : 乙`
+        rtn if held == null ? 0 : held!!.sum()
+    }
+}
+
+// ---------------------------------------------------------------- 类当参数/返回类型
+
+public fun distanceSquared(a : Point, b : Point) -> int {
+    var dx = a.x - b.x
+    var dy = a.y - b.y
+    rtn dx * dx + dy * dy
+}
+
+public fun makePoint(n : int) -> Point {
+    rtn new Point(n, n * 2)
+}
+
+// ---------------------------------------------------------------- 入口
+
+fun main() -> void {
+    var p = new Point(3, 4)
+    println(p.describe())                       // point(3, 4)
+    println("sum = " + p.sum())                 // 7
+
+    p.shift(1, 1)
+    println(p.describe())                       // point(4, 5)
+    println("private 方法经公开方法访问 = " + p.reveal())   // 42
+
+    var q = Point.origin()
+    println("静态工厂造出来的是 " + q.describe())            // point(0, 0)
+    println("距离平方 = " + distanceSquared(p, q))          // 41
+
+    var r = makePoint(5)
+    println("函数返回对象 " + r.describe())                  // point(5, 10)
+
+    // 对象之间互不影响
+    var a = new Point(1, 1)
+    a.doubleBoth()
+    println("a = " + a.describe() + "，p 还是 " + p.describe())   // point(2, 2) / point(4, 5)
+
+    // 可空类字段
+    var h = new Holder()
+    println("空的 Holder: has = " + h.has() + ", sumOrZero = " + h.sumOrZero())  // false, 0
+    h.keep(new Point(10, 20))
+    println("放进对象后: has = " + h.has() + ", sumOrZero = " + h.sumOrZero())  // true, 30
+
+    // 循环里反复改字段（rsf 没有 ++，写 i = i + 1）
+    var total = 0
+    var walker = new Point(0, 0)
+    for (var i = 0; i < 4; i = i + 1) {
+        walker.shift(1, 2)
+        total = total + walker.sum()
+    }
+    println("走完 4 步: " + walker.describe() + "，累计 = " + total)  // point(4, 8)，累计 = 30
+
+    rtn
+}

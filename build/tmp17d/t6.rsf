@@ -1,0 +1,27 @@
+public class Point {
+    var x : int = 0
+    var y : int = 0
+
+    constructor(x0 : int, y0 : int) {
+        x = x0
+        y = y0
+    }
+
+    public fun sum() -> int {
+        rtn x + y
+    }
+}
+
+public fun distanceSquared(a : Point, b : Point) -> int {
+    var dx = a.x - b.x
+    var dy = a.y - b.y
+    rtn dx * dx + dy * dy
+}
+
+fun main() -> void {
+    var p = new Point(3, 4)
+    var q = new Point(0, 0)
+    println(distanceSquared(p, q))
+    println(p.sum())
+    rtn
+}

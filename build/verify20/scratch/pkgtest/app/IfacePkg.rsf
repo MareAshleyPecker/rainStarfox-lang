@@ -1,0 +1,17 @@
+pkg app
+
+public interface Greeter {
+    fun greet() -> string
+}
+
+class Dog : Greeter {
+    public fun greet() -> string {
+        rtn "woof pkg"
+    }
+}
+
+fun main() -> void {
+    var g : Greeter = new Dog()
+    println(g.greet())
+    rtn
+}

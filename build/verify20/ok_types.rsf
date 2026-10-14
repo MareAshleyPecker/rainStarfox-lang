@@ -1,0 +1,24 @@
+public interface Greeter {
+    fun greet() -> string
+}
+
+class Dog : Greeter {
+    public fun greet() -> string {
+        rtn "woof"
+    }
+}
+
+fun hello(g : Greeter) -> string {
+    rtn g.greet()
+}
+
+fun must() -> !Greeter {
+    rtn new Dog()
+}
+
+fun main() -> void {
+    println(hello(new Dog()))
+    var g : Greeter = must() ?: new Dog()
+    println(g.greet())
+    rtn
+}

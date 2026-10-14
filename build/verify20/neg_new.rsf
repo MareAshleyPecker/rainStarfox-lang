@@ -1,0 +1,8 @@
+public interface Greeter {
+    fun greet() -> string
+}
+
+fun main() -> void {
+    var g = new Greeter()
+    rtn
+}

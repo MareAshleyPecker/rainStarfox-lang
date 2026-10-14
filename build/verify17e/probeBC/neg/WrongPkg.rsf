@@ -1,0 +1,5 @@
+pkg a.b
+
+fun main() {
+    println("never")
+}

@@ -1,0 +1,5 @@
+module "nope"
+
+fun main() {
+    println("never")
+}

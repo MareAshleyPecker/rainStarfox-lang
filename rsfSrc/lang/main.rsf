@@ -1,0 +1,189 @@
+// rainStarfox sample -- v0.6
+//
+// Signature:  <ControlType> fun <MainType> name(<参数表>) <返回子句> { ... }
+//   <ControlType> = public / protected / private (optional, leftmost; 省略就是 public)
+//   <MainType>    = type slot after `fun`, defaults to void
+//   return clause = -> T  /  :: T           (both equivalent; `: T` was removed)
+//   参数写法      = 两种风格都行、可以混：Java 风格 `int a` / Kotlin 风格 `a : int`，逗号分隔
+//   变量 / 字段   = Kotlin 后缀风格：`var 名字 : 类型 = 初值`（类型可省）
+//   构造对象      = `new` 可以省：`Point(1, 2)` 等价于 `new Point(1, 2)`
+//   可空          = 类型名前加 ?，例如 ?string / ?int
+//
+// Variables:  var    = mutable
+//             imutvar  = immutable (reassigning it is a compile error)
+//
+// Control flow: if / else / else if / while / for (two styles) /
+//               break / continue / goto + labels / ternary / ?: / !!
+
+public fun greeting() -> string {
+    rtn "hello, rainStarfox!"
+}
+
+fun add(a : int, b : int) -> int {
+    rtn a + b
+}
+
+private fun secret() :: int {
+    rtn 42
+}
+
+// 递归
+fun fact(n : int) -> int {
+    if (n <= 1) { rtn 1 }
+    rtn n * fact(n - 1)
+}
+
+fun fib(n : int) -> int {
+    if (n < 2) { rtn n }
+    rtn fib(n - 1) + fib(n - 2)
+}
+
+// 参数按 C 的惯例是可变的
+fun twice(n : int) -> int {
+    n = n * 2
+    rtn n
+}
+
+// 实参会自动加宽到形参类型
+fun mix(a : int, b : long, c : double) -> double {
+    rtn a + b + c
+}
+
+// 用 else 做分支
+fun classify(x : int) -> string {
+    if (x < 0) {
+        rtn "negative"
+    } else if (x == 0) {
+        rtn "zero"
+    } else if (x < 5) {
+        rtn "small"
+    } else {
+        rtn "big"
+    }
+}
+
+// 字符串参数 + 区间循环拼接
+fun stars(n : int) -> string {
+    var out = ""
+    for (i in 0..n - 1) {
+        out = out + "*"
+    }
+    rtn out
+}
+
+// ---- ?T 可空 ----
+// 返回类型写 ?string 就表示「可能返回 null」，调用方必须处理
+fun findName(id : int) :: ?string {
+    if (id == 1) { rtn "rainStarfox" }
+    rtn null
+}
+
+// 参数也可以可空
+fun greet(who : ?string) -> string {
+    rtn "hello, " + (who ?: "stranger")
+}
+
+// 可空的基本类型会装箱成包装类
+fun maybeInt(n : int) -> ?int {
+    if (n > 0) { rtn n * 10 }
+    rtn null
+}
+
+fun main() -> void {
+    println(greeting())
+    println("add(1, 2) = " + add(1, 2))
+    println("private secret() = " + secret())
+
+    println("fact(5) = " + fact(5))
+    println("fib(10) = " + fib(10))
+    println("twice(21) = " + twice(21))
+    println("mix(1, 10L, 0.5) = " + mix(1, 10L, 0.5))
+    println("classify(7) = " + classify(7))
+    println("stars(6) = " + stars(6))
+
+    // ---- ?T 可空：?: 兜底、== null 判断、!! 强制解包 ----
+    println("findName(1) ?: -> " + (findName(1) ?: "not found"))
+    println("findName(9) ?: -> " + (findName(9) ?: "not found"))
+    println(greet("rainStarfox"))
+    println(greet(null))
+
+    var who = findName(2)
+    if (who == null) : println("nobody")
+    else : println("who = " + who!!)
+
+    var maybe = maybeInt(4)
+    println("maybeInt(4) = " + maybe)
+    println("maybeInt(4) ?: -1 = " + (maybe ?: -1))
+    var none = maybeInt(-1)
+    println("maybeInt(-1) = " + none)
+    println("maybeInt(-1) ?: -1 = " + (none ?: -1))
+
+    var declared : ?string = null
+    println("declared = " + declared)
+
+    // ---- 三目（表达式，可以喂给 rtn） ----
+    imutvar x = 3
+    imutvar label = if x > 2 ? "big" : "small"
+    println("x = " + x + " -> " + label)
+
+    // ---- while + break / continue ----
+    var i = 0
+    var oddSum = 0
+    while (i < 10) {
+        i = i + 1
+        if (i % 2 == 0) : continue
+        if (i > 7) { break }
+        oddSum = oddSum + i
+    }
+    println("odd sum below 8 = " + oddSum)
+
+    // ---- for：区间（两端都含） ----
+    var evenSum = 0
+    for (i in 0..10 step 2) {
+        evenSum = evenSum + i
+    }
+    println("even sum 0..10 step 2 = " + evenSum)
+
+    var desc = ""
+    for (i in 3..0 step -1) {
+        desc = desc + i
+    }
+    println("descending = " + desc)
+
+    // ---- for：经典三段式 ----
+    var triangle = 0
+    for (var r = 1; r <= 4; r = r + 1) {
+        triangle = triangle + r
+    }
+    println("triangle(4) = " + triangle)
+
+    // ---- 冒号形式的 if + else ----
+    var n = 4
+    if n > 3 : println("n is big")
+    else : println("n is small")
+
+    // ---- goto + 标签 ----
+    var c = 0
+countdown:
+    if (c >= 3) { goto finished }
+    println("countdown " + (3 - c))
+    c = c + 1
+    goto countdown
+
+finished:
+
+    // ---- 块作用域 ----
+    imutvar outer = 1
+    {
+        imutvar inner = 10
+        println("inner block: " + (outer + inner))
+    }
+
+    println("10 / 3 = " + (10 / 3))
+    println("10 / 3.0 = " + (10 / 3.0d))
+
+    // 源码是 UTF-8，一路走到字节码常量池再到控制台
+    println("你好，rainStarfox")
+
+    return null
+}

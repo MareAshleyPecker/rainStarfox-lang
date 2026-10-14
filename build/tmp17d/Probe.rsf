@@ -1,0 +1,76 @@
+// 17d 探针（临时，验证完删）：ASM 互操作到底能不能用
+import java.lang.System
+import org.objectweb.asm.ClassWriter
+import org.objectweb.asm.Label
+import org.objectweb.asm.Handle
+
+fun recipe() -> string {
+    rtn "" + toChar(1) + toChar(1)
+}
+
+fun buildGen() -> byte[] {
+    var cw = new ClassWriter(3)
+    cw.visit(61, 49, "Gen", null, "java/lang/Object", null)
+    cw.visitSource("Gen.rsf", null)
+
+    var init = cw.visitMethod(1, "<init>", "()V", null, null)
+    init.visitCode()
+    init.visitVarInsn(25, 0)
+    init.visitMethodInsn(183, "java/lang/Object", "<init>", "()V", false)
+    init.visitInsn(177)
+    init.visitMaxs(0, 0)
+    init.visitEnd()
+
+    var mm = cw.visitMethod(9, "main", "([Ljava/lang/String;)V", null, null)
+    mm.visitCode()
+    var l0 = new Label()
+    mm.visitLabel(l0)
+    mm.visitLineNumber(2, l0)
+    mm.visitFieldInsn(178, "java/lang/System", "out", "Ljava/io/PrintStream;")
+    mm.visitLdcInsn("a = ")
+    mm.visitLdcInsn(Integer.valueOf(7))
+    mm.visitMethodInsn(184, "java/lang/String", "valueOf", "(I)Ljava/lang/String;", false)
+    var args : Object[] = new Object[1]
+    args[0] = recipe()
+    var bsm = new Handle(6, "java/lang/invoke/StringConcatFactory", "makeConcatWithConstants", "(Ljava/lang/invoke/MethodHandles$Lookup;Ljava/lang/String;Ljava/lang/invoke/MethodType;Ljava/lang/String;[Ljava/lang/Object;)Ljava/lang/invoke/CallSite;", false)
+    mm.visitInvokeDynamicInsn("makeConcatWithConstants", "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;", bsm, args)
+    mm.visitMethodInsn(182, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false)
+
+    // 一小段带标签的分支：验证 Label / 跳转 / COMPUTE_FRAMES
+    var lElse = new Label()
+    var lEnd = new Label()
+    mm.visitInsn(3)
+    mm.visitJumpInsn(153, lElse)
+    mm.visitLdcInsn("yes")
+    mm.visitJumpInsn(167, lEnd)
+    mm.visitLabel(lElse)
+    mm.visitLdcInsn("no")
+    mm.visitLabel(lEnd)
+    mm.visitMethodInsn(182, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false)
+
+    // 一个 int 局部变量：验证 ISTORE/ILOAD
+    mm.visitInsn(4)
+    mm.visitVarInsn(54, 1)
+    mm.visitFieldInsn(178, "java/lang/System", "out", "Ljava/io/PrintStream;")
+    mm.visitVarInsn(21, 1)
+    mm.visitMethodInsn(182, "java/io/PrintStream", "println", "(I)V", false)
+
+    mm.visitInsn(177)
+    mm.visitMaxs(0, 0)
+    mm.visitEnd()
+
+    cw.visitEnd()
+    rtn cw.toByteArray()
+}
+
+fun main() -> void {
+    var bytes = buildGen()
+    println("len = " + bytes.length)
+    try {
+        writeBytes("build/tmp17d/gen/Gen.class", bytes)
+        println("written")
+    } catch (e : string) {
+        println("write failed: " + e)
+    }
+    rtn
+}

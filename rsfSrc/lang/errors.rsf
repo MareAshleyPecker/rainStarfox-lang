@@ -1,0 +1,119 @@
+// rainStarfox 阶段 14 示例：错误返回 `!T` 与 try / catch
+//
+// 跑：rsf run   rsfSrc/lang/errors.rsf          （解释器，不落地任何 .class）
+//     rsf build rsfSrc/lang/errors.rsf          （字节码：生成 errors.class）
+//     java -cp out errors
+// 查：rsf check rsfSrc/lang/errors.rsf
+//
+// 约定（两条后端的可观察行为完全一致，有测试守着）：
+//   * 返回子句前面加 `!`：`fun f(...) -> !int` 表示「可能失败」。正常路径返回的
+//     就是 int，出错时走**异常**这条路（JVM 上就是 RuntimeException）——所以
+//     `!T` 在字节码里和 `T` 是同一个描述符，不新造类型、也不装箱。
+//   * 调用 `!T` 函数必须显式处理错误，三种写法任选：
+//       (a) try { ... } catch (e : string) { ... }    catch 变量就是那条消息
+//       (b) f(...) ?: 兜底值                         出错就取右边的值
+//       (c) f(...)!!                                 往上抛：本函数也得是 !T
+//   * `fail "消息"` 只能写在 !T 函数里，或者 try 块里。
+//
+// 一条边界照实写清楚：try / `?:` 只接 **rsf 自己的**错误。别的 Java 互操作异常
+// （例如 `Integer.valueOf("abc")` 的 NumberFormatException）不在这一版的范围里。
+// 阶段 16 起语言自带的 `parseInt` 算例外：它内部会把 Java 的异常换成 rsf 的错误
+// 消息，所以它是两端一致的（见 rsfSrc/lang/stdlib.rsf）。
+
+// ---------------------------------------------------------------- 可能失败的函数
+
+// 注意名字：阶段 16 起 `parseInt` 已经是内置函数了（`parseInt(string) -> !int`），
+// 内置函数名不允许被用户函数占用，所以这里用另一个名字自己写一个 !T 函数。
+public fun readNumber(s : string) -> !int {
+    if (s.length() == 0) {
+        fail "空字符串没法转数字"
+    }
+    rtn 42
+}
+
+public fun lookup(id : int) -> !string {
+    if (id < 0) {
+        fail "编号不能是负数：" + id      // 消息可以拼出来，不限于字面量
+    }
+    rtn "第 " + id + " 号"
+}
+
+// (c) 用 `!!` 把 lookup 的错误往上抛 —— 所以 describe 自己也必须是 !T
+public fun describe(id : int) -> !string {
+    rtn "查询结果：" + lookup(id)!!
+}
+
+// `!void`：不带值的 rtn 也只允许出现在这里
+public fun check(n : int) -> !void {
+    if (n < 0) {
+        fail "check 只接受非负数，实际是 " + n
+    }
+    println("check 通过：" + n)
+    rtn
+}
+
+// ---------------------------------------------------------------- 入口
+
+fun main() -> void {
+    // (a) try / catch：catch 变量是 string，就是 fail 的那条消息
+    println("== (a) try / catch ==")
+    try {
+        println("正常路径：" + readNumber("12"))
+    } catch (e : string) {
+        println("出错了：" + e)         // 正常路径不会走到这里
+    }
+
+    try {
+        var n = readNumber("")        // 空字符串 → 里面 fail
+        println("n = " + n)             // 上面那行失败了，这句不会执行
+    } catch (e : string) {
+        println("出错了：" + e)
+    }
+
+    // try 里也可以自己 fail：消息照样由这个 catch 接住
+    try {
+        fail "这是 try 块里直接 fail 出来的"
+    } catch (e : string) {
+        println("接住了：" + e)
+    }
+
+    // (b) `?:` 给兜底值：出错就取右边，结果类型是非 ! 的正常类型
+    println("== (b) ?: 兜底 ==")
+    println("出错的：" + (readNumber("") ?: -1))
+    println("正常的：" + (readNumber("12") ?: -1))
+
+    // (c) `!!` 往上抛 + 错误跨多层函数传播：
+    //     main → describe → lookup（lookup 里 fail），最后由 main 的 try 接住
+    println("== (c) !! 往上抛，跨层传播 ==")
+    try {
+        println(describe(7))
+        println(describe(-1))           // 这里 fail，下面那句不会执行
+        println("这一行不会执行")
+    } catch (e : string) {
+        println("跨层接住：" + e)
+    }
+
+    // `!void` 函数：处理方式和其他 !T 一样
+    println("== !void ==")
+    try {
+        check(3)
+        check(-3)
+        println("这一行不会执行")
+    } catch (e : string) {
+        println("check 失败：" + e)
+    }
+
+    // 循环 / 分支里同样能用：处理体不在保护范围内，所以那里再调 !T 仍要显式处理
+    println("== 循环里逐条处理 ==")
+    var i = 0
+    while (i < 3) {
+        try {
+            println(lookup(i - 1)!!)    // i = 0 时是 -1，会失败
+        } catch (e : string) {
+            println("第 " + i + " 次失败：" + e)
+        }
+        i = i + 1
+    }
+
+    rtn
+}

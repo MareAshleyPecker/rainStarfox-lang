@@ -1,0 +1,18 @@
+public interface Greeter {
+    fun name() -> string
+    fun shout() -> string {
+        rtn name() + "!"
+    }
+}
+
+class Dog : Greeter {
+    public fun name() -> string {
+        rtn "rex"
+    }
+}
+
+fun main() -> void {
+    var g : Greeter = new Dog()
+    println(g.shout())
+    rtn
+}

@@ -1,0 +1,125 @@
+// rainStarfox 阶段 15 示例：泛型（JVM 擦除语义）
+//
+// 跑：rsf run rsfSrc/lang/generics.rsf        （解释器）
+//     rsf build rsfSrc/lang/generics.rsf      （字节码：会生成 generics.class + Box.class + Pair.class）
+// 查：rsf check rsfSrc/lang/generics.rsf
+//
+// 类型实参写成 `&<...>`：`&` 让它和比较运算的 `<` 一眼分开，
+// 也不会跟 rsfSrc/lang/example.rsf 草稿里的 `<ControlType>` 占位符混淆（[] 留给数组）。
+//
+// 擦除：`Box&<int>` 与 `Box&<string>` 在 JVM 上是**同一个类**，
+// 字段是 `Ljava/lang/Object;`；类型实参只活在编译期——所以
+//   * `Box&<int>` 不能赋给 `Box&<string>`（编译器拦住，JVM 拦不住）
+//   * `get()` 取出来要 CHECKCAST + 拆箱（字节码）／按静态类型收敛（解释器）
+// 两条后端在这些点上必须表现完全一致。
+
+import java.util.ArrayList
+
+// ---------------------------------------------------------------- 自定义泛型类
+
+public class Box&<T> {
+    var value : T = 0                 // 字段可以是 T
+
+    constructor(v0 : T) {               // 参数可以是 T
+        value = v0
+    }
+
+    public fun get() -> T {           // 返回类型可以是 T
+        rtn value
+    }
+
+    public fun set(v : T) -> void {
+        value = v
+    }
+
+    public fun echo(v : T) -> T {
+        var copy : T = v              // 局部变量也可以是 T
+        rtn copy
+    }
+}
+
+// 多个类型参数用逗号分隔
+public class Pair&<K, V> {
+    var key : K = 0
+    var val : V = 0
+
+    constructor(k0 : K, v0 : V) {
+        key = k0
+        val = v0
+    }
+
+    public fun keyOf() -> K {
+        rtn key
+    }
+
+    public fun valOf() -> V {
+        rtn val
+    }
+}
+
+// ---------------------------------------------------------------- 泛型类当参数/返回类型
+
+public fun boxed(n : int) -> Box&<int> {
+    rtn new Box&<int>(n * 10)
+}
+
+public fun twice(b : Box&<int>) -> int {
+    rtn b.get() + b.get()
+}
+
+// ---------------------------------------------------------------- 入口
+
+fun main() -> void {
+    // 实例化：类型名后面写&<实参类型>
+    var a : Box&<int> = new Box&<int>(0)
+    a.set(7)
+    println("a.get() = " + a.get())            // 7
+    println("a.get() + 1 = " + (a.get() + 1))  // 8
+
+    var s : Box&<string> = new Box&<string>("hi")
+    println("s.get() = " + s.get())            // hi
+    println("s.get().length() = " + s.get().length())  // 2
+    println("echo = " + s.echo("yo"))          // yo
+
+    // 嵌套：Box&<Box&<int>>
+    var nested : Box&<Box&<int>> = new Box&<Box&<int>>(new Box&<int>(5))
+    println("嵌套取值 = " + nested.get().get())        // 5
+    println("嵌套再算 = " + (nested.get().get() + 2))  // 7
+
+    // 多个类型参数
+    var p : Pair&<string, int> = new Pair&<string, int>("age", 30)
+    println(p.keyOf() + " = " + p.valOf())     // age = 30
+    var q : Pair&<int, string> = new Pair&<int, string>(7, "seven")
+    println("q = " + (q.keyOf() + 1) + " / " + q.valOf())   // q = 8 / seven
+
+    // 泛型类当参数与返回类型
+    var made : Box&<int> = boxed(4)
+    println("boxed = " + made.get())           // 40
+    println("twice = " + twice(made))          // 80
+
+    // JVM 泛型集合：元素类型 int 时自动装箱/拆箱
+    var xs : ArrayList&<int> = new ArrayList&<int>()
+    xs.add(3)
+    xs.add(4)
+    println("xs.size() = " + xs.size())        // 2
+    println("xs.get(0) + 1 = " + (xs.get(0) + 1))            // 4
+    println("求和 = " + (xs.get(0) + xs.get(1)))             // 7
+
+    var names : ArrayList&<string> = new ArrayList&<string>()
+    names.add("rain")
+    names.add("starfox")
+    println("拼起来 = " + (names.get(0) + "-" + names.get(1)))   // rain-starfox
+
+    // 循环里用泛型集合
+    var squares : ArrayList&<int> = new ArrayList&<int>()
+    for (var i = 1; i <= 4; i = i + 1) {
+        squares.add(i * i)
+    }
+    var total = 0
+    for (var j = 0; j < squares.size(); j = j + 1) {
+        total = total + squares.get(j)
+    }
+    println("平方和 = " + total)               // 30
+
+    rtn
+}

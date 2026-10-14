@@ -1,0 +1,16 @@
+import "../../rsfSrc/bootstrap/Parser.rsf"
+import java.lang.System
+
+fun main() -> void {
+    var p = System.getProperty("rsf.ast.file") ?: "rsfSrc/lang/class.rsf"
+    var src = ""
+    try {
+        src = readText(p)!!
+    } catch (e : string) {
+        System.err.println("读取失败: " + e)
+        System.exit(1)
+    }
+    var n = parseSource(src)
+    println(astText(n))
+    rtn
+}

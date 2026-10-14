@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 16 16">
+  <!-- 插件管理器图标（40px）：和文件图标同一套几何，只是大 2.5 倍，
+       所以能多用一层渐变和高光。 -->
+  <defs>
+    <linearGradient id="ring" x1="0" y1="0" x2="0.3" y2="1">
+      <stop offset="0" stop-color="#6AA6F5"/>
+      <stop offset="1" stop-color="#1B57BC"/>
+    </linearGradient>
+    <linearGradient id="star" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFDD66"/>
+      <stop offset="1" stop-color="#F5A623"/>
+    </linearGradient>
+  </defs>
+
+  <path d="M8 2 A6 6 0 1 0 14 8"
+        fill="none" stroke="url(#ring)" stroke-width="1.6" stroke-linecap="round"/>
+  <path d="M8 4.6 L8.852 6.827 L11.234 6.949 L9.379 8.448 L9.998 10.751 L8 9.45 L6.002 10.751 L6.621 8.448 L4.766 6.949 L7.148 6.827 Z"
+        fill="url(#star)" stroke="#D08A00" stroke-width="0.45" stroke-linejoin="round"/>
+  <!-- 右上两个尖角上的一点高光：40px 看得见，缩到 16px 自然糊掉，不添乱 -->
+  <path d="M8 4.6 L11.234 6.949 L9.379 8.448 Z" fill="#FFF0B8" opacity="0.6"/>
+  <path d="M8 4.6 L4.766 6.949 L6.621 8.448 Z" fill="#FFF0B8" opacity="0.3"/>
+</svg>

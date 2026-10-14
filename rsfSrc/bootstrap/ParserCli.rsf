@@ -1,0 +1,65 @@
+// rainStarfox 阶段 17b：rsf 版语法分析器的**命令行入口**
+//
+// 语法分析器本体是旁边的 `Parser.rsf`（纯库，没有 main）；这里只负责「挑一个输入文件、
+// 打印语法树 dump」。
+//
+// 跑：rsf build rsfSrc/bootstrap/ParserCli.rsf -o out
+//     java -cp out ParserCli                                     （默认 dump rsfSrc/lang/enums.rsf）
+//     java -Drsf.ast.file=rsfSrc/lang/class.rsf -cp out ParserCli
+//
+// 输出格式与测试源集里 `org.example.AstDump` 打出来的**逐字节相同**（对拍就是拿这两边 diff），
+// 差别只在行尾：rsf 的 `println` 在 Windows 上是 CRLF，对拍时统一成 LF 再比。
+//
+// 为什么用系统属性而不是命令行参数：rsf 的 `fun main() -> void` 接不到 args
+// （JVM 的 main(String[]) 没有地方接），这是当前语言的一个缺口，记在 BOOTSTRAP.md 里。
+//
+// 解析失败时打印一行 `<解析失败> 路径` 并正常退出（**不**用 fail）：rsf 版语法器
+// 没有异常这条路，失败是「节点树上落一个 ERROR 节点」，入口负责把它翻译成人看得懂的一行。
+//
+// 17e 不接线多文件装载：这里的契约是**「纯语法器的 AST」**——测试对拍拿 Kotlin 侧的
+// `Rsf.parse`（不走 SourceLoader）当参照，dump 里必须留着 SOURCE_IMPORT 条目、
+// 也**不能**把被 import 的文件并进来。要走装载器请看 `BackendCli.rsf` / `InterpCli.rsf`。
+
+import "Parser.rsf"
+
+import java.lang.System
+
+// 挑输入：-Drsf.ast.file 给了就用它，没给就 dump 仓库里的一个示例
+// （相对路径，不写死绝对路径）。
+//
+// `System.getProperty` 在 rsf 里的声明类型是 `string`，但属性不存在时实际返回 null ——
+// 直接 `.length()` 会在**编译产物**上抛 NullPointerException（17a 踩过一次），
+// 所以要用 `?string` 接住再兜底。
+fun pickPath() -> string {
+    var given : ?string = System.getProperty("rsf.ast.file")
+    var path = given ?: "rsfSrc/lang/enums.rsf"
+    rtn path
+}
+
+fun main() -> void {
+    var path = pickPath()
+
+    // 出口口径**保持原样**：
+    //   * 读不到文件        -> 打 "读不到文件：路径"
+    //   * 入口语法/词法错误 -> 打 "<解析失败> 路径"
+    // 两种都**正常退出（exit 0）**，这是 rsf parse 一直以来的约定。
+    var text = ""
+    var readOk = true
+    try {
+        text = readText(path)!!
+    } catch (readError : string) {
+        readOk = false
+    }
+    if (!readOk) {
+        println("读不到文件：" + path)
+        rtn
+    }
+
+    var ast = parseSource(text)
+    if (ast.kind == NodeKind.ERROR) {
+        println("<解析失败> " + path)
+        rtn
+    }
+    dumpAst(ast)
+    rtn
+}

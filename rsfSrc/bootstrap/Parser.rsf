@@ -1,0 +1,1949 @@
+// rainStarfox 阶段 17b：**用 rsf 自己写的语法分析器**（自举的第二步）
+//
+// 基准是 Kotlin 版 `src/main/kotlin/org/example/complie/parsing/Parser.kt`：
+// 同一份 `.rsf` 输入，这里建出来的语法树必须与它**结构完全相同**——对拍时两边各自
+// 打成同一份规范化文本（见下面的「dump 格式」），逐行比。对拍命令见 BOOTSTRAP.md 的 17b 段。
+//
+// 这个文件是**纯库**（没有 main）：`import "Parser.rsf"` 就能用
+// `parseSource(source)` 与 `dumpAst(node)`。要跑起来看输出用旁边的 `ParserCli.rsf`：
+//
+//     rsf build rsfSrc/bootstrap/ParserCli.rsf -o out
+//     java -Drsf.ast.file=rsfSrc/lang/enums.rsf -cp out ParserCli
+//
+// 查：rsf check rsfSrc/bootstrap/ParserCli.rsf（Parser.rsf 自己没有 main，check 也过）
+//
+// ================================================================ AST 怎么表示
+//
+// **rsf 现在没有继承/接口**（阶段 20 才有），所以写不出「Expr / Stmt / Decl 多态
+// 节点层次」那种设计——那需要「一个数组装不同子类」。这里用的是**胖节点**：
+//
+//     public class Node(kind : NodeKind, text : string)
+//         kind      —— NodeKind 枚举，说明这是哪一种节点
+//         text      —— 这一层的**属性串**，形如 "name=foo mutable=true"，字段之间正好一个空格
+//         children  —— 子节点数组（用 add 追加，内部满 8 个翻倍）
+//
+// 于是「一棵树」就是 `Node` 对象的数组套数组，遍历一律 `switch (node.kind)`——
+// 这正是阶段 19c 加 `switch` 的原因。**没有继承带来的三个直接后果**：
+//
+//   1. **属性只能塞进字符串**。Kotlin 版每个节点类有自己的字段（`FuncDecl.control`、
+//      `ForStmt.condition`…），rsf 版没有字段可声明，只能把「这一层需要的字面量」
+//      拼成一个 `k=v` 串。好处是它**恰好就是对拍用的 dump 文本**；坏处是拼错了
+//      （把 `ret` 写成 `retType`）编译器一句话都不说，只有对拍测试会报「第 N 行不一样」。
+//      —— 这就是为什么对拍测试在这个阶段不是「锦上添花」，而是唯一的正确性防线。
+//   2. **可选的子节点没法用 null 表示**：rsf 的**数组元素不可空**（`Node[]` 里放不进
+//      null），所以「可能没有的孩子」不能留空位。这里的做法是**按需 add**：
+//      `if (...) { node.add(child) }`，节点自己不存在就不占位置。Kotlin 版那边是
+//      `List`，天然可以为空，两边因此都能表达同一件事。
+//   3. **没有方法重载**：`match(LT, GT, LE, GE)` 那种 Kotlin 写法在这里得拆成
+//      `matchAny4(a, b, c, d)` 这种定参数个数的函数（见下面「工具」段）。
+//
+// ================================================================ dump 格式
+//
+// 与测试源集里的 `src/test/kotlin/org/example/AstDump.kt` **逐字节一致**：
+//
+//     缩进 = 2 空格 × 深度；一行一个节点；
+//     行 = <缩进><KIND NAME>[" " + text]；text 为空就只有一个 KIND NAME；
+//     列表节点自己带 count=N（孩子个数），孩子就是它的 childCount 个 child。
+//
+// 两份实现必须同步改：`AstDump.kt` 的 `esc` 与这里的 `escapeValue` 是同一张转义表，
+// 字段顺序也必须一样（Kotlin 那边在 dump 函数里按固定顺序写字段，这边在解析时按同一顺序 put）。
+//
+// ================================================================ 解糖：做，而且照着 Kotlin 版做
+//
+// `for (i in a..b step n)` 在 Kotlin 版里是**解析期解糖**成
+//
+//     { imutvar __rsf_forEnd<k> = b; imutvar __rsf_forStep<k> = n; imutvar i = a;
+//       for (步长 >= 0 ? i <= 终点 : i >= 终点 ; i = i + 步长) 循环体 }
+//
+// rsf 版**照做**，连合成名字的计数器 `__rsf_forEnd<k>` 的编号顺序都一样。理由是
+// 对拍口径必须一致：Kotlin 版手里的 AST 已经是解糖后的样子，原始写法（区间、step）
+// 在树上**已经不存在了**，所以 rsf 版要是保留一个「FOR_IN」原始节点，两边就永远比不平——
+// 除非在 Kotlin 侧的 dump 里把解糖后的树再「反解糖」回源码形状，那是自欺欺人。
+//
+// ================================================================ 出错怎么办：不做异常，做成 flag
+//
+// Kotlin 版遇错就抛 `RsfError`（消息很具体）。rsf 版**不用** `fail`：`fail` 会把整个
+// 程序停下来，`!T` 又要顺着调用链一路标注到每一个 parse 函数上，写起来比语法本身还长。
+// 这里沿用 `Lexer.rsf` 那套：`Parser` 对象上挂一个 `failed` 标志 + 消息 + 行列，
+// 每个解析函数出错就 `failAt(...)`，然后返回一个占位节点继续往下走。
+//
+// **这样做是安全的**，因为：合法输入上 `failed` 永远是 false，占位那条路根本不走；
+// 非法输入上我们只要求「两边都判定为失败」，不要求错误消息逐字相同（那是 17c 的事）。
+// 每个循环都有 EOF / failed 出口，所以出错也不会转死循环。
+
+import "Lexer.rsf"
+
+// 数字字面量的「值」要按 JVM 的规则算（`Double.toString(3.141592653589793238)` 是
+// `3.141592653589793`，不是源码里那串字符），所以直接借 java.lang 的静态方法，
+// 与 Kotlin 版的 `raw.toDoubleOrNull()` / `Float.toString` 是**同一个 JVM 方法**。
+import java.lang.Double
+import java.lang.Float
+import java.lang.Integer
+import java.lang.Long
+
+// ---------------------------------------------------------------- 节点种类
+//
+// 与 AstDump.kt 里那几个 dump 函数一一对应。**没有 else 的 switch 必须穷尽**，
+// 所以漏了一个种类编译器会直接报错——这是胖节点设计里唯一还留着的一点类型安全。
+
+public enum NodeKind {
+    PROGRAM, PKG, IMPORTS, CLASS_IMPORT, SOURCE_IMPORT, MODULE_IMPORT,
+    FUNCS, FUNC, PARAMS, PARAM,
+    CLASSES, CLASS, TYPE_PARAMS, TYPE_PARAM, FIELDS, FIELD, METHODS,
+    ENUMS, ENUM, VALUES, ENUM_VALUE,
+    BLOCK, VAR_DECL, ASSIGN, MEMBER_ASSIGN, INDEX_ASSIGN, RETURN, EXPR_STMT,
+    LABEL, THIS_CALL, SWITCH, CASES, CASE, GOTO, IF, WHILE, FOR, BREAK, CONTINUE,
+    FAIL, TRY,
+    ARGS, DIMS,
+    INT_LIT, LONG_LIT, FLOAT_LIT, DOUBLE_LIT, STRING_LIT, CHAR_LIT, BOOL_LIT, NULL_LIT,
+    VAR, CALL, NEW, NEW_ARRAY, MEMBER, INDEX, UNARY, BINARY, IF_EXPR, ELVIS, FORCE, THIS,
+    // 只在对拍测试与 CLI 里出现：解析失败的落点（合法输入上永远不会建出来）
+    ERROR
+}
+
+// 枚举值 -> dump 里的名字。写成显式 switch（而不是靠 `"" + k` 拿 toString）有两个好处：
+// 名字和 AstDump.kt 里写死的字符串**能一眼对上**，而且这一层穷尽性由编译器把关。
+public fun kindName(k : NodeKind) -> string {
+    switch (k) {
+        case NodeKind.PROGRAM : rtn "PROGRAM"
+        case NodeKind.PKG : rtn "PKG"
+        case NodeKind.IMPORTS : rtn "IMPORTS"
+        case NodeKind.CLASS_IMPORT : rtn "CLASS_IMPORT"
+        case NodeKind.SOURCE_IMPORT : rtn "SOURCE_IMPORT"
+        case NodeKind.MODULE_IMPORT : rtn "MODULE_IMPORT"
+        case NodeKind.FUNCS : rtn "FUNCS"
+        case NodeKind.FUNC : rtn "FUNC"
+        case NodeKind.PARAMS : rtn "PARAMS"
+        case NodeKind.PARAM : rtn "PARAM"
+        case NodeKind.CLASSES : rtn "CLASSES"
+        case NodeKind.CLASS : rtn "CLASS"
+        case NodeKind.TYPE_PARAMS : rtn "TYPE_PARAMS"
+        case NodeKind.TYPE_PARAM : rtn "TYPE_PARAM"
+        case NodeKind.FIELDS : rtn "FIELDS"
+        case NodeKind.FIELD : rtn "FIELD"
+        case NodeKind.METHODS : rtn "METHODS"
+        case NodeKind.ENUMS : rtn "ENUMS"
+        case NodeKind.ENUM : rtn "ENUM"
+        case NodeKind.VALUES : rtn "VALUES"
+        case NodeKind.ENUM_VALUE : rtn "ENUM_VALUE"
+        case NodeKind.BLOCK : rtn "BLOCK"
+        case NodeKind.VAR_DECL : rtn "VAR_DECL"
+        case NodeKind.ASSIGN : rtn "ASSIGN"
+        case NodeKind.MEMBER_ASSIGN : rtn "MEMBER_ASSIGN"
+        case NodeKind.INDEX_ASSIGN : rtn "INDEX_ASSIGN"
+        case NodeKind.RETURN : rtn "RETURN"
+        case NodeKind.EXPR_STMT : rtn "EXPR_STMT"
+        case NodeKind.LABEL : rtn "LABEL"
+        case NodeKind.THIS_CALL : rtn "THIS_CALL"
+        case NodeKind.SWITCH : rtn "SWITCH"
+        case NodeKind.CASES : rtn "CASES"
+        case NodeKind.CASE : rtn "CASE"
+        case NodeKind.GOTO : rtn "GOTO"
+        case NodeKind.IF : rtn "IF"
+        case NodeKind.WHILE : rtn "WHILE"
+        case NodeKind.FOR : rtn "FOR"
+        case NodeKind.BREAK : rtn "BREAK"
+        case NodeKind.CONTINUE : rtn "CONTINUE"
+        case NodeKind.FAIL : rtn "FAIL"
+        case NodeKind.TRY : rtn "TRY"
+        case NodeKind.ARGS : rtn "ARGS"
+        case NodeKind.DIMS : rtn "DIMS"
+        case NodeKind.INT_LIT : rtn "INT_LIT"
+        case NodeKind.LONG_LIT : rtn "LONG_LIT"
+        case NodeKind.FLOAT_LIT : rtn "FLOAT_LIT"
+        case NodeKind.DOUBLE_LIT : rtn "DOUBLE_LIT"
+        case NodeKind.STRING_LIT : rtn "STRING_LIT"
+        case NodeKind.CHAR_LIT : rtn "CHAR_LIT"
+        case NodeKind.BOOL_LIT : rtn "BOOL_LIT"
+        case NodeKind.NULL_LIT : rtn "NULL_LIT"
+        case NodeKind.VAR : rtn "VAR"
+        case NodeKind.CALL : rtn "CALL"
+        case NodeKind.NEW : rtn "NEW"
+        case NodeKind.NEW_ARRAY : rtn "NEW_ARRAY"
+        case NodeKind.MEMBER : rtn "MEMBER"
+        case NodeKind.INDEX : rtn "INDEX"
+        case NodeKind.UNARY : rtn "UNARY"
+        case NodeKind.BINARY : rtn "BINARY"
+        case NodeKind.IF_EXPR : rtn "IF_EXPR"
+        case NodeKind.ELVIS : rtn "ELVIS"
+        case NodeKind.FORCE : rtn "FORCE"
+        case NodeKind.THIS : rtn "THIS"
+        case NodeKind.ERROR : rtn "ERROR"
+    }
+    // 上面那个 switch 已经穷尽了 NodeKind 的每一个值，这里只是给「函数一定有返回值」
+    // 一个静态的落点（rsf 的返回值检查是看最后一条语句，不看 switch 的穷尽性）。
+    rtn "?"
+}
+
+// ---------------------------------------------------------------- 胖节点
+
+public class Node(kind : NodeKind, text : string) {
+    var kind : NodeKind = kind
+    // 属性串：`name=foo mutable=true`（字段之间正好一个空格）。
+    // 值里的空格/换行已经在 escapeValue 里转义掉了，所以「按空格切」是无歧义的。
+    var text : string = text
+    var children : Node[] = new Node[0]
+    var childCount : int = 0
+    // 源码行号（1 起）；**0 表示还没定**，由最近的语句起头 token 补上，发射时统一钳到 >=1。
+    // 只用来生成 `LineNumberTable`：Kotlin 侧每个 AST 节点带 `at: SourceLine`，这里对应地记一个行号。
+    // dump（astLine）不打印它，所以不影响 17b 的差分对拍。
+    var line : int = 0
+
+    constructor(kind : NodeKind) {
+        this(kind, "")
+    }
+
+    // 追加一个属性。属性顺序 = put 的顺序，必须与 AstDump.kt 里那几个函数写字段的顺序一致。
+    public fun put(name : string, value : string) -> Node {
+        if (text.length() == 0) {
+            text = name + "=" + value
+        } else {
+            text = text + " " + name + "=" + value
+        }
+        rtn this
+    }
+
+    // 追加一个孩子。rsf 的数组长度固定，所以满了就翻倍（和 Lexer.rsf 的 pushToken 一个套路）。
+    public fun add(child : Node) -> Node {
+        if (childCount >= children.length) {
+            var size = 8
+            if (children.length > 0) { size = children.length * 2 }
+            var bigger : Node[] = new Node[size]
+            for (var i = 0; i < childCount; i = i + 1) {
+                bigger[i] = children[i]
+            }
+            children = bigger
+        }
+        children[childCount] = child
+        childCount = childCount + 1
+        rtn this
+    }
+
+    // 列表节点的 `count=N`：必须在孩子都加完之后调。
+    public fun countTag() -> Node {
+        rtn put("count", intToString(childCount))
+    }
+}
+
+// ---------------------------------------------------------------- 类型引用
+//
+// Kotlin 版的 TypeRef 是个节点，这里有两点不同：
+//   * **不进 children**，而是内联成 `type=...` 属性（它没有孩子，拆成节点只会让 dump 变长）；
+//   * **不是 Node**：`parseTypeRef()` 直接返回这个三字段的小对象，字符串形式按需拼。
+//
+// `name` 里可能带前导 `?`（可空写在名字里，和 Kotlin 版的 `TypeRef.name` 一样）；
+// `args` 存的是**实参表内部**的文本（`int` / `int,string`），空串表示没有 `&<...>`。
+
+public class TypeInfo(name : string, args : string, depth : int) {
+    var name : string = name
+    var args : string = args
+    var depth : int = depth
+
+    public fun text() -> string {
+        var out = name
+        if (args.length() > 0) { out = out + "&<" + args + ">" }
+        rtn out + repeatText("[]", depth)
+    }
+
+    public fun argsOrDash() -> string {
+        if (args.length() == 0) { rtn "-" }
+        rtn args
+    }
+}
+
+// ---------------------------------------------------------------- 小工具
+
+fun repeatText(s : string, n : int) -> string {
+    var out = ""
+    for (var i = 0; i < n; i = i + 1) {
+        out = out + s
+    }
+    rtn out
+}
+
+fun boolText(b : bool) -> string {
+    if (b) { rtn "true" }
+    rtn "false"
+}
+
+fun startsWithChar(s : string, c : char) -> bool {
+    if (s.length() == 0) { rtn false }
+    rtn s.charAt(0) == c
+}
+
+public fun isTypeKeyword(kind : string) -> bool {
+    if (kind == "KW_VOID") { rtn true }
+    if (kind == "KW_INT") { rtn true }
+    if (kind == "KW_LONG") { rtn true }
+    if (kind == "KW_FLOAT") { rtn true }
+    if (kind == "KW_DOUBLE") { rtn true }
+    if (kind == "KW_STRING") { rtn true }
+    if (kind == "KW_BOOL") { rtn true }
+    if (kind == "KW_BYTE") { rtn true }
+    if (kind == "KW_CHAR") { rtn true }
+    rtn false
+}
+
+public fun isControlKeyword(kind : string) -> bool {
+    if (kind == "KW_PUBLIC") { rtn true }
+    if (kind == "KW_PRIVATE") { rtn true }
+    if (kind == "KW_PROTECTED") { rtn true }
+    rtn false
+}
+
+fun isStaticKeyword(kind : string) -> bool { rtn kind == "KW_STATIC" }
+
+fun isVarKeyword(kind : string) -> bool {
+    if (kind == "KW_VAR") { rtn true }
+    rtn kind == "KW_IMUTVAR"
+}
+
+fun isReturnKeyword(kind : string) -> bool {
+    if (kind == "KW_RTN") { rtn true }
+    rtn kind == "KW_RETURN"
+}
+
+fun isComparisonKind(kind : string) -> bool {
+    if (kind == "LT") { rtn true }
+    if (kind == "GT") { rtn true }
+    if (kind == "LE") { rtn true }
+    rtn kind == "GE"
+}
+
+fun isEqualityKind(kind : string) -> bool {
+    if (kind == "EQ") { rtn true }
+    rtn kind == "NE"
+}
+
+fun isAddKind(kind : string) -> bool {
+    if (kind == "PLUS") { rtn true }
+    rtn kind == "MINUS"
+}
+
+fun isMulKind(kind : string) -> bool {
+    if (kind == "STAR") { rtn true }
+    if (kind == "SLASH") { rtn true }
+    rtn kind == "PERCENT"
+}
+
+fun isLiteralKind(kind : string) -> bool {
+    if (kind == "INT_LIT") { rtn true }
+    if (kind == "LONG_LIT") { rtn true }
+    if (kind == "FLOAT_LIT") { rtn true }
+    if (kind == "DOUBLE_LIT") { rtn true }
+    if (kind == "STRING_LIT") { rtn true }
+    rtn kind == "CHAR_LIT"
+}
+
+// 控制词 -> ControlType 的名字（Kotlin 版是 ControlType.of(kind).name）
+fun controlName(kind : string) -> string {
+    if (kind == "KW_PUBLIC") { rtn "PUBLIC" }
+    if (kind == "KW_PRIVATE") { rtn "PRIVATE" }
+    if (kind == "KW_PROTECTED") { rtn "PROTECTED" }
+    rtn "DEFAULT"
+}
+
+// 类型关键字 -> 规范类型名（Kotlin 版的 canonicalTypeName：别名 str / boolean 归一化）
+fun canonicalTypeName(kind : string) -> string {
+    if (kind == "KW_VOID") { rtn "void" }
+    if (kind == "KW_INT") { rtn "int" }
+    if (kind == "KW_LONG") { rtn "long" }
+    if (kind == "KW_FLOAT") { rtn "float" }
+    if (kind == "KW_DOUBLE") { rtn "double" }
+    if (kind == "KW_STRING") { rtn "string" }
+    if (kind == "KW_BOOL") { rtn "bool" }
+    if (kind == "KW_BYTE") { rtn "byte" }
+    if (kind == "KW_CHAR") { rtn "char" }
+    rtn ""
+}
+
+// ---------------------------------------------------------------- 值转义
+//
+// 与 AstDump.kt 的 `esc` **是同一张表**：`\` `换行` `回车` `制表` `空格` 各自一个转义，
+// 其余 < 0x20 的控制字符写成 `\xNN`（小写两位十六进制）。中文原样输出。
+//
+// 为什么非要转义空格：dump 的行格式是「字段之间正好一个空格」，值里再出现空格
+// 就没法按空格切了 —— 而字符串字面量 `"hello world"` 里就有空格。
+
+public fun escapeValue(s : string) -> string {
+    var out = ""
+    for (var i = 0; i < s.length(); i = i + 1) {
+        var c = s.charAt(i)
+        if (c == '\\') {
+            out = out + "\\\\"
+        } else {
+            if (c == '\n') {
+                out = out + "\\n"
+            } else {
+                if (c == '\r') {
+                    out = out + "\\r"
+                } else {
+                    if (c == '\t') {
+                        out = out + "\\t"
+                    } else {
+                        if (c == ' ') {
+                            out = out + "\\s"
+                        } else {
+                            if (charToInt(c) < 32) {
+                                out = out + "\\x" + hex2(charToInt(c))
+                            } else {
+                                out = out + c
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    rtn out
+}
+
+fun hexDigitChar(v : int) -> char {
+    if (v < 10) { rtn toChar(48 + v) }
+    rtn toChar(87 + v)
+}
+
+fun hex2(v : int) -> string {
+    rtn "" + hexDigitChar(v / 16) + hexDigitChar(v % 16)
+}
+
+// ---------------------------------------------------------------- import 路径
+//
+// Kotlin 版：`raw.split('\n').map { it.trim() }.filter { it.isNotEmpty() }.joinToString("")`。
+// rsf 没有 split/join，只能自己走一遍字符；trim 用内置的 isWhitespace
+// （正是 Kotlin 的 Char.isWhitespace，所以两边裁的是同一批字符）。
+
+fun trimWhitespace(s : string) -> string {
+    var from = 0
+    var to = s.length()
+    while (from < to) {
+        if (!isWhitespace(s.charAt(from))) { break }
+        from = from + 1
+    }
+    while (to > from) {
+        if (!isWhitespace(s.charAt(to - 1))) { break }
+        to = to - 1
+    }
+    rtn s.substring(from, to)
+}
+
+fun normalizeImportPath(raw : string) -> string {
+    var out = ""
+    var line = ""
+    for (var i = 0; i < raw.length(); i = i + 1) {
+        var c = raw.charAt(i)
+        if (charToInt(c) == 10) {
+            out = out + trimWhitespace(line)
+            line = ""
+        } else {
+            line = line + c
+        }
+    }
+    rtn out + trimWhitespace(line)
+}
+
+// ---------------------------------------------------------------- 字面量的「值」文本
+//
+// 与 Kotlin 版 AST 里存的值**一模一样**（`IntLit.value` / `DoubleLit.value` …），
+// 走的也是同一批 JVM 方法，所以源码文本与值的十进制写法不同的那种输入
+// （`007`、`3.141592653589793238`、`2.5D`）两端也能对上。
+
+fun intLiteralText(t : Token) -> string {
+    rtn Integer.toString(Integer.parseInt(t.text))
+}
+
+fun longLiteralText(t : Token) -> string {
+    // 词法阶段已经把后缀统一成小写，所以 LONG_LIT 的文本一定是「数字 + l」
+    rtn Long.toString(Long.parseLong(dropLast(t.text)))
+}
+
+fun floatLiteralText(t : Token) -> string {
+    rtn Float.toString(Float.parseFloat(dropLast(t.text)))
+}
+
+fun doubleLiteralText(t : Token) -> string {
+    // 带 d 后缀要去掉；不带后缀的（源码里写了小数点）整串就是数字
+    if (endsWithLetter(t.text, 'd')) {
+        rtn Double.toString(Double.parseDouble(dropLast(t.text)))
+    }
+    rtn Double.toString(Double.parseDouble(t.text))
+}
+
+// ================================================================ 语法分析器本体
+
+public class Parser(tokens : Token[]) {
+    var ts : Token[] = tokens
+    var pos : int = 0
+
+    // `for (i in a..b)` 解糖时生成不重名的内部变量名（与 Kotlin 版的 synthCounter 一个意思，
+    // 连「第几个 for-in」的编号顺序都要一样，否则 __rsf_forEnd0 会对不上 __rsf_forEnd1）
+    var synth : int = 0
+
+    var failed : bool = false
+    var failMessage : string = ""
+    var failLine : int = 0
+    var failCol : int = 0
+
+    // ------------------------------------------------------------ 出错
+
+    fun failAt(t : Token, message : string) -> void {
+        if (failed) { rtn }
+        failed = true
+        failLine = t.line
+        failCol = t.col
+        failMessage = message
+    }
+
+    fun errorNode() -> Node {
+        var n = new Node(NodeKind.ERROR)
+        n.put("message", escapeValue(failMessage))
+        rtn n
+    }
+
+    // ------------------------------------------------------------ 记号流
+
+    fun peekAt(offset : int) -> Token {
+        var i = pos + offset
+        if (i >= ts.length) { i = ts.length - 1 }
+        rtn ts[i]
+    }
+
+    fun peek() -> Token { rtn peekAt(0) }
+
+    fun check(kind : string) -> bool { rtn peek().kind == kind }
+
+    fun checkAt(offset : int, kind : string) -> bool { rtn peekAt(offset).kind == kind }
+
+    // 与 Kotlin 版一样：EOF 上 advance 不动（不然会越界，循环也停不下来）
+    fun advance() -> Token {
+        var t = peek()
+        if (t.kind != "EOF") { pos = pos + 1 }
+        rtn t
+    }
+
+    fun matchOne(kind : string) -> bool {
+        if (!check(kind)) { rtn false }
+        advance()
+        rtn true
+    }
+
+    // 没有可变参数 / 重载，所以按参数个数各写一个（这是 rsf 目前最直接的缺口之一，
+    // 见报告里「rsf 还缺什么」）
+    fun matchAny2(a : string, b : string) -> bool {
+        if (matchOne(a)) { rtn true }
+        rtn matchOne(b)
+    }
+
+    fun matchAny3(a : string, b : string, c : string) -> bool {
+        if (matchOne(a)) { rtn true }
+        if (matchOne(b)) { rtn true }
+        rtn matchOne(c)
+    }
+
+    fun matchAny4(a : string, b : string, c : string, d : string) -> bool {
+        if (matchOne(a)) { rtn true }
+        if (matchOne(b)) { rtn true }
+        if (matchOne(c)) { rtn true }
+        rtn matchOne(d)
+    }
+
+    fun expect(kind : string, message : string) -> Token {
+        if (!check(kind)) {
+            failAt(peek(), message)
+            rtn advance()
+        }
+        rtn advance()
+    }
+
+    fun hasFailed() -> bool { rtn failed }
+    fun errorMessage() -> string { rtn failMessage }
+
+    // ============================================================ 顶层
+
+    fun parseProgram() -> Node {
+        var program = new Node(NodeKind.PROGRAM)
+
+        // pkg 只能出现在最前面（在 import 之前），和 Java 的 package 一样
+        var hasPkg = false
+        var pkgName = ""
+        if (check("KW_PKG")) {
+            pkgName = parsePackageDecl()
+            hasPkg = true
+        }
+
+        var imports = new Node(NodeKind.IMPORTS)
+        var funcs = new Node(NodeKind.FUNCS)
+        var classes = new Node(NodeKind.CLASSES)
+        var enums = new Node(NodeKind.ENUMS)
+
+        while (!check("EOF") && !failed) {
+            if (check("KW_IMPORT") || check("KW_MODULE")) {
+                imports.add(parseImport())
+            } else {
+                if (check("KW_PKG")) {
+                    failAt(peek(), "'pkg' 只能写在文件最前面（在所有 import 之前）")
+                } else {
+                    if (check("KW_ENUM") || isEnumDeclAhead()) {
+                        enums.add(parseEnumDecl())
+                    } else {
+                        if (check("KW_CLASS") || isClassDeclAhead()) {
+                            classes.add(parseClassDecl())
+                        } else {
+                            funcs.add(parseFuncDecl())
+                        }
+                    }
+                }
+            }
+        }
+
+        // 孩子顺序固定为 PKG / IMPORTS / FUNCS / CLASSES / ENUMS（与 AstDump.kt 一致）
+        if (hasPkg) {
+            program.add(new Node(NodeKind.PKG).put("name", escapeValue(pkgName)))
+        }
+        program.add(imports.countTag())
+        program.add(funcs.countTag())
+        program.add(classes.countTag())
+        program.add(enums.countTag())
+        rtn program
+    }
+
+    // 包名段之间 ` . ` ` \ ` `/` 都收，混写也行，最后统一成点分形式
+    fun parsePackageDecl() -> string {
+        advance()   // pkg
+        var parts = readPkgIdent()
+        var going = true
+        while (going && !failed) {
+            var separated = false
+            if (matchOne("DOT")) {
+                separated = true
+            } else {
+                if (matchOne("SLASH")) {
+                    separated = true
+                } else {
+                    if (matchOne("BACKSLASH")) { separated = true }
+                }
+            }
+            if (separated) {
+                parts = parts + "." + readPkgIdent()
+            } else {
+                going = false
+            }
+        }
+        rtn parts
+    }
+
+    fun readPkgIdent() -> string {
+        var t = peek()
+        if (t.kind != "IDENT") {
+            failAt(t, "包名需要标识符（例如 pkg util 或 pkg a.b）")
+            rtn ""
+        }
+        advance()
+        rtn t.text
+    }
+
+    fun isClassDeclAhead() -> bool {
+        var offset = 0
+        if (isControlKeyword(peek().kind)) { offset = 1 }
+        rtn peekAt(offset).kind == "KW_CLASS"
+    }
+
+    fun isEnumDeclAhead() -> bool {
+        var offset = 0
+        if (isControlKeyword(peek().kind)) { offset = 1 }
+        rtn peekAt(offset).kind == "KW_ENUM"
+    }
+
+    // 三种 import：点分路径（JVM 类）、字符串路径（rsf 源文件）、module 目录
+    fun parseImport() -> Node {
+        var kw = advance()
+        var isModule = kw.kind == "KW_MODULE"
+
+        if (check("STRING_LIT")) {
+            var t = advance()
+            var path = normalizeImportPath(t.text)
+            if (path.length() == 0) {
+                failAt(t, kw.text + " 的路径是空的")
+            }
+            if (isModule) {
+                rtn new Node(NodeKind.MODULE_IMPORT).put("path", escapeValue(path))
+            }
+            rtn new Node(NodeKind.SOURCE_IMPORT).put("path", escapeValue(path))
+        }
+
+        if (isModule) {
+            failAt(peek(), "'module' 后面需要一个目录路径，写成 module \"文件夹\"")
+            rtn new Node(NodeKind.MODULE_IMPORT).put("path", "")
+        }
+
+        var firstTok = expect("IDENT", kw.text + " 后面需要一个类名（点分路径，例如 java.lang.Math）或者一个字符串路径")
+        var path2 = firstTok.text
+        while (matchOne("DOT")) {
+            var seg = expect("IDENT", "'.' 后面需要标识符")
+            path2 = path2 + "." + seg.text
+        }
+        rtn new Node(NodeKind.CLASS_IMPORT).put("path", escapeValue(path2))
+    }
+
+    // ============================================================ 枚举
+
+    fun parseEnumDecl() -> Node {
+        var control = "DEFAULT"
+        if (isControlKeyword(peek().kind)) { control = controlName(advance().kind) }
+        var enumTok = expect("KW_ENUM", "enum 声明缺少 'enum'")
+        var nameTok = expect("IDENT", "'enum' 后面缺少枚举名")
+
+        expect("LBRACE", "枚举 '" + nameTok.text + "' 缺少 '{'")
+
+        var values = new Node(NodeKind.VALUES)
+        while (!check("RBRACE") && !check("EOF") && !failed) {
+            var valueTok = expect("IDENT", "枚举 '" + nameTok.text + "' 里需要一个值名（写法是 IDENT, INT_LIT, ...）")
+            values.add(new Node(NodeKind.ENUM_VALUE).put("name", escapeValue(valueTok.text)))
+            // 尾逗号可写可不写：没吃到逗号就说明值列完了
+            if (!matchOne("COMMA")) { break }
+        }
+        expect("RBRACE", "枚举 '" + nameTok.text + "' 没有闭合，缺少 '}'")
+
+        if (values.childCount == 0) {
+            failAt(enumTok, "枚举 '" + nameTok.text + "' 至少要有一个值")
+        }
+
+        var n = new Node(NodeKind.ENUM).put("control", control).put("name", escapeValue(nameTok.text))
+        n.add(values.countTag())
+        rtn n
+    }
+
+    // ============================================================ 类
+
+    fun parseClassDecl() -> Node {
+        var control = "DEFAULT"
+        if (isControlKeyword(peek().kind)) { control = controlName(advance().kind) }
+        var classTok = expect("KW_CLASS", "class 声明缺少 'class'")
+        var nameTok = expect("IDENT", "'class' 后面缺少类名")
+
+        // 类型参数子句 `class Box&<T>` / `class Pair&<K, V>`
+        var typeParams = new Node(NodeKind.TYPE_PARAMS)
+        var seenParams = new string[8]
+        var seenCount = 0
+        if (check("AMP")) {
+            advance()
+            expect("LT", "'&' 后面缺少 '<'：类型参数要写成 class " + nameTok.text + "&<T>")
+            var going = true
+            while (going && !failed) {
+                var paramTok = expect("IDENT", "类型参数需要一个名字，写法是 class " + nameTok.text + "&<T>")
+                // **没有 HashSet**：重名只能拿数组线性查（见报告里「rsf 还缺什么」）
+                for (var i = 0; i < seenCount; i = i + 1) {
+                    if (seenParams[i] == paramTok.text) {
+                        failAt(paramTok, "类 '" + nameTok.text + "' 的类型参数 '" + paramTok.text + "' 重名了")
+                    }
+                }
+                if (paramTok.text == nameTok.text) {
+                    failAt(paramTok, "类型参数不能和类同名（都叫 '" + nameTok.text + "'）")
+                }
+                if (seenCount >= seenParams.length) {
+                    var bigger : string[] = new string[seenParams.length * 2]
+                    for (var i = 0; i < seenCount; i = i + 1) { bigger[i] = seenParams[i] }
+                    seenParams = bigger
+                }
+                seenParams[seenCount] = paramTok.text
+                seenCount = seenCount + 1
+                typeParams.add(new Node(NodeKind.TYPE_PARAM).put("name", escapeValue(paramTok.text)))
+                if (!matchOne("COMMA")) { going = false }
+            }
+            expect("GT", "类 '" + nameTok.text + "' 的类型参数表没有闭合，缺少 '>'")
+        }
+
+        // 主构造（类头那对括号）在解析时合成一个 FuncDecl：名字 = 类名、体是**空块**。
+        // 它排进 METHODS 的**最前面**，字段与方法按源码顺序跟在后面。
+        var methods = new Node(NodeKind.METHODS)
+        if (check("LPAREN")) {
+            var ctorParams = parseParamList("类 '" + nameTok.text + "' 的主构造参数表没有闭合，缺少 ')'")
+            var primary = new Node(NodeKind.FUNC)
+                .put("control", "DEFAULT")
+                .put("static", "false")
+                .put("main", "void")
+                .put("name", escapeValue(nameTok.text))
+                .put("ret", "OMITTED")
+                .put("mayError", "false")
+                .put("retType", "void")
+                .put("ctor", "true")
+                .put("primary", "true")
+            primary.add(ctorParams)
+            primary.add(new Node(NodeKind.BLOCK).countTag())
+            methods.add(primary)
+        }
+
+        expect("LBRACE", "类 '" + nameTok.text + "' 缺少 '{'")
+
+        var fields = new Node(NodeKind.FIELDS)
+        while (!check("RBRACE") && !check("EOF") && !failed) {
+            // 成员（字段 / 方法 / 次构造）也要行号：字段初始化块与函数体里的指令都要发
+            // `LineNumberTable`，字段那条取的是**声明行**
+            var memberLine = peek().line
+            if (isVarKeyword(peek().kind)) {
+                var fld = parseFieldDecl()
+                if (fld.line < 1) { fld.line = memberLine }
+                fields.add(fld)
+            } else {
+                var ctorAhead = peek().kind == "KW_CONSTRUCTOR" ||
+                    ((isControlKeyword(peek().kind) || isStaticKeyword(peek().kind)) && checkAt(1, "KW_CONSTRUCTOR"))
+                var mem = new Node(NodeKind.ERROR)
+                if (ctorAhead) {
+                    mem = parseConstructor(nameTok.text)
+                } else {
+                    mem = parseFuncDecl()
+                }
+                if (mem.line < 1) { mem.line = memberLine }
+                methods.add(mem)
+            }
+        }
+        expect("RBRACE", "类 '" + nameTok.text + "' 没有闭合，缺少 '}'")
+
+        var n = new Node(NodeKind.CLASS).put("control", control).put("name", escapeValue(nameTok.text))
+        n.add(typeParams.countTag())
+        n.add(fields.countTag())
+        n.add(methods.countTag())
+        rtn n
+    }
+
+    // 次构造：`constructor(参数) { ... }`。没有返回类型、不能写权限修饰词、不能 static。
+    fun parseConstructor(className : string) -> Node {
+        if (isControlKeyword(peek().kind)) {
+            failAt(peek(), "constructor 不能写权限修饰词：构造器只能通过 new 调用")
+        }
+        if (isStaticKeyword(peek().kind)) {
+            failAt(peek(), "constructor 不能是 static：构造器一定要有当前对象（this）")
+        }
+        advance()   // constructor
+
+        var params = parseParamList("constructor 后面缺少 '('，写法是 constructor(参数) { ... }")
+
+        var next = peek()
+        if (next.kind == "ARROW" || next.kind == "DOUBLE_COLON" || next.kind == "COLON") {
+            failAt(next, "constructor 不写返回类型（构造器没有返回值）：去掉 '" + next.text + "'，直接写 '{'")
+        }
+
+        var body = parseBlock()
+        var n = new Node(NodeKind.FUNC)
+            .put("control", "DEFAULT")
+            .put("static", "false")
+            .put("main", "void")
+            .put("name", escapeValue(className))
+            .put("ret", "OMITTED")
+            .put("mayError", "false")
+            .put("retType", "void")
+            .put("ctor", "true")
+            .put("primary", "false")
+        n.add(params)
+        n.add(body)
+        rtn n
+    }
+
+    // 字段：`var 名字 : 类型 = 初值`（类型与初值都必须写）
+    fun parseFieldDecl() -> Node {
+        var kwTok = advance()
+        var mutable = kwTok.kind == "KW_VAR"
+        var nameTok = expect("IDENT", "字段缺少名字：写法是 '" + kwTok.text + " 名字 : 类型 = 初值'")
+        if (!check("COLON")) {
+            failAt(peek(), "字段必须写类型：'" + kwTok.text + " " + nameTok.text + " : int = 初值'")
+        }
+        advance()   // :
+        var ty = parseSuffixType("字段 '" + nameTok.text + "' 的类型要写成 '" + kwTok.text + " " + nameTok.text + " : 类型 = 初值'")
+        expect("ASSIGN", "字段 '" + nameTok.text + "' 必须给初值")
+        var init = parseExpr()
+
+        var n = new Node(NodeKind.FIELD)
+            .put("name", escapeValue(nameTok.text))
+            .put("mutable", boolText(mutable))
+            .put("type", ty.text())
+        n.add(init)
+        rtn n
+    }
+
+    // ============================================================ 函数
+
+    fun parseFuncDecl() -> Node {
+        var control = "DEFAULT"
+        if (isControlKeyword(peek().kind)) { control = controlName(advance().kind) }
+
+        var isStatic = false
+        if (isStaticKeyword(peek().kind)) {
+            advance()
+            isStatic = true
+        }
+
+        if (peek().kind != "KW_FUN") {
+            failAt(peek(), "顶层只能写函数声明，格式是 '[public|protected|private] [static] fun [类型] 名字() 返回子句 函数体'")
+            rtn emptyFunc(control, isStatic)
+        }
+        advance()   // fun
+
+        // 曾经写反的修饰符位置
+        if (isControlKeyword(peek().kind) || isStaticKeyword(peek().kind)) {
+            failAt(peek(), "修饰符要写在 fun 前面：改成 '" + peek().text + " fun ...'")
+        }
+
+        // <MainType>：fun 之后、函数名之前的类型槽，缺省 void
+        var mainType = "void"
+        if (isTypeKeyword(peek().kind)) {
+            mainType = parseTypeRef().text()
+        }
+
+        var nameTok = expect("IDENT", "缺少函数名")
+        var params = parseParamList("函数名 '" + nameTok.text + "' 后面缺少 '('")
+
+        // 返回子句：只认 `->` 和 `::`（`:` 那条别名已删）
+        var retStyle = "OMITTED"
+        var mayError = false
+        var retType = "void"
+        if (matchOne("ARROW")) {
+            retStyle = "ARROW"
+        } else {
+            if (matchOne("DOUBLE_COLON")) {
+                retStyle = "DOUBLE_COLON"
+            } else {
+                if (check("COLON")) {
+                    failAt(peek(), "返回类型子句不再接受 ':'：请用 '->' 或者 '::'")
+                }
+            }
+        }
+        if (retStyle != "OMITTED") {
+            mayError = matchOne("BANG")
+            if (check("KW_NULL")) {
+                advance()
+                retType = "void"
+            } else {
+                retType = parseTypeRef().text()
+            }
+        }
+
+        var body = parseBlock()
+        var n = new Node(NodeKind.FUNC)
+            .put("control", control)
+            .put("static", boolText(isStatic))
+            .put("main", mainType)
+            .put("name", escapeValue(nameTok.text))
+            .put("ret", retStyle)
+            .put("mayError", boolText(mayError))
+            .put("retType", retType)
+            .put("ctor", "false")
+            .put("primary", "false")
+        n.add(params)
+        n.add(body)
+        rtn n
+    }
+
+    fun emptyFunc(control : string, isStatic : bool) -> Node {
+        var n = new Node(NodeKind.FUNC)
+            .put("control", control)
+            .put("static", boolText(isStatic))
+            .put("main", "void")
+            .put("name", "")
+            .put("ret", "OMITTED")
+            .put("mayError", "false")
+            .put("retType", "void")
+            .put("ctor", "false")
+            .put("primary", "false")
+        n.add(new Node(NodeKind.PARAMS).countTag())
+        n.add(new Node(NodeKind.BLOCK).countTag())
+        rtn n
+    }
+
+    // 参数表：`(int a, b : string)`。两种风格靠记号前瞻分流，同一个表里可以混写。
+    fun parseParamList(missingParen : string) -> Node {
+        expect("LPAREN", missingParen)
+        var params = new Node(NodeKind.PARAMS)
+        if (!check("RPAREN")) {
+            var going = true
+            while (going && !failed) {
+                params.add(parseParam())
+                if (!matchOne("COMMA")) { going = false }
+            }
+        }
+        expect("RPAREN", "参数表没有闭合，缺少 ')'")
+        rtn params.countTag()
+    }
+
+    fun parseParam() -> Node {
+        var t = peek()
+
+        // 1. Kotlin 风格：名字 : 类型
+        if (t.kind == "IDENT" && checkAt(1, "COLON")) {
+            var nameTok = advance()
+            advance()   // :
+            var ty = parseSuffixType("参数类型要写成 '" + nameTok.text + " : 类型'（Kotlin 风格）或者 '类型 " + nameTok.text + "'（Java 风格）")
+            rtn new Node(NodeKind.PARAM).put("type", ty.text()).put("name", escapeValue(nameTok.text))
+        }
+
+        // 2/3. Java 风格：类型 名字
+        var javaStyle = isTypeKeyword(t.kind) || t.kind == "QUESTION" ||
+            (t.kind == "IDENT" && (checkAt(1, "IDENT") || checkAt(1, "AMP") || checkAt(1, "LBRACKET")))
+        if (javaStyle) {
+            var ty2 = parseTypeRef()
+            var nameTok2 = expect("IDENT", "参数缺少名字。两种写法都可以：Java 风格 '" + ty2.text() + " 名字'，或者 Kotlin 风格 '名字 : " + ty2.text() + "'")
+            rtn new Node(NodeKind.PARAM).put("type", ty2.text()).put("name", escapeValue(nameTok2.text))
+        }
+
+        failAt(t, "参数要写成「类型 名字」或者「名字 : 类型」")
+        rtn new Node(NodeKind.PARAM).put("type", "?").put("name", "")
+    }
+
+    // `名字 : 类型` 里冒号后面那个类型槽（局部变量、字段、Kotlin 风格参数共用）
+    fun parseSuffixType(hint : string) -> TypeInfo {
+        var t = peek()
+        if (!isTypeKeyword(t.kind) && t.kind != "IDENT" && t.kind != "QUESTION") {
+            failAt(t, hint)
+            rtn new TypeInfo("?", "", 0)
+        }
+        rtn parseTypeRef()
+    }
+
+    // 类型引用：可空 `?` 前缀、泛型实参 `&<...>`、数组后缀 `[]`（可叠多层）
+    fun parseTypeRef() -> TypeInfo {
+        var nullable = matchOne("QUESTION")
+        var t = peek()
+        var name = ""
+        if (isTypeKeyword(t.kind)) {
+            advance()
+            name = canonicalTypeName(t.kind)
+        } else {
+            if (t.kind == "IDENT") {
+                advance()
+                name = t.text
+            } else {
+                failAt(t, "这里需要一个类型（void / int / long / float / double / string / bool / byte / char，或者一个类名）")
+                rtn new TypeInfo("?", "", 0)
+            }
+        }
+        if (nullable) { name = "?" + name }
+
+        var args = ""
+        if (check("AMP")) {
+            if (isTypeKeyword(t.kind)) {
+                failAt(peek(), "'" + name + "' 是内置类型，没有类型参数——'&<实参类型>' 只能跟在一个类名后面")
+                rtn new TypeInfo(name, "", 0)
+            }
+            args = parseTypeArgs()
+        }
+
+        // `[]` 只吃**紧挨着的**一对空括号（`new int[5]` 里的 `[5]` 是维度、不是类型后缀）
+        var depth = 0
+        while (check("LBRACKET") && checkAt(1, "RBRACKET") && !failed) {
+            advance()
+            advance()
+            depth = depth + 1
+        }
+        if (depth > 0 && startsWithChar(name, '?')) {
+            failAt(t, "数组类型不能写 '?'：数组本身就是引用，去掉 '?' 写成 '" + name.substring(1, name.length()) + "[]'")
+        }
+        rtn new TypeInfo(name, args, depth)
+    }
+
+    // 类型实参表 `&<int>` / `&<string, int>` / `&<Box&<int>>`；返回的是**内部**文本
+    fun parseTypeArgs() -> string {
+        advance()   // &
+        expect("LT", "'&' 后面缺少 '<'：类型实参要写成 '&<实参类型>'（单独的 '<' 是比较运算）")
+        var out = ""
+        var going = true
+        while (going && !failed) {
+            var arg = parseTypeRef()
+            if (out.length() == 0) {
+                out = arg.text()
+            } else {
+                out = out + "," + arg.text()
+            }
+            if (!matchOne("COMMA")) { going = false }
+        }
+        expect("GT", "类型实参表没有闭合，缺少 '>'")
+        rtn out
+    }
+
+    // ============================================================ 语句
+
+    fun parseBlock() -> Node {
+        expect("LBRACE", "函数体需要以 '{' 开始")
+        var b = new Node(NodeKind.BLOCK)
+        while (!check("RBRACE") && !check("EOF") && !failed) {
+            b.add(parseStmt())
+            while (matchOne("SEMI")) { }
+        }
+        expect("RBRACE", "函数体没有闭合，缺少 '}'")
+        rtn b.countTag()
+    }
+
+    // 语句节点的行号 = 这条语句**第一个 token** 的行号（与 Kotlin 版 `at` 同口径）。
+    // 表达式里的节点不带行号（只有语句节点需要），行号由 parseStmt 统一补。
+    fun parseStmt() -> Node {
+        var ln = peek().line
+        var n = parseStmtInner()
+        if (n.line < 1) { n.line = ln }
+        rtn n
+    }
+
+    fun parseStmtInner() -> Node {
+        var t = peek()
+        var k = t.kind
+
+        if (k == "LBRACE") { rtn parseBlock() }
+        if (isVarKeyword(k)) { rtn parseVarDecl() }
+        if (k == "KW_LET") {
+            failAt(t, "'let' 已经换成两个关键字了：'var'（可变）和 'imutvar'（不可变）")
+            rtn errorNode()
+        }
+        if (isReturnKeyword(k)) { rtn parseReturn() }
+        if (k == "KW_IF") { rtn parseIfStmt() }
+        if (k == "KW_ELSE") {
+            failAt(t, "'else' 要跟在 if 的分支后面，不能单独成句")
+            rtn errorNode()
+        }
+        if (k == "KW_WHILE") {
+            advance()
+            var cond = parseExpr()
+            var body = parseBody("while")
+            var n = new Node(NodeKind.WHILE)
+            n.add(cond)
+            n.add(body)
+            rtn n
+        }
+        if (k == "KW_FOR") { rtn parseFor() }
+        if (k == "KW_SWITCH") { rtn parseSwitch() }
+        if (k == "KW_CASE") {
+            failAt(t, "'case' 只能写在 switch 的块里，写法是 switch (值) { case 枚举名.值名 : 语句 ... }")
+            rtn errorNode()
+        }
+        if (k == "KW_BREAK") {
+            advance()
+            rtn new Node(NodeKind.BREAK)
+        }
+        if (k == "KW_CONTINUE") {
+            advance()
+            rtn new Node(NodeKind.CONTINUE)
+        }
+        if (k == "KW_GOTO") {
+            advance()
+            var label = expect("IDENT", "'goto' 后面缺少标签名")
+            rtn new Node(NodeKind.GOTO).put("label", escapeValue(label.text))
+        }
+        if (k == "KW_FAIL") { rtn parseFail() }
+        if (k == "KW_TRY") { rtn parseTry() }
+
+        // `this(实参)` 是构造器委托，必须排在成员访问前面判断（靠后面跟 '(' 还是 '.' 分流）
+        if (k == "KW_THIS" && checkAt(1, "LPAREN")) { rtn parseThisCall() }
+
+        if (k == "KW_CONSTRUCTOR") {
+            failAt(t, "'constructor' 只能写在类体里（它是次构造：constructor(参数) { ... }）")
+            rtn errorNode()
+        }
+        if (k == "KW_CATCH") {
+            failAt(t, "'catch' 只能跟在 try 块后面，写法是 try { ... } catch (e : string) { ... }")
+            rtn errorNode()
+        }
+
+        if (k == "IDENT" && checkAt(1, "ASSIGN")) { rtn parseAssign() }
+
+        if (k == "IDENT" && checkAt(1, "COLON")) {
+            advance()
+            advance()   // :
+            rtn new Node(NodeKind.LABEL).put("name", escapeValue(t.text))
+        }
+
+        rtn finishExprStmt(parseExpr())
+    }
+
+    // 表达式语句，顺带认出两种赋值目标：`p.x = 1`（成员）与 `a[i] = 1`（下标）
+    fun finishExprStmt(e : Node) -> Node {
+        if (check("ASSIGN")) {
+            if (e.kind == NodeKind.MEMBER) {
+                advance()   // =
+                var n = new Node(NodeKind.MEMBER_ASSIGN)
+                n.add(e)
+                n.add(parseExpr())
+                rtn n
+            }
+            if (e.kind == NodeKind.INDEX) {
+                advance()   // =
+                var n2 = new Node(NodeKind.INDEX_ASSIGN)
+                n2.add(e)
+                n2.add(parseExpr())
+                rtn n2
+            }
+        }
+        var stmt = new Node(NodeKind.EXPR_STMT)
+        stmt.add(e)
+        rtn stmt
+    }
+
+    fun parseAssign() -> Node {
+        var nameTok = advance()
+        advance()   // =
+        var value = parseExpr()
+        var n = new Node(NodeKind.ASSIGN).put("name", escapeValue(nameTok.text)).put("synthetic", "false")
+        n.add(value)
+        rtn n
+    }
+
+    fun parseVarDecl() -> Node {
+        var kwTok = advance()
+        var mutable = kwTok.kind == "KW_VAR"
+        var nameTok = expect("IDENT", "'" + kwTok.text + "' 后面缺少变量名")
+
+        var hasType = false
+        var tyText = "-"
+        if (matchOne("COLON")) {
+            hasType = true
+            tyText = parseSuffixType("变量 '" + nameTok.text + "' 的类型要写成 '" + kwTok.text + " " + nameTok.text + " : 类型 = 初值'").text()
+        }
+        expect("ASSIGN", "变量 '" + nameTok.text + "' 声明时必须初始化")
+
+        var init = parseExpr()
+        var n = new Node(NodeKind.VAR_DECL)
+            .put("name", escapeValue(nameTok.text))
+            .put("mutable", boolText(mutable))
+            .put("typed", boolText(hasType))
+            .put("type", tyText)
+        n.add(init)
+        rtn n
+    }
+
+    // `rtn` / `return`：后面跟不跟值，靠「右大括号 / 分号 / 文件结束 / 换行了」判断
+    // （rsf 不靠换行分词，所以这里必须看行号，否则下一行的语句会被当成返回值）
+    fun parseReturn() -> Node {
+        var rtnTok = advance()
+        var next = peek()
+        if (next.kind == "RBRACE" || next.kind == "EOF" || next.kind == "SEMI" || next.line != rtnTok.line) {
+            rtn new Node(NodeKind.RETURN).put("hasValue", "false")
+        }
+        var n = new Node(NodeKind.RETURN).put("hasValue", "true")
+        n.add(parseExpr())
+        rtn n
+    }
+
+    fun parseFail() -> Node {
+        var failTok = advance()
+        var next = peek()
+        if (next.kind == "RBRACE" || next.kind == "EOF" || next.kind == "SEMI" || next.line != failTok.line) {
+            failAt(next, "'fail' 后面要跟错误消息，写法是 'fail \"出错了\"'（消息必须是 string 表达式）")
+            rtn errorNode()
+        }
+        var n = new Node(NodeKind.FAIL)
+        n.add(parseExpr())
+        rtn n
+    }
+
+    // `try { ... } catch (e : string) { ... }`（也收老写法 `catch (e string)`）
+    fun parseTry() -> Node {
+        advance()   // try
+        var body = parseBody("try")
+
+        if (!check("KW_CATCH")) {
+            failAt(peek(), "try 块后面必须跟一个 catch，写法是 try { ... } catch (e : string) { ... }")
+            rtn errorNode()
+        }
+        advance()   // catch
+
+        expect("LPAREN", "catch 后面需要 '('，写法是 catch (错误变量 : string)")
+        var nameTok = expect("IDENT", "catch 里需要错误变量名，写法是 catch (e : string)")
+
+        if (matchOne("COLON")) {
+            if (check("KW_STRING")) {
+                advance()
+            } else {
+                failAt(peek(), catchTypeError(nameTok.text))
+            }
+        } else {
+            if (check("KW_STRING")) {
+                advance()   // 老写法 catch (e string)
+            } else {
+                failAt(peek(), catchTypeError(nameTok.text))
+            }
+        }
+        expect("RPAREN", "catch 的参数表没有闭合，缺少 ')'")
+        var catchBody = parseBody("catch")
+
+        var n = new Node(NodeKind.TRY).put("catch", escapeValue(nameTok.text))
+        n.add(body)
+        n.add(catchBody)
+        rtn n
+    }
+
+    fun catchTypeError(name : string) -> string {
+        rtn "catch 的错误变量类型只能是 string。两种写法都可以：Kotlin 风格 'catch (" + name + " : string)'，或者 Java 风格 'catch (" + name + " string)'"
+    }
+
+    // if：花括号块、`c : 语句`、以及「三目出现在语句位置」（值被丢弃）
+    fun parseIfStmt() -> Node {
+        advance()   // if
+        var cond = parseExpr()
+
+        if (check("QUESTION")) {
+            var e = parseIfTail(cond)
+            var stmt = new Node(NodeKind.EXPR_STMT)
+            stmt.add(e)
+            rtn stmt
+        }
+
+        var body = parseBody("if")
+        var n = new Node(NodeKind.IF)
+        n.add(cond)
+        n.add(body)
+        if (matchOne("KW_ELSE")) {
+            n.add(parseElseBody())
+            n.put("hasElse", "true")
+        } else {
+            n.put("hasElse", "false")
+        }
+        rtn n
+    }
+
+    // else 后面：另一个 if（形成 else-if 链），或者一个普通体
+    fun parseElseBody() -> Node {
+        if (check("KW_IF")) {
+            // 走 parseStmt 而不是直接 parseIfStmt：链上的每个 if 都要带**自己那一行**行号
+            // （Kotlin 的 LineNumberTable 里 else-if 的条件属于 else-if 所在行）
+            var nested = parseStmt()
+            var b = new Node(NodeKind.BLOCK)
+            b.add(nested)
+            rtn b.countTag()
+        }
+        rtn parseBody("else")
+    }
+
+    // if / while / for / case / else / try / catch 的体：花括号块，或者冒号后面的单条语句
+    // （单条语句也被包成一个只有一条语句的块，于是下游只有一种「体」形状）
+    fun parseBody(what : string) -> Node {
+        if (check("LBRACE")) {
+            var lb = peek().line
+            var blk = parseBlock()
+            if (blk.line < 1) { blk.line = lb }
+            rtn blk
+        }
+        if (check("COLON")) {
+            advance()
+            var single = parseStmt()
+            var b = new Node(NodeKind.BLOCK)
+            b.add(single)
+            // 块的行号 = 它第一条语句的行号：`case X : 语句` 的标签要发这一行
+            if (single.line > 0) { b.line = single.line }
+            rtn b.countTag()
+        }
+        failAt(peek(), "'" + what + "' 后面需要 '{' 开始一个块，或者 ':' 后面跟单条语句")
+        rtn errorNode()
+    }
+
+    // 三目的后半截：`? 值1 : 值2`
+    fun parseIfTail(condition : Node) -> Node {
+        expect("QUESTION", "三目运算符需要 '?'，写法是 'if 条件 ? 值1 : 值2'")
+        var whenTrue = parseExpr()
+        expect("COLON", "三目运算符缺少 ':'（写法是 'if 条件 ? 值1 : 值2'）")
+        var whenFalse = parseExpr()
+        var n = new Node(NodeKind.IF_EXPR)
+        n.add(condition)
+        n.add(whenTrue)
+        n.add(whenFalse)
+        rtn n
+    }
+
+    // 枚举分派（阶段 19c）：`switch (值) { case 枚举名.值名 : 语句 / else : 语句 }`
+    fun parseSwitch() -> Node {
+        var switchTok = advance()   // switch
+        expect("LPAREN", "'switch' 后面需要 '('（写法是 switch (值) { ... }）")
+        var subject = parseExpr()
+        expect("RPAREN", "switch 的条件没有闭合，缺少 ')'")
+        expect("LBRACE", "switch 缺少 '{'")
+
+        var cases = new Node(NodeKind.CASES)
+        var hasElse = false
+        var elseBody = errorNode()
+        var sawElse = false
+
+        while (!check("RBRACE") && !check("EOF") && !failed) {
+            if (matchOne("SEMI")) {
+                // 多写几个空语句不算错
+            } else {
+                if (check("KW_ELSE")) {
+                    var elseTok = advance()
+                    if (sawElse) { failAt(elseTok, "switch 里只能有一个 'else' 分支") }
+                    sawElse = true
+                    hasElse = true
+                    elseBody = parseBody("else")
+                } else {
+                    if (check("IDENT") && peek().text == "default") {
+                        failAt(peek(), "rsf 的默认分支写成 'else :'（不是 Java 的 'default :'）")
+                    }
+                    expect("KW_CASE", "switch 的块里只能写 'case 枚举名.值名 : 语句' 或者 'else : 语句'")
+                    var enumTok = expect("IDENT", "'case' 后面需要一个枚举名（写法是 case 枚举名.值名 : 语句）")
+                    expect("DOT", "'case " + enumTok.text + "' 后面需要 '.'——case 只接受枚举常量")
+                    var valueTok = expect("IDENT", "'case " + enumTok.text + ".' 后面需要一个值名")
+                    var caseBody = parseBody("case")
+                    var c = new Node(NodeKind.CASE)
+                        .put("enum", escapeValue(enumTok.text))
+                        .put("value", escapeValue(valueTok.text))
+                    c.add(caseBody)
+                    cases.add(c)
+                }
+            }
+        }
+        expect("RBRACE", "switch 没有闭合，缺少 '}'")
+
+        if (cases.childCount == 0 && !hasElse) {
+            failAt(switchTok, "switch 里什么都没有：至少要有一个 'case 枚举名.值名 : 语句' 分支")
+        }
+
+        var n = new Node(NodeKind.SWITCH)
+        n.add(subject)
+        n.add(cases.countTag())
+        if (hasElse) { n.add(elseBody) }
+        n.put("caseCount", intToString(cases.childCount)).put("hasElse", boolText(hasElse))
+        rtn n
+    }
+
+    // 构造器委托 `this(实参)`
+    fun parseThisCall() -> Node {
+        advance()   // this
+        expect("LPAREN", "'this' 后面需要 '('（构造器委托写成 this(实参)）")
+        var args = new Node(NodeKind.ARGS)
+        if (!check("RPAREN")) {
+            var going = true
+            while (going && !failed) {
+                args.add(parseExpr())
+                if (!matchOne("COMMA")) { going = false }
+            }
+        }
+        expect("RPAREN", "this(...) 的参数表没有闭合，缺少 ')'")
+        var n = new Node(NodeKind.THIS_CALL).put("argc", intToString(args.childCount))
+        n.add(args.countTag())
+        rtn n
+    }
+
+    // ============================================================ for
+
+    fun parseFor() -> Node {
+        var forTok = advance()   // for
+        expect("LPAREN", "'for' 后面需要 '('")
+        if (peek().kind == "IDENT" && checkAt(1, "KW_IN")) {
+            rtn parseForIn(forTok)
+        }
+        rtn parseForClassic()
+    }
+
+    fun parseForClassic() -> Node {
+        var init = new Node(NodeKind.BLOCK)
+        if (!check("SEMI")) {
+            var going = true
+            while (going && !failed) {
+                init.add(parseForClauseStmt())
+                if (!matchOne("COMMA")) { going = false }
+            }
+        }
+        expect("SEMI", "for 的初始化部分后面需要 ';'")
+
+        var hasCond = false
+        var cond = errorNode()
+        if (!check("SEMI")) {
+            cond = parseExpr()
+            hasCond = true
+        }
+        expect("SEMI", "for 的条件部分后面需要 ';'")
+
+        var steps = new Node(NodeKind.BLOCK)
+        if (!check("RPAREN")) {
+            var going2 = true
+            while (going2 && !failed) {
+                steps.add(parseForClauseStmt())
+                if (!matchOne("COMMA")) { going2 = false }
+            }
+        }
+        expect("RPAREN", "for 的头部没有闭合，缺少 ')'")
+
+        var body = parseBody("for")
+
+        // 更新部分：0 条没有、1 条直接用、多条包成一个块（与 Kotlin 版的 when 一致）
+        var hasStep = false
+        var stepNode = errorNode()
+        if (steps.childCount == 1) {
+            stepNode = steps.children[0]
+            hasStep = true
+        } else {
+            if (steps.childCount > 1) {
+                stepNode = steps.countTag()
+                hasStep = true
+            }
+        }
+
+        var loop = new Node(NodeKind.FOR)
+        if (hasCond) { loop.add(cond) }
+        if (hasStep) { loop.add(stepNode) }
+        loop.add(body)
+        loop.put("hasCond", boolText(hasCond)).put("hasStep", boolText(hasStep))
+
+        // 初始化语句和循环本体一起放进块里，初始化变量就只在循环内可见
+        if (init.childCount == 0) { rtn loop }
+        var outer = new Node(NodeKind.BLOCK)
+        for (var i = 0; i < init.childCount; i = i + 1) {
+            outer.add(init.children[i])
+        }
+        outer.add(loop)
+        rtn outer.countTag()
+    }
+
+    fun parseForClauseStmt() -> Node {
+        var t = peek()
+        if (isVarKeyword(t.kind)) { rtn parseVarDecl() }
+        if (t.kind == "KW_LET") {
+            failAt(t, "'let' 已经换成两个关键字了：'var'（可变）和 'imutvar'（不可变）")
+            rtn errorNode()
+        }
+        if (t.kind == "IDENT" && checkAt(1, "ASSIGN")) { rtn parseAssign() }
+        rtn finishExprStmt(parseExpr())
+    }
+
+    // `for (i in 起点..终点 step 步长)` —— 与 Kotlin 版**逐字对应**地解糖。
+    // 终点与步长只求值一次（和 Java / Kotlin 一致），步长为负就自动变成递减。
+    fun parseForIn(forTok : Token) -> Node {
+        var nameTok = advance()   // IDENT
+        advance()                   // in
+
+        var start = parseExpr()
+        expect("RANGE", "for-in 需要一个区间，写法是 'for (" + nameTok.text + " in 起点..终点)'。数组还不能用 for-in 遍历，按下标写：for (var i = 0; i < 数组.length; i = i + 1)")
+        var end = parseExpr()
+
+        // step 是上下文关键字：只有出现在这里才当关键字，别处照样能叫 step
+        var stepExpr = new Node(NodeKind.INT_LIT).put("value", "1")
+        if (peek().kind == "IDENT" && peek().text == "step") {
+            advance()
+            stepExpr = parseExpr()
+        }
+
+        expect("RPAREN", "for 的头部没有闭合，缺少 ')'")
+        var body = parseBody("for")
+
+        // 计数器与 Kotlin 版一样**在解析完 body 之后**自增（嵌套时内层因此拿的是更小的编号）
+        var k = synth
+        synth = synth + 1
+        var endName = "__rsf_forEnd" + intToString(k)
+        var stepName = "__rsf_forStep" + intToString(k)
+
+        var endDecl = new Node(NodeKind.VAR_DECL).put("name", endName).put("mutable", "false").put("typed", "false").put("type", "-")
+        endDecl.add(end)
+        var stepDecl = new Node(NodeKind.VAR_DECL).put("name", stepName).put("mutable", "false").put("typed", "false").put("type", "-")
+        stepDecl.add(stepExpr)
+        var loopVar = new Node(NodeKind.VAR_DECL).put("name", escapeValue(nameTok.text)).put("mutable", "false").put("typed", "false").put("type", "-")
+        loopVar.add(start)
+
+        // 条件：步长非负就 i <= 终点，否则 i >= 终点
+        var nonNegative = binaryNode("GE", varNode(stepName), intNode("0"))
+        var ascending = binaryNode("LE", varNode(nameTok.text), varNode(endName))
+        var descending = binaryNode("GE", varNode(nameTok.text), varNode(endName))
+        var cond = new Node(NodeKind.IF_EXPR)
+        cond.add(nonNegative)
+        cond.add(ascending)
+        cond.add(descending)
+
+        var advanceStep = new Node(NodeKind.ASSIGN).put("name", escapeValue(nameTok.text)).put("synthetic", "true")
+        advanceStep.add(binaryNode("PLUS", varNode(nameTok.text), varNode(stepName)))
+
+        var loop = new Node(NodeKind.FOR)
+        loop.add(cond)
+        loop.add(advanceStep)
+        loop.add(body)
+        loop.put("hasCond", "true").put("hasStep", "true")
+
+        var outer = new Node(NodeKind.BLOCK)
+        outer.add(endDecl)
+        outer.add(stepDecl)
+        outer.add(loopVar)
+        outer.add(loop)
+        rtn outer.countTag()
+    }
+
+    fun varNode(name : string) -> Node {
+        rtn new Node(NodeKind.VAR).put("name", escapeValue(name))
+    }
+
+    fun intNode(value : string) -> Node {
+        rtn new Node(NodeKind.INT_LIT).put("value", value)
+    }
+
+    fun binaryNode(op : string, left : Node, right : Node) -> Node {
+        var n = new Node(NodeKind.BINARY).put("op", op)
+        n.add(left)
+        n.add(right)
+        rtn n
+    }
+
+    // ============================================================ 表达式
+    //
+    // 优先级从松到紧（与 Java / Kotlin 完全一致）：
+    //   ?:  <  ||  <  &&  <  == !=  <  < > <= >=  <  + -  <  * / %  <  一元  <  后缀
+
+    fun parseExpr() -> Node { rtn parseElvis() }
+
+    fun parseElvis() -> Node {
+        var left = parseOr()
+        while (matchOne("ELVIS") && !failed) {
+            var right = parseOr()
+            var n = new Node(NodeKind.ELVIS)
+            n.add(left)
+            n.add(right)
+            left = n
+        }
+        rtn left
+    }
+
+    fun parseOr() -> Node {
+        var left = parseAnd()
+        while (matchOne("OROR") && !failed) {
+            var right = parseAnd()
+            left = binaryNode("OROR", left, right)
+        }
+        rtn left
+    }
+
+    fun parseAnd() -> Node {
+        var left = parseEquality()
+        while (matchOne("ANDAND") && !failed) {
+            var right = parseEquality()
+            left = binaryNode("ANDAND", left, right)
+        }
+        rtn left
+    }
+
+    fun parseEquality() -> Node {
+        var left = parseComparison()
+        while (isEqualityKind(peek().kind) && !failed) {
+            var op = advance().kind
+            left = binaryNode(op, left, parseComparison())
+        }
+        rtn left
+    }
+
+    fun parseComparison() -> Node {
+        var left = parseTerm()
+        while (isComparisonKind(peek().kind) && !failed) {
+            var op = advance().kind
+            left = binaryNode(op, left, parseTerm())
+        }
+        rtn left
+    }
+
+    fun parseTerm() -> Node {
+        var left = parseFactor()
+        while (isAddKind(peek().kind) && !failed) {
+            var op = advance().kind
+            left = binaryNode(op, left, parseFactor())
+        }
+        rtn left
+    }
+
+    fun parseFactor() -> Node {
+        var left = parseUnary()
+        while (isMulKind(peek().kind) && !failed) {
+            var op = advance().kind
+            left = binaryNode(op, left, parseUnary())
+        }
+        rtn left
+    }
+
+    fun parseUnary() -> Node {
+        if (check("MINUS") || check("BANG")) {
+            var opTok = advance()
+            var operand = parseUnary()
+            var n = new Node(NodeKind.UNARY).put("op", opTok.kind)
+            n.add(operand)
+            rtn n
+        }
+        rtn parsePostfix()
+    }
+
+    // 后缀：`!!`、`.`（成员）、`[i]`（下标）。三者同一个循环，所以 a[i][j]、p.f[0].g!! 自然层层套。
+    fun parsePostfix() -> Node {
+        var e = parsePrimary()
+        var going = true
+        while (going && !failed) {
+            if (check("BANG") && checkAt(1, "BANG")) {
+                advance()
+                advance()
+                var n = new Node(NodeKind.FORCE)
+                n.add(e)
+                e = n
+            } else {
+                if (check("DOT")) {
+                    advance()
+                    var nameTok = expect("IDENT", "'.' 后面需要成员名")
+                    var isCall = false
+                    var args = new Node(NodeKind.ARGS)
+                    if (matchOne("LPAREN")) {
+                        isCall = true
+                        if (!check("RPAREN")) {
+                            var g = true
+                            while (g && !failed) {
+                                args.add(parseExpr())
+                                if (!matchOne("COMMA")) { g = false }
+                            }
+                        }
+                        expect("RPAREN", "成员调用的参数表没有闭合，缺少 ')'")
+                    }
+                    var m = new Node(NodeKind.MEMBER).put("name", escapeValue(nameTok.text)).put("call", boolText(isCall))
+                    m.add(e)
+                    if (isCall) { m.add(args.countTag()) }
+                    e = m
+                } else {
+                    if (check("LBRACKET")) {
+                        advance()
+                        var index = parseExpr()
+                        expect("RBRACKET", "下标访问缺少 ']'（写法是 数组[下标]，例如 a[0]）")
+                        var ix = new Node(NodeKind.INDEX)
+                        ix.add(e)
+                        ix.add(index)
+                        e = ix
+                    } else {
+                        going = false
+                    }
+                }
+            }
+        }
+        rtn e
+    }
+
+    fun parsePrimary() -> Node {
+        var t = peek()
+        var k = t.kind
+
+        if (k == "INT_LIT") {
+            advance()
+            rtn new Node(NodeKind.INT_LIT).put("value", intLiteralText(t))
+        }
+        if (k == "LONG_LIT") {
+            advance()
+            rtn new Node(NodeKind.LONG_LIT).put("value", longLiteralText(t))
+        }
+        if (k == "FLOAT_LIT") {
+            advance()
+            rtn new Node(NodeKind.FLOAT_LIT).put("value", floatLiteralText(t))
+        }
+        if (k == "DOUBLE_LIT") {
+            advance()
+            rtn new Node(NodeKind.DOUBLE_LIT).put("value", doubleLiteralText(t))
+        }
+        if (k == "STRING_LIT") {
+            advance()
+            rtn new Node(NodeKind.STRING_LIT).put("value", escapeValue(t.text))
+        }
+        if (k == "CHAR_LIT") {
+            advance()
+            rtn new Node(NodeKind.CHAR_LIT).put("value", escapeValue(charLiteralValue(t.text)))
+        }
+        if (k == "KW_TRUE") {
+            advance()
+            rtn new Node(NodeKind.BOOL_LIT).put("value", "true")
+        }
+        if (k == "KW_FALSE") {
+            advance()
+            rtn new Node(NodeKind.BOOL_LIT).put("value", "false")
+        }
+        if (k == "KW_NULL") {
+            advance()
+            rtn new Node(NodeKind.NULL_LIT)
+        }
+        if (k == "KW_IF") {
+            advance()
+            var cond = parseExpr()
+            rtn parseIfTail(cond)
+        }
+        if (k == "KW_THIS") {
+            advance()
+            rtn new Node(NodeKind.THIS)
+        }
+        if (k == "KW_NEW") {
+            advance()
+            rtn parseNewExpr()
+        }
+        if (k == "IDENT") {
+            advance()
+            // `Box&<int>(0)`：类型实参只会出现在类型上，所以「标识符 +&<...> + (」无歧义地是一次构造
+            if (check("AMP")) {
+                var typeArgs = parseTypeArgs()
+                expect("LPAREN", "'" + t.text + "&<...>' 后面缺少 '('：构造对象要写实参表，例如 new " + t.text + "&<int>(0)（new 可以省）")
+                var newArgs = new Node(NodeKind.ARGS)
+                if (!check("RPAREN")) {
+                    var g2 = true
+                    while (g2 && !failed) {
+                        newArgs.add(parseExpr())
+                        if (!matchOne("COMMA")) { g2 = false }
+                    }
+                }
+                expect("RPAREN", "构造 '" + t.text + "' 的参数表没有闭合，缺少 ')'")
+                var ctor = new Node(NodeKind.NEW).put("class", escapeValue(t.text)).put("typeArgs", typeArgs)
+                ctor.add(newArgs.countTag())
+                rtn ctor
+            }
+            if (matchOne("LPAREN")) {
+                var callArgs = new Node(NodeKind.ARGS)
+                if (!check("RPAREN")) {
+                    var g3 = true
+                    while (g3 && !failed) {
+                        callArgs.add(parseExpr())
+                        if (!matchOne("COMMA")) { g3 = false }
+                    }
+                }
+                expect("RPAREN", "调用 '" + t.text + "' 的参数表没有闭合，缺少 ')'")
+                var call = new Node(NodeKind.CALL).put("name", escapeValue(t.text))
+                call.add(callArgs.countTag())
+                rtn call
+            }
+            rtn new Node(NodeKind.VAR).put("name", escapeValue(t.text))
+        }
+        if (k == "LPAREN") {
+            advance()
+            var inner = parseExpr()
+            expect("RPAREN", "括号没有闭合，缺少 ')'")
+            rtn inner
+        }
+
+        failAt(t, "这里需要一个表达式")
+        rtn errorNode()
+    }
+
+    // `new 类名(实参)` / `new 类名&<T>(实参)` / `new T[n]` / `new T[n][m]`
+    // 两条路靠「类型后面跟的是 '(' 还是 '['」区分，没有歧义。
+    fun parseNewExpr() -> Node {
+        var t = peek()
+        if (!isTypeKeyword(t.kind) && t.kind != "IDENT") {
+            failAt(t, "'new' 后面需要类名（new Point(1, 2)）或者数组类型（new int[5]）")
+            rtn errorNode()
+        }
+        var ty = parseTypeRef()
+        if (startsWithChar(ty.name, '?')) {
+            failAt(t, "'new' 后面的类型不能写 '?'")
+        }
+
+        if (check("LBRACKET")) {
+            var dims = new Node(NodeKind.DIMS)
+            while (matchOne("LBRACKET") && !failed) {
+                if (check("RBRACKET")) {
+                    failAt(peek(), "数组创建必须给出每一维的长度：new " + ty.text() + "[n]")
+                }
+                dims.add(parseExpr())
+                expect("RBRACKET", "'new " + ty.text() + "[...]' 缺少 ']'")
+            }
+            if (ty.depth > 0) {
+                failAt(t, "new 后面的数组类型不能再写 '[]'：长度写在方括号里，例如 new int[5]")
+            }
+            var arr = new Node(NodeKind.NEW_ARRAY).put("elem", ty.text())
+            arr.add(dims.countTag())
+            rtn arr
+        }
+
+        if (isTypeKeyword(t.kind)) {
+            failAt(t, "'" + ty.name + "' 是内置类型，不能 new（没有构造器）。要造数组写成 new " + ty.name + "[长度]")
+            rtn errorNode()
+        }
+        if (ty.depth > 0) {
+            failAt(t, "数组类型要用 'new " + ty.name + "[长度]' 创建（长度写在方括号里）")
+            rtn errorNode()
+        }
+
+        expect("LPAREN", "'new " + ty.text() + "' 后面缺少 '('（对象要写实参表，数组要写长度）")
+        var args = new Node(NodeKind.ARGS)
+        if (!check("RPAREN")) {
+            var going = true
+            while (going && !failed) {
+                args.add(parseExpr())
+                if (!matchOne("COMMA")) { going = false }
+            }
+        }
+        expect("RPAREN", "'new " + ty.text() + "' 的参数表没有闭合，缺少 ')'")
+
+        var n = new Node(NodeKind.NEW).put("class", escapeValue(ty.name)).put("typeArgs", ty.argsOrDash())
+        n.add(args.countTag())
+        rtn n
+    }
+}
+
+// ================================================================ 对外接口
+
+// 解析一份源码。**合法输入上与 Kotlin 版 Parser 建出结构相同的树**。
+// 失败时不抛（rsf 版不用异常）：返回一个 kind = ERROR 的节点，消息在 text 里。
+public fun parseSource(source : string) -> Node {
+    var ts = lex(source)
+    if (ts.length == 0) {
+        // 词法就挂了：Kotlin 版这时抛的是 RsfError，rsf 版把词法消息落进 ERROR 节点
+        var e = new Node(NodeKind.ERROR)
+        e.put("message", escapeValue(lexError(source)))
+        rtn e
+    }
+    var p = new Parser(ts)
+    var ast = p.parseProgram()
+    // 解析中途出错时**不能**把半棵树交出去：CLI 与对拍都要一个明确的「失败」信号
+    if (p.hasFailed()) {
+        var e = new Node(NodeKind.ERROR)
+        e.put("message", escapeValue(p.errorMessage()))
+        rtn e
+    }
+    rtn ast
+}
+
+// 判定一份源码能不能解析（对拍「两边都失败」那条边界用的）
+public fun parseFailed(source : string) -> bool {
+    var ts = lex(source)
+    if (ts.length == 0) { rtn true }
+    var p = new Parser(ts)
+    var ast = p.parseProgram()
+    if (p.hasFailed()) { rtn true }
+    rtn ast.kind == NodeKind.ERROR
+}
+
+// 解析失败时的消息（没失败就是空串）
+public fun parseErrorMessage(source : string) -> string {
+    var ts = lex(source)
+    if (ts.length == 0) { rtn lexError(source) }
+    var p = new Parser(ts)
+    p.parseProgram()
+    rtn p.errorMessage()
+}
+
+// 读文件再解析（路径用 / 分隔；不写死任何绝对路径）
+public fun parseFile(path : string) -> !Node {
+    var text = readText(path)!!
+    rtn parseSource(text)
+}
+
+// ================================================================ dump
+
+fun astLine(node : Node, depth : int) -> string {
+    var head = repeatText("  ", depth) + kindName(node.kind)
+    if (node.text.length() > 0) { head = head + " " + node.text }
+    rtn head
+}
+
+public fun dumpAstAt(node : Node, depth : int) -> void {
+    println(astLine(node, depth))
+    for (var i = 0; i < node.childCount; i = i + 1) {
+        dumpAstAt(node.children[i], depth + 1)
+    }
+}
+
+public fun dumpAst(node : Node) -> void {
+    dumpAstAt(node, 0)
+}
+
+// 与 dumpAst 同样的内容，但拼成一个字符串返回（测试与工具用起来更方便）
+public fun astTextAt(node : Node, depth : int) -> string {
+    var out = astLine(node, depth) + "\n"
+    for (var i = 0; i < node.childCount; i = i + 1) {
+        out = out + astTextAt(node.children[i], depth + 1)
+    }
+    rtn out
+}
+
+public fun astText(node : Node) -> string {
+    rtn astTextAt(node, 0)
+}
+
+// ---------------------------------------------------------------- 说明
+//
+// 和 Lexer.rsf 一样，**这个文件故意没有 main**：rsf 一个程序里只能有一个 main，
+// 留在库里会让任何 import 它的程序撞名。入口单独放在 `ParserCli.rsf`。
+//
+// rsf 的 main 也**收不到命令行参数**，所以 ParserCli 用系统属性 `rsf.ast.file`
+// 指定输入（属性不存在时 `System.getProperty` 返回 null，要按 `?string` 接住再兜底）。

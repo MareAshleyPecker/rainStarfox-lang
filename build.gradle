@@ -1,0 +1,179 @@
+import org.gradle.internal.os.OperatingSystem
+import org.gradle.process.ExecOperations
+import javax.inject.Inject
+
+plugins {
+    id 'org.jetbrains.kotlin.jvm' version '2.3.10'
+    id 'application'
+}
+
+group = 'org.example'
+version = '0.9.0'
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    // 字节码后端
+    implementation 'org.ow2.asm:asm:9.9.1'
+    // --dump 用的反汇编器
+    implementation 'org.ow2.asm:asm-util:9.9.1'
+
+    testImplementation platform('org.junit:junit-bom:5.11.4')
+    testImplementation 'org.jetbrains.kotlin:kotlin-test'
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+kotlin {
+    jvmToolchain(25)
+}
+
+application {
+    mainClass = 'org.example.MainKt'
+}
+
+// ---------------------------------------------------------------------------
+// rsfSrc/lang/multifile/rsf.java —— Java 源文件**不参与 rsf 编译**
+//
+// 那个多文件示例 import 了一个 Java 写的类（`import multifile.rsf`），而 rsf 编译器
+// 只从 classpath 上读 .class 的签名。所以要先手工编一次：
+//
+//   javac -encoding UTF-8 -d build\java-multifile rsfSrc\lang\multifile\rsf.java
+//
+// 再把输出目录挂到 run 的 classpath 上（就是下面这行），这样 README 里那条
+// `gradlew run --args="run rsfSrc/lang/multifile/main.rsf"` 才找得到那个类。
+// 目录不存在时 Gradle 直接忽略，不影响别的例子。
+// ---------------------------------------------------------------------------
+tasks.named('run', JavaExec) {
+    classpath += files(layout.buildDirectory.dir('java-multifile'))
+}
+
+test {
+    useJUnitPlatform()
+    // rsfSrc 下的 .rsf **是被测试的输入**，不是无关的素材：
+    // 阶段 17a/17b 的差分对拍（rsf 版词法器、rsf 版语法器）会直接把
+    // rsfSrc/bootstrap/*.rsf 读进来解释执行，再和 Kotlin 版逐行比。
+    // Gradle 默认只看 Kotlin 源码，改了 .rsf 而没改 .kt 时会认为 test 是最新的、
+    // 直接跳过 —— 那对拍就等于没跑。把 rsfSrc 声明成输入，改一个 rsf 文件就会重跑。
+    inputs.dir(layout.projectDirectory.dir('rsfSrc')).withPropertyName('rsfSources')
+}
+
+// `gradlew jar` 产出的就是可直接 java -jar 的胖包
+tasks.named('jar', Jar) {
+    manifest {
+        attributes(
+                'Main-Class': 'org.example.MainKt',
+                'Implementation-Title': 'rainStarfox',
+                'Implementation-Version': project.version,
+        )
+    }
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    from { configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) } }
+    exclude 'META-INF/*.SF', 'META-INF/*.DSA', 'META-INF/*.RSA', 'module-info.class'
+}
+
+// ---------------------------------------------------------------------------
+// gradlew exe —— 打成自带精简 JVM 的原生启动器
+//
+// 用 JDK 自带的 jpackage（不需要 GraalVM，也不需要 Launch4j 之类的外部工具）：
+//   app-image 目录里是一个 rainStarfox.exe + 一份用 jlink 裁过的 runtime/。
+// 目标机器不需要装 Java，直接跑 exe 即可。
+// --win-console 必须加，否则 Windows 下双击/命令行都看不到任何输出。
+// ---------------------------------------------------------------------------
+abstract class RsfNativeTask extends DefaultTask {
+
+    @Inject
+    abstract ExecOperations getExecOps()
+
+    @InputDirectory
+    abstract DirectoryProperty getLibsDir()
+
+    @Input
+    abstract Property<String> getAppVersion()
+
+    @OutputDirectory
+    abstract DirectoryProperty getOutDir()
+
+    @TaskAction
+    void generate() {
+        def isWindows = OperatingSystem.current().isWindows()
+        def exeSuffix = isWindows ? '.exe' : ''
+
+        def javaHome = System.getProperty('java.home')
+        def jpackage = new File(javaHome, "bin/jpackage${exeSuffix}")
+        if (!jpackage.isFile()) {
+            throw new GradleException("在 ${javaHome}/bin 里找不到 jpackage，请用 JDK 14+ 运行 Gradle")
+        }
+
+        def out = outDir.get().asFile
+        out.mkdirs()
+
+        // jpackage 拒绝往已存在的目标目录里写。麻烦在于：刚跑过 rainStarfox.exe 之后，
+        // Windows 会继续占着 exe / runtime 里的 dll 一段时间（映像段未释放、杀毒扫描），
+        // 这段时间里文件删不掉。所以分两步：
+        //   1) 先直接删，带几次重试（快路径）
+        //   2) 还删不掉就把旧目录**改名挪开** —— 目录改名不要求独占其中的文件，
+        //      挪走之后 jpackage 就能往干净路径写了；旧目录尽力删除，删不掉留到下次
+        staleDirs(out).each { it.deleteDir() }
+
+        def target = new File(out, 'rainStarfox')
+        for (int i = 0; i < 3 && target.exists(); i++) {
+            target.deleteDir()
+            if (target.exists()) sleep(500)
+        }
+        if (target.exists()) {
+            def aside = new File(out, "rainStarfox.old-${System.currentTimeMillis()}")
+            if (!target.renameTo(aside)) {
+                throw new GradleException(
+                        "清理不掉 ${target}：多半是 rainStarfox.exe 还在运行。关掉它再试一次。")
+            }
+            aside.deleteDir()
+            logger.lifecycle("[rsf] 旧产物被占用，已挪到 ${aside.name}（可稍后手动删除）")
+        }
+
+        def cmd = [
+                jpackage.absolutePath,
+                '--type', 'app-image',
+                '--name', 'rainStarfox',
+                '--input', libsDir.get().asFile.absolutePath,
+                '--main-jar', "rainStarfox-${appVersion.get()}.jar",
+                '--main-class', 'org.example.MainKt',
+                '--dest', out.absolutePath,
+                '--app-version', appVersion.get(),
+                '--vendor', 'rainStarfox',
+                // 我们只用到 java.base；裁掉其余模块能让 runtime/ 小一个数量级
+                '--add-modules', 'java.base',
+                // 注意：**不要**设 -Dstdout.encoding / -Dstderr.encoding。
+                // Windows 控制台默认是 cp936，JVM 会跟着控制台走，中文才显示得对；
+                // 强行指定 UTF-8 反而会在 cmd/PowerShell 里变成乱码。
+                '--java-options', '-Dfile.encoding=UTF-8',
+        ]
+        if (isWindows) {
+            cmd += ['--win-console']
+        }
+
+        execOps.exec { commandLine cmd }.assertNormalExitValue()
+
+        def launcher = new File(out, "rainStarfox/rainStarfox${exeSuffix}")
+        logger.lifecycle("[rsf] 已生成原生启动器: ${launcher}")
+        logger.lifecycle("[rsf] 试一下: ${launcher} run lang/main.rsf")
+    }
+
+    /** 上一次构建挪开的旧目录，尽力删掉，删不掉就算了。 */
+    private static List<File> staleDirs(File out) {
+        def list = out.listFiles()
+        if (list == null) return []
+        return list.findAll { it.isDirectory() && it.name.startsWith('rainStarfox.old-') }
+    }
+}
+
+tasks.register('exe', RsfNativeTask) {
+    group = 'distribution'
+    description = '用 jpackage 生成自带精简 JVM 的 rainStarfox.exe'
+    dependsOn tasks.named('jar')
+    libsDir = layout.buildDirectory.dir('libs')
+    outDir = layout.buildDirectory.dir('native')
+    appVersion = project.version.toString()
+}

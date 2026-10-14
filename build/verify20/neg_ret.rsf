@@ -1,0 +1,13 @@
+public interface Greeter {
+    fun greet() -> string
+}
+
+class Dog : Greeter {
+    public fun greet() -> int {
+        rtn 1
+    }
+}
+
+fun main() -> void {
+    rtn
+}

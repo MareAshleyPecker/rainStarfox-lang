@@ -1,0 +1,79 @@
+// rainStarfox 阶段 17c：rsf 版解释器的**命令行入口**
+//
+// 解释器本体是旁边的 `Interp.rsf`（纯库，没有 main）；这里只负责「挑一个输入文件、
+// 读进来、交给 rsf 版解释器跑」。
+//
+// 跑：rsf build rsfSrc/bootstrap/InterpCli.rsf -o out
+//     java -cp out InterpCli                                     （默认跑 rsfSrc/lang/main.rsf）
+//     java -Drsf.interp.file=rsfSrc/lang/arrays.rsf -cp out InterpCli
+//
+// **stdout 与 `rsf run <同一个文件>` 逐字节相同**——对拍就是拿这两边 diff。
+//
+// 为什么用系统属性而不是命令行参数：rsf 的 `fun main() -> void` 接不到 args
+// （JVM 的 main(String[]) 没有地方接），这是当前语言的一个缺口，见 BOOTSTRAP.md。
+//
+// 错误一律走 stderr、格式与 Kotlin 版 Main.kt 的 `运行期错误: <消息>` 一致，
+// 退出码也用 `System.exit(1)` 对齐（rsf 自己没有设置退出码的手段）。
+
+import "Interp.rsf"
+
+// 17e：多文件装载。`import "x.rsf"` 指向的源码会被包含式地并进同一棵树再跑
+// （与 Kotlin 版 `rsf run` 走 SourceLoader 的口径一致）。
+import "Sources.rsf"
+
+import java.lang.System
+
+// 挑输入：-Drsf.interp.file 给了就用它，没给就跑去仓库里的一个示例（相对路径）
+fun pickPath() -> string {
+    var given : ?string = System.getProperty("rsf.interp.file")
+    var path = given ?: "rsfSrc/lang/main.rsf"
+    rtn path
+}
+
+fun main() -> void {
+    var path = pickPath()
+
+    // 17e：装载交给 Sources.rsf（它自己读入口文件、递归 import、并成一棵树）。
+    // 出口口径**保持原样**：
+    //   * 读不到文件        -> stderr "读不到文件：路径" + exit 1（与从前逐字相同）
+    //   * 入口解析失败      -> 从前是 runSource 里 fail "解析失败：…"，被下面那个 catch
+    //                          包成 "运行期错误: 解析失败：…"；这里显式走同一条出口，
+    //                          消息逐字相同
+    //   * 装载期错误（找不到被 import 的文件等，17e 新增）-> 也走 "运行期错误: …"
+    var ast : Node = new Node(NodeKind.ERROR)
+    var loaded = false
+    var message = ""
+    try {
+        ast = loadProgram(path)!!
+        loaded = true
+    } catch (loadError : string) {
+        message = loadError
+        loaded = false
+    }
+    if (!loaded) {
+        if (message.startsWith("读不到文件：")) {
+            System.err.println(message)
+        } else {
+            System.err.println("运行期错误: " + message)
+        }
+        System.exit(1)
+        rtn
+    }
+
+    try {
+        runProgram(ast)!!
+    } catch (e : string) {
+        if (isSignal(e) && signalKind(e) == "X") {
+            // 带外信号（`!!` 打到 null、除以零）：Kotlin 版那边抛的是 JVM 异常，
+            // 消息就是载荷本身
+            System.err.println("运行期错误: " + signalPayload(e))
+        } else if (isSignal(e)) {
+            System.err.println("运行期错误: 内部信号 " + signalKind(e) + " 没有被接住")
+        } else {
+            System.err.println("运行期错误: " + e)
+        }
+        System.exit(1)
+        rtn
+    }
+    rtn
+}

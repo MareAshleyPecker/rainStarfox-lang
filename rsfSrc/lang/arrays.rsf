@@ -1,0 +1,228 @@
+// rainStarfox 阶段 13 示例：数组 `T[]`
+//
+// 跑：rsf run   rsfSrc/lang/arrays.rsf          （解释器，不落地任何 .class）
+//     rsf build rsfSrc/lang/arrays.rsf          （字节码：生成 arrays.class）
+//     java -cp out arrays
+// 查：rsf check rsfSrc/lang/arrays.rsf
+//
+// 约定（两条后端的可观察行为完全一致，有测试守着）：
+//   * 类型写成 C 风格后缀 `T[]`，能出现在**所有**类型位置：局部变量、字段、
+//     参数、返回类型、泛型实参（`Box&<int[]>`）。
+//   * 创建：`new T[长度]`，长度是**运行时求值**的 int 表达式。
+//     元素默认值按 JVM 规则：数字 0、bool false、引用 null。
+//   * 读写：`a[i]` 读、`a[i] = v` 写、`a.length` 取长度。
+//     注意 length 是**属性**不是方法——写 `a.length`，不是 `a.length()`。
+//   * 数组是**引用语义**：传参、返回、赋给另一个变量拿到的都是同一个数组，
+//     在函数里改元素，外面看得见（和 Java 一样）。
+//   * 越界（含负数下标）两端抛**同一条 rsf 运行期错误**，消息格式统一：
+//       数组下标越界：长度 3，下标 5
+//     所以 `try { ... } catch (e : string) { println(e) }` 两边打出来一模一样。
+//     JVM 自己的 ArrayIndexOutOfBoundsException（消息是 "Index 5 out of bounds
+//     for length 3"）在两端都被显式边界检查替换掉了。
+//   * 数组**不能直接打印或拼进字符串**：JVM 上数组的 toString 是身份哈希
+//     （[I@1b6d3586），每次运行都不同，没法保证两端一致。要看清内容就按下标取。
+//   * 本阶段不做：数组字面量 `[1, 2, 3]`、切片、`for (x in arr)` 迭代语法、
+//     锯齿数组 `new int[3][]`（每一维都要写长度）。
+
+// ---------------------------------------------------------------- 数组当参数 / 返回值
+
+// 数组当参数：类型写成 int[]
+fun sum(xs : int[]) -> int {
+    var total = 0
+    for (var i = 0; i < xs.length; i = i + 1) {
+        total = total + xs[i]
+    }
+    rtn total
+}
+
+// 引用语义：传进来的是**同一个**数组，改元素调用方看得见
+fun fill(xs : int[], value : int) -> void {
+    for (var i = 0; i < xs.length; i = i + 1) {
+        xs[i] = value
+    }
+    rtn
+}
+
+// 数组当返回值：可以在函数里按运行期长度分配
+fun makeSquares(n : int) -> int[] {
+    var out = new int[n]
+    for (var i = 0; i < n; i = i + 1) {
+        out[i] = i * i
+    }
+    rtn out
+}
+
+// 二维数组当参数：`int[][]` 是「元素为 int[] 的数组」
+fun sumGrid(grid : int[][]) -> int {
+    var total = 0
+    for (var r = 0; r < grid.length; r = r + 1) {
+        for (var c = 0; c < grid[r].length; c = c + 1) {
+            total = total + grid[r][c]
+        }
+    }
+    rtn total
+}
+
+// ---------------------------------------------------------------- 类：数组当字段、类数组、泛型类数组
+
+// 数组可以当类的字段（字段类型写在名字前面，初值照样必填）
+public class Bag {
+    var items : int[] = new int[2]
+    imutvar label : string = "bag"
+
+    public fun total() -> int {
+        rtn items[0] + items[1]
+    }
+}
+
+public class Point {
+    var x : int = 0
+    var y : int = 0
+
+    constructor(x0 : int, y0 : int) {
+        x = x0
+        y = y0
+    }
+
+    public fun sum() -> int { rtn x + y }
+}
+
+// 泛型类：类型参数也能套数组（`Box&<int[]>` 这种实参是允许的）
+public class Box&<T> {
+    var value : T = 0
+    public fun get() -> T { rtn value }
+    public fun set(v : T) -> void { value = v }
+}
+
+// ---------------------------------------------------------------- 入口
+
+fun main() -> void {
+    // ------------------------------------------------------------ 基础类型数组
+    println("== 基础类型数组 ==")
+    var a : int[] = new int[5]
+    println("长度 = " + a.length)
+    println("默认值 a[0] = " + a[0] + "，a[4] = " + a[4])
+    a[0] = 10
+    a[4] = 40
+    a[2] = a[0] + a[4]
+    println("写入后 a[0] = " + a[0] + "，a[2] = " + a[2] + "，a[4] = " + a[4])
+    println("sum(a) = " + sum(a))
+
+    // 引用语义：b 和 a 是同一个数组
+    var b : int[] = a
+    b[1] = 99
+    println("通过 b 写入后 a[1] = " + a[1])
+    fill(a, 7)
+    println("fill 之后 b[3] = " + b[3])
+
+    var sq : int[] = makeSquares(4)
+    println("平方 = " + sq[0] + ", " + sq[1] + ", " + sq[2] + ", " + sq[3] +
+        "（长度 " + sq.length + "）")
+
+    // 长度是运行期表达式：数组大小可以算出来
+    var n : int = 3
+    var ds : double[] = new double[n * 2]
+    ds[0] = 1.5
+    println("double[] 长度 = " + ds.length + "，ds[0] = " + ds[0] + "，ds[5] = " + ds[5])
+
+    var ls : long[] = new long[2]
+    ls[0] = 9000000000L
+    println("long[] ls[0] = " + ls[0] + "，ls[1] = " + ls[1])
+
+    // ------------------------------------------------------------ bool / char / byte 数组
+    println("== bool / char / byte 数组 ==")
+    var flags : bool[] = new bool[2]
+    println("flags 默认 = " + flags[0] + "，" + flags[1])
+    flags[0] = true
+    println("写入后 flags[0] = " + flags[0])
+
+    var cs : char[] = new char[3]
+    cs[0] = 'r'
+    cs[1] = 's'
+    cs[2] = 'f'
+    println("char[] 拼起来 = " + cs[0] + cs[1] + cs[2])
+
+    // byte[]：为阶段 16b 的 Files.write 铺路
+    var raw : byte[] = new byte[4]
+    println("byte[] 长度 = " + raw.length + "，默认 raw[0] = " + raw[0])
+    raw[0] = toByte(200)     // 截断成 -56
+    raw[1] = 1               // 0..127 的字面量可以直接赋给 byte
+    println("写入后 raw[0] = " + raw[0] + "，raw[1] = " + raw[1] + "，raw[3] = " + raw[3])
+
+    // ------------------------------------------------------------ 引用类型数组
+    println("== 引用类型数组 ==")
+    var names : string[] = new string[3]
+    println("默认值 names[0] = " + names[0])     // 引用类型默认 null
+    names[0] = "Ada"
+    names[2] = "Linus"
+    println("写入后 names[0] = " + names[0] + "，names[1] = " + names[1] +
+        "，names[2] = " + names[2])
+
+    // ------------------------------------------------------------ 用户类数组 / 泛型类数组
+    println("== 用户类数组 / 泛型类数组 ==")
+    var ps : Point[] = new Point[2]
+    ps[0] = new Point(3, 4)
+    ps[1] = new Point(10, 20)
+    println("Point[] 长度 = " + ps.length + "，ps[0].sum() = " + ps[0].sum() +
+        "，ps[1].sum() = " + ps[1].sum())
+    // 数组元素是对象引用：改的是同一个对象
+    var first : Point = ps[0]
+    first.x = 100
+    println("通过 first 改过之后 ps[0].sum() = " + ps[0].sum())
+
+    var boxes : Box&<int>[] = new Box&<int>[2]
+    boxes[0] = new Box&<int>()
+    boxes[0].set(42)
+    // 注意：这行**打印出来的文字**保持带空格的 `Box &<int>[]` —— 它是展示文案（不是语法），
+    // 而本示例的 stdout 被验收用 SHA256 钉死了（1119B/6D1A2875），改一个字就不符。
+    // **语法位置**一律写无空格的 `Box&<int>`（上面两行就是）。
+    println("Box &<int>[] 长度 = " + boxes.length + "，boxes[0].get() = " + boxes[0].get())
+
+    // ------------------------------------------------------------ 数组当字段
+    println("== 数组当字段 ==")
+    var bag = new Bag()
+    println("字段数组长度 = " + bag.items.length + "，默认 total = " + bag.total())
+    bag.items[0] = 5
+    bag.items[1] = 6
+    println("写入后 bag.items[1] = " + bag.items[1] + "，total = " + bag.total())
+
+    // ------------------------------------------------------------ 嵌套数组（数组的数组）
+    println("== 嵌套数组 ==")
+    var grid : int[][] = new int[2][3]
+    println("grid.length = " + grid.length + "，grid[0].length = " + grid[0].length +
+        "，默认 grid[0][0] = " + grid[0][0])
+    grid[1][2] = 42
+    println("写入后 grid[1][2] = " + grid[1][2])
+    var row : int[] = grid[0]
+    row[0] = 9
+    println("row 就是 grid[0]，所以 grid[0][0] = " + grid[0][0])
+    for (var r = 0; r < grid.length; r = r + 1) {
+        for (var c = 0; c < grid[r].length; c = c + 1) {
+            grid[r][c] = r * 10 + c
+        }
+    }
+    println("填好之后 sumGrid(grid) = " + sumGrid(grid))
+
+    // ------------------------------------------------------------ 越界：两端同一条错误
+    println("== 越界 ==")
+    var small : int[] = new int[3]
+    try {
+        println("不该走到这里：" + small[5])
+    } catch (e : string) {
+        println("读越界：" + e)
+    }
+    try {
+        small[-1] = 1
+    } catch (e : string) {
+        println("写越界：" + e)
+    }
+    try {
+        var bad : int[] = new int[-1]
+        println("不该走到这里：" + bad.length)
+    } catch (e : string) {
+        println("负长度：" + e)
+    }
+    println("越界之后程序照常往下走")
+
+    rtn
+}

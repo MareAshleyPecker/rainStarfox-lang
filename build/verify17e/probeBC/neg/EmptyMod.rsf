@@ -1,0 +1,5 @@
+module "emptydir"
+
+fun main() {
+    println("never")
+}

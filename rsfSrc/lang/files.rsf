@@ -1,0 +1,173 @@
+// rainStarfox 阶段 16b 示例：文件读写（readText / writeText / readBytes / writeBytes）
+//
+// 这四个函数都是 `!T`（可能失败），调用方**必须**显式处理错误，三种写法这个示例都演示了：
+//   (a) try { ... } catch (e : string) { ... }   接住失败，消息就在 catch 变量里
+//   (b) f(...) ?: 兜底值                        失败就取右边的值
+//   (c) f(...)!!                               往上抛（那本函数也得写成 !T）
+//
+// 跑：rsf run   rsfSrc/lang/files.rsf      （解释器）
+//     rsf build rsfSrc/lang/files.rsf      （字节码：生成 files.class + TempFile.class）
+//     java -cp out files
+// 查：rsf check rsfSrc/lang/files.rsf
+//
+// **这个示例只在系统临时目录里读写，跑完把文件删掉**——不给仓库留任何垃圾文件。
+// 路径由 `java.io.File(临时目录, 名字)` 拼出来，所以 Windows / Linux 都不用管分隔符。
+
+import java.io.File
+
+// ---------------------------------------------------------------- 临时文件
+
+// 一个临时文件对象：负责拼路径、以及跑完把它删掉。
+// （rsf 没有内置的「删文件」，删除走 java.io.File 的实例方法，和读写一样是 JVM 互操作）
+class TempFile(name : string) {
+    var file : File = new File(System.getProperty("java.io.tmpdir"), "rsf-16b-" + name)
+
+    public fun path() -> string {
+        rtn file.getAbsolutePath()
+    }
+
+    public fun label() -> string {
+        rtn file.getName()
+    }
+
+    // 删除是**尽力而为**：删不掉不报错（临时目录本来就由系统回收）
+    public fun cleanup() -> void {
+        if (file.delete()) {
+            println("  （临时文件已删除: " + label() + "）")
+        } else {
+            println("  （临时文件没能删掉，留给系统回收: " + label() + "）")
+        }
+    }
+}
+
+// ---------------------------------------------------------------- 包一层 !T
+
+// 四个文件函数自己是 !T，这里再包一层是为了演示「!T 函数自己内部也要处理错误」。
+// 有返回值的用 `!!` 往上抛；返回 void 的没有值可取，所以用 try + fail 原样往上抛
+// （`!void` 上不能写 `!!`——没有值可以取）。
+
+fun saveText(path : string, text : string) -> !void {
+    try {
+        writeText(path, text)
+    } catch (e : string) {
+        fail e
+    }
+}
+
+fun loadText(path : string) -> !string {
+    rtn readText(path)!!
+}
+
+fun saveBytes(path : string, data : byte[]) -> !void {
+    try {
+        writeBytes(path, data)
+    } catch (e : string) {
+        fail e
+    }
+}
+
+fun loadBytes(path : string) -> !byte[] {
+    rtn readBytes(path)!!
+}
+
+// ---------------------------------------------------------------- 小工具
+
+// byte -> 两位十六进制（byte 是**有符号**的，负的要先加回 256）
+fun hexDigit(n : int) -> string {
+    if (n < 10) { rtn intToString(n) }
+    rtn "abcdef".substring(n - 10, n - 9)
+}
+
+fun byteHex(b : byte) -> string {
+    var n : int = b                 // byte 隐式加宽成 int
+    if (n < 0) { n = n + 256 }
+    rtn hexDigit(n / 16) + hexDigit(n % 16)
+}
+
+fun bytesToHex(data : byte[]) -> string {
+    var out = ""
+    for (i in 0..data.length - 1) {
+        out = out + byteHex(data[i])
+    }
+    rtn out
+}
+
+// ---------------------------------------------------------------- 入口
+
+fun main() -> void {
+    var text = new TempFile("demo.txt")
+    var bin = new TempFile("demo.bin")
+    var missing = new TempFile("no-such-file.txt")
+
+    // ---- (a) 写文本 + 读回来，整段用 try 接住 ----
+    println("== 文本：writeText / readText ==")
+    try {
+        var content = "hello, rainStarfox!\n第二行（UTF-8）\n"
+        saveText(text.path(), content)
+        println("写进 " + text.label() + " 的字符数 = " + content.length())
+
+        var back = loadText(text.path())
+        println("读回来的字符数 = " + back.length())
+        println("第一行 = " + back.substring(0, 19))
+        println("和写进去的一模一样 = " + (back == content))
+    } catch (e : string) {
+        println("文本读写失败: " + e)
+    }
+    text.cleanup()
+
+    // ---- 写二进制 + 读回来 ----
+    println()
+    println("== 二进制：writeBytes / readBytes ==")
+    try {
+        var raw : byte[] = new byte[6]
+        raw[0] = toByte(82)      // 'R'
+        raw[1] = toByte(115)     // 's'
+        raw[2] = toByte(102)     // 'f'
+        raw[3] = toByte(0)
+        raw[4] = toByte(200)     // 有符号 byte 的负数：读回来是 -56
+        raw[5] = toByte(255)     // 截断成 -1
+        println("要写的字节 = " + bytesToHex(raw))
+
+        saveBytes(bin.path(), raw)
+        var back : byte[] = loadBytes(bin.path())
+        println("读回来的字节数 = " + back.length)
+        println("读回来的字节 = " + bytesToHex(back))
+        println("第 5 个字节（有符号）= " + back[4])
+    } catch (e : string) {
+        println("二进制读写失败: " + e)
+    }
+    bin.cleanup()
+
+    // ---- (b) 读一个不存在的文件：?: 给兜底值 ----
+    println()
+    println("== 失败处理之一：?: 兜底 ==")
+    var fallback = loadText(missing.path()) ?: "(读不到，用了兜底值)"
+    println("loadText(不存在的文件) ?: -> " + fallback)
+
+    // ---- (c) 同一次失败，用 try 接住 ----
+    println()
+    println("== 失败处理之二：try / catch ==")
+    try {
+        var never = loadText(missing.path())
+        println("不该走到这里: " + never)
+    } catch (e : string) {
+        // 消息形如： readText: 文件操作失败 '<绝对路径>'：<绝对路径>
+        // 绝对路径每次跑都不一样（里面有临时目录），所以这里只打印固定那两段，
+        // 免得示例的输出随机器变。
+        println("catch 接住了：消息以 '" + e.substring(0, 8) + "' 开头，长度 " + e.length())
+        println("消息里有 '文件操作失败' 吗 = " + e.contains("文件操作失败"))
+    }
+
+    // ---- 写到一个不可能成功的路径：让 writeText 自己失败 ----
+    println()
+    println("== 失败处理之三：写失败也能接住 ==")
+    try {
+        var dir : string = System.getProperty("java.io.tmpdir")
+        saveText(dir + "/rsf-16b-不存在的目录/x.txt", "x")
+        println("不该走到这里")
+    } catch (e : string) {
+        println("catch 接住了写失败：消息以 '" + e.substring(0, 9) + "' 开头，长度 " + e.length())
+    }
+
+    rtn
+}

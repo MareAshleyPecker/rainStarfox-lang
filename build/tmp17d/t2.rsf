@@ -1,0 +1,42 @@
+fun bigger(a : int, b : int) -> int {
+    if (a > b) {
+        rtn a
+    } else {
+        rtn b
+    }
+}
+
+fun main() -> void {
+    var i : int = 0
+    while (i < 3) {
+        println("i = " + i)
+        i = i + 1
+    }
+    var total = 0
+    for (var j = 0; j < 4; j = j + 1) {
+        if (j == 2) {
+            continue
+        }
+        total = total + j
+    }
+    println("total = " + total)
+    println("bigger = " + bigger(3, 7))
+    for (n in 0..2) {
+        println("n = " + n)
+    }
+    for (n in 0..3) {
+        println("n = " + n)
+    }
+    for (k in 0..10 step 3) {
+        println("k = " + k)
+    }
+    var flag : bool = total > 3 && !(i == 0)
+    if (flag) {
+        println("flag ok")
+    } else {
+        println("flag no")
+    }
+    var label = if i > 1 ? "yes" : "no"
+    println("ternary " + label)
+    rtn
+}

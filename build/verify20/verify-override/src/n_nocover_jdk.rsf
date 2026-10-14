@@ -1,0 +1,10 @@
+import java.lang.Runnable
+
+class Robot : Runnable {
+    public fun run() -> void {
+        rtn
+    }
+    override public fun walk() -> void {
+        rtn
+    }
+}

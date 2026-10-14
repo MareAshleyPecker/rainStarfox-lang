@@ -1,0 +1,13 @@
+import java.lang.Runnable
+
+class Robot : Runnable {
+    override public fun run() -> void {
+        println("running")
+    }
+}
+
+fun main() -> void {
+    var r : Runnable = new Robot()
+    r.run()
+    rtn
+}

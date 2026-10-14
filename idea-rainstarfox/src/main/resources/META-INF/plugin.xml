@@ -1,0 +1,71 @@
+<idea-plugin>
+    <id>org.rainstarfox.idea</id>
+    <name>rainStarfox</name>
+    <vendor>rainStarfox</vendor>
+
+    <!-- 描述、版本、兼容区间由 build.gradle.kts 的 pluginConfiguration 注入，
+         不写在这里：校验器对描述有硬性规则（必须拉丁字母开头、至少 40 字符），
+         放在构建脚本里一份来源，避免两边不一致。 -->
+
+    <depends>com.intellij.modules.platform</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <!-- 文件类型与语言 -->
+        <fileType name="rainStarfox File"
+                  implementationClass="org.rainstarfox.idea.RsfFileType"
+                  fieldName="INSTANCE"
+                  language="rainStarfox"
+                  extensions="rsf"/>
+
+        <!-- 词法 / 语法（扁平树） -->
+        <lang.parserDefinition language="rainStarfox"
+                               implementationClass="org.rainstarfox.idea.RsfParserDefinition"/>
+
+        <!-- 高亮 -->
+        <lang.syntaxHighlighterFactory language="rainStarfox"
+                                       implementationClass="org.rainstarfox.idea.RsfSyntaxHighlighterFactory"/>
+        <colorSettingsPage implementation="org.rainstarfox.idea.RsfColorSettingsPage"/>
+
+        <!-- 编辑体验 -->
+        <lang.commenter language="rainStarfox"
+                        implementationClass="org.rainstarfox.idea.RsfCommenter"/>
+        <lang.braceMatcher language="rainStarfox"
+                           implementationClass="org.rainstarfox.idea.RsfBraceMatcher"/>
+
+        <!-- 报错波浪线：外部注解器，在后台线程跑编译器 -->
+        <externalAnnotator language="rainStarfox"
+                           implementationClass="org.rainstarfox.idea.RsfExternalAnnotator"/>
+
+        <!-- 补全 -->
+        <completion.contributor language="rainStarfox"
+                                implementationClass="org.rainstarfox.idea.RsfCompletionContributor"/>
+
+        <!-- 设置 -->
+        <applicationService serviceImplementation="org.rainstarfox.idea.RsfSettings"/>
+        <applicationConfigurable parentId="tools"
+                                 id="org.rainstarfox.idea.settings"
+                                 displayName="rainStarfox"
+                                 instance="org.rainstarfox.idea.RsfConfigurable"/>
+
+        <notificationGroup id="rainStarfox" displayType="BALLOON"/>
+    </extensions>
+
+    <actions>
+        <action id="Rsf.RunFile"
+                class="org.rainstarfox.idea.RsfRunAction"
+                text="运行 rainStarfox 文件"
+                description="用解释器执行当前 .rsf 文件（rsf run）">
+            <add-to-group group-id="RunMenu" anchor="first"/>
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+            <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
+        </action>
+        <action id="Rsf.BuildFile"
+                class="org.rainstarfox.idea.RsfBuildAction"
+                text="编译 rainStarfox 文件"
+                description="把当前 .rsf 文件编译成 .class（rsf build）">
+            <add-to-group group-id="BuildMenu" anchor="first"/>
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+            <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
+        </action>
+    </actions>
+</idea-plugin>

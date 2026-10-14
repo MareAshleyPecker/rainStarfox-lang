@@ -1,0 +1,120 @@
+// rainStarfox 阶段 17d：rsf 版字节码后端的**命令行入口**
+//
+// 后端本体是旁边的 `Backend.rsf`（纯库，没有 main）；这里只负责「挑一个输入文件、
+// 读进来、交给 rsf 版后端编成一个 .class」。
+//
+//     rsf build rsfSrc/bootstrap/BackendCli.rsf -o build/tmp17d/out
+//     java -Drsf.backend.file=a.rsf -Drsf.backend.out=build/tmp17d/out \
+//          -cp "build/tmp17d/out;build/libs/rainStarfox-0.9.0.jar" BackendCli
+//
+// **运行期 classpath 必须挂上 rainStarfox 的胖包**：生成的字节码本身只依赖 JDK，
+// 但「生成」这个动作要跑 ASM，而 ASM 在编译器 fat jar 里。
+//
+// 为什么用系统属性而不是命令行参数：rsf 的 `fun main() -> void` 接不到 args
+// （JVM 的 main(String[]) 没有地方接），这是当前语言的一个缺口，见 BOOTSTRAP.md。
+
+import "Backend.rsf"
+
+// 17e：多文件装载。`import "x.rsf"` 指向的源码会被包含式地并进同一棵树再编译
+// （对齐 Kotlin 版 `rsf build` 走 SourceLoader 的口径）。
+import "Sources.rsf"
+
+import java.io.File
+import java.lang.System
+
+fun propOr(key : string, dflt : string) -> string {
+    var given : ?string = System.getProperty(key)
+    rtn given ?: dflt
+}
+
+fun stripExt(name : string) -> string {
+    if (name.length() > 4 && name.substring(name.length() - 4, name.length()) == ".rsf") {
+        rtn name.substring(0, name.length() - 4)
+    }
+    rtn name
+}
+
+// 文件基名（去掉目录与 .rsf），与 Kotlin 版 Rsf.deriveClassName 同一口径
+fun baseNameOf(path : string) -> string {
+    var i = path.length() - 1
+    while (i >= 0) {
+        var c = path.charAt(i)
+        if (c == '/' || c == '\\') {
+            rtn stripExt(path.substring(i + 1, path.length()))
+        }
+        i = i - 1
+    }
+    rtn stripExt(path)
+}
+
+fun main() -> void {
+    var file = propOr("rsf.backend.file", "")
+    if (file.length() == 0) {
+        System.err.println("[rsf-17d] 用法: java -Drsf.backend.file=<源.rsf> [-Drsf.backend.out=<目录>] [-Drsf.backend.name=<类名>] -cp \"out;build/libs/rainStarfox-0.9.0.jar\" BackendCli")
+        System.exit(2)
+        rtn
+    }
+    var outDir = propOr("rsf.backend.out", "out")
+    var base = baseNameOf(file)
+    var name = propOr("rsf.backend.name", "")
+    if (name.length() == 0) { name = base }
+
+    // 17e：装载交给 Sources.rsf（读入口 + 递归 import + 并成一棵树）。
+    // 出口口径**保持原样**：loader 的失败消息本身就带前缀
+    //   "读不到文件：…" / "解析失败：…"（17e 之前这两条分别由下面的读、解析两步报出），
+    // 所以这里统一加 "[rsf-17d] " 前缀 + exit 1，读/解析失败时与从前逐字相同。
+    var ast : Node = new Node(NodeKind.ERROR)
+    var loaded = false
+    var message = ""
+    try {
+        ast = loadProgram(file)!!
+        loaded = true
+    } catch (loadError : string) {
+        message = loadError
+        loaded = false
+    }
+    if (!loaded) {
+        System.err.println("[rsf-17d] " + message)
+        System.exit(1)
+        rtn
+    }
+
+    var g = new Gen(name)
+    compileProgram(g, ast, base + ".rsf")
+    if (g.failed) {
+        // 不支持的构造一律在这里报错退出，**一个 .class 都不写**
+        System.err.println("[rsf-17d] " + g.message)
+        System.exit(1)
+        rtn
+    }
+
+    var dir = new File(outDir)
+    dir.mkdirs()
+    // 写了 `pkg a.b` 时内部名里带包路径（`a/b/Main`），落盘要先把这个子目录建出来 ——
+    // Kotlin 侧 `BytecodeCompiler.writeClass` 也是先 `out.parentFile?.mkdirs()`。
+    if (g.pkgPrefix != "") {
+        var pdir = new File(outDir + "/" + g.pkgPrefix)
+        pdir.mkdirs()
+    }
+
+    var n = backendCount(g)
+    var i = 0
+    while (i < n) {
+        var target = outDir + "/" + backendNameAt(g, i) + ".class"
+        var bytes = backendBytesAt(g, i)
+        var writeOk = false
+        try {
+            writeBytes(target, bytes)
+            writeOk = true
+        } catch (writeError : string) {
+            writeOk = false
+        }
+        if (!writeOk) {
+            System.err.println("[rsf-17d] 写不出 " + target)
+            System.exit(1)
+            rtn
+        }
+        println("[rsf-17d] 已生成 " + target)
+        i = i + 1
+    }
+}

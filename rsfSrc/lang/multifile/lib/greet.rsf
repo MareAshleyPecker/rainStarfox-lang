@@ -1,0 +1,4 @@
+// 被 import "lib/greet.rsf" 引入
+public fun greet(who : string) -> string {
+    rtn "hello, " + who
+}

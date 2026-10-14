@@ -1,0 +1,16 @@
+import java.lang.Runnable
+import java.lang.Thread
+
+class Job : Runnable {
+    public fun run() -> void {
+        println("running")
+    }
+}
+
+fun main() -> void {
+    var j = new Job()
+    var t = new Thread(j)
+    t.start()
+    t.join()
+    rtn
+}

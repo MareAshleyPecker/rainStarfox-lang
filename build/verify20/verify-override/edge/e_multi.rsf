@@ -1,0 +1,21 @@
+public interface A {
+    fun say() -> string
+}
+
+public interface B {
+    fun say() -> string
+}
+
+class C : A, B {
+    override public fun say() -> string {
+        rtn "c"
+    }
+}
+
+fun main() -> void {
+    var a : A = new C()
+    var b : B = new C()
+    println(a.say())
+    println(b.say())
+    rtn
+}

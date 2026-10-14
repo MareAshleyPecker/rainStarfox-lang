@@ -1,0 +1,7 @@
+import "lib.rsf"
+
+public fun main() {
+    var p = Point(3, 4)
+    println("sum=" + intToString(p.sum()))
+    println("twice=" + intToString(twice(21)))
+}

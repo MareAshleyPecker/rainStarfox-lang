@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>
+  body { margin: 0; font-family: sans-serif; }
+  .row { display: flex; align-items: center; gap: 18px; padding: 10px 14px; }
+  .dark { background: #2b2d30; color: #ddd; }
+  .light { background: #f7f8fa; color: #333; }
+  .cell { text-align: center; font-size: 11px; }
+  .big { width: 320px; height: 320px; image-rendering: auto; }
+  .small { width: 128px; height: 128px; image-rendering: pixelated; }
+</style></head>
+<body>
+  <div class="row light">
+    <div class="cell">16px ×8<br><img class="small" src="../../src/main/resources/icons/rsf.svg"></div>
+    <div class="cell">40px ×8<br><img class="big" src="../../src/main/resources/META-INF/pluginIcon.svg"></div>
+  </div>
+  <div class="row dark">
+    <div class="cell">暗色<br><img class="small" src="../../src/main/resources/icons/rsf.svg"></div>
+    <div class="cell">暗色<br><img class="big" src="../../src/main/resources/META-INF/pluginIcon.svg"></div>
+  </div>
+</body></html>

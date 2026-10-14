@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+  <!-- rainStarfox 文件图标：四分之三圆围着一颗星。
+       缺口在右上（12 点到 3 点之间那 90°）。环半径 6、笔画 1.6，星最大半径 3.4，
+       中间留出 1.8 的余量——16px 下星和环才不会糊在一起。 -->
+  <path d="M8 2 A6 6 0 1 0 14 8"
+        fill="none" stroke="#2C7BE5" stroke-width="1.6" stroke-linecap="round"/>
+  <path d="M8 4.6 L8.852 6.827 L11.234 6.949 L9.379 8.448 L9.998 10.751 L8 9.45 L6.002 10.751 L6.621 8.448 L4.766 6.949 L7.148 6.827 Z"
+        fill="#FFC61A" stroke="#D89B00" stroke-width="0.5" stroke-linejoin="round"/>
+</svg>

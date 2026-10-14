@@ -1,0 +1,31 @@
+fun risky(n : int) -> !int {
+    if (n < 0) {
+        fail "负数不行: " + intToString(n)
+    }
+    rtn n * 2
+}
+
+fun main() -> void {
+    var a = risky(5) ?: -1
+    println("a = " + intToString(a))
+    var b = risky(-3) ?: -1
+    println("b = " + intToString(b))
+    try {
+        var c = risky(-7)!!
+        println("c = " + intToString(c))
+    } catch (msg : string) {
+        println("caught: " + msg)
+    }
+    var d = parseInt("123") ?: 0
+    println("d = " + intToString(d))
+    var e = parseInt("abc") ?: -5
+    println("e = " + intToString(e))
+    try {
+        var f = parseInt("zz")!!
+        println("f = " + intToString(f))
+    } catch (m2 : string) {
+        println("caught2: " + m2)
+    }
+    println("done")
+    rtn
+}

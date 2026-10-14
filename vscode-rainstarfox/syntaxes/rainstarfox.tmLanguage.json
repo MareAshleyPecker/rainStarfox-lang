@@ -1,0 +1,452 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "rainStarfox",
+  "scopeName": "source.rsf",
+  "fileTypes": ["rsf"],
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#function-declaration" },
+    { "include": "#class-declaration" },
+    { "include": "#interface-declaration" },
+    { "include": "#variable-declaration" },
+    { "include": "#catch-clause" },
+    { "include": "#for-in-header" },
+    { "include": "#goto" },
+    { "include": "#labels" },
+    { "include": "#numbers" },
+    { "include": "#keywords" },
+    { "include": "#types" },
+    { "include": "#generics" },
+    { "include": "#array-types" },
+    { "include": "#constants" },
+    { "include": "#builtins" },
+    { "include": "#calls" },
+    { "include": "#operators" },
+    { "include": "#punctuation" }
+  ],
+  "repository": {
+
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.rsf",
+          "begin": "//",
+          "end": "$"
+        },
+        {
+          "name": "comment.block.rsf",
+          "begin": "/\\*",
+          "end": "\\*/"
+        }
+      ]
+    },
+
+    "strings": {
+      "patterns": [
+        {
+          "comment": "字符字面量 'a' / '\\n' / '\\u0041'（阶段 16）。必须排在双引号规则旁边。end 里的 `|$` 是关键：编译器那边的字符字面量**不跨行**（撞上换行就报「没有闭合」），编辑器里也得跟着停在本行——不然漏一个引号会把后面半屏都吃掉",
+          "name": "string.quoted.single.rsf",
+          "begin": "'",
+          "end": "'|$",
+          "patterns": [
+            {
+              "name": "constant.character.escape.rsf",
+              "match": "\\\\(?:u[0-9A-Fa-f]{4}|.)"
+            }
+          ]
+        },
+        {
+          "comment": "字符串字面量。允许跨行（Go 风格的 import 路径可以断成多行），所以 end 里不加 $",
+          "name": "string.quoted.double.rsf",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            {
+              "name": "constant.character.escape.rsf",
+              "match": "\\\\."
+            }
+          ]
+        }
+      ]
+    },
+
+    "function-declaration": {
+      "patterns": [
+        {
+          "comment": "<ControlType> <static>：只出现在 fun 前面。什么都不写就是 public（阶段 19）。阶段 20 追加可选的 override，顺序不限（`override public fun` / `public override fun` 都收）",
+          "match": "\\b(public|protected|private|static|override)\\b(?=\\s+(?:(?:public|protected|private|static|override)\\s+)*fun\\b)",
+          "name": "storage.modifier.rsf"
+        },
+        {
+          "comment": "fun [MainType] 名字 (参数表)。用 begin/end 包住到参数表右括号为止，好让 #parameters 在参数表里生效（阶段 18 的 MainType 槽位仍然只接受类型关键字）",
+          "begin": "\\b(fun)\\b\\s*(?:(void|int|long|float|double|string|str|bool|boolean|byte|char)\\s+)?([A-Za-z_][A-Za-z0-9_]*)",
+          "beginCaptures": {
+            "1": { "name": "storage.type.function.rsf" },
+            "2": { "name": "storage.type.rsf" },
+            "3": { "name": "entity.name.function.rsf" }
+          },
+          "end": "(\\))|$",
+          "endCaptures": {
+            "1": { "name": "punctuation.rsf" }
+          },
+          "patterns": [
+            { "match": "\\(", "name": "punctuation.rsf" },
+            { "include": "#parameters" }
+          ]
+        },
+        {
+          "comment": "次构造 constructor(参数)（阶段 18）：参数表和函数一样两种风格都收",
+          "begin": "\\b(constructor)\\b\\s*(?=\\()",
+          "beginCaptures": {
+            "1": { "name": "storage.type.function.rsf" }
+          },
+          "end": "(\\))|$",
+          "endCaptures": {
+            "1": { "name": "punctuation.rsf" }
+          },
+          "patterns": [
+            { "match": "\\(", "name": "punctuation.rsf" },
+            { "include": "#parameters" }
+          ]
+        }
+      ]
+    },
+
+    "parameters": {
+      "comment": "参数（阶段 19 起两种风格都收，同一个表里可以混写）：Kotlin 风格 `名字 : 类型`、Java 风格 `类型 名字`。只在上面的 fun / constructor 头部，以及下面 class 头部的区间里生效，所以不会误伤行首标签 `名字:` 和表达式里的冒号",
+      "patterns": [
+        {
+          "comment": "Kotlin 风格：名字 : 类型（类型写在名字后面）",
+          "match": "([A-Za-z_][A-Za-z0-9_]*)\\s*(:)\\s*([?]?[A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "variable.parameter.rsf" },
+            "2": { "name": "punctuation.separator.type.rsf" },
+            "3": { "name": "storage.type.rsf" }
+          }
+        },
+        {
+          "comment": "Java 风格：类型 名字（类型在前）。类型是用户自定义类名时也在这里上色",
+          "match": "([?]?[A-Za-z_][A-Za-z0-9_]*)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "storage.type.rsf" },
+            "2": { "name": "variable.parameter.rsf" }
+          }
+        },
+        {
+          "comment": "光秃秃一个名字（fun f(x) 这种漏了类型的写法，编译器会报「两种写法都可以」）：照样当参数上色",
+          "match": "[A-Za-z_][A-Za-z0-9_]*",
+          "name": "variable.parameter.rsf"
+        }
+      ]
+    },
+
+    "class-declaration": {
+      "patterns": [
+        {
+          "comment": "类声明：class 名字 [&<类型参数>] [(主构造参数)]（阶段 12 / 18）。类名按类型上色；主构造的括号里复用 #parameters",
+          "begin": "\\b(class)\\b\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "beginCaptures": {
+            "1": { "name": "storage.type.class.rsf" },
+            "2": { "name": "entity.name.type.class.rsf" }
+          },
+          "end": "(\\{)|$",
+          "endCaptures": {
+            "1": { "name": "punctuation.section.block.rsf" }
+          },
+          "patterns": [
+            { "include": "#generics" },
+            { "match": "[()]", "name": "punctuation.rsf" },
+            { "include": "#parameters" }
+          ]
+        }
+      ]
+    },
+
+    "interface-declaration": {
+      "patterns": [
+        {
+          "comment": "接口声明（阶段 20）：interface 名字 [&<类型参数>] [: 父接口, ...]。和类不一样：接口**没有主构造括号**，父接口列表和类的 ': 子句' 语法相同。接口名按类型上色",
+          "begin": "\\b(interface)\\b\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "beginCaptures": {
+            "1": { "name": "storage.type.class.rsf" },
+            "2": { "name": "entity.name.type.class.rsf" }
+          },
+          "end": "(\\{)|$",
+          "endCaptures": {
+            "1": { "name": "punctuation.section.block.rsf" }
+          },
+          "patterns": [
+            { "include": "#generics" }
+          ]
+        }
+      ]
+    },
+
+    "variable-declaration": {
+      "patterns": [
+        {
+          "comment": "变量 / 字段声明（阶段 19 起**只认**后缀式）：`var 名字 : 类型 = 初值`。名字是变量；`:` 后面的类型按类型上色——用户自定义类名（Point / Box …）在这里也认出来，内置类型关键字就算被 #types 再匹配一次也不算错。老写法 `varis int x = 0` 已经不接受，所以没有对应规则",
+          "match": "\\b(var|imutvar)\\b\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*(:)\\s*([?]?[A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "storage.modifier.rsf" },
+            "2": { "name": "variable.other.rsf" },
+            "3": { "name": "punctuation.separator.type.rsf" },
+            "4": { "name": "storage.type.rsf" }
+          }
+        },
+        {
+          "comment": "没有类型标注的声明：`var x = 1`（类型从初值推断）。排在带标注的那条后面",
+          "match": "\\b(var|imutvar)\\b\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "storage.modifier.rsf" },
+            "2": { "name": "variable.other.rsf" }
+          }
+        }
+      ]
+    },
+
+    "catch-clause": {
+      "patterns": [
+        {
+          "comment": "catch 的错误变量（阶段 14；阶段 19b 起类型标注改成 Kotlin 风格 `catch (e : string)`）。老写法 `catch (e string)` 仍然接受，所以分隔符那一段写成 `: 或空格` 二选一",
+          "match": "\\b(catch)\\b(\\s*\\()\\s*([A-Za-z_][A-Za-z0-9_]*)(\\s*)(:?)(\\s*)(string)\\b",
+          "captures": {
+            "1": { "name": "keyword.control.error.rsf" },
+            "2": { "name": "punctuation.rsf" },
+            "3": { "name": "variable.other.rsf" },
+            "5": { "name": "punctuation.separator.type.rsf" },
+            "7": { "name": "storage.type.rsf" }
+          }
+        }
+      ]
+    },
+
+    "for-in-header": {
+      "comment": "只有形如 for (i in a..b) 的头部才把 in / step 当关键字，step 仍可作普通标识符",
+      "begin": "\\b(for)\\b\\s*(\\()(?=[^)]*\\.\\.)",
+      "beginCaptures": {
+        "1": { "name": "keyword.control.rsf" },
+        "2": { "name": "punctuation.rsf" }
+      },
+      "end": "(\\))",
+      "endCaptures": {
+        "1": { "name": "punctuation.rsf" }
+      },
+      "patterns": [
+        { "include": "#comments" },
+        { "match": "\\b(in|step)\\b", "name": "keyword.control.rsf" },
+        { "match": "\\.\\.", "name": "keyword.operator.range.rsf" },
+        { "include": "#numbers" },
+        { "include": "#operators" },
+        { "include": "#punctuation" }
+      ]
+    },
+
+    "goto": {
+      "patterns": [
+        {
+          "match": "\\b(goto)\\b\\s*([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.control.flow.rsf" },
+            "2": { "name": "entity.name.label.rsf" }
+          }
+        }
+      ]
+    },
+
+    "labels": {
+      "patterns": [
+        {
+          "comment": "行首的 名字: —— 排除**所有**关键字与类型关键字（写成 int: 这种也不该当标签），且不能吃掉 ::",
+          "match": "^\\s*(?!(?:if|else|while|for|return|rtn|break|continue|goto|var|imutvar|fun|public|protected|private|static|override|in|step|class|interface|new|this|constructor|import|module|pkg|try|catch|fail|let|true|false|null|void|int|long|float|double|string|str|bool|boolean|byte|char)\\b)([A-Za-z_][A-Za-z0-9_]*)(:)(?!:)",
+          "captures": {
+            "1": { "name": "entity.name.label.rsf" },
+            "2": { "name": "punctuation.rsf" }
+          }
+        }
+      ]
+    },
+
+    "numbers": {
+      "patterns": [
+        {
+          "comment": "带 f/d 后缀的浮点",
+          "name": "constant.numeric.float.rsf",
+          "match": "\\b\\d[\\d_]*(?:\\.\\d[\\d_]*)?(?:[eE][+-]?\\d+)?[fFdD]\\b"
+        },
+        {
+          "comment": "带小数点的浮点",
+          "name": "constant.numeric.float.rsf",
+          "match": "\\b\\d[\\d_]*\\.\\d[\\d_]*(?:[eE][+-]?\\d+)?\\b"
+        },
+        {
+          "comment": "整数，L 后缀表示 long",
+          "name": "constant.numeric.integer.rsf",
+          "match": "\\b\\d[\\d_]*[lL]?\\b"
+        }
+      ]
+    },
+
+    "keywords": {
+      "comment": "关键字表。**必须和编译器的 Lexer.kt 的 KEYWORDS 逐条对齐**（多一个少一个都会让高亮串味）：同一个列表在另外两处也各有一份——IDEA 插件的 RsfKeywords、编译器补全表 EditorSupport.KEYWORDS",
+      "patterns": [
+        {
+          "comment": "import / module / pkg（阶段 6a；pkg 一直漏在高亮表外）",
+          "name": "keyword.control.import.rsf",
+          "match": "\\b(import|module|pkg)\\b"
+        },
+        {
+          "name": "keyword.control.rsf",
+          "match": "\\b(if|else|while|for|break|continue|in)\\b"
+        },
+        {
+          "comment": "阶段 14 的错误处理关键字（和编译器的 EditorSupport.KEYWORDS、idea 插件的 RsfKeywords.CONTROL 三处同步）",
+          "name": "keyword.control.error.rsf",
+          "match": "\\b(fail|try|catch)\\b"
+        },
+        {
+          "comment": "阶段 12：类、构造、this。这三只一直漏在高亮表外（class 只在上面的 #class-declaration 里出现过）",
+          "name": "storage.type.class.rsf",
+          "match": "\\b(class)\\b"
+        },
+        {
+          "name": "keyword.other.rsf",
+          "match": "\\b(new|this)\\b"
+        },
+        {
+          "comment": "阶段 20：接口声明关键字（接口名本身由上面的 #interface-declaration 上色）",
+          "name": "storage.type.class.rsf",
+          "match": "\\b(interface)\\b"
+        },
+        {
+          "name": "keyword.control.flow.rsf",
+          "match": "\\b(rtn|return|goto)\\b"
+        },
+        {
+          "comment": "阶段 20：`override` 和 ControlType/static 同族，只写在 fun 前面（真正的 fun 前修饰词由上面的 #function-declaration 收）",
+          "name": "storage.modifier.rsf",
+          "match": "\\b(var|imutvar|public|protected|private|static|override)\\b"
+        },
+        {
+          "comment": "let 在词法器里仍然是保留字（写了会得到「let 已经换成 var 与 imutvar」的提示），所以不能当普通标识符；标成废弃关键字，免得看起来像能用",
+          "name": "invalid.deprecated.rsf",
+          "match": "\\b(let)\\b"
+        }
+      ]
+    },
+
+    "types": {
+      "patterns": [
+        {
+          "comment": "类型关键字（str / boolean 是 string / bool 的别名），与 Lexer.kt 的 KEYWORDS 对齐",
+          "name": "storage.type.rsf",
+          "match": "\\b(void|int|long|float|double|string|str|bool|boolean|byte|char)\\b"
+        }
+      ]
+    },
+
+    "generics": {
+      "comment": "泛型 `&<...>`（阶段 15）。`&` 让它一眼跟比较运算的 `<` 分开，两边都紧挨着写，所以 `&<` 不会出现在别的地方",
+      "begin": "&<",
+      "beginCaptures": {
+        "0": { "name": "punctuation.generics.rsf" }
+      },
+      "end": ">",
+      "endCaptures": {
+        "0": { "name": "punctuation.generics.rsf" }
+      },
+      "patterns": [
+        { "include": "#generics" },
+        { "match": "[A-Za-z_][A-Za-z0-9_]*", "name": "storage.type.rsf" },
+        { "match": ",", "name": "punctuation.rsf" }
+      ]
+    },
+
+    "array-types": {
+      "patterns": [
+        {
+          "comment": "数组类型后缀 `[]`（阶段 13）：int[] / string[] / Point[] / Box&<int>[]。必须排在 punctuation 之前，否则会被当成普通标点；不用 (?=\\s*[A-Za-z_]) 之类的上下文判断，因为 `a[0]` 里的方括号不空、这里要求紧挨着的一对空括号，两者天然不冲突",
+          "name": "storage.type.array.rsf",
+          "match": "\\[\\]"
+        }
+      ]
+    },
+
+    "constants": {
+      "patterns": [
+        {
+          "name": "constant.language.rsf",
+          "match": "\\b(true|false|null)\\b"
+        }
+      ]
+    },
+
+    "builtins": {
+      "patterns": [
+        {
+          "comment": "内置函数（阶段 16 起包含 byte/char 与 parseInt 那一批），加了 (?=\\s*\\() 是为了不误伤同名变量",
+          "name": "support.function.builtin.rsf",
+          "match": "\\b(print|println|toByte|toChar|charToInt|intToString|parseInt|isDigit|isLetter|isWhitespace|toUpper|toLower)\\b(?=\\s*\\()"
+        }
+      ]
+    },
+
+    "calls": {
+      "patterns": [
+        {
+          "comment": "标识符后面跟 ( —— 关键字已经被前面的规则吃掉了",
+          "name": "entity.name.function.call.rsf",
+          "match": "\\b[A-Za-z_][A-Za-z0-9_]*(?=\\s*\\()"
+        }
+      ]
+    },
+
+    "operators": {
+      "patterns": [
+        {
+          "comment": "?: 必须排在单个 ? 前面，否则会被吃成一个问号",
+          "name": "keyword.operator.elvis.rsf",
+          "match": "\\?:"
+        },
+        {
+          "comment": "返回子句只有两种写法：-> 和 ::（老写法 `: T` 已经在阶段 19 删掉，这里**故意**没有单独一条把 : 当返回子句的规则）",
+          "name": "keyword.operator.return.rsf",
+          "match": "->|::"
+        },
+        {
+          "name": "keyword.operator.comparison.rsf",
+          "match": "==|!=|<=|>=|<|>"
+        },
+        {
+          "name": "keyword.operator.arithmetic.rsf",
+          "match": "\\+|-|\\*|/|%"
+        },
+        {
+          "comment": "!! 是强制解包后缀；单独的 ! 是逻辑非",
+          "name": "keyword.operator.force.rsf",
+          "match": "!!"
+        },
+        {
+          "name": "keyword.operator.rsf",
+          "match": "!|\\?|="
+        }
+      ]
+    },
+
+    "punctuation": {
+      "patterns": [
+        {
+          "comment": "单独的 . 是成员访问；.. 已经被 operators 的区间规则先吃掉了",
+          "name": "punctuation.accessor.rsf",
+          "match": "\\."
+        },
+        {
+          "comment": "单独的 `:` 只有三种用途了（类型标注的冒号由 #variable-declaration / #parameters / #catch-clause 自己吃掉）：if 的冒号形式、三目、行首标签。它**不是**返回子句",
+          "name": "punctuation.rsf",
+          "match": "[(){}\\[\\],;:]"
+        }
+      ]
+    }
+  }
+}

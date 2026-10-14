@@ -1,0 +1,2277 @@
+// rainStarfox 阶段 17c：**用 rsf 自己写的解释器**（自举的第三步）
+//
+// 基准是 Kotlin 版 `src/main/kotlin/org/example/complie/interp/Interpreter.kt`：同一份 `.rsf`
+// 输入，这里跑出来的 **stdout 必须与 `rsf run` 逐字节相同**（对拍见 BOOTSTRAP.md 的 17c 段）。
+//
+// 这个文件是**纯库**（没有 main）：`import "Interp.rsf"` 就能用 `runSource(source)`。
+// 要跑起来看输出用旁边的 `InterpCli.rsf`：
+//
+//     rsf build rsfSrc/bootstrap/InterpCli.rsf -o out
+//     java -Drsf.interp.file=rsfSrc/lang/main.rsf -cp out InterpCli
+//
+// 查：rsf check rsfSrc/bootstrap/InterpCli.rsf
+//
+// ================================================================ 内部流程
+//
+//     rsf 版 lex（Lexer.rsf）→ rsf 版 parse（Parser.rsf）→ 在这棵**胖节点树**上遍历执行
+//
+// 所以它是**树遍历解释器**，而 Kotlin 版跑的是降级后的扁平 IR。两条实现路径不同，
+// 但**观察到的语义必须一致**——这就是本阶段的对拍口径。
+//
+// ================================================================ 值怎么表示：标签联合
+//
+// rsf 没有继承/接口，写不出 `sealed class Value`，所以值是一个**标签联合**：
+// `Val` 上挂一个 `kind : Kind` 枚举 + 每种载荷一个字段（`iv : int`、`dv : double`、
+// `sv : string`、`ov : ?Obj`…）。对象/数组单独用 `Obj` / `Arr` 两个类，
+// `Val` 里存它们的**引用**——于是 `var b = a` 天然是共享引用（和 JVM 一致）。
+//
+// **静态类型怎么补上**：Kotlin 版有一整套 Checker 算出来的静态类型，很多语义（int 除法
+// 还是 double 除法、`render` 按哪个类型打、`byte` 怎么截断）都靠它。树遍历器没有那张表，
+// 用的是**运行期标签**：只要在每个类型边界（变量声明、参数、返回、字段、数组元素）
+// 按标注把值收敛一次，运行期标签就恒等于静态类型，两种做法给出的结果就一样。
+// 这正是 `coerceTo` 存在的理由，不是可选的优化。
+//
+// ================================================================ 控制流怎么表示：fail + 信号
+//
+// rsf 只有 `fail` / `!T`（没有异常），而解释器需要四种「跳出」：return / break /
+// continue / goto。做法是**借用 `fail` 做非局部跳转**，用一条带前缀的消息区分信号与真错误：
+//
+//     消息 = toChar(1) + 种类 + ":" + 载荷
+//
+// 前缀用 `toChar(1)`（运行期算出来的控制字符）而不是字符串字面量里的 `\u0001`，
+// 免得踩到词法器转义表的边角；用户 `fail` 出来的消息不可能以它开头。
+//
+// 每种跳出都在**离它最近的、能处理它的那一层**被接住，接不住就原样重新 `fail`：
+//   BLOCK  接 goto（标签在本块里才接；否则往上传）
+//   WHILE  接 break / continue
+//   FOR    接 break / continue（continue 要把它自己的「更新」跑一遍）
+//   TRY    接真错误；信号一律原样往上传（否则 `try { rtn 5 } catch ...` 会把 return 吃掉）
+//   函数调用 接 return
+// 还有一个「不可接」的信号 `X`：`!!` 打到 null。Kotlin 版那里抛的是
+// `NullPointerException`，而解释器的 `try` **只接 rsf 自己的错误**，所以它必须穿过去。
+//
+// ================================================================ 调用约定
+//
+// 本文件里所有「可能出错」的函数都标成 `!T`，调用点一律用 `!!` 往上抛——和 Parser.rsf
+// 的 flag 路线不同：解释器的错误本来就是「跳出去」，用 `fail` 才是同构的写法。
+// 纯 void 的中间函数写成 `-> !int`（恒返回 0）只是为了让 `!!` 能用
+// （rsf 的 `!void` 取不出值、写不了 `!!`）。
+
+import "Lexer.rsf"
+import "Parser.rsf"
+
+import java.lang.System
+// 数字字面量的「值」在树上是**规范化过的文本**（Parser.rsf 用同一批 JVM 方法算出来的），
+// 所以这里用同一批方法读回来：`Double.toString(0.5)` 写出来的东西只有
+// `Double.parseDouble` 能一字不差地读回去。
+import java.lang.Long
+import java.lang.Float
+import java.lang.Double
+// 互操作替身用的两个类（只有 files.rsf 那条路会碰）：路径拼接与删除**交给 JVM 自己做**，
+// 免得自己拼分隔符、也免得自己实现 unlink
+import java.io.File
+
+// ================================================================ 运行期错误消息
+//
+// **和 sema/Builtins.kt 里的那几个 object 一字不差**。它们是「两端逐字节一致」的
+// 直接依赖：`try { ... } catch (e : string) { println(e) }` 打出来的就是这些串。
+
+// ArrayRuntime
+public fun arrayIndexFailure(length : int, index : int) -> string {
+    rtn "数组下标越界：长度 " + length + "，下标 " + index
+}
+
+public fun arrayLengthFailure(length : int) -> string {
+    rtn "数组长度不能是负数：" + length
+}
+
+// EnumRuntime
+public fun switchNoMatchFailure(enumName : string) -> string {
+    rtn "switch 没匹配到任何分支：" + enumName + " 的常量都不是 null，" +
+        "所以被分派的值只能是 null（数组元素的默认值、泛型容器取出来的空槽都会是 null）。" +
+        "给这个 switch 加一支 'else : ...' 就能兜住它"
+}
+
+// Builtins.parseIntFailure —— 消息本身由 rsf 内置的 `parseInt` 抛出来，那条路径已经一致；
+// 这里只是把「解释器自己也要能给出同一条」写下来，供 `?:` 那条路复核。
+public fun parseIntFailure(text : string) -> string {
+    rtn "parseInt: 不是合法的整数：'" + text + "'"
+}
+
+// 17c 解释器自己的「暂不支持」前缀。凡是没实现的语法/语义**一律走这里**，
+// 绝不允许静默算错（静默算错是对拍测试唯一抓不住的东西）。
+public fun unsupported(what : string) -> string {
+    rtn "17c 解释器暂不支持：" + what
+}
+
+// ================================================================ 信号
+//
+// 见文件头。`toChar(1)` 是运行期算出来的，源码里不出现这个控制字符。
+
+fun sigMark() -> string {
+    rtn "" + toChar(1)
+}
+
+public fun makeSignal(kind : string, payload : string) -> string {
+    rtn sigMark() + kind + ":" + payload
+}
+
+public fun isSignal(m : string) -> bool {
+    if (m.length() == 0) { rtn false }
+    rtn m.charAt(0) == toChar(1)
+}
+
+public fun signalKind(m : string) -> string {
+    if (!isSignal(m)) { rtn "" }
+    if (m.length() < 2) { rtn "" }
+    rtn m.substring(1, 2)
+}
+
+public fun signalPayload(m : string) -> string {
+    if (!isSignal(m)) { rtn "" }
+    if (m.length() < 3) { rtn "" }
+    rtn m.substring(3, m.length())
+}
+
+// ================================================================ 胖节点上的小工具
+//
+// Parser.rsf 把「这一层的属性」拼成了一个形如 `name=foo mutable=true` 的串（值里的
+// 空格/换行都转义过，所以按空格切无歧义）。这里把它读回来。
+
+fun hexCharValue(c : char) -> int {
+    var n = charToInt(c)
+    if (n >= 48 && n <= 57) { rtn n - 48 }
+    if (n >= 97 && n <= 102) { rtn n - 87 }
+    if (n >= 65 && n <= 70) { rtn n - 55 }
+    rtn 0
+}
+
+// escapeValue 的逆（Parser.escapeValue 那张转义表）
+public fun unescapeValue(s : string) -> string {
+    var out = ""
+    var i = 0
+    var len = s.length()
+    while (i < len) {
+        var c = s.charAt(i)
+        if (c == '\\' && i + 1 < len) {
+            var d = s.charAt(i + 1)
+            if (d == 'n') {
+                out = out + '\n'
+                i = i + 2
+            } else if (d == 'r') {
+                out = out + '\r'
+                i = i + 2
+            } else if (d == 't') {
+                out = out + '\t'
+                i = i + 2
+            } else if (d == 's') {
+                out = out + ' '
+                i = i + 2
+            } else if (d == '\\') {
+                out = out + '\\'
+                i = i + 2
+            } else if (d == 'x' && i + 3 < len) {
+                var hi = hexCharValue(s.charAt(i + 2))
+                var lo = hexCharValue(s.charAt(i + 3))
+                out = out + toChar(hi * 16 + lo)
+                i = i + 4
+            } else {
+                out = out + c
+                i = i + 1
+            }
+        } else {
+            out = out + c
+            i = i + 1
+        }
+    }
+    rtn out
+}
+
+// 取一个属性；没有就返回空串
+public fun attr(n : Node, key : string) -> string {
+    var t = n.text
+    var i = 0
+    var len = t.length()
+    while (i < len) {
+        var keyStart = i
+        while (i < len && t.charAt(i) != '=') { i = i + 1 }
+        var k = t.substring(keyStart, i)
+        i = i + 1
+        var valStart = i
+        while (i < len && t.charAt(i) != ' ') { i = i + 1 }
+        var v = t.substring(valStart, i)
+        if (k == key) { rtn unescapeValue(v) }
+        i = i + 1
+    }
+    rtn ""
+}
+
+fun attrBool(n : Node, key : string) -> bool {
+    rtn attr(n, key) == "true"
+}
+
+fun attrInt(n : Node, key : string) -> int {
+    var raw = attr(n, key)
+    if (raw.length() == 0) { rtn 0 }
+    rtn parseInt(raw) ?: 0
+}
+
+// 孩子按位置取（越界给一个 ERROR 占位节点，调用方不必到处判长度）
+fun kid(n : Node, index : int) -> Node {
+    if (index < 0 || index >= n.childCount) { rtn new Node(NodeKind.ERROR) }
+    rtn n.children[index]
+}
+
+fun isErrorNode(n : Node) -> bool {
+    rtn n.kind == NodeKind.ERROR
+}
+
+// ================================================================ 值的标签
+//
+// 每一个载荷对应 Kotlin 解释器里的一种「运行时载体」：
+//   INTV -> java.lang.Integer、LONGV -> Long、FLOATV -> Float、DOUBLEV -> Double、
+//   BOOLV -> Boolean、CHARV -> Character、BYTEV -> Byte、STRV -> String、
+//   OBJV -> Interpreter.RsfObject、ARRV -> JVM 数组、ENUMV -> Interpreter.RsfEnumValue、
+//   LISTV -> java.util.ArrayList（互操作）、CTYPEV -> 「类名」这个静态接收者。
+//
+// 分成 INT / LONG / FLOAT / DOUBLE 四档不是为了省事，而是必须：`10 / 3` 与 `10 / 3.0`
+// 的差别只能靠运行期标签还原（见文件头「静态类型怎么补上」）。
+
+public enum Kind {
+    NULLV, INTV, LONGV, FLOATV, DOUBLEV, BOOLV, CHARV, BYTEV,
+    STRV, OBJV, ARRV, ENUMV, LISTV, CTYPEV, FILEV
+}
+
+// 数值提升的档位（和 RsfBase.rank 同一张表：byte/char 与 int 同档，先提升成 int）
+fun kindRank(k : Kind) -> int {
+    switch (k) {
+        case Kind.BYTEV : rtn 0
+        case Kind.CHARV : rtn 0
+        case Kind.INTV : rtn 0
+        case Kind.LONGV : rtn 1
+        case Kind.FLOATV : rtn 2
+        case Kind.DOUBLEV : rtn 3
+        else : rtn -1
+    }
+    // 和 Parser.kindName 一样：rsf 的返回值检查看的是「最后一条语句」，
+    // 不看这个 switch 是否已经把每种取值都覆盖了，所以这里留一个静态落点。
+    rtn -1
+}
+
+fun isNumericKind(k : Kind) -> bool {
+    rtn kindRank(k) >= 0
+}
+
+// ================================================================ 值
+
+public class Val(kind : Kind) {
+    var k : Kind = kind
+    var iv : int = 0
+    var lv : long = 0L
+    var fv : float = 0.0f
+    var dv : double = 0.0
+    var bv : bool = false
+    var cv : char = ' '
+    var yv : byte = 0
+    var sv : string = ""
+    var en : string = ""
+    var ov : ?Obj = null
+    var av : ?Arr = null
+    var lsv : ?JList = null
+    var cname : string = ""
+}
+
+public fun vNull() -> Val {
+    rtn new Val(Kind.NULLV)
+}
+
+public fun vInt(n : int) -> Val {
+    var v = new Val(Kind.INTV)
+    v.iv = n
+    rtn v
+}
+
+public fun vLong(n : long) -> Val {
+    var v = new Val(Kind.LONGV)
+    v.lv = n
+    rtn v
+}
+
+public fun vFloat(n : float) -> Val {
+    var v = new Val(Kind.FLOATV)
+    v.fv = n
+    rtn v
+}
+
+public fun vDouble(n : double) -> Val {
+    var v = new Val(Kind.DOUBLEV)
+    v.dv = n
+    rtn v
+}
+
+public fun vBool(b : bool) -> Val {
+    var v = new Val(Kind.BOOLV)
+    v.bv = b
+    rtn v
+}
+
+public fun vChar(c : char) -> Val {
+    var v = new Val(Kind.CHARV)
+    v.cv = c
+    rtn v
+}
+
+public fun vByte(b : byte) -> Val {
+    var v = new Val(Kind.BYTEV)
+    v.yv = b
+    rtn v
+}
+
+public fun vStr(s : string) -> Val {
+    var v = new Val(Kind.STRV)
+    v.sv = s
+    rtn v
+}
+
+public fun vEnum(enumName : string, valueName : string) -> Val {
+    var v = new Val(Kind.ENUMV)
+    v.en = enumName
+    v.sv = valueName
+    rtn v
+}
+
+public fun vObj(o : Obj) -> Val {
+    var v = new Val(Kind.OBJV)
+    v.ov = o
+    rtn v
+}
+
+public fun vArr(a : Arr) -> Val {
+    var v = new Val(Kind.ARRV)
+    v.av = a
+    rtn v
+}
+
+public fun vList(l : JList) -> Val {
+    var v = new Val(Kind.LISTV)
+    v.lsv = l
+    rtn v
+}
+
+// 类名当接收者（`Point.origin()` 里的 `Point`）。它不是一个真的值，
+// 只在「静态成员访问」这条路上出现。
+public fun vCType(name : string) -> Val {
+    var v = new Val(Kind.CTYPEV)
+    v.cname = name
+    rtn v
+}
+
+// java.io.File 的替身：只装一个路径（真正的文件操作由外部那几个函数代劳）。
+// 见 17c 报告：跨语言互操作这一块**只做示例用到的那几个**，其余显式报「暂不支持」。
+public fun vFile(path : string) -> Val {
+    var v = new Val(Kind.FILEV)
+    v.sv = path
+    rtn v
+}
+
+// ================================================================ 对象 / 数组 / 列表
+
+// 一个 rsf 对象：类名 + 按声明顺序排的字段数组（和 Kotlin 版的 RsfObject 同构）
+public class Obj(cn : string) {
+    var cls : string = cn
+    var fs : Val[] = new Val[0]
+}
+
+// 一个 rsf 数组。`depth` 是「还套着几层」（`new int[2][3]` 的最外层是 2）；
+// 只有 depth == 1 的那一层直接装值，其余装的是子数组的 Val。
+public class Arr(d : int) {
+    var depth : int = d
+    var es : Val[] = new Val[0]
+    // 最内层的元素类型（`new int[3]` 是 `int`）——元素赋值时的运行期收敛要用它
+    var elemType : string = ""
+}
+
+// java.util.ArrayList 的替代品（见 17c 报告：`ArrayList&<T>` 是唯一能用的
+// JVM 泛型容器——`HashMap&<K,V>` 因为两个类型实参拿不到擦除替换，形参全是 Object，
+// 传不进 string/int）。这里按 rsf 自己的动态数组实现，语义与 ArrayList 一致。
+public class JList() {
+    var es : Val[] = new Val[8]
+    var n : int = 0
+}
+
+// ================================================================ 作用域
+//
+// 手写的符号表（rsf 用不了 HashMap）：每个作用域两条平行数组 + 线性查找。
+// 名字解析顺序与 Checker 一致：**先局部/参数，后字段**——所以 `Env` 链上找不到时
+// 才去当前类的字段里找。
+
+public class Env(p : ?Env) {
+    var up : ?Env = p
+    var me : ?Obj = null
+    var cl : ?Cls = null
+    var names : string[] = new string[8]
+    var vals : Val[] = new Val[8]
+    var n : int = 0
+
+    public fun define(name : string, v : Val) -> void {
+        if (n >= names.length) {
+            var size = names.length * 2
+            var nn : string[] = new string[size]
+            var nv : Val[] = new Val[size]
+            var i = 0
+            while (i < n) {
+                nn[i] = names[i]
+                nv[i] = vals[i]
+                i = i + 1
+            }
+            names = nn
+            vals = nv
+        }
+        names[n] = name
+        vals[n] = v
+        n = n + 1
+        rtn
+    }
+
+    public fun find(name : string) -> ?Val {
+        var i = n - 1
+        while (i >= 0) {
+            if (names[i] == name) { rtn vals[i] }
+            i = i - 1
+        }
+        rtn null
+    }
+
+    // 一路往上找
+    public fun lookup(name : string) -> ?Val {
+        var e : ?Env = this
+        while (e != null) {
+            var hit = e!!.find(name)
+            if (hit != null) { rtn hit }
+            e = e!!.up
+        }
+        rtn null
+    }
+
+    public fun assign(name : string, v : Val) -> bool {
+        var e : ?Env = this
+        while (e != null) {
+            var i = e!!.n - 1
+            while (i >= 0) {
+                if (e!!.names[i] == name) {
+                    e!!.vals[i] = v
+                    rtn true
+                }
+                i = i - 1
+            }
+            e = e!!.up
+        }
+        rtn false
+    }
+
+    // 当前 this（沿链找）
+    public fun thisObj() -> ?Obj {
+        var e : ?Env = this
+        while (e != null) {
+            if (e!!.me != null) { rtn e!!.me }
+            e = e!!.up
+        }
+        rtn null
+    }
+
+    // 当前所在的类（沿链找）
+    public fun curClass() -> ?Cls {
+        var e : ?Env = this
+        while (e != null) {
+            if (e!!.cl != null) { rtn e!!.cl }
+            e = e!!.up
+        }
+        rtn null
+    }
+}
+
+// ================================================================ 函数 / 类 / 枚举的表
+
+public class Fn(nm : string) {
+    var name : string = nm
+    var pnames : string[] = new string[0]
+    var ptypes : string[] = new string[0]
+    var pcount : int = 0
+    var body : Node = new Node(NodeKind.ERROR)
+    var retType : string = "void"
+    var mayError : bool = false
+    var isCtor : bool = false
+    var isStatic : bool = false
+    var isPrimary : bool = false
+}
+
+public class Cls(nm : string) {
+    var name : string = nm
+    var fnames : string[] = new string[0]
+    var ftypes : string[] = new string[0]
+    var finits : Node[] = new Node[0]
+    var fcount : int = 0
+    var ctors : Fn[] = new Fn[0]
+    var ccount : int = 0
+    var methods : Fn[] = new Fn[0]
+    var mcount : int = 0
+
+    public fun fieldIndex(nm2 : string) -> int {
+        var i = 0
+        while (i < fcount) {
+            if (fnames[i] == nm2) { rtn i }
+            i = i + 1
+        }
+        rtn -1
+    }
+
+    public fun methodNamed(nm2 : string) -> ?Fn {
+        var i = 0
+        while (i < mcount) {
+            if (methods[i].name == nm2) { rtn methods[i] }
+            i = i + 1
+        }
+        rtn null
+    }
+}
+
+public class Enm(nm : string) {
+    var name : string = nm
+    var values : string[] = new string[0]
+    var vcount : int = 0
+    var cached : Val[] = new Val[0]
+
+    public fun has(v : string) -> bool {
+        var i = 0
+        while (i < vcount) {
+            if (values[i] == v) { rtn true }
+            i = i + 1
+        }
+        rtn false
+    }
+
+    // 枚举值是**单例**：同一个 `枚举名.值名` 永远返回同一个 Val 对象，
+    // `==` 的引用相等才成立（和 Kotlin 版 enumCache 同一个理由）
+    public fun valueOf(v : string) -> ?Val {
+        var i = 0
+        while (i < vcount) {
+            if (values[i] == v) { rtn cached[i] }
+            i = i + 1
+        }
+        rtn null
+    }
+}
+
+// ================================================================ 表扩容（rsf 没有 ArrayList）
+//
+// 和 Parser.rsf 的 `Node.add` 一个套路：满了翻倍。解释器只在**装载**阶段用这几条，
+// 运行期不会碰（所以不心疼）。
+
+fun growFn(a : Fn[], used : int, add : Fn) -> Fn[] {
+    if (used < a.length) {
+        a[used] = add
+        rtn a
+    }
+    var size = 4
+    if (a.length > 0) { size = a.length * 2 }
+    var bigger : Fn[] = new Fn[size]
+    var i = 0
+    while (i < used) {
+        bigger[i] = a[i]
+        i = i + 1
+    }
+    bigger[used] = add
+    rtn bigger
+}
+
+fun growCls(a : Cls[], used : int, add : Cls) -> Cls[] {
+    if (used < a.length) {
+        a[used] = add
+        rtn a
+    }
+    var size = 4
+    if (a.length > 0) { size = a.length * 2 }
+    var bigger : Cls[] = new Cls[size]
+    var i = 0
+    while (i < used) {
+        bigger[i] = a[i]
+        i = i + 1
+    }
+    bigger[used] = add
+    rtn bigger
+}
+
+fun growEnm(a : Enm[], used : int, add : Enm) -> Enm[] {
+    if (used < a.length) {
+        a[used] = add
+        rtn a
+    }
+    var size = 4
+    if (a.length > 0) { size = a.length * 2 }
+    var bigger : Enm[] = new Enm[size]
+    var i = 0
+    while (i < used) {
+        bigger[i] = a[i]
+        i = i + 1
+    }
+    bigger[used] = add
+    rtn bigger
+}
+
+fun growVal(a : Val[], used : int, add : Val) -> Val[] {
+    if (used < a.length) {
+        a[used] = add
+        rtn a
+    }
+    var size = 8
+    if (a.length > 0) { size = a.length * 2 }
+    var bigger : Val[] = new Val[size]
+    var i = 0
+    while (i < used) {
+        bigger[i] = a[i]
+        i = i + 1
+    }
+    bigger[used] = add
+    rtn bigger
+}
+
+// 类型文本上的小工具：找字符 / 找子串（rsf 的 string 没有 indexOf）
+fun indexOfCharIn(s : string, want : char) -> int {
+    var i = 0
+    while (i < s.length()) {
+        if (s.charAt(i) == want) { rtn i }
+        i = i + 1
+    }
+    rtn -1
+}
+
+fun indexOfTextIn(s : string, want : string) -> int {
+    if (want.length() == 0) { rtn 0 }
+    var i = 0
+    var last = s.length() - want.length()
+    while (i <= last) {
+        if (s.substring(i, i + want.length()) == want) { rtn i }
+        i = i + 1
+    }
+    rtn -1
+}
+
+// ================================================================ java.io.File 的替身
+//
+// 只有 files.rsf 那条路用得到。路径拼接 / 绝对路径 / 文件名 / 删除这四件事
+// **直接交给 JVM 的 java.io.File 做**（自己拼分隔符迟早会在某个平台上错），
+// 解释器这边只负责把结果搬来搬去。
+
+fun fileJoinPath(parent : string, child : string) -> string {
+    var f = new File(parent, child)
+    rtn f.getAbsolutePath()
+}
+
+fun fileAbsolutePath(path : string) -> string {
+    var f = new File(path)
+    rtn f.getAbsolutePath()
+}
+
+fun fileBaseName(path : string) -> string {
+    var f = new File(path)
+    rtn f.getName()
+}
+
+fun fileDeletePath(path : string) -> bool {
+    var f = new File(path)
+    rtn f.delete()
+}
+
+fun fileExistsPath(path : string) -> bool {
+    var f = new File(path)
+    rtn f.exists()
+}
+
+// ================================================================ 解释器
+//
+// 表的形状：进程内一次性装载（函数表 / 类表 / 枚举表），运行期只读。
+// 名字解析全部是线性查找——rsf 用不了 HashMap（见 17c 报告），而示例的规模上
+// 线性查找完全够；真慢下来也是先慢在「按名字查局部变量」那条路上。
+
+public class Interp(prog : Node) {
+    var p : Node = prog
+    var globals : Env = new Env(null)
+    var funcs : Fn[] = new Fn[0]
+    var fcount : int = 0
+    var classes : Cls[] = new Cls[0]
+    var ccount : int = 0
+    var enums : Enm[] = new Enm[0]
+    var ecount : int = 0
+    var depth : int = 0
+
+    // 最近一次 `rtn` 带出来的值（信号 `R` 的载荷走这里——信号消息只能是字符串）
+    var retVal : Val = new Val(Kind.NULLV)
+
+    // `?:` 的「接住了」哨兵：和 Kotlin 版的 CAUGHT 同一个作用。
+    // 用一个**独有的 Val 对象**，靠引用相等判断，所以不可能是任何真实值。
+    var caughtVal : Val = new Val(Kind.NULLV)
+
+    // ------------------------------------------------------------------ 装载
+
+    public fun load() -> void {
+        var i = 0
+        while (i < p.childCount) {
+            var c = p.children[i]
+            if (c.kind == NodeKind.FUNCS) { loadFuncs(c) }
+            else if (c.kind == NodeKind.CLASSES) { loadClasses(c) }
+            else if (c.kind == NodeKind.ENUMS) { loadEnums(c) }
+            i = i + 1
+        }
+        rtn
+    }
+
+    fun makeFn(node : Node) -> Fn {
+        var f = new Fn(attr(node, "name"))
+        var ps = kid(node, 0)
+        var n = ps.childCount
+        var pn : string[] = new string[n]
+        var pt : string[] = new string[n]
+        var k = 0
+        while (k < n) {
+            pn[k] = attr(ps.children[k], "name")
+            pt[k] = attr(ps.children[k], "type")
+            k = k + 1
+        }
+        f.pnames = pn
+        f.ptypes = pt
+        f.pcount = n
+        f.body = kid(node, 1)
+        f.retType = attr(node, "retType")
+        f.mayError = attrBool(node, "mayError")
+        f.isCtor = attrBool(node, "ctor")
+        f.isStatic = attrBool(node, "static")
+        f.isPrimary = attrBool(node, "primary")
+        rtn f
+    }
+
+    fun loadFuncs(fs : Node) -> void {
+        var i = 0
+        while (i < fs.childCount) {
+            funcs = growFn(funcs, fcount, makeFn(fs.children[i]))
+            fcount = fcount + 1
+            i = i + 1
+        }
+        rtn
+    }
+
+    fun loadClasses(cs : Node) -> void {
+        var i = 0
+        while (i < cs.childCount) {
+            var cn = cs.children[i]
+            var c = new Cls(attr(cn, "name"))
+            var j = 0
+            while (j < cn.childCount) {
+                var part = cn.children[j]
+                if (part.kind == NodeKind.FIELDS) { loadFields(c, part) }
+                else if (part.kind == NodeKind.METHODS) { loadMethods(c, part) }
+                j = j + 1
+            }
+            classes = growCls(classes, ccount, c)
+            ccount = ccount + 1
+            i = i + 1
+        }
+        rtn
+    }
+
+    fun loadFields(c : Cls, fields : Node) -> void {
+        var n = fields.childCount
+        var nms : string[] = new string[n]
+        var tys : string[] = new string[n]
+        var inits : Node[] = new Node[n]
+        var k = 0
+        while (k < n) {
+            var fd = fields.children[k]
+            nms[k] = attr(fd, "name")
+            tys[k] = attr(fd, "type")
+            inits[k] = kid(fd, 0)
+            k = k + 1
+        }
+        c.fnames = nms
+        c.ftypes = tys
+        c.finits = inits
+        c.fcount = n
+        rtn
+    }
+
+    fun loadMethods(c : Cls, ms : Node) -> void {
+        var k = 0
+        while (k < ms.childCount) {
+            var f = makeFn(ms.children[k])
+            if (f.isCtor) {
+                c.ctors = growFn(c.ctors, c.ccount, f)
+                c.ccount = c.ccount + 1
+            } else {
+                c.methods = growFn(c.methods, c.mcount, f)
+                c.mcount = c.mcount + 1
+            }
+            k = k + 1
+        }
+        rtn
+    }
+
+    fun loadEnums(es : Node) -> void {
+        var i = 0
+        while (i < es.childCount) {
+            var en = es.children[i]
+            var e = new Enm(attr(en, "name"))
+            var vals = kid(en, 0)
+            var n = vals.childCount
+            var vs : string[] = new string[n]
+            var cs : Val[] = new Val[n]
+            var k = 0
+            while (k < n) {
+                vs[k] = attr(vals.children[k], "name")
+                cs[k] = vEnum(e.name, vs[k])
+                k = k + 1
+            }
+            e.values = vs
+            e.cached = cs
+            e.vcount = n
+            enums = growEnm(enums, ecount, e)
+            ecount = ecount + 1
+            i = i + 1
+        }
+        rtn
+    }
+
+    // ------------------------------------------------------------------ 查表
+
+    public fun findFunc(nm : string) -> ?Fn {
+        var i = 0
+        while (i < fcount) {
+            if (funcs[i].name == nm) { rtn funcs[i] }
+            i = i + 1
+        }
+        rtn null
+    }
+
+    public fun findCls(nm : string) -> ?Cls {
+        var i = 0
+        while (i < ccount) {
+            if (classes[i].name == nm) { rtn classes[i] }
+            i = i + 1
+        }
+        rtn null
+    }
+
+    public fun findEnum(nm : string) -> ?Enm {
+        var i = 0
+        while (i < ecount) {
+            if (enums[i].name == nm) { rtn enums[i] }
+            i = i + 1
+        }
+        rtn null
+    }
+
+    // ------------------------------------------------------------------ 类型文本
+    //
+    // 类型在树上是**文本**（`int` / `?string` / `Point` / `int[]` / `Box&<int>`）。
+    // 解释器只需要「基础名」这一个信息来做运行期收敛，所以这里把修饰全部剥掉。
+
+    public fun baseTypeName(typeText : string) -> string {
+        var t = typeText
+        if (t.length() > 0 && t.charAt(0) == '?') { t = t.substring(1, t.length()) }
+        var amp = indexOfCharIn(t, '&')
+        if (amp >= 0) { t = t.substring(0, amp) }
+        var br = indexOfTextIn(t, "[]")
+        if (br >= 0) { t = t.substring(0, br) }
+        rtn t
+    }
+
+    fun isPrimitiveName(nm : string) -> bool {
+        if (nm == "int") { rtn true }
+        if (nm == "long") { rtn true }
+        if (nm == "float") { rtn true }
+        if (nm == "double") { rtn true }
+        if (nm == "bool") { rtn true }
+        if (nm == "char") { rtn true }
+        if (nm == "byte") { rtn true }
+        if (nm == "string") { rtn true }
+        rtn false
+    }
+
+    // ------------------------------------------------------------------ 数值取值
+    //
+    // 每种「按目标类型取数」写成一个函数，是因为 rsf 的数值转换只允许**加宽**
+    // （没有 (int) 这种强转）——所以能取到哪几种来源，就直接在函数体里穷举掉。
+
+    // 注意：rsf 的数值转换**只允许加宽**（没有 (int) 这种强转），所以每个函数
+    // 只列它真能接住的来源；接不住的档位在合法程序里根本不会出现（Checker 管着），
+    // 真碰上就返回 0——不会静默算错一个「看起来像」的值。
+    fun intOf(v : Val) -> int {
+        switch (v.k) {
+            case Kind.INTV : rtn v.iv
+            case Kind.BYTEV : rtn v.yv
+            case Kind.CHARV : rtn charToInt(v.cv)
+            else : rtn 0
+        }
+        rtn 0
+    }
+
+    fun longOf(v : Val) -> long {
+        switch (v.k) {
+            case Kind.INTV : rtn v.iv
+            case Kind.BYTEV : rtn v.yv
+            case Kind.CHARV : rtn charToInt(v.cv)
+            case Kind.LONGV : rtn v.lv
+            else : rtn 0L
+        }
+        rtn 0L
+    }
+
+    fun floatOf(v : Val) -> float {
+        switch (v.k) {
+            case Kind.INTV : rtn v.iv
+            case Kind.BYTEV : rtn v.yv
+            case Kind.CHARV : rtn charToInt(v.cv)
+            case Kind.LONGV : rtn v.lv
+            case Kind.FLOATV : rtn v.fv
+            else : rtn 0.0f
+        }
+        rtn 0.0f
+    }
+
+    fun doubleOf(v : Val) -> double {
+        switch (v.k) {
+            case Kind.INTV : rtn v.iv
+            case Kind.BYTEV : rtn v.yv
+            case Kind.CHARV : rtn charToInt(v.cv)
+            case Kind.LONGV : rtn v.lv
+            case Kind.FLOATV : rtn v.fv
+            case Kind.DOUBLEV : rtn v.dv
+            else : rtn 0.0
+        }
+        rtn 0.0
+    }
+
+    // 运行期收敛到声明的静态类型。**只在加宽方向生效**（rsf 的语义本来也不允许反向），
+    // 非数值（string / 对象 / 数组 / 枚举 / null）原样放行。
+    public fun coerceTo(typeText : string, v : Val) -> Val {
+        var base = baseTypeName(typeText)
+        if (!isPrimitiveName(base)) { rtn v }
+        var r = kindRank(v.k)
+        if (r < 0) { rtn v }
+        if (base == "int") {
+            if (r == 0) { rtn vInt(intOf(v)) }
+            rtn v
+        }
+        if (base == "long") {
+            if (r <= 1) { rtn vLong(longOf(v)) }
+            rtn v
+        }
+        if (base == "float") {
+            if (r <= 2) { rtn vFloat(floatOf(v)) }
+            rtn v
+        }
+        if (base == "double") { rtn vDouble(doubleOf(v)) }
+        if (base == "byte") {
+            if (r == 0) { rtn vByte(toByte(intOf(v))) }
+            rtn v
+        }
+        if (base == "char") {
+            if (r == 0) { rtn vChar(toChar(intOf(v))) }
+            rtn v
+        }
+        rtn v
+    }
+
+    // 数组元素的默认值（和 JVM 的 new 数组规则一致：数值 0、bool false、引用 null）
+    public fun defaultOf(typeText : string) -> Val {
+        var base = baseTypeName(typeText)
+        if (base == "int") { rtn vInt(0) }
+        if (base == "long") { rtn vLong(0L) }
+        if (base == "float") { rtn vFloat(0.0f) }
+        if (base == "double") { rtn vDouble(0.0) }
+        if (base == "bool") { rtn vBool(false) }
+        if (base == "char") { rtn vChar(toChar(0)) }
+        if (base == "byte") { rtn vByte(toByte(0)) }
+        rtn vNull()
+    }
+
+    fun truth(v : Val) -> !bool {
+        if (v.k == Kind.BOOLV) { rtn v.bv }
+        fail unsupported("条件位置上的 " + ("" + v.k) + "（要求 bool）")
+        rtn false
+    }
+
+    // ------------------------------------------------------------------ 渲染
+    //
+    // 与 Kotlin 版 `render(v, t)` / `ObjectFormat.valueText` 对齐：静态类型是 string
+    // 的原样给，null 给 "null"，其余走 JVM 的 toString（这里就是 `"" + 值`）。
+
+    public fun render(v : Val) -> !string {
+        switch (v.k) {
+            case Kind.NULLV : rtn "null"
+            case Kind.INTV : rtn "" + v.iv
+            case Kind.LONGV : rtn "" + v.lv
+            case Kind.FLOATV : rtn "" + v.fv
+            case Kind.DOUBLEV : rtn "" + v.dv
+            case Kind.BOOLV : rtn "" + v.bv
+            case Kind.CHARV : rtn "" + v.cv
+            case Kind.BYTEV : rtn "" + v.yv
+            case Kind.STRV : rtn v.sv
+            case Kind.ENUMV : rtn v.sv
+            case Kind.OBJV : rtn renderObj(v.ov!!)!!
+            case Kind.LISTV : rtn renderList(v.lsv!!)!!
+            case Kind.ARRV : rtn renderArray(v.av!!)!!
+            case Kind.CTYPEV : rtn v.cname
+            case Kind.FILEV : rtn v.sv
+        }
+        rtn "?"
+    }
+
+    // 数组直接打印是 Kotlin 版检查期就拦掉的事（身份哈希两端没法一致），
+    // 解释器这条路上也拦住，别静默打出一串没意义的东西。
+    fun renderArray(a : Arr) -> !string {
+        fail "数组不能直接打印或拼进字符串：JVM 上打出来的是身份哈希（像 [I@1b6d3586），" +
+            "每次运行都不同，两端没法保证一致。要看清内容就按下标逐个取，比如 a[0]、a.length，或者用循环"
+        rtn ""
+    }
+
+    // java.util.AbstractCollection.toString 的格式：`[a, b]`
+    fun renderList(l : JList) -> !string {
+        var out = "["
+        var i = 0
+        while (i < l.n) {
+            if (i > 0) { out = out + ", " }
+            out = out + render(l.es[i])!!
+            i = i + 1
+        }
+        rtn out + "]"
+    }
+
+    // ObjectFormat.render：`类名(字段=值, 字段=值)`，字段按声明顺序，
+    // 只有「基础类型 / string / 可空基础类型 / 枚举」的字段真的打值，数组与对象字段一律 `...`。
+    fun renderObj(o : Obj) -> !string {
+        var c = findCls(o.cls)
+        if (c == null) { rtn o.cls + "()" }
+        var out = o.cls + "("
+        var i = 0
+        while (i < c!!.fcount) {
+            if (i > 0) { out = out + ", " }
+            out = out + c!!.fnames[i] + "="
+            if (isDisplayableField(c!!.ftypes[i])) {
+                out = out + renderFieldValue(o.fs[i], c!!.ftypes[i])!!
+            } else {
+                out = out + "..."
+            }
+            i = i + 1
+        }
+        rtn out + ")"
+    }
+
+    fun isDisplayableField(typeText : string) -> bool {
+        if (indexOfTextIn(typeText, "[]") >= 0) { rtn false }
+        var base = baseTypeName(typeText)
+        if (base == "string") { rtn true }
+        if (base == "int" || base == "long" || base == "float" || base == "double") { rtn true }
+        if (base == "bool" || base == "char" || base == "byte") { rtn true }
+        rtn findEnum(base) != null
+    }
+
+    fun renderFieldValue(v : Val, typeText : string) -> !string {
+        if (v.k == Kind.NULLV) { rtn "null" }
+        if (findEnum(baseTypeName(typeText)) != null) { rtn v.sv }
+        rtn render(v)!!
+    }
+
+    // ------------------------------------------------------------------ 算术
+    //
+    // 提升规则与 RsfType.rank 一致：byte/char 与 int 同档（先提升成 int），
+    // 结果取两边更高的那一档。**int 档一定用 int 运算**——溢出的回绕行为
+    // 只有这样才和 JVM 的 IADD/IMUL 一致（用 long 算再截是另一回事）。
+
+    fun intOp(op : string, a : int, b : int) -> !int {
+        if (op == "PLUS") { rtn a + b }
+        if (op == "MINUS") { rtn a - b }
+        if (op == "STAR") { rtn a * b }
+        if (op == "SLASH") {
+            if (b == 0) { fail makeSignal("X", "除以零") }
+            rtn a / b
+        }
+        if (op == "PERCENT") {
+            if (b == 0) { fail makeSignal("X", "除以零") }
+            rtn a % b
+        }
+        fail unsupported("算术运算符 " + op)
+        rtn 0
+    }
+
+    fun longOp(op : string, a : long, b : long) -> !long {
+        if (op == "PLUS") { rtn a + b }
+        if (op == "MINUS") { rtn a - b }
+        if (op == "STAR") { rtn a * b }
+        if (op == "SLASH") {
+            if (b == 0L) { fail makeSignal("X", "除以零") }
+            rtn a / b
+        }
+        if (op == "PERCENT") {
+            if (b == 0L) { fail makeSignal("X", "除以零") }
+            rtn a % b
+        }
+        fail unsupported("算术运算符 " + op)
+        rtn 0L
+    }
+
+    fun floatOp(op : string, a : float, b : float) -> !float {
+        if (op == "PLUS") { rtn a + b }
+        if (op == "MINUS") { rtn a - b }
+        if (op == "STAR") { rtn a * b }
+        if (op == "SLASH") { rtn a / b }
+        if (op == "PERCENT") { rtn a % b }
+        fail unsupported("算术运算符 " + op)
+        rtn 0.0f
+    }
+
+    fun doubleOp(op : string, a : double, b : double) -> !double {
+        if (op == "PLUS") { rtn a + b }
+        if (op == "MINUS") { rtn a - b }
+        if (op == "STAR") { rtn a * b }
+        if (op == "SLASH") { rtn a / b }
+        if (op == "PERCENT") { rtn a % b }
+        fail unsupported("算术运算符 " + op)
+        rtn 0.0
+    }
+
+    public fun arithOp(op : string, a : Val, b : Val) -> !Val {
+        var ra = kindRank(a.k)
+        var rb = kindRank(b.k)
+        if (ra < 0 || rb < 0) {
+            fail unsupported("算术运算 '" + op + "' 用在 " + ("" + a.k) + " 与 " + ("" + b.k) + " 上")
+        }
+        var c = ra
+        if (rb > c) { c = rb }
+        if (c == 0) { rtn vInt(intOp(op, intOf(a), intOf(b))!!) }
+        if (c == 1) { rtn vLong(longOp(op, longOf(a), longOf(b))!!) }
+        if (c == 2) { rtn vFloat(floatOp(op, floatOf(a), floatOf(b))!!) }
+        rtn vDouble(doubleOp(op, doubleOf(a), doubleOf(b))!!)
+    }
+
+    fun cmpInt(a : int, b : int) -> int {
+        if (a < b) { rtn -1 }
+        if (a > b) { rtn 1 }
+        rtn 0
+    }
+
+    fun cmpLong(a : long, b : long) -> int {
+        if (a < b) { rtn -1 }
+        if (a > b) { rtn 1 }
+        rtn 0
+    }
+
+    fun cmpFloat(a : float, b : float) -> int {
+        if (a < b) { rtn -1 }
+        if (a > b) { rtn 1 }
+        rtn 0
+    }
+
+    fun cmpDouble(a : double, b : double) -> int {
+        if (a < b) { rtn -1 }
+        if (a > b) { rtn 1 }
+        rtn 0
+    }
+
+    // 非数值的比较：字符串按内容，对象/数组/枚举按**引用相等**——和 Kotlin 版
+    // 统一走 `a == b`（Object.equals）是同一件事。
+    fun valuesEqual(a : Val, b : Val) -> bool {
+        if (a.k == Kind.NULLV || b.k == Kind.NULLV) {
+            rtn a.k == Kind.NULLV && b.k == Kind.NULLV
+        }
+        if (a.k == Kind.STRV && b.k == Kind.STRV) { rtn a.sv == b.sv }
+        if (a.k == Kind.BOOLV && b.k == Kind.BOOLV) { rtn a.bv == b.bv }
+        if (a.k == Kind.OBJV && b.k == Kind.OBJV) { rtn a.ov == b.ov }
+        if (a.k == Kind.ARRV && b.k == Kind.ARRV) { rtn a.av == b.av }
+        if (a.k == Kind.LISTV && b.k == Kind.LISTV) { rtn a.lsv == b.lsv }
+        if (a.k == Kind.ENUMV && b.k == Kind.ENUMV) { rtn a == b }
+        rtn false
+    }
+
+    public fun compareOp(op : string, a : Val, b : Val) -> !Val {
+        var ra = kindRank(a.k)
+        var rb = kindRank(b.k)
+        if (ra >= 0 && rb >= 0) {
+            var c = ra
+            if (rb > c) { c = rb }
+            var d = 0
+            if (c == 0) { d = cmpInt(intOf(a), intOf(b)) }
+            else if (c == 1) { d = cmpLong(longOf(a), longOf(b)) }
+            else if (c == 2) { d = cmpFloat(floatOf(a), floatOf(b)) }
+            else { d = cmpDouble(doubleOf(a), doubleOf(b)) }
+            if (op == "EQ") { rtn vBool(d == 0) }
+            if (op == "NE") { rtn vBool(d != 0) }
+            if (op == "LT") { rtn vBool(d < 0) }
+            if (op == "GT") { rtn vBool(d > 0) }
+            if (op == "LE") { rtn vBool(d <= 0) }
+            rtn vBool(d >= 0)
+        }
+        if (op != "EQ" && op != "NE") {
+            fail unsupported("比较运算符 '" + op + "' 用在非数值上（" + ("" + a.k) + " / " + ("" + b.k) + "）")
+        }
+        var eq = valuesEqual(a, b)
+        if (op == "EQ") { rtn vBool(eq) }
+        rtn vBool(!eq)
+    }
+
+    // ------------------------------------------------------------------ 数组
+    //
+    // 越界与负长度**显式检查**（不让 JVM 自己抛）：消息要和 Kotlin 版一字不差，
+    // 而且解释器的 `try` 接不住 JVM 的异常——两端会分叉。
+
+    // 返回 `!int` 而不是 `!void`：rsf 的 `!void` 取不出值、因此写不了 `!!`，
+    // 调用点就得各包一层 try。恒返回 0 只是为了让调用点能一行写完。
+    public fun checkIndex(length : int, index : int) -> !int {
+        if (index < 0 || index >= length) {
+            fail arrayIndexFailure(length, index)
+        }
+        rtn 0
+    }
+
+    public fun makeArray(elemText : string, dims : int[], at : int) -> Arr {
+        var left = dims.length - at
+        var a = new Arr(left)
+        a.elemType = elemText
+        var cnt = dims[at]
+        a.es = new Val[cnt]
+        var i = 0
+        if (left == 1) {
+            while (i < cnt) {
+                a.es[i] = defaultOf(elemText)
+                i = i + 1
+            }
+        } else {
+            while (i < cnt) {
+                a.es[i] = vArr(makeArray(elemText, dims, at + 1))
+                i = i + 1
+            }
+        }
+        rtn a
+    }
+
+    // ==== PART3 ====
+
+    // ------------------------------------------------------------------ 表达式求值
+
+    public fun evalArgs(argsNode : Node, env : Env) -> !Val[] {
+        var cnt = argsNode.childCount
+        var out : Val[] = new Val[cnt]
+        var i = 0
+        while (i < cnt) {
+            out[i] = ev(argsNode.children[i], env)!!
+            i = i + 1
+        }
+        rtn out
+    }
+
+    public fun ev(n : Node, env : Env) -> !Val {
+        switch (n.kind) {
+            case NodeKind.INT_LIT : rtn vInt(parseInt(attr(n, "value")) ?: 0)
+            case NodeKind.LONG_LIT : rtn vLong(Long.parseLong(attr(n, "value")))
+            case NodeKind.FLOAT_LIT : rtn vFloat(Float.parseFloat(attr(n, "value")))
+            case NodeKind.DOUBLE_LIT : rtn vDouble(Double.parseDouble(attr(n, "value")))
+            case NodeKind.STRING_LIT : rtn vStr(attr(n, "value"))
+            case NodeKind.CHAR_LIT : rtn vChar(charOfLiteral(attr(n, "value")))
+            case NodeKind.BOOL_LIT : rtn vBool(attr(n, "value") == "true")
+            case NodeKind.NULL_LIT : rtn vNull()
+            case NodeKind.VAR : rtn evVar(n, env)!!
+            case NodeKind.CALL : rtn evCall(n, env)!!
+            case NodeKind.NEW : rtn evNew(n, env)!!
+            case NodeKind.NEW_ARRAY : rtn evNewArray(n, env)!!
+            case NodeKind.MEMBER : rtn evMember(n, env)!!
+            case NodeKind.INDEX : rtn evIndex(n, env)!!
+            case NodeKind.UNARY : rtn evUnary(n, env)!!
+            case NodeKind.BINARY : rtn evBinary(n, env)!!
+            case NodeKind.IF_EXPR : rtn evIfExpr(n, env)!!
+            case NodeKind.ELVIS : rtn evElvis(n, env)!!
+            case NodeKind.FORCE : rtn evForce(n, env)!!
+            case NodeKind.THIS : rtn evThis(n, env)!!
+            else : fail unsupported("表达式节点 " + kindName(n.kind))
+        }
+        rtn vNull()
+    }
+
+    // 字符字面量的值在树上是**字符串**（`'a'` 是 "a"，`'\n'` 是真的换行符）
+    fun charOfLiteral(s : string) -> char {
+        if (s.length() == 0) { rtn toChar(0) }
+        rtn s.charAt(0)
+    }
+
+    public fun evVar(n : Node, env : Env) -> !Val {
+        var nm = attr(n, "name")
+        var v = env.lookup(nm)
+        if (v != null) { rtn v!! }
+        // 方法体里的裸字段名（`rtn x`）：局部没找到才看字段（与 Checker 的解析顺序一致）
+        var c = env.curClass()
+        if (c != null) {
+            var idx = c!!.fieldIndex(nm)
+            if (idx >= 0) {
+                var o = env.thisObj()
+                if (o == null) { fail "17c 解释器：字段 '" + nm + "' 出现在没有 this 的地方" }
+                rtn o!!.fs[idx]
+            }
+        }
+        // 类名 / 枚举名当静态接收者（`Point.origin()`、`TokenKind.IDENT`）
+        if (findCls(nm) != null || findEnum(nm) != null) { rtn vCType(nm) }
+        // JVM 互操作里「当类名用」的几个名字（见 17c 报告：只做示例用到的那几个）
+        if (isInteropClassName(nm)) { rtn vCType(nm) }
+        fail "17c 解释器：找不到名字 '" + nm + "'"
+        rtn vNull()
+    }
+
+    public fun evThis(n : Node, env : Env) -> !Val {
+        var o = env.thisObj()
+        if (o == null) { fail "17c 解释器：这里没有 this" }
+        rtn vObj(o!!)
+    }
+
+    public fun evIfExpr(n : Node, env : Env) -> !Val {
+        var c = ev(kid(n, 0), env)!!
+        if (truth(c)!!) { rtn ev(kid(n, 1), env)!! }
+        rtn ev(kid(n, 2), env)!!
+    }
+
+    // `!!`：Kotlin 版这里抛的是 NullPointerException，而解释器的 `try` 只接 rsf 自己的
+    // 错误——所以走**不可接**的信号 `X`，语义上才是同构的。
+    public fun evForce(n : Node, env : Env) -> !Val {
+        var v = ev(kid(n, 0), env)!!
+        if (v.k == Kind.NULLV) { fail makeSignal("X", "rsf: 对 null 使用了 '!!'") }
+        rtn v
+    }
+
+    public fun evUnary(n : Node, env : Env) -> !Val {
+        var op = attr(n, "op")
+        var v = ev(kid(n, 0), env)!!
+        if (op == "BANG") {
+            var bv2 = truth(v)!!
+            rtn vBool(!bv2)
+        }
+        if (op != "MINUS") { fail unsupported("一元运算符 " + op) }
+        // byte / char 取负之后是 **int**（RsfType 的提升规则），别的地方照原档。
+        // 注意 byte 那一支写成 `0 - v.yv` 而不是 `-v.yv`：**字节码后端在一元负号上只认
+        // int/long/float/double 四种静态类型**（BytecodeCompiler.kt:1286），
+        // 操作数是 byte / char 时 Checker 放行、后端直接抛
+        // `IllegalStateException: 一元减号的操作数不是数值`——这是 17c 期间实测到的
+        // 编译器缺陷（本阶段不动 Kotlin 编译器，先在自己的 rsf 源码里绕开）。
+        switch (v.k) {
+            case Kind.INTV : rtn vInt(-v.iv)
+            case Kind.BYTEV : rtn vInt(0 - v.yv)
+            case Kind.CHARV : rtn vInt(0 - charToInt(v.cv))
+            case Kind.LONGV : rtn vLong(-v.lv)
+            case Kind.FLOATV : rtn vFloat(-v.fv)
+            case Kind.DOUBLEV : rtn vDouble(-v.dv)
+            else : fail unsupported("一元 '-' 用在 " + ("" + v.k) + " 上")
+        }
+        rtn vNull()
+    }
+
+    public fun evBinary(n : Node, env : Env) -> !Val {
+        var op = attr(n, "op")
+        var ln = kid(n, 0)
+        var rn = kid(n, 1)
+
+        // `&&` / `||` 真短路：右边在能定结果时**一次都不能求值**
+        // （右边的副作用会直接体现在输出上，这条错了对拍立刻红）
+        if (op == "ANDAND") {
+            var l = ev(ln, env)!!
+            if (!truth(l)!!) { rtn vBool(false) }
+            rtn vBool(truth(ev(rn, env)!!)!!)
+        }
+        if (op == "OROR") {
+            var l = ev(ln, env)!!
+            if (truth(l)!!) { rtn vBool(true) }
+            rtn vBool(truth(ev(rn, env)!!)!!)
+        }
+
+        var a = ev(ln, env)!!
+        var b = ev(rn, env)!!
+        // 字符串拼接：Kotlin 版按**静态结果类型**分派，这里按运行期标签——
+        // 只要有一边是 string，静态类型就一定是 string（Checker 的规则）
+        if (op == "PLUS" && (a.k == Kind.STRV || b.k == Kind.STRV)) {
+            rtn vStr(render(a)!! + render(b)!!)
+        }
+        if (op == "EQ" || op == "NE" || op == "LT" || op == "GT" || op == "LE" || op == "GE") {
+            rtn compareOp(op, a, b)!!
+        }
+        rtn arithOp(op, a, b)!!
+    }
+
+    public fun evIndex(n : Node, env : Env) -> !Val {
+        var a = ev(kid(n, 0), env)!!
+        var iv = ev(kid(n, 1), env)!!
+        if (a.k != Kind.ARRV) { fail unsupported("下标访问用在 " + ("" + a.k) + " 上") }
+        var idx = intOf(iv)
+        checkIndex(a.av!!.es.length, idx)!!
+        rtn a.av!!.es[idx]
+    }
+
+    public fun evNewArray(n : Node, env : Env) -> !Val {
+        var elemText = attr(n, "elem")
+        var dimsNode = kid(n, 0)
+        var cnt = dimsNode.childCount
+        var dims : int[] = new int[cnt]
+        var i = 0
+        while (i < cnt) {
+            var d = intOf(ev(dimsNode.children[i], env)!!)
+            if (d < 0) { fail arrayLengthFailure(d) }
+            dims[i] = d
+            i = i + 1
+        }
+        rtn vArr(makeArray(elemText, dims, 0))
+    }
+
+    // ------------------------------------------------------------------ 构造
+
+    public fun evNew(n : Node, env : Env) -> !Val {
+        var raw = attr(n, "class")
+        var base = baseTypeName(raw)
+        var args = evalArgs(kid(n, 0), env)!!
+        var c = findCls(base)
+        if (c != null) { rtn constructUser(c!!, args)!! }
+        // JVM 互操作：只做示例用到的那几个（ArrayList / File）
+        if (base == "ArrayList") { rtn vList(new JList()) }
+        if (base == "File") {
+            if (args.length == 1) { rtn vFile(fileAbsolutePath(render(args[0])!!)) }
+            if (args.length == 2) { rtn vFile(fileJoinPath(render(args[0])!!, render(args[1])!!)) }
+            fail unsupported("java.io.File 的 " + args.length + " 个实参的构造器")
+        }
+        fail unsupported("构造 JVM 类 '" + raw + "'（本阶段只做了 java.util.ArrayList 与 java.io.File）")
+        rtn vNull()
+    }
+
+    public fun constructUser(c : Cls, args : Val[]) -> !Val {
+        var o = new Obj(c.name)
+        o.fs = new Val[c.fcount]
+        var i = 0
+        while (i < c.fcount) {
+            o.fs[i] = defaultOf(c.ftypes[i])
+            i = i + 1
+        }
+        var ctor = pickCtor(c, args)
+        if (ctor == null) {
+            // 隐式无参构造器：一个构造器都没写时只有字段初值
+            var e0 = new Env(globals)
+            e0.me = o
+            e0.cl = c
+            runFieldInits(c, o, e0)!!
+        } else {
+            runCtor(c, ctor!!, o, args)!!
+        }
+        rtn vObj(o)
+    }
+
+    // 构造器重载按「个数 + 类型契合度」挑，和 Checker 的口径一致（个数优先、精确优先）
+    public fun pickCtor(c : Cls, args : Val[]) -> ?Fn {
+        var best : ?Fn = null
+        var bestScore = 2147483647
+        var i = 0
+        while (i < c.ccount) {
+            if (c.ctors[i].pcount == args.length) {
+                var s = 0
+                var k = 0
+                while (k < args.length) {
+                    if (!typeMatches(c.ctors[i].ptypes[k], args[k])) { s = s + 1 }
+                    k = k + 1
+                }
+                if (s < bestScore) {
+                    bestScore = s
+                    best = c.ctors[i]
+                }
+            }
+            i = i + 1
+        }
+        rtn best
+    }
+
+    fun typeMatches(typeText : string, v : Val) -> bool {
+        var base = baseTypeName(typeText)
+        if (base == "int") { rtn kindRank(v.k) == 0 }
+        if (base == "long" || base == "float" || base == "double") { rtn kindRank(v.k) >= 0 }
+        if (base == "byte" || base == "char") { rtn kindRank(v.k) == 0 }
+        if (base == "bool") { rtn v.k == Kind.BOOLV }
+        if (base == "string") { rtn v.k == Kind.STRV || v.k == Kind.NULLV }
+        if (findEnum(base) != null) { rtn v.k == Kind.ENUMV || v.k == Kind.NULLV }
+        rtn v.k == Kind.OBJV || v.k == Kind.NULLV || v.k == Kind.LISTV || v.k == Kind.ARRV
+    }
+
+    // 构造器体里有没有 `this(...)` 委托：只有链的**根**跑字段初值（和 JVM 同一个道理）。
+    // 只看顶层语句——委托必须是首句，这是语法层面的约定。
+    fun hasThisCall(bodyNode : Node) -> bool {
+        var i = 0
+        while (i < bodyNode.childCount) {
+            if (bodyNode.children[i].kind == NodeKind.THIS_CALL) { rtn true }
+            i = i + 1
+        }
+        rtn false
+    }
+
+    public fun runFieldInits(c : Cls, o : Obj, env : Env) -> !int {
+        var i = 0
+        while (i < c.fcount) {
+            o.fs[i] = coerceTo(c.ftypes[i], ev(c.finits[i], env)!!)
+            i = i + 1
+        }
+        rtn 0
+    }
+
+    public fun runCtor(c : Cls, f : Fn, o : Obj, args : Val[]) -> !int {
+        var env = new Env(globals)
+        env.me = o
+        env.cl = c
+        var i = 0
+        while (i < f.pcount) {
+            var a = vNull()
+            if (i < args.length) { a = args[i] }
+            env.define(f.pnames[i], coerceTo(f.ptypes[i], a))
+            i = i + 1
+        }
+        if (!hasThisCall(f.body)) { runFieldInits(c, o, env)!! }
+        var sig = ""
+        try {
+            blk(f.body, env)!!
+        } catch (e : string) {
+            if (signalKind(e) != "R") { sig = e }
+        }
+        if (sig.length() > 0) { fail sig }
+        rtn 0
+    }
+
+    // ------------------------------------------------------------------ 调用
+
+    public fun callFn(f : Fn, self : ?Obj, c : ?Cls, args : Val[]) -> !Val {
+        var env = new Env(globals)
+        env.me = self
+        env.cl = c
+        var i = 0
+        while (i < f.pcount) {
+            var a = vNull()
+            if (i < args.length) { a = args[i] }
+            env.define(f.pnames[i], coerceTo(f.ptypes[i], a))
+            i = i + 1
+        }
+        rtn execFnBody(f, env)!!
+    }
+
+    public fun execFnBody(f : Fn, env : Env) -> !Val {
+        depth = depth + 1
+        if (depth > 2000) {
+            depth = depth - 1
+            fail "调用层级超过 2000 层，多半是无限递归"
+        }
+        var out = vNull()
+        var sig = ""
+        try {
+            blk(f.body, env)!!
+        } catch (e : string) {
+            if (signalKind(e) == "R") { out = retVal } else { sig = e }
+        }
+        depth = depth - 1
+        if (sig.length() > 0) { fail sig }
+        rtn out
+    }
+
+    public fun evCall(n : Node, env : Env) -> !Val {
+        var args = evalArgs(kid(n, 0), env)!!
+        rtn invokeCall(attr(n, "name"), args, env)!!
+    }
+
+    public fun isBuiltinName(nm : string) -> bool {
+        if (nm == "toByte" || nm == "toChar" || nm == "charToInt") { rtn true }
+        if (nm == "intToString" || nm == "parseInt") { rtn true }
+        if (nm == "isDigit" || nm == "isLetter" || nm == "isWhitespace") { rtn true }
+        if (nm == "toUpper" || nm == "toLower") { rtn true }
+        if (nm == "readText" || nm == "writeText") { rtn true }
+        if (nm == "readBytes" || nm == "writeBytes") { rtn true }
+        rtn false
+    }
+
+    // 可能失败的内置函数（`?:` 要按这个判断「左边这次调用自己会不会失败」）
+    public fun isErrorBuiltin(nm : string) -> bool {
+        if (nm == "parseInt") { rtn true }
+        if (nm == "readText" || nm == "readBytes") { rtn true }
+        if (nm == "writeText" || nm == "writeBytes") { rtn true }
+        rtn false
+    }
+
+    // JVM 互操作里可以被当成「类名」用的名字
+    public fun isInteropClassName(nm : string) -> bool {
+        if (nm == "System" || nm == "File") { rtn true }
+        if (nm == "ArrayList") { rtn true }
+        rtn false
+    }
+
+    // `readBytes` 给回来的是 rsf 的 `byte[]`，解释器里用「元素类型是 byte 的数组」接住
+    public fun bytesToArray(raw : byte[]) -> Arr {
+        var a = new Arr(1)
+        a.elemType = "byte"
+        a.es = new Val[raw.length]
+        var i = 0
+        while (i < raw.length) {
+            a.es[i] = vByte(raw[i])
+            i = i + 1
+        }
+        rtn a
+    }
+
+    public fun arrayToBytes(a : Arr) -> byte[] {
+        var raw : byte[] = new byte[a.es.length]
+        var i = 0
+        while (i < a.es.length) {
+            raw[i] = toByte(intOf(a.es[i]))
+            i = i + 1
+        }
+        rtn raw
+    }
+
+    public fun callBuiltin(nm : string, args : Val[]) -> !Val {
+        if (args.length == 0) { fail unsupported("内置函数 '" + nm + "' 没有实参") }
+        var a0 = args[0]
+        if (nm == "toByte") { rtn vByte(toByte(intOf(a0))) }
+        if (nm == "toChar") { rtn vChar(toChar(intOf(a0))) }
+        if (nm == "charToInt") { rtn vInt(charToInt(a0.cv)) }
+        if (nm == "intToString") { rtn vStr(intToString(intOf(a0))) }
+        // parseInt 的失败消息直接由 rsf 自己的内置 parseInt 抛出来，
+        // 与 Builtins.parseIntFailure 是同一个格式（两端天然一字不差）
+        if (nm == "parseInt") { rtn vInt(parseInt(render(a0)!!)!!) }
+        if (nm == "isDigit") { rtn vBool(isDigit(a0.cv)) }
+        if (nm == "isLetter") { rtn vBool(isLetter(a0.cv)) }
+        if (nm == "isWhitespace") { rtn vBool(isWhitespace(a0.cv)) }
+        if (nm == "toUpper") { rtn vChar(toUpper(a0.cv)) }
+        if (nm == "toLower") { rtn vChar(toLower(a0.cv)) }
+        // 四个文件函数：调的是 rsf **自己**的 readText / writeText / readBytes / writeBytes，
+        // 也就是 Kotlin 版解释器 callBuiltin 里同一批 java.nio.file 调用 —— 失败消息天然一字不差
+        if (nm == "readText") { rtn vStr(readText(render(a0)!!)!!) }
+        if (nm == "readBytes") { rtn vArr(bytesToArray(readBytes(render(a0)!!)!!)) }
+        if (nm == "writeText") {
+            var failed = false
+            var failedMsg = ""
+            try {
+                writeText(render(a0)!!, render(args[1])!!)
+            } catch (w : string) {
+                failed = true
+                failedMsg = w
+            }
+            if (failed) { fail failedMsg }
+            rtn vNull()
+        }
+        if (nm == "writeBytes") {
+            var failed2 = false
+            var failedMsg2 = ""
+            try {
+                writeBytes(render(a0)!!, arrayToBytes(args[1].av!!))
+            } catch (w2 : string) {
+                failed2 = true
+                failedMsg2 = w2
+            }
+            if (failed2) { fail failedMsg2 }
+            rtn vNull()
+        }
+        fail unsupported("内置函数 '" + nm + "'")
+        rtn vNull()
+    }
+
+    public fun invokeCall(nm : string, args : Val[], env : Env) -> !Val {
+        if (nm == "print" || nm == "println") {
+            if (args.length == 0) {
+                if (nm == "println") { println() }
+                rtn vNull()
+            }
+            var text = render(args[0])!!
+            if (nm == "println") { println(text) } else { print(text) }
+            rtn vNull()
+        }
+        if (isBuiltinName(nm)) { rtn callBuiltin(nm, args)!! }
+        // 省掉 new 的构造写法（`Point(1, 2)`）：类名与函数名不可能重名
+        var c = findCls(nm)
+        if (c != null) { rtn constructUser(c!!, args)!! }
+        // 类里按名字直接调本类方法（隐式 this / 隐式类名）
+        var cur = env.curClass()
+        if (cur != null) {
+            var m = cur!!.methodNamed(nm)
+            if (m != null) { rtn callFn(m!!, env.thisObj(), cur!!, args)!! }
+        }
+        var f = findFunc(nm)
+        if (f != null) { rtn callFn(f!!, null, null, args)!! }
+        fail unsupported("调用 '" + nm + "'（既不是内置函数，也不是本程序里的函数或类）")
+        rtn vNull()
+    }
+
+    // ------------------------------------------------------------------ 成员访问
+
+    public fun evMember(n : Node, env : Env) -> !Val {
+        var recvNode = kid(n, 0)
+        var nm = attr(n, "name")
+        var isCall = attrBool(n, "call")
+
+        // 枚举常量 `TokenKind.IDENT`：接收者是个**枚举名**（不是变量）时才算
+        if (!isCall && recvNode.kind == NodeKind.VAR) {
+            var rn = attr(recvNode, "name")
+            if (env.lookup(rn) == null) {
+                var en = findEnum(rn)
+                if (en != null) {
+                    var got = en!!.valueOf(nm)
+                    if (got == null) { fail "枚举 '" + rn + "' 里没有常量 '" + nm + "'" }
+                    rtn got!!
+                }
+            }
+        }
+
+        var recv = ev(recvNode, env)!!
+
+        // 数组的 .length 是**属性**（不带括号）
+        if (recv.k == Kind.ARRV && !isCall && nm == "length") {
+            rtn vInt(recv.av!!.es.length)
+        }
+
+        if (!isCall) {
+            if (recv.k == Kind.OBJV) {
+                var o = recv.ov!!
+                var c = findCls(o.cls)
+                if (c == null) { fail "17c 解释器：类 '" + o.cls + "' 不在本程序里" }
+                var idx = c!!.fieldIndex(nm)
+                if (idx < 0) { fail "类 '" + o.cls + "' 里没有字段 '" + nm + "'" }
+                rtn o.fs[idx]
+            }
+            fail unsupported("成员访问 " + ("" + recv.k) + "." + nm)
+        }
+
+        var args = evalArgs(kid(n, 1), env)!!
+        rtn invokeMember(recv, nm, args, env)!!
+    }
+
+    public fun invokeMember(recv : Val, nm : string, args : Val[], env : Env) -> !Val {
+        if (recv.k == Kind.STRV) { rtn stringMember(recv.sv, nm, args)!! }
+        if (recv.k == Kind.LISTV) { rtn listMember(recv.lsv!!, nm, args, env)!! }
+        if (recv.k == Kind.CTYPEV) { rtn staticMember(recv.cname, nm, args, env)!! }
+        if (recv.k == Kind.OBJV) { rtn objMember(recv.ov!!, nm, args, env)!! }
+        if (recv.k == Kind.FILEV) { rtn fileMember(recv.sv, nm, args)!! }
+        fail unsupported("成员方法 " + ("" + recv.k) + "." + nm + "()")
+        rtn vNull()
+    }
+
+    // java.io.File 的替身（只做 files.rsf 用到的那几个）
+    public fun fileMember(path : string, nm : string, args : Val[]) -> !Val {
+        if (nm == "getAbsolutePath") { rtn vStr(fileAbsolutePath(path)) }
+        if (nm == "getPath") { rtn vStr(path) }
+        if (nm == "getName") { rtn vStr(fileBaseName(path)) }
+        if (nm == "delete") { rtn vBool(fileDeletePath(path)) }
+        if (nm == "exists") { rtn vBool(fileExistsPath(path)) }
+        fail unsupported("java.io.File 的方法 '" + nm + "'")
+        rtn vNull()
+    }
+
+    // string 的三个方法（length / charAt / substring）在 Kotlin 版里走 JVM 反射，
+    // 这里直接实现；多出来的几个（contains 之类）是为了 files.rsf 那类程序。
+    public fun stringMember(s : string, nm : string, args : Val[]) -> !Val {
+        if (nm == "length") { rtn vInt(s.length()) }
+        if (nm == "charAt") { rtn vChar(s.charAt(intOf(args[0]))) }
+        if (nm == "substring") { rtn vStr(s.substring(intOf(args[0]), intOf(args[1]))) }
+        if (nm == "isEmpty") { rtn vBool(s.length() == 0) }
+        if (nm == "contains") { rtn vBool(indexOfTextIn(s, render(args[0])!!) >= 0) }
+        if (nm == "equals") { rtn vBool(s == render(args[0])!!) }
+        if (nm == "startsWith") { rtn vBool(indexOfTextIn(s, render(args[0])!!) == 0) }
+        if (nm == "endsWith") {
+            var tail = render(args[0])!!
+            if (tail.length() > s.length()) { rtn vBool(false) }
+            rtn vBool(s.substring(s.length() - tail.length(), s.length()) == tail)
+        }
+        fail unsupported("string 的方法 '" + nm + "'")
+        rtn vNull()
+    }
+
+    public fun listMember(l : JList, nm : string, args : Val[], env : Env) -> !Val {
+        if (nm == "size") { rtn vInt(l.n) }
+        if (nm == "isEmpty") { rtn vBool(l.n == 0) }
+        if (nm == "clear") {
+            l.n = 0
+            rtn vNull()
+        }
+        if (nm == "add") {
+            l.es = growVal(l.es, l.n, args[0])
+            l.n = l.n + 1
+            rtn vBool(true)
+        }
+        if (nm == "get") {
+            var i = intOf(args[0])
+            checkIndex(l.n, i)!!
+            rtn l.es[i]
+        }
+        if (nm == "set") {
+            var i = intOf(args[0])
+            checkIndex(l.n, i)!!
+            var old = l.es[i]
+            l.es[i] = args[1]
+            rtn old
+        }
+        if (nm == "remove") {
+            var i = intOf(args[0])
+            checkIndex(l.n, i)!!
+            var old = l.es[i]
+            var k = i
+            while (k < l.n - 1) {
+                l.es[k] = l.es[k + 1]
+                k = k + 1
+            }
+            l.n = l.n - 1
+            rtn old
+        }
+        if (nm == "contains") {
+            var k = 0
+            while (k < l.n) {
+                if (valuesEqual(l.es[k], args[0])) { rtn vBool(true) }
+                k = k + 1
+            }
+            rtn vBool(false)
+        }
+        if (nm == "indexOf") {
+            var k = 0
+            while (k < l.n) {
+                if (valuesEqual(l.es[k], args[0])) { rtn vInt(k) }
+                k = k + 1
+            }
+            rtn vInt(-1)
+        }
+        fail unsupported("ArrayList 的方法 '" + nm + "'")
+        rtn vNull()
+    }
+
+    public fun objMember(o : Obj, nm : string, args : Val[], env : Env) -> !Val {
+        var c = findCls(o.cls)
+        if (c == null) { fail "17c 解释器：类 '" + o.cls + "' 不在本程序里" }
+        var m = c!!.methodNamed(nm)
+        if (m == null) { fail "类 '" + o.cls + "' 里没有方法 '" + nm + "'" }
+        rtn callFn(m!!, o, c!!, args)!!
+    }
+
+    public fun staticMember(clsName : string, nm : string, args : Val[], env : Env) -> !Val {
+        var c = findCls(clsName)
+        if (c != null) {
+            var m = c!!.methodNamed(nm)
+            if (m == null) { fail "类 '" + clsName + "' 里没有静态方法 '" + nm + "'" }
+            rtn callFn(m!!, null, c!!, args)!!
+        }
+        // JVM 静态互操作：目前只做 files.rsf 用得到的 System.getProperty
+        if (clsName == "System" && nm == "getProperty") {
+            var key = render(args[0])!!
+            var got : ?string = System.getProperty(key)
+            if (got == null) { rtn vNull() }
+            rtn vStr(got!!)
+        }
+        fail unsupported("JVM 静态方法 " + clsName + "." + nm + "()")
+        rtn vNull()
+    }
+
+    // ------------------------------------------------------------------ `?:`
+
+    // 左边这次调用「自己可能失败」吗？（!T 函数 / !T 方法 / parseInt）
+    fun isErrorCapable(ln : Node, env : Env) -> bool {
+        if (ln.kind == NodeKind.CALL) {
+            var nm = attr(ln, "name")
+            if (isErrorBuiltin(nm)) { rtn true }
+            var f = findFunc(nm)
+            if (f != null && f!!.mayError) { rtn true }
+            var cur = env.curClass()
+            if (cur != null) {
+                var m = cur!!.methodNamed(nm)
+                if (m != null && m!!.mayError) { rtn true }
+            }
+            rtn false
+        }
+        if (ln.kind == NodeKind.MEMBER && attrBool(ln, "call")) {
+            var nm = attr(ln, "name")
+            var i = 0
+            while (i < ccount) {
+                var m = classes[i].methodNamed(nm)
+                if (m != null && m!!.mayError) { rtn true }
+                i = i + 1
+            }
+            rtn false
+        }
+        rtn false
+    }
+
+    // 只把**目标调用本身**包进保护范围：实参求值时的失败要继续往外传
+    // （Kotlin 版那边靠 failure.frames 的第一个是不是目标函数来区分，效果相同）。
+    // 接住了就返回哨兵 caughtVal。
+    public fun tryCallProtected(ln : Node, env : Env) -> !Val {
+        if (ln.kind == NodeKind.MEMBER) {
+            var recv = ev(kid(ln, 0), env)!!
+            var args = evalArgs(kid(ln, 1), env)!!
+            var got = vNull()
+            var bad = false
+            try {
+                got = invokeMember(recv, attr(ln, "name"), args, env)!!
+            } catch (e : string) {
+                if (isSignal(e)) { fail e }
+                bad = true
+            }
+            if (bad) { rtn caughtVal }
+            rtn got
+        }
+        var args2 = evalArgs(kid(ln, 0), env)!!
+        var got2 = vNull()
+        var bad2 = false
+        try {
+            got2 = invokeCall(attr(ln, "name"), args2, env)!!
+        } catch (e2 : string) {
+            if (isSignal(e2)) { fail e2 }
+            bad2 = true
+        }
+        if (bad2) { rtn caughtVal }
+        rtn got2
+    }
+
+    public fun evElvis(n : Node, env : Env) -> !Val {
+        var ln = kid(n, 0)
+        var rn = kid(n, 1)
+        if (isErrorCapable(ln, env)) {
+            var got = tryCallProtected(ln, env)!!
+            if (got == caughtVal) { rtn ev(rn, env)!! }
+            rtn got
+        }
+        var l = ev(ln, env)!!
+        if (l.k != Kind.NULLV) { rtn l }
+        rtn ev(rn, env)!!
+    }
+
+    // ==== PART4 ====
+
+    // ------------------------------------------------------------------ 语句
+    //
+    // 每个 BLOCK 自成一个作用域（和 rsf 的大括号语义一致）；函数体不额外开一层
+    // （参数与函数体顶层共用作用域，这一点和 Checker 的口径对齐）。
+
+    public fun blk(b : Node, env : Env) -> !int {
+        var pc = 0
+        var cnt = b.childCount
+        while (pc < cnt) {
+            var s = b.children[pc]
+            if (s.kind == NodeKind.LABEL) {
+                pc = pc + 1
+            } else {
+                // goto 由**离它最近的、含该标签的块**接住；本块没有就原样往上传
+                var jump = -1
+                var sig = ""
+                try {
+                    st(s, env)!!
+                } catch (e : string) {
+                    if (signalKind(e) == "G") {
+                        var idx = labelIndex(b, signalPayload(e))
+                        if (idx >= 0) { jump = idx } else { sig = e }
+                    } else {
+                        sig = e
+                    }
+                }
+                if (sig.length() > 0) { fail sig }
+                if (jump >= 0) { pc = jump } else { pc = pc + 1 }
+            }
+        }
+        rtn 0
+    }
+
+    fun labelIndex(b : Node, nm : string) -> int {
+        var i = 0
+        while (i < b.childCount) {
+            var s = b.children[i]
+            if (s.kind == NodeKind.LABEL && attr(s, "name") == nm) { rtn i }
+            i = i + 1
+        }
+        rtn -1
+    }
+
+    public fun st(n : Node, env : Env) -> !int {
+        switch (n.kind) {
+            case NodeKind.BLOCK : rtn blk(n, new Env(env))!!
+            case NodeKind.VAR_DECL : rtn stVarDecl(n, env)!!
+            case NodeKind.ASSIGN : rtn stAssign(n, env)!!
+            case NodeKind.MEMBER_ASSIGN : rtn stMemberAssign(n, env)!!
+            case NodeKind.INDEX_ASSIGN : rtn stIndexAssign(n, env)!!
+            case NodeKind.RETURN : rtn stReturn(n, env)!!
+            case NodeKind.EXPR_STMT : rtn stExpr(n, env)!!
+            case NodeKind.LABEL : rtn 0
+            case NodeKind.THIS_CALL : rtn stThisCall(n, env)!!
+            case NodeKind.SWITCH : rtn stSwitch(n, env)!!
+            case NodeKind.GOTO : rtn stGoto(n)!!
+            case NodeKind.IF : rtn stIf(n, env)!!
+            case NodeKind.WHILE : rtn stWhile(n, env)!!
+            case NodeKind.FOR : rtn stFor(n, env)!!
+            case NodeKind.BREAK : rtn stBreak()!!
+            case NodeKind.CONTINUE : rtn stContinue()!!
+            case NodeKind.FAIL : rtn stFail(n, env)!!
+            case NodeKind.TRY : rtn stTry(n, env)!!
+            else : fail unsupported("语句 " + kindName(n.kind))
+        }
+        rtn 0
+    }
+
+    public fun stVarDecl(n : Node, env : Env) -> !int {
+        var v = ev(kid(n, 0), env)!!
+        env.define(attr(n, "name"), coerceTo(attr(n, "type"), v))
+        rtn 0
+    }
+
+    // 裸名字赋值：局部/参数优先，其次才是当前类的字段（与 Checker 的解析顺序一致）
+    public fun stAssign(n : Node, env : Env) -> !int {
+        var nm = attr(n, "name")
+        var v = ev(kid(n, 0), env)!!
+        if (env.assign(nm, v)) { rtn 0 }
+        var c = env.curClass()
+        if (c != null) {
+            var idx = c!!.fieldIndex(nm)
+            if (idx >= 0) {
+                var o = env.thisObj()
+                if (o == null) { fail "17c 解释器：字段 '" + nm + "' 出现在没有 this 的地方" }
+                o!!.fs[idx] = coerceTo(c!!.ftypes[idx], v)
+                rtn 0
+            }
+        }
+        fail "17c 解释器：赋值给未声明的名字 '" + nm + "'"
+        rtn 0
+    }
+
+    fun evalReceiverObj(recvNode : Node, env : Env) -> !Obj {
+        if (recvNode.kind == NodeKind.THIS) {
+            var self = env.thisObj()
+            if (self == null) { fail "17c 解释器：这里没有 this" }
+            rtn self!!
+        }
+        var r = ev(recvNode, env)!!
+        if (r.k == Kind.OBJV) { rtn r.ov!! }
+        fail unsupported("成员赋值的目标不是对象（" + ("" + r.k) + "）")
+        rtn new Obj("")
+    }
+
+    // `p.x = 1`：接收者先求值，再求右值（和 Kotlin 版一致）
+    public fun stMemberAssign(n : Node, env : Env) -> !int {
+        var m = kid(n, 0)
+        var nm = attr(m, "name")
+        var o = evalReceiverObj(kid(m, 0), env)!!
+        var c = findCls(o.cls)
+        if (c == null) { fail "17c 解释器：类 '" + o.cls + "' 不在本程序里" }
+        var idx = c!!.fieldIndex(nm)
+        if (idx < 0) { fail "类 '" + o.cls + "' 里没有字段 '" + nm + "'" }
+        var v = ev(kid(n, 1), env)!!
+        o.fs[idx] = coerceTo(c!!.ftypes[idx], v)
+        rtn 0
+    }
+
+    // `a[i] = v`：求值顺序 = 接收者 → 下标 → **越界检查** → 右值。
+    // 右值放在检查之后，越界时它里面的副作用一次都不会发生（两端输出才不会分叉）。
+    public fun stIndexAssign(n : Node, env : Env) -> !int {
+        var ix = kid(n, 0)
+        var a = ev(kid(ix, 0), env)!!
+        var iv = ev(kid(ix, 1), env)!!
+        if (a.k != Kind.ARRV) { fail unsupported("下标赋值用在非数组上") }
+        var arr = a.av!!
+        var idx = intOf(iv)
+        checkIndex(arr.es.length, idx)!!
+        var v = ev(kid(n, 1), env)!!
+        arr.es[idx] = coerceTo(arr.elemType, v)
+        rtn 0
+    }
+
+    public fun stReturn(n : Node, env : Env) -> !int {
+        var v = vNull()
+        if (attrBool(n, "hasValue") && n.childCount > 0) {
+            v = ev(n.children[0], env)!!
+        }
+        retVal = v
+        fail makeSignal("R", "")
+        rtn 0
+    }
+
+    public fun stExpr(n : Node, env : Env) -> !int {
+        ev(kid(n, 0), env)!!
+        rtn 0
+    }
+
+    public fun stGoto(n : Node) -> !int {
+        fail makeSignal("G", attr(n, "label"))
+        rtn 0
+    }
+
+    public fun stBreak() -> !int {
+        fail makeSignal("B", "")
+        rtn 0
+    }
+
+    public fun stContinue() -> !int {
+        fail makeSignal("C", "")
+        rtn 0
+    }
+
+    public fun stFail(n : Node, env : Env) -> !int {
+        var v = ev(kid(n, 0), env)!!
+        fail render(v)!!
+        rtn 0
+    }
+
+    public fun stIf(n : Node, env : Env) -> !int {
+        if (truth(ev(kid(n, 0), env)!!)!!) { rtn blk(kid(n, 1), new Env(env))!! }
+        if (n.childCount > 2) { rtn blk(kid(n, 2), new Env(env))!! }
+        rtn 0
+    }
+
+    public fun stWhile(n : Node, env : Env) -> !int {
+        var cond = kid(n, 0)
+        var bodyNode = kid(n, 1)
+        while (true) {
+            if (!truth(ev(cond, env)!!)!!) { rtn 0 }
+            var brk = false
+            var sig = ""
+            try {
+                blk(bodyNode, new Env(env))!!
+            } catch (e : string) {
+                var sk = signalKind(e)
+                if (sk == "B") { brk = true }
+                else if (sk == "C") { }
+                else { sig = e }
+            }
+            if (sig.length() > 0) { fail sig }
+            if (brk) { rtn 0 }
+        }
+        rtn 0
+    }
+
+    // `for`：孩子按「条件? 更新? 体」排列（有没有靠 hasCond / hasStep 说）。
+    // `continue` 在 for 里要**把更新跑一遍**再进下一轮（while 里直接进下一轮），
+    // 这是两种循环在降级后唯一的行为差别。
+    public fun stFor(n : Node, env : Env) -> !int {
+        var hasCond = attrBool(n, "hasCond")
+        var hasStep = attrBool(n, "hasStep")
+        var idx = 0
+        var condNode = kid(n, 0)
+        if (hasCond) {
+            condNode = kid(n, idx)
+            idx = idx + 1
+        }
+        var stepNode = kid(n, 0)
+        if (hasStep) {
+            stepNode = kid(n, idx)
+            idx = idx + 1
+        }
+        var bodyNode = kid(n, idx)
+        while (true) {
+            if (hasCond) {
+                if (!truth(ev(condNode, env)!!)!!) { rtn 0 }
+            }
+            var brk = false
+            var sig = ""
+            try {
+                blk(bodyNode, new Env(env))!!
+            } catch (e : string) {
+                var sk = signalKind(e)
+                if (sk == "B") { brk = true }
+                else if (sk == "C") { }
+                else { sig = e }
+            }
+            if (sig.length() > 0) { fail sig }
+            if (brk) { rtn 0 }
+            if (hasStep) { st(stepNode, env)!! }
+        }
+        rtn 0
+    }
+
+    // `switch`：被分派的值只求一次，按声明顺序跟枚举常量比**引用相等**
+    // （枚举值是单例，见 Enm.valueOf），一个都没命中就走 else；没写 else 且穷尽时
+    // 唯一到得了这里的只有 null——消息与 Kotlin 版一字不差。
+    public fun stSwitch(n : Node, env : Env) -> !int {
+        var subject = ev(kid(n, 0), env)!!
+        var cases = kid(n, 1)
+        var i = 0
+        while (i < cases.childCount) {
+            var cnode = cases.children[i]
+            var en = findEnum(attr(cnode, "enum"))
+            if (en != null) {
+                var want = en!!.valueOf(attr(cnode, "value"))
+                if (want != null) {
+                    if (subject == want!!) { rtn blk(kid(cnode, 0), new Env(env))!! }
+                }
+            }
+            i = i + 1
+        }
+        if (attrBool(n, "hasElse")) { rtn blk(kid(n, 2), new Env(env))!! }
+        var enumName = ""
+        if (cases.childCount > 0) { enumName = attr(cases.children[0], "enum") }
+        fail switchNoMatchFailure(enumName)
+        rtn 0
+    }
+
+    // `try` / `catch`：接住的**只有真错误**，控制流信号一律原样往上传
+    // （否则 `try { rtn 5 } catch ...` 会把 return 吃掉）
+    public fun stTry(n : Node, env : Env) -> !int {
+        var sig = ""
+        var bad = false
+        var msg = ""
+        try {
+            blk(kid(n, 0), new Env(env))!!
+        } catch (e : string) {
+            if (isSignal(e)) {
+                sig = e
+            } else {
+                bad = true
+                msg = e
+            }
+        }
+        if (sig.length() > 0) { fail sig }
+        if (bad) {
+            var catchEnv = new Env(env)
+            catchEnv.define(attr(n, "catch"), vStr(msg))
+            rtn blk(kid(n, 1), catchEnv)!!
+        }
+        rtn 0
+    }
+
+    public fun stThisCall(n : Node, env : Env) -> !int {
+        var c = env.curClass()
+        var o = env.thisObj()
+        if (c == null || o == null) { fail "17c 解释器：this(...) 不在构造器里" }
+        var args = evalArgs(kid(n, 0), env)!!
+        var target = pickCtor(c!!, args)
+        if (target == null) { fail "17c 解释器：this(...) 找不到匹配的构造器" }
+        rtn runCtor(c!!, target!!, o!!, args)!!
+    }
+
+    // ------------------------------------------------------------------ 入口
+
+    public fun runMain() -> !int {
+        var m = findFunc("main")
+        if (m == null) { fail "找不到入口函数：需要 fun main() -> void { ... }" }
+        if (m!!.pcount != 0) {
+            fail "入口函数 main 不能有参数：JVM 只认 main(String[])，rsf 里也没有地方给它传参"
+        }
+        callFn(m!!, null, null, new Val[0])!!
+        rtn 0
+    }
+}
+
+// ================================================================ 对外接口
+
+// 跑一份源码：rsf 版 lex → rsf 版 parse → 遍历执行。
+// 解析失败时 `fail`（和 Kotlin 版 `rsf run` 遇错抛 RsfError 是同一条路）。
+//
+// 返回 `!int`（恒 0）而不是 `!void`：rsf 的 `!void` 写不出 `!!`，调用点会很难看。
+public fun runSource(source : string) -> !int {
+    var ast = parseSource(source)
+    if (ast.kind == NodeKind.ERROR) {
+        fail "解析失败：" + attr(ast, "message")
+    }
+    var it = new Interp(ast)
+    it.load()
+    it.runMain()!!
+    rtn 0
+}
+
+// 已经有树时直接跑（测试与入口都用得上：一次解析、多次跑）
+public fun runProgram(ast : Node) -> !int {
+    if (ast.kind == NodeKind.ERROR) {
+        fail "解析失败：" + attr(ast, "message")
+    }
+    var it = new Interp(ast)
+    it.load()
+    it.runMain()!!
+    rtn 0
+}

@@ -1,0 +1,18 @@
+public interface A {
+    fun say() -> string {
+        rtn "a"
+    }
+}
+
+public interface B {
+    fun say() -> string {
+        rtn "b"
+    }
+}
+
+class C : A, B {
+}
+
+fun main() -> void {
+    rtn
+}

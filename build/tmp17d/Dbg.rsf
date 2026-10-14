@@ -1,0 +1,36 @@
+import "../../rsfSrc/bootstrap/Backend.rsf"
+import java.lang.System
+
+fun main() -> void {
+    var p = System.getProperty("rsf.dbg.file") ?: "rsfSrc/lang/class.rsf"
+    var src = ""
+    try {
+        src = readText(p)!!
+    } catch (e : string) {
+        System.err.println("读取失败: " + e)
+        System.exit(1)
+    }
+    var ast = parseSource(src)
+    var classes : Node = new Node(NodeKind.ERROR)
+    var enums : Node = new Node(NodeKind.ERROR)
+    var imps : Node = new Node(NodeKind.ERROR)
+    var i = 0
+    while (i < ast.childCount) {
+        if (ast.children[i].kind == NodeKind.CLASSES) { classes = ast.children[i] }
+        if (ast.children[i].kind == NodeKind.ENUMS) { enums = ast.children[i] }
+        if (ast.children[i].kind == NodeKind.IMPORTS) { imps = ast.children[i] }
+        i = i + 1
+    }
+    var g = new Gen("x")
+    collectImports(g, imps)
+    collectClasses(g, classes, enums)
+    println("failed=" + boolText(g.failed) + " message=" + g.message)
+    println("classes=" + intToString(g.ciCount) + " enums=" + intToString(g.eiCount) + " imports=" + intToString(g.importCount))
+    var c = 0
+    while (c < g.ciCount) {
+        var ci = g.cis[c]
+        println("C" + intToString(c) + " name=" + ci.name + " internal=" + ci.internal + " fields=" + intToString(ci.fieldCount) + " meths=" + intToString(ci.methCount) + " ctors=" + intToString(ci.ctorCount()))
+        c = c + 1
+    }
+    rtn
+}

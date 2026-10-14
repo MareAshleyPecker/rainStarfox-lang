@@ -1,0 +1,35 @@
+// 多文件示例的入口——三种 import 语法各演示一次
+//
+//   import "文件.rsf"        引入另一个 rsf 源文件（Go 风格，路径可以跨行写）
+//   import 点分.类名         引入 JVM 类（Java/Kotlin 风格，按 classpath 上的 .class 解析）
+//   module "文件夹"          把该目录下所有 .rsf 并进来
+//
+// ⚠️ 这个例子**不能直接跑**：它 import 的 `multifile.rsf` 是旁边那个 rsf.java 编出来的，
+//    而 Java 源文件不参与 rsf 编译。先手工 javac 一次，再跑：
+//
+//      javac -encoding UTF-8 -d build\java-multifile rsfSrc\lang\multifile\rsf.java
+//      gradlew run --args="run rsfSrc/lang/multifile/main.rsf"
+//
+//    没有 javac 过的话，`import multifile.rsf` 会报「classpath 上找不到 JVM 类」。
+//    细节见 README 的「多文件与 Java 互操作」一节。
+
+import "lib/greet.rsf"
+import multifile.rsf
+// 路径可以断成多行，空白会被去掉
+import "lib/
+       math.rsf"
+
+module "plugins"
+
+fun main() -> void {
+    println(greet("rainStarfox"))
+    println("add(1, 2) = " + add(1, 2))
+    println("square(7) = " + square(7))
+    println(pluginHello())
+
+    // 下面两行调的是 Java 那边的方法（multifile/rsf.java → classpath 上的 multifile/rsf.class）
+    println(rsf.banner())
+    println("rsf.triple(14) = " + rsf.triple(14))
+
+    rtn
+}

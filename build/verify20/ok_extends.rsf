@@ -1,0 +1,22 @@
+public interface Base {
+    fun id() -> int
+}
+
+public interface Named : Base {
+    fun name() -> string
+}
+
+class Dog : Named {
+    public fun id() -> int {
+        rtn 7
+    }
+    public fun name() -> string {
+        rtn "rex"
+    }
+}
+
+fun main() -> void {
+    var d : Named = new Dog()
+    println(intToString(d.id()) + "/" + d.name())
+    rtn
+}

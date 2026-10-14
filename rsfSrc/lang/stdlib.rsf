@@ -1,0 +1,142 @@
+// 阶段 16 示例：byte / char 与标准库切片
+//
+// 这一阶段补的是「自己写一个词法器」最少要用的那套积木：
+//
+//   - char 字面量（'a' / '\n' / '\u0041'）与 byte / char 两个基础类型；
+//   - 字符分类与大小写：isDigit / isLetter / isWhitespace / toUpper / toLower；
+//   - 字符与码点互转：charToInt / toChar，以及窄化用的 toByte；
+//   - 字符串切片：length() / charAt(int) -> char / substring(int, int) -> string
+//     （这三个是 java.lang.String 自己的方法，走 JVM 互操作，不是内置函数）；
+//   - parseInt(string) -> !int：唯一会「失败」的一个，三种处理方式在下面都演示了。
+
+// ------------------------------------------------------------------ 字符分类
+
+// 词法器的第一步：一个字符算数字、字母、空白，还是别的
+fun kindOf(c : char) -> string {
+    if (isDigit(c)) { rtn "数字" }
+    if (isLetter(c)) { rtn "字母" }
+    if (isWhitespace(c)) { rtn "空白" }
+    rtn "符号"
+}
+
+// 十六进制字符 -> 数值。这里同时用了 charToInt（取码点）和 toLower（统一大小写）
+fun hexValue(c : char) -> int {
+    if (isDigit(c)) { rtn charToInt(c) - charToInt('0') }
+    rtn charToInt(toLower(c)) - charToInt('a') + 10
+}
+
+// 把转义字符写成能看懂的名字：'\n' 这种打出来是看不见的
+fun escapeName(c : char) -> string {
+    if (c == '\n') { rtn "\\n" }
+    if (c == '\t') { rtn "\\t" }
+    if (c == '\r') { rtn "\\r" }
+    if (c == '\0') { rtn "\\0" }
+    if (c == '\\') { rtn "\\\\" }
+    if (c == '\'') { rtn "\\'" }
+    rtn "printable"
+}
+
+// ------------------------------------------------------------------ 字符串切片
+
+// 只用 length / charAt / substring 这三个，把字符串倒过来（数组还没实现，所以不落地）
+fun reverse(s : string) -> string {
+    var out = ""
+    var i = s.length() - 1
+    while (i >= 0) {
+        out = out + s.charAt(i)
+        i = i - 1
+    }
+    rtn out
+}
+
+// 统计每个字符的种类，返回「数字 x 个，字母 y 个，空白 z 个」
+fun summarize(s : string) -> string {
+    var digits = 0
+    var letters = 0
+    var spaces = 0
+    for (var i = 0; i < s.length(); i = i + 1) {
+        var c = s.charAt(i)
+        if (isDigit(c)) { digits = digits + 1 }
+        if (isLetter(c)) { letters = letters + 1 }
+        if (isWhitespace(c)) { spaces = spaces + 1 }
+    }
+    rtn "数字 " + digits + " 个，字母 " + letters + " 个，空白 " + spaces + " 个"
+}
+fun f(){
+
+}
+// ------------------------------------------------------------------ 主程序
+
+fun main() -> void {
+    println("== byte ==")
+    // byte 与 int 的边界：字面量可以直接给（0..127），算术一律按 int 提升
+    var b : byte = 100
+    println("b = " + b)
+    println("b + b = " + (b + b))
+    println("b * 3 = " + (b * 3))
+    println("toByte(200) = " + toByte(200))
+    println("toByte(-1) = " + toByte(-1))
+
+    // ?byte 走的是既有的 ?T 机制：装箱成 java/lang/Byte，null 可以兜底
+    var maybe : ?byte = null
+    println("maybe = " + maybe)
+    println("maybe ?: toByte(7) = " + (maybe ?: toByte(7)))
+
+    println("")
+    println("== char 字面量与转义 ==")
+    var c : char = 'a'
+    println("c = " + c)
+    println("转义 '\\n' 的码点是 " + charToInt('\n') + "，名字是 " + escapeName('\n'))
+    println("转义：\\t 的名字是 " + escapeName('\t'))
+    println("转义：\\0 的名字是 " + escapeName('\0'))
+    println("转义：\\\\ 的名字是 " + escapeName('\\'))
+    println("转义：\\' 的名字是 " + escapeName('\''))
+    println("\\u0041 = " + '\u0041')
+    println("charToInt('A') = " + charToInt('A'))
+    println("toChar(66) = " + toChar(66))
+
+    println("")
+    println("== 分类与大小写 ==")
+    println("kindOf('7') = " + kindOf('7'))
+    println("kindOf('x') = " + kindOf('x'))
+    println("kindOf(' ') = " + kindOf(' '))
+    println("kindOf('+') = " + kindOf('+'))
+    println("toUpper('a') = " + toUpper('a'))
+    println("toLower('A') = " + toLower('A'))
+    println("toUpper('7') = " + toUpper('7'))
+    println("hexValue('9') = " + hexValue('9'))
+    println("hexValue('F') = " + hexValue('F'))
+
+    println("")
+    println("== 字符串切片 ==")
+    var text : string = "Rsf 16"
+    println("text = " + text)
+    println("text.length() = " + text.length())
+    println("text.charAt(0) = " + text.charAt(0))
+    println("text.charAt(1) = " + text.charAt(1))
+    println("text.substring(0, 3) = " + text.substring(0, 3))
+    println("text.substring(4, 6) = " + text.substring(4, 6))
+    println("reverse(text) = " + reverse(text))
+    println("summarize(text) = " + summarize(text))
+    println("拼接：" + "字 = " + text.charAt(0) + "，" + "码点 = " + charToInt(text.charAt(0)))
+
+    println("")
+    println("== parseInt：三种处理方式 ==")
+    // (a) 兜底值：失败就取右边
+    println("parseInt(\"42\") ?: -1 = " + (parseInt("42") ?: -1))
+    println("parseInt(\"x\") ?: -1 = " + (parseInt("x") ?: -1))
+    println("parseInt(\"99999999999\") ?: -1 = " + (parseInt("99999999999") ?: -1))
+
+    // (b) try / catch：接住错误消息本身
+    try {
+        var n = parseInt("12a")
+        println("不该走到这里：" + n)
+    } catch (e : string) {
+        println("接住了：" + e)
+    }
+
+    // (c) 正常路径：解析成功就是普通 int
+    var count = parseInt("108") ?: 0
+    println("count / 2 = " + (count / 2))
+    rtn
+}

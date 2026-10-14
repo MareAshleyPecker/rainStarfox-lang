@@ -1,0 +1,17 @@
+import java.util.ArrayList
+import java.util.Collections
+import java.util.Comparator
+
+class ByValue : Comparator&<string> {
+    public fun compare(a : string, b : string) -> int {
+        rtn 0
+    }
+}
+
+fun main() -> void {
+    var xs = new ArrayList&<string>()
+    xs.add("5")
+    var c : Comparator&<string> = new ByValue()
+    Collections.sort(xs, c)
+    rtn
+}
