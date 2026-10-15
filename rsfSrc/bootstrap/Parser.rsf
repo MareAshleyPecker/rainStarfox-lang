@@ -1273,6 +1273,10 @@ public class Parser(tokens : Token[]) {
             .put("name", escapeValue(nameTok.text))
             .put("type", ty.text())
             .put("hasDefault", boolText(hasDefault))
+        // 行号取**元素名 token**：Kotlin 侧 `AnnotationElement.at` 就是元素名那一行
+        //（`Parser.kt:456-469`），伴生类给元素访问器发 LineNumberTable 时要用它；
+        // 缺这一行，4a 的元素访问器就少一条 LineNumberTable 属性（对拍会差文件）。
+        n.line = nameTok.line
         if (hasDefault) { n.add(defaultExpr) }
         rtn n
     }

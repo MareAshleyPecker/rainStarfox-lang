@@ -28,14 +28,25 @@
 // 清单见 `BOOTSTRAP.md` 的 17d 段。
 
 import "Parser.rsf"
+// 阶段 21 补的装箱器：`AnnotationVisitor.visit(String, Object)` 的形参是 Object，
+// 自举检查器不做自动装箱，注解实参必须在调用点显式 `valueOf`。Boolean/Byte/Character
+// 这三行是这一刀新加的（Integer/Long/Float/Double 原本就有）。
+import java.lang.Boolean
+import java.lang.Byte
+import java.lang.Character
 import java.lang.Double
 import java.lang.Float
 import java.lang.Integer
 import java.lang.Long
+import org.objectweb.asm.AnnotationVisitor
 import org.objectweb.asm.ClassWriter
+import org.objectweb.asm.FieldVisitor
 import org.objectweb.asm.Handle
 import org.objectweb.asm.Label
 import org.objectweb.asm.MethodVisitor
+// 阶段 21：注解伴生类的 `annotationType()` 里要 `LDC Type.getObjectType(注解接口内部名)`
+// —— ASM 把它写成 CONSTANT_Class 常量，跟 `LDC String` 的常量池形态不同，不能混用。
+import org.objectweb.asm.Type
 
 // ============================================================ 常量（与 Kotlin 侧同一张表）
 
@@ -75,6 +86,15 @@ fun computeAll() -> int { rtn 3 }
 // 阶段 20：接口类头 = ACC_PUBLIC | ACC_INTERFACE | ACC_ABSTRACT = 1 | 512 | 1024 = 1537
 fun accInterface() -> int { rtn 512 }
 fun accAbstract() -> int { rtn 1024 }
+// 阶段 21：注解接口类头还要加上 ACC_ANNOTATION（0x2000 = 8192）
+// → 1 | 512 | 1024 | 8192 = 9729。父接口固定写死 `java/lang/annotation/Annotation`。
+fun accAnnotation() -> int { rtn 8192 }
+// 访问器方法的同步位 ACC_SYNCHRONIZED。**它的值和 accSuper() 一模一样（都是 32）**，
+// 但两者语义毫无关系：host 是类时访问器带 32（1|8|32 = 0x29），
+// host 是接口/注解时**绝不能带** —— 否则加载期
+// `ClassFormatError: Method X in class Y has illegal modifiers: 0x29`。
+// 单开一个函数就是为了让读者一眼看出这里加的是同步位而不是某个「super 标志」。
+fun accSync() -> int { rtn 32 }
 
 // ============================================================ 字符串数组工具
 
@@ -698,6 +718,17 @@ public class Gen(owner : string) {
     var ifaceHitCount : int = 0
     var eis : EInfo[] = new EInfo[4]
     var eiCount : int = 0
+    // ---- 阶段 21：注解声明表 + 访问器表 ----
+    // `ains` 是源码里 `annotation X(...)` 的登记表（含伴生类结论）；
+    // `accs` 是**使用点**表，一条 = 宿主类上要补的一个访问器。两张表都在
+    // `collectAnnotations` 里一次填完，发射阶段只查不改。
+    var ains : AnnInfo[] = new AnnInfo[4]
+    var aiCount : int = 0
+    var accs : AccInfo[] = new AccInfo[8]
+    var accCount : int = 0
+    // `cis` 里前多少条是**用户类**。注解伴生类也进 `cis`（它们要走普通类的发射路径），
+    // 但排在用户类后面，且不参与「宿主使用点」的登记（宿主是伴生类的那批在注解那一圈登记）。
+    var userCiCount : int = 0
     var imports : string[] = new string[4]        // 简单名
     var importVals : string[] = new string[4]     // 内部名
     var importCount : int = 0
@@ -778,6 +809,36 @@ public class Gen(owner : string) {
             i = i + 1
         }
         rtn null
+    }
+
+    // ---- 阶段 21：注解表 ----
+    public fun addAnn(a : AnnInfo) -> void {
+        if (aiCount >= ains.length) {
+            var b : AnnInfo[] = new AnnInfo[ains.length * 2]
+            for (var i = 0; i < aiCount; i = i + 1) { b[i] = ains[i] }
+            ains = b
+        }
+        ains[aiCount] = a
+        aiCount = aiCount + 1
+    }
+
+    public fun findAnn(nm : string) -> ?AnnInfo {
+        var i = 0
+        while (i < aiCount) {
+            if (ains[i].name == nm) { rtn ains[i] }
+            i = i + 1
+        }
+        rtn null
+    }
+
+    public fun addAcc(a : AccInfo) -> void {
+        if (accCount >= accs.length) {
+            var b : AccInfo[] = new AccInfo[accs.length * 2]
+            for (var i = 0; i < accCount; i = i + 1) { b[i] = accs[i] }
+            accs = b
+        }
+        accs[accCount] = a
+        accCount = accCount + 1
     }
 
     // 内部名是不是 rsf 接口（`?:` 合成方法里的 INVOKESTATIC 末位布尔要用它）
@@ -1467,6 +1528,9 @@ fun jvmInternalName(simple : string) -> string {
     if (simple == "Object") { rtn "java/lang/Object" }
     if (simple == "StringBuilder") { rtn "java/lang/StringBuilder" }
     if (simple == "CharSequence") { rtn "java/lang/CharSequence" }
+    // 阶段 21：注解伴生类可以 `: Runnable`（`companion entity Impl : Runnable { ... }`），
+    // 而 rsf 的 JDK 类型表不查反射 —— Kotlin 侧 sema 认得它，自举侧也得认得。
+    if (simple == "Runnable") { rtn "java/lang/Runnable" }
     rtn ""
 }
 
@@ -1569,10 +1633,32 @@ fun jdkStatic(owner : string, nm : string, argc : int) -> ?Mem2 {
         if (nm == "parseFloat" && argc == 1) { rtn staticM(owner, "parseFloat", "(Ljava/lang/String;)F", tFloat(), memP1(tString())) }
         rtn null
     }
+    if (owner == "java/lang/Boolean") {
+        // 阶段 21：注解的 bool 元素要装箱成 java.lang.Boolean 才进得了 Object 形参
+        if (nm == "valueOf" && argc == 1) { rtn staticM(owner, "valueOf", "(Z)Ljava/lang/Boolean;", wrapType("bool"), memP1(tBool())) }
+        rtn null
+    }
+    if (owner == "java/lang/Byte") {
+        if (nm == "valueOf" && argc == 1) { rtn staticM(owner, "valueOf", "(B)Ljava/lang/Byte;", wrapType("byte"), memP1(tByte())) }
+        rtn null
+    }
+    if (owner == "java/lang/Character") {
+        if (nm == "valueOf" && argc == 1) { rtn staticM(owner, "valueOf", "(C)Ljava/lang/Character;", wrapType("char"), memP1(tChar())) }
+        rtn null
+    }
     if (owner == "java/lang/Double") {
         if (nm == "valueOf" && argc == 1) { rtn staticM(owner, "valueOf", "(D)Ljava/lang/Double;", wrapType("double"), memP1(tDouble())) }
         if (nm == "toString" && argc == 1) { rtn staticM(owner, "toString", "(D)Ljava/lang/String;", tString(), memP1(tDouble())) }
         if (nm == "parseDouble" && argc == 1) { rtn staticM(owner, "parseDouble", "(Ljava/lang/String;)D", tDouble(), memP1(tString())) }
+        rtn null
+    }
+    if (owner == "org/objectweb/asm/Type") {
+        // 阶段 21：只开 `getObjectType(String) : Type` 这一个口子，给注解伴生类的
+        // `annotationType()` 用 —— `mv.visitLdcInsn(Type)` 落盘的是 CONSTANT_Class，
+        // 与 `visitLdcInsn(String)` 的 CONSTANT_Utf8 是两种常量，不能互相顶替。
+        if (nm == "getObjectType" && argc == 1) {
+            rtn staticM(owner, "getObjectType", "(Ljava/lang/String;)Lorg/objectweb/asm/Type;", tExternal("org/objectweb/asm/Type"), memP1(tString()))
+        }
         rtn null
     }
     rtn null
@@ -1906,6 +1992,9 @@ public class CField(name : string, type : BType, init : Node, mutable : bool) {
     var type : BType = type
     var init : Node = init          // 初值表达式
     var mutable : bool = mutable
+    // 阶段 21：字段级注解（`@Doc(label = "fld") var title : string`）要发在
+    // `visitField(...)` 与 `visitEnd()` **之间**，所以字段得记住自己那颗 AST 节点。
+    var node : Node = new Node(NodeKind.ERROR)
 }
 
 // 一个用户方法 / 构造器
@@ -1921,6 +2010,11 @@ public class CMeth(node : Node, name : string, params : BType[], paramNames : st
     var primary : bool = primary
     var delegation : Node = new Node(NodeKind.ERROR)   // 次构造器里的 this(...)
     var delegTarget : ?CMeth = null                    // this(...) 指向的构造器
+    // 阶段 21：注解伴生类的**合成主构造器**。Kotlin 侧 `companionPrimaryConstructor`
+    // 在伴生体没写构造器时按元素表造一个（形参 = 元素表），这里对齐它：
+    // 合成构造器没有 AST（node 是 ERROR 占位），体也不发 —— 字段初始化改走
+    // `emitFieldInits` 的「元素字段从形参取」分支。带这个标志就绝不读 `node.children`。
+    var synth : bool = false
 
     // 构造器描述符（用户类构造器一律返回 void）
     public fun desc() -> string {
@@ -1970,6 +2064,13 @@ public class CInfo(name : string, internal : string) {
     var isIface : bool = false
     var supers : string[] = new string[4]
     var scount : int = 0
+    // 阶段 21：这是某个注解的**伴生类**时记下注解简名（否则空串）。
+    // 前 `annElemCount` 个字段是注解元素字段 —— 它们的类型描述符、toString 的
+    // 拼接规则、元素访问器方法、以及「从构造器形参取初值」都靠这两个字段区分。
+    var annComp : string = ""
+    var annElemCount : int = 0
+    // 阶段 21：注解接口的伴生类内部名（`LDoc$Impl;` 的中段）。也是缓存字段的描述符。
+    var annCompInternal : string = ""
 
     public fun addSuper(nm2 : string) -> void {
         if (nm2.length() == 0) { rtn }
@@ -2151,6 +2252,9 @@ public class NewRef(internal : string, desc : string, params : BType[]) {
     var internal : string = internal
     var desc : string = desc
     var params : BType[] = params
+    // 阶段 21：`new 注解名(...)` 省略的实参要用**元素默认值**补齐（Kotlin
+    // `checkCompanionConstruction` :2731-2742）。非注解构造这里是 null。
+    var annAI : ?AnnInfo = null
 }
 
 fun memP0() -> BType[] { rtn new BType[0] }
@@ -2261,10 +2365,10 @@ fun asmRow(t : AsmMem[], i : int, owner : string, nm : string, argc : int, desc 
 
 fun asmLabel() -> BType { rtn tExternal("org/objectweb/asm/Label") }
 
-// 表的内容严格对齐 `org.objectweb.asm` 的真实签名（26 条里的 23 条成员；
+// 表的内容严格对齐 `org.objectweb.asm` 的真实签名（阶段 21 起 33 条里的 30 条成员；
 // 三条构造器 <init>(I)V / Label.<init>()V / Handle.<init>(...) 在 jdkNewRef 里）。
 fun asmTable() -> AsmMem[] {
-    var t : AsmMem[] = new AsmMem[23]
+    var t : AsmMem[] = new AsmMem[30]
     var i = 0
 
     // --- ClassWriter（6 条成员）---
@@ -2283,10 +2387,21 @@ fun asmTable() -> AsmMem[] {
         tExternal("org/objectweb/asm/MethodVisitor"), memP5(tInt(), tString(), tString(), tString(), arrOf(tExternal("java/lang/String"))))
     i = asmRow(t, i, "org/objectweb/asm/ClassWriter", "visitSource", 2,
         "(Ljava/lang/String;Ljava/lang/String;)V", tVoid(), memP2(tString(), tString()))
+    // 阶段 21：注解使用点（`@Tag("cls")` → RuntimeVisibleAnnotations）
+    i = asmRow(t, i, "org/objectweb/asm/ClassWriter", "visitAnnotation", 2,
+        "(Ljava/lang/String;Z)Lorg/objectweb/asm/AnnotationVisitor;",
+        tExternal("org/objectweb/asm/AnnotationVisitor"), memP2(tString(), tBool()))
 
     // --- MethodVisitor（16 条成员）---
     i = asmRow(t, i, "org/objectweb/asm/MethodVisitor", "visitCode", 0,
         "()V", tVoid(), memP0())
+    // 阶段 21：方法级注解使用点、以及注解元素方法的默认值
+    i = asmRow(t, i, "org/objectweb/asm/MethodVisitor", "visitAnnotation", 2,
+        "(Ljava/lang/String;Z)Lorg/objectweb/asm/AnnotationVisitor;",
+        tExternal("org/objectweb/asm/AnnotationVisitor"), memP2(tString(), tBool()))
+    i = asmRow(t, i, "org/objectweb/asm/MethodVisitor", "visitAnnotationDefault", 0,
+        "()Lorg/objectweb/asm/AnnotationVisitor;",
+        tExternal("org/objectweb/asm/AnnotationVisitor"), memP0())
     i = asmRow(t, i, "org/objectweb/asm/MethodVisitor", "visitEnd", 0,
         "()V", tVoid(), memP0())
     i = asmRow(t, i, "org/objectweb/asm/MethodVisitor", "visitFieldInsn", 4,
@@ -2324,8 +2439,22 @@ fun asmTable() -> AsmMem[] {
     i = asmRow(t, i, "org/objectweb/asm/MethodVisitor", "visitVarInsn", 2,
         "(II)V", tVoid(), memP2(tInt(), tInt()))
 
-    // --- FieldVisitor（1 条成员：`g.cw.visitField(...).visitEnd()` 的链式尾巴）---
+    // --- FieldVisitor（阶段 21 起 2 条成员：`g.cw.visitField(...).visitEnd()` 的链式尾巴
+    //     以及字段级注解使用点）---
     i = asmRow(t, i, "org/objectweb/asm/FieldVisitor", "visitEnd", 0,
+        "()V", tVoid(), memP0())
+    i = asmRow(t, i, "org/objectweb/asm/FieldVisitor", "visitAnnotation", 2,
+        "(Ljava/lang/String;Z)Lorg/objectweb/asm/AnnotationVisitor;",
+        tExternal("org/objectweb/asm/AnnotationVisitor"), memP2(tString(), tBool()))
+
+    // --- AnnotationVisitor（3 条成员：注解实参写入器）---
+    // 第 2 参声明成 Object，装箱按**元素声明类型**在调用点完成（emitAnnPair / emitAnnDefault）。
+    i = asmRow(t, i, "org/objectweb/asm/AnnotationVisitor", "visit", 2,
+        "(Ljava/lang/String;Ljava/lang/Object;)V", tVoid(), memP2(tString(), tObject()))
+    i = asmRow(t, i, "org/objectweb/asm/AnnotationVisitor", "visitEnum", 3,
+        "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V", tVoid(),
+        memP3(tString(), tString(), tString()))
+    i = asmRow(t, i, "org/objectweb/asm/AnnotationVisitor", "visitEnd", 0,
         "()V", tVoid(), memP0())
 
     rtn t
@@ -2389,8 +2518,10 @@ fun jdkMember(g : Gen, recv : BType, nm : string, argc : int) -> ?Mem2 {
             if (nm == "print" && argc == 1) { rtn new Mem2("java/io/PrintStream", "print", "(Ljava/lang/String;)V", tVoid(), memP1(tString()), false) }
             rtn null
         }
-        // 17e：ASM。三个 owner 的成员表见 asmTable，匹配/撞车判定都在 asmLookup 里
-        if (recv.name == "org/objectweb/asm/ClassWriter" || recv.name == "org/objectweb/asm/MethodVisitor" || recv.name == "org/objectweb/asm/FieldVisitor") {
+        // 17e：ASM。四个 owner 的成员表见 asmTable，匹配/撞车判定都在 asmLookup 里。
+        // 阶段 21 加了 AnnotationVisitor：`cw.visitAnnotation(...)` 的返回值就是它，
+        // 链式尾巴（`.visitEnum(...)` / `.visit(...)` / `.visitEnd()`）靠这一支才解析得到。
+        if (recv.name == "org/objectweb/asm/ClassWriter" || recv.name == "org/objectweb/asm/MethodVisitor" || recv.name == "org/objectweb/asm/FieldVisitor" || recv.name == "org/objectweb/asm/AnnotationVisitor") {
             rtn asmLookup(g, recv.name, nm, argc)
         }
     }
@@ -3504,6 +3635,44 @@ public class Walker(g : Gen) {
             i = i + 1
         }
         var argc = argNode.childCount
+        // 阶段 21：`new Marker("hi", 3)` 造的是**伴生类** `Marker$Impl` ——
+        // Kotlin 侧 sema 把注解名解析成 `companionJvmName`（Checker.kt:2633 →
+        // `checkCompanionConstruction`）。实参个数**可以少于**元素个数：缺的那几个
+        // 用元素默认值补齐，发射端在 emitConstruction 里补压（Kotlin :2731-2742）。
+        var ain = g.findAnn(clsName)
+        if (ain != null && ain!!.hasComp) {
+            var ai = ain!!
+            if (argc > ai.elCount) {
+                g.bad("new " + ai.name + "(...) 的实参个数不对：给了 " + intToString(argc) + " 个，元素只有 " + intToString(ai.elCount) + " 个")
+                rtn tVoid()
+            }
+            var q = 0
+            while (q < argc) {
+                if (!acceptsValue(g, ai.els[q].type, argNode.children[q], tOf(g, argNode.children[q]))) {
+                    g.bad("new " + ai.name + "(...) 的第 " + intToString(q + 1) + " 个实参类型不对：元素 '" + ai.els[q].name + "' 需要 " + ai.els[q].type.desc())
+                    rtn tVoid()
+                }
+                q = q + 1
+            }
+            q = argc
+            while (q < ai.elCount) {
+                if (!ai.els[q].hasDef) {
+                    g.bad("new " + ai.name + "(...) 少了元素 '" + ai.els[q].name + "'：它没有默认值")
+                    rtn tVoid()
+                }
+                q = q + 1
+            }
+            var aprm : BType[] = new BType[ai.elCount]
+            var q2 = 0
+            while (q2 < ai.elCount) {
+                aprm[q2] = ai.els[q2].type
+                q2 = q2 + 1
+            }
+            var aref = new NewRef(ai.compInternal, ai.ctorDesc(), aprm)
+            aref.annAI = ai
+            g.putNew(e, aref)
+            rtn new BType("external", ai.compInternal, false, 0)
+        }
         var ci = g.findClass(clsName)
         if (ci != null) {
             if (ci!!.ctorCount() == 0) {
@@ -4668,6 +4837,17 @@ fun emitConstruction(g : Gen, mv : MethodVisitor, e : Node, off : int) -> void {
         emitWiden(g, mv, tOf(g, na.children[ni]), nr.params[ni])
         ni = ni + 1
     }
+    // 阶段 21：`new 注解名(...)` 省略的实参用元素默认值补齐（Kotlin
+    // `checkCompanionConstruction` :2731-2742 在语义侧补，这里在发码侧补）。
+    if (nr.annAI != null) {
+        var ai = nr.annAI!!
+        var dj = na.childCount
+        while (dj < ai.elCount) {
+            emitAnnPushArg(g, mv, ai, dj, ai.els[dj].def)
+            if (g.failed) { rtn }
+            dj = dj + 1
+        }
+    }
     mv.visitMethodInsn(183, nr.internal, "<init>", nr.desc, false)
 }
 
@@ -5084,6 +5264,10 @@ fun emitFunction(g : Gen, fn : Node) -> void {
     var off = 0
     if (entry) { off = 1 }
     var mv = g.cw.visitMethod(accessOf(fn) + accStatic(), name, descriptorOfSig(g, sg, entry), null, null)
+    // 顶层函数上的注解使用点：也在 visitCode() 之前（Kotlin :1678）。
+    // 宿主是 null（顶层函数当不了方案 B 宿主），所以只发使用点、不发访问器。
+    emitAnnSitesM(g, annUsesOf(fn), mv)
+    if (g.failed) { rtn }
     mv.visitCode()
 
     g.slotCount = 0
@@ -5208,7 +5392,9 @@ fun collectClasses(g : Gen, classes : Node, enums : Node) -> void {
                     var f = part.children[fi]
                     var ft = typeOfText(g, prop(f, "type"))
                     if (ft == null) { rtn }
-                    ci.addField(new CField(prop(f, "name"), ft!!, f.children[0], prop(f, "mutable") == "true"))
+                    var nf = new CField(prop(f, "name"), ft!!, f.children[0], prop(f, "mutable") == "true")
+                    nf.node = f
+                    ci.addField(nf)
                     fi = fi + 1
                 }
             } else if (part.kind == NodeKind.METHODS) {
@@ -5309,13 +5495,22 @@ fun flushBody(g : Gen, mv : MethodVisitor, p : Prep, off : int, ret : BType, tai
 }
 
 // 字段初值（所有非委托构造器的序言里都要重发一遍，和 Kotlin 一致）
-fun emitFieldInits(g : Gen, mv : MethodVisitor, ci : CInfo) -> void {
+fun emitFieldInits(g : Gen, mv : MethodVisitor, ci : CInfo, m : ?CMeth) -> void {
+    // 伴生类的前 `annElemCount` 个字段是注解元素字段：它们的值来自构造器形参，
+    // **不是**声明里那个占位初值（对齐 Kotlin BytecodeCompiler.kt:1447-1464）。
+    var slot = 1
     var i = 0
     while (i < ci.fieldCount) {
         var f = ci.fields[i]
         mv.visitVarInsn(25, 0)
-        emitExpr(g, mv, f.init, 0)
-        emitWiden(g, mv, tOf(g, f.init), f.type)
+        if (i < ci.annElemCount && m != null && i < m!!.params.length) {
+            var pt = m!!.params[i]
+            eLoadSlot(mv, pt, slot)
+            slot = slot + pt.slots()
+        } else {
+            emitExpr(g, mv, f.init, 0)
+            emitWiden(g, mv, tOf(g, f.init), f.type)
+        }
         mv.visitFieldInsn(181, ci.internal, f.name, f.type.desc())
         i = i + 1
     }
@@ -5333,8 +5528,12 @@ fun emitUserCtor(g : Gen, ci : CInfo, m : ?CMeth) -> void {
         params = m!!.params
         pnames = m!!.paramNames
         desc = m!!.desc()
-        body = m!!.node.children[1]
-        hasBody = true
+        // 合成的伴生类主构造器（m.synth）没有函数体节点：参数表就是元素表，
+        // 字段赋值由下面的 emitFieldInits 直接从形参搬运（Kotlin 同）。
+        if (!m!!.synth) {
+            body = m!!.node.children[1]
+            hasBody = true
+        }
     }
     var mv = g.cw.visitMethod(accPublic(), "<init>", desc, null, null)
     g.curLabel = ci.name + ".<init>"
@@ -5366,7 +5565,7 @@ fun emitUserCtor(g : Gen, ci : CInfo, m : ?CMeth) -> void {
     } else {
         mv.visitVarInsn(25, 0)
         mv.visitMethodInsn(183, "java/lang/Object", "<init>", "()V", false)
-        emitFieldInits(g, mv, ci)
+        emitFieldInits(g, mv, ci, m)
     }
     if (hasBody) {
         flushBody(g, mv, p!!, 0, tVoid(), "<init>")
@@ -5382,6 +5581,10 @@ fun emitUserMethod(g : Gen, ci : CInfo, m : CMeth) -> void {
     if (m.isStatic) { access = access + accStatic() }
     var mv = g.cw.visitMethod(access, m.name, m.mdesc(), null, null)
     g.curLabel = ci.name + "." + m.name
+    // 方法上的注解使用点必须发在 visitCode() **之前**（Kotlin :1489）——
+    // 发在之后 ASM 会静默丢弃。
+    emitAnnSitesM(g, annUsesOf(m.node), mv)
+    if (g.failed) { rtn }
     mv.visitCode()
     var first = 0
     if (!m.isStatic) { first = 1 }
@@ -5498,10 +5701,18 @@ fun emitUserClass(g : Gen, ci : CInfo) -> void {
     g.cur = ci
     g.cw.visit(v17(), accPublic() + accSuper(), ci.internal, null, "java/lang/Object", superArr(ci))
     g.cw.visitSource(g.sourceName, null)
+    // 类上的注解使用点：必须在 getFields/字段之前发（Kotlin :653）。
+    emitAnnSites(g, annUsesOf(ci.node))
+    if (g.failed) { rtn }
     var i = 0
     while (i < ci.fieldCount) {
         var f = ci.fields[i]
-        g.cw.visitField(accPublic(), f.name, f.type.desc(), null, null).visitEnd()
+        var fv = g.cw.visitField(accPublic(), f.name, f.type.desc(), null, null)
+        if (f.node.kind != NodeKind.ERROR) {
+            emitAnnSitesF(g, annUsesOf(f.node), fv)
+            if (g.failed) { rtn }
+        }
+        fv.visitEnd()
         i = i + 1
     }
     // 字段初值要先走一遍（主构造参数在 1..n 号槽上）
@@ -5571,17 +5782,28 @@ fun emitUserClass(g : Gen, ci : CInfo) -> void {
         }
         k = k + 1
     }
-    // 真正走 + 发
+    // 真正走 + 发。order 里构造器全在前、方法全在后（Kotlin 的方法表就是这个顺序）。
     k = 0
-    while (k < n) {
+    var nCtor = ci.ctorCount()
+    while (k < nCtor) {
         var meth2 = order[k]
         g.curMeth = meth2
         g.curStatic = meth2.isStatic
-        if (meth2.ctor) {
-            emitUserCtor(g, ci, meth2)
-        } else {
-            emitUserMethod(g, ci, meth2)
-        }
+        emitUserCtor(g, ci, meth2)
+        if (g.failed) { rtn }
+        k = k + 1
+    }
+    // 注解伴生类：元素访问器排在 `<init>` 之后、用户方法之前
+    // （Kotlin 的 `methods = listOf(constructor) + accessors + plainMethods`）。
+    if (ci.annComp.length() > 0) {
+        emitAnnElemAccessors(g, ci)
+        if (g.failed) { rtn }
+    }
+    while (k < n) {
+        var meth3 = order[k]
+        g.curMeth = meth3
+        g.curStatic = meth3.isStatic
+        emitUserMethod(g, ci, meth3)
         if (g.failed) { rtn }
         k = k + 1
     }
@@ -5589,6 +5811,15 @@ fun emitUserClass(g : Gen, ci : CInfo) -> void {
         emitUserToString(g, ci)
     }
     emitOrElseRange(g, orFrom, g.orCount)
+    // 伴生类的两件额外东西：访问器缓存字段 + `annotationType()`（Kotlin :683-686）
+    if (ci.annComp.length() > 0) {
+        emitAnnCaches(g, ci)
+        emitAnnType(g, ci)
+        if (g.failed) { rtn }
+    }
+    // 宿主上的使用点访问器。类是**类**宿主 —— 带同步位（Kotlin 传 sync = true）。
+    emitAnnotationAccessors(g, ci.name, true)
+    if (g.failed) { rtn }
     g.cw.visitEnd()
     g.cur = null
     g.curMeth = null
@@ -5789,11 +6020,16 @@ fun emitUserInterface(g : Gen, ci : CInfo) -> void {
     var orFrom = g.orCount
     g.cw.visit(v17(), accPublic() + accInterface() + accAbstract(), ci.internal, null, "java/lang/Object", superArr(ci))
     g.cw.visitSource(g.sourceName, null)
+    // 接口上的注解使用点（Kotlin :903 的接口/抽象方法分支要在 visitEnd 之前发）
+    emitAnnSites(g, annUsesOf(ci.node))
+    if (g.failed) { rtn }
     var i = 0
     while (i < ci.methCount) {
         var m = ci.meths[i]
         if (!hasBodyNode(m.node)) {
             var mv = g.cw.visitMethod(accPublic() + accAbstract(), m.name, m.mdesc(), null, null)
+            emitAnnSitesM(g, annUsesOf(m.node), mv)
+            if (g.failed) { rtn }
             mv.visitEnd()
         } else {
             emitUserMethod(g, ci, m)
@@ -5802,10 +6038,948 @@ fun emitUserInterface(g : Gen, ci : CInfo) -> void {
         i = i + 1
     }
     emitOrElseRange(g, orFrom, g.orCount)
+    // 接口宿主：访问器**绝不带**同步位（0x29 加载期 ClassFormatError）
+    emitAnnotationAccessors(g, ci.name, false)
+    if (g.failed) { rtn }
     g.cw.visitEnd()
     g.cur = null
     g.curMeth = null
     g.curStatic = false
+}
+
+// ============================================================ 阶段 21：注解
+//
+// 这一刀只做**代码生成**：语法树里有什么就算什么（自举链上没有 Checker，
+// 也没有语义表）。结论全部画进两张表 —— `gen.ains`（注解声明 → 元素表 / 伴生类）
+// 与 `gen.accs`（使用点 → 宿主上的访问器），收集完就只查不改。对齐 Kotlin
+// `BytecodeCompiler.kt:920-1318`：
+//   * 注解接口 = `ACC_ANNOTATION|ACC_INTERFACE|ACC_ABSTRACT`（9729）+ 父接口
+//     `java/lang/annotation/Annotation`，**内部名是简名、不带包**（拍板 1：
+//     `classInternalName` 对「不在 classModel.classes 里」的名字不加包前缀）；
+//   * 伴生类 = 普通类的发射路径 + 元素字段 + 缓存字段 + `annotationType()`，
+//     内部名 = 包前缀 + 注解简名 + "$" + 伴生名（没写名字就是 `companion`）；
+//   * 访问器（方案 B）发在**宿主**上，缓存字段发在**伴生类**上，`@Retention`
+//     固定写死 RUNTIME（拍板 5）。
+//
+// 收集 → 发射的分工：
+//   `collectAnnotations` 一次填完两张表；`emitAnnotationClass` 发注解接口；
+//   伴生类由 `emitUserClass` 照常发（靠 `CInfo.annComp` 认出来）；
+//   使用点由 `emitAnnSites*` 在**对应的 visitEnd() 之前**发（顺序错了 ASM 会静默丢弃）。
+
+// 一条注解元素（`annotation Tag(value : string = "t")` 里的一行）。
+public class AnnEl(name : string, type : BType, def : Node, hasDef : bool, line : int) {
+    var name : string = name
+    var type : BType = type
+    var def : Node = def        // hasDef = false 时是 ERROR 占位，不许读
+    var hasDef : bool = hasDef
+    // 元素名 token 的行号。Kotlin 用 `el.decl.at` 给元素访问器打 LineNumberTable，
+    // 自举侧同口径；AST 里没记时是 0，那时按 Kotlin 的 `at == NONE` 跳过。
+    var line : int = line
+}
+
+// 一个注解声明。
+public class AnnInfo(name : string, internal : string) {
+    var name : string = name          // 注解简名 = 注解**接口**的内部名（拍板 1）
+    var internal : string = internal  // 与 name 相同，留字段只为读起来对称
+    var node : Node = new Node(NodeKind.ERROR)
+    var els : AnnEl[] = new AnnEl[4]
+    var elCount : int = 0
+    var hasComp : bool = false        // 没有伴生体就是纯标记注解：只发接口，不发伴生类
+    var compName : string = ""        // 伴生类简名（`Marker$Impl`）
+    var compInternal : string = ""    // 伴生类内部名（带包前缀）
+    var compNode : Node = new Node(NodeKind.ERROR)
+
+    public fun addEl(e : AnnEl) -> void {
+        if (elCount >= els.length) {
+            var b : AnnEl[] = new AnnEl[els.length * 2]
+            for (var i = 0; i < elCount; i = i + 1) { b[i] = els[i] }
+            els = b
+        }
+        els[elCount] = e
+        elCount = elCount + 1
+    }
+
+    public fun elIndex(nm : string) -> int {
+        var i = 0
+        while (i < elCount) {
+            if (els[i].name == nm) { rtn i }
+            i = i + 1
+        }
+        rtn -1
+    }
+
+    // 伴生类构造器的描述符：形参就是元素表（Kotlin `companionPrimaryConstructor`
+    // 与 `checkCompanionConstructor` 都要求实参表与元素表逐项对上）。
+    public fun ctorDesc() -> string {
+        var d = "("
+        var i = 0
+        while (i < elCount) {
+            d = d + els[i].type.desc()
+            i = i + 1
+        }
+        rtn d + ")V"
+    }
+}
+
+// 一个**使用点** → 宿主上的一个访问器。
+// `member` 为空串 = 类型级访问器（宿主上无参、方法名就是注解简名）；
+// 否则是成员级（1 个 string 形参，按成员名逐条比，比不中返回 null）。
+public class AccInfo(ann : string, host : string, member : string, comp : string, ai : AnnInfo, use : Node) {
+    var ann : string = ann          // 注解简名 —— 访问器的**方法名**
+    var host : string = host        // 宿主简名（类 / 接口 / 注解 / 伴生类）
+    var member : string = member    // "" = 类型级；否则成员名
+    var comp : string = comp        // 伴生类内部名（带包）
+    var ai : AnnInfo = ai
+    var use : Node = use            // 这一条 ANNOTATION_USE
+}
+
+// 缓存字段名：`__rsf_ann$<宿主简名>$<成员名>`（类型级时成员名是空串）。
+// Kotlin 侧 `cacheFieldName` 就是这么拼的，`$` 在三个引擎里都原样保留（拍板 3）。
+fun annCacheName(a : AccInfo) -> string {
+    rtn "__rsf_ann$" + a.host + "$" + a.member
+}
+
+// 分组键：同一宿主上「同一个注解 + 同是类型级/同是成员级」合成一个方法。
+fun annKeyOf(a : AccInfo) -> string {
+    if (a.member.length() == 0) { rtn a.ann + "#type" }
+    rtn a.ann + "#member"
+}
+
+// 某个节点自己的 ANNOTATION_USES（没有就是 ERROR 占位节点）。每个节点至多一个。
+fun annUsesOf(n : Node) -> Node {
+    var i = 0
+    while (i < n.childCount) {
+        if (n.children[i].kind == NodeKind.ANNOTATION_USES) { rtn n.children[i] }
+        i = i + 1
+    }
+    rtn new Node(NodeKind.ERROR)
+}
+
+// 注解实参取不到编译期常量时的统一出口 —— **必须让 build 失败**（拍板 7：
+// `an1_annot_nonconst` 就靠这一条；措辞不要求与 Kotlin 逐字相同）。
+fun annBad(g : Gen, nm : string, t : BType, why : string) -> void {
+    g.bad("注解元素 '" + nm + "' 的值必须是编译期常量（字面量、取负的字面量或枚举常量）：'" + t.desc() + "' " + why + "；数组/注解类型的元素只能用声明里的默认值")
+}
+
+// 剥掉**只允许**的一个一元负号（Kotlin `annotationConstant` 的 UnaryExpr 分支：
+// 操作符必须是 MINUS、operand 必须是字面量）。返回 null = 已报错。
+// rsf 没有出参，所以用「返回字面量 + 一个 Bool2 出参对象」带出取负标志。
+public class NegLit(node : Node, neg : bool) {
+    var node : Node = node
+    var neg : bool = neg
+}
+
+fun annLiteral(g : Gen, nm : string, t : BType, v : Node) -> ?NegLit {
+    var x = v
+    var neg = false
+    if (x.kind == NodeKind.UNARY) {
+        if (prop(x, "op") != "MINUS" || x.childCount != 1) {
+            annBad(g, nm, t, "这里拿不到常量")
+            rtn null
+        }
+        neg = true
+        x = x.children[0]
+    }
+    if (!isConstLit(x.kind)) {
+        annBad(g, nm, t, "这里拿不到常量")
+        rtn null
+    }
+    rtn new NegLit(x, neg)
+}
+
+fun isConstLit(k : NodeKind) -> bool {
+    if (k == NodeKind.INT_LIT || k == NodeKind.LONG_LIT || k == NodeKind.FLOAT_LIT || k == NodeKind.DOUBLE_LIT) { rtn true }
+    if (k == NodeKind.STRING_LIT || k == NodeKind.CHAR_LIT || k == NodeKind.BOOL_LIT) { rtn true }
+    rtn false
+}
+
+// 元素值 → bool（对齐 Kotlin `annotationConstant` 的 BOOL 分箱）。
+fun annBoolVal(g : Gen, nm : string, t : BType, v : Node) -> bool {
+    var L = annLiteral(g, nm, t, v)
+    if (L == null) { rtn false }
+    if (L!!.neg || L!!.node.kind != NodeKind.BOOL_LIT) {
+        annBad(g, nm, t, "这里拿不到常量")
+        rtn false
+    }
+    rtn prop(L!!.node, "value") == "true"
+}
+
+// 元素值 → String。
+fun annStrVal(g : Gen, nm : string, t : BType, v : Node) -> string {
+    var L = annLiteral(g, nm, t, v)
+    if (L == null) { rtn "" }
+    if (L!!.neg || L!!.node.kind != NodeKind.STRING_LIT) {
+        annBad(g, nm, t, "这里拿不到常量")
+        rtn ""
+    }
+    rtn prop(L!!.node, "value")
+}
+
+// 元素值 → int（int 元素吃 INT_LIT / CHAR_LIT；byte 元素也走这里）。
+fun annIntVal(g : Gen, nm : string, t : BType, v : Node) -> int {
+    var L = annLiteral(g, nm, t, v)
+    if (L == null) { rtn 0 }
+    var x = L!!.node
+    var r = 0
+    if (x.kind == NodeKind.INT_LIT) {
+        r = parseInt(prop(x, "value")) ?: 0
+    } else if (x.kind == NodeKind.CHAR_LIT) {
+        var cs = prop(x, "value")
+        if (cs.length() > 0) { r = charToInt(cs.charAt(0)) }
+    } else {
+        annBad(g, nm, t, "这里拿不到常量")
+        rtn 0
+    }
+    if (L!!.neg) { r = 0 - r }
+    rtn r
+}
+
+// 元素值 → char（CHAR 分箱：Char 字面量直接用，别的走 int 再 toChar）。
+fun annCharVal(g : Gen, nm : string, t : BType, v : Node) -> char {
+    var L = annLiteral(g, nm, t, v)
+    if (L == null) { rtn toChar(0) }
+    if (!L!!.neg && L!!.node.kind == NodeKind.CHAR_LIT) {
+        var cs = prop(L!!.node, "value")
+        if (cs.length() > 0) { rtn cs.charAt(0) }
+        rtn toChar(0)
+    }
+    rtn toChar(annIntVal(g, nm, t, v))
+}
+
+// 元素值 → long（LONG 分箱：Int / Char 也接受）。
+fun annLongVal(g : Gen, nm : string, t : BType, v : Node) -> long {
+    var L = annLiteral(g, nm, t, v)
+    if (L == null) { rtn 0 }
+    var x = L!!.node
+    var r : long = 0
+    if (x.kind == NodeKind.LONG_LIT) {
+        r = Long.parseLong(prop(x, "value"))
+    } else if (x.kind == NodeKind.INT_LIT) {
+        var iv = parseInt(prop(x, "value")) ?: 0
+        r = iv
+    } else if (x.kind == NodeKind.CHAR_LIT) {
+        var cs = prop(x, "value")
+        if (cs.length() > 0) { var cv = charToInt(cs.charAt(0)); r = cv }
+    } else {
+        annBad(g, nm, t, "这里拿不到常量")
+        rtn 0
+    }
+    if (L!!.neg) { r = 0 - r }
+    rtn r
+}
+
+// 元素值 → float（FLOAT 分箱：Int 也接受）。
+fun annFloatVal(g : Gen, nm : string, t : BType, v : Node) -> float {
+    var fz : float = 0.0f
+    var L = annLiteral(g, nm, t, v)
+    if (L == null) { rtn fz }
+    var x = L!!.node
+    var r : float = 0.0f
+    if (x.kind == NodeKind.FLOAT_LIT) {
+        r = Float.parseFloat(prop(x, "value"))
+    } else if (x.kind == NodeKind.INT_LIT) {
+        var iv = parseInt(prop(x, "value")) ?: 0
+        r = iv
+    } else {
+        annBad(g, nm, t, "这里拿不到常量")
+        rtn fz
+    }
+    if (L!!.neg) { r = 0.0f - r }
+    rtn r
+}
+
+// 元素值 → double（DOUBLE 分箱：Int / Long / Float 也接受）。
+fun annDoubleVal(g : Gen, nm : string, t : BType, v : Node) -> double {
+    var L = annLiteral(g, nm, t, v)
+    if (L == null) { rtn 0.0 }
+    var x = L!!.node
+    var r : double = 0.0
+    if (x.kind == NodeKind.DOUBLE_LIT) {
+        r = Double.parseDouble(prop(x, "value"))
+    } else if (x.kind == NodeKind.FLOAT_LIT) {
+        var fv = Float.parseFloat(prop(x, "value"))
+        r = fv
+    } else if (x.kind == NodeKind.INT_LIT) {
+        var iv = parseInt(prop(x, "value")) ?: 0
+        r = iv
+    } else if (x.kind == NodeKind.LONG_LIT) {
+        var lv = Long.parseLong(prop(x, "value"))
+        r = lv
+    } else {
+        annBad(g, nm, t, "这里拿不到常量")
+        rtn 0.0
+    }
+    if (L!!.neg) { r = 0.0f - r }
+    rtn r
+}
+
+// 值是不是枚举常量 `Color.RED`？是就返回「枚举内部名 \t 常量名」，否则 null。
+// 对齐 Kotlin `model.enumValueOf(value)`：只有 `枚举名.常量名` 这一种写法算。
+fun annEnumOf(g : Gen, v : Node) -> ?string {
+    if (v.kind != NodeKind.MEMBER || v.childCount < 2) { rtn null }
+    var recv = v.children[0]
+    if (recv.kind != NodeKind.VAR) { rtn null }
+    var en = g.findEnum(prop(recv, "name"))
+    if (en == null) { rtn null }
+    var cn = prop(v, "name")
+    if (!en!!.has(cn)) { rtn null }
+    rtn en!!.internal + "\t" + cn
+}
+
+// 一条 ANNOTATION_USE 的显式实参表：按**元素下标**摆放（对齐 Kotlin `explicitValues`），
+// 没给的格子留 ERROR 占位。位置实参写在它自己的实参下标上，命名实参按名字查。
+fun annExplicit(g : Gen, ai : AnnInfo, use : Node) -> Node[] {
+    var out : Node[] = new Node[ai.elCount]
+    var i = 0
+    while (i < ai.elCount) {
+        out[i] = new Node(NodeKind.ERROR)
+        i = i + 1
+    }
+    if (use.childCount == 0) { rtn out }
+    var args = use.children[0]
+    var k = 0
+    while (k < args.childCount) {
+        var a = args.children[k]
+        var idx = k
+        if (a.kind == NodeKind.NAMED_ARG) {
+            idx = ai.elIndex(prop(a, "name"))
+            if (idx < 0) {
+                g.bad("注解 " + ai.name + " 没有元素 " + prop(a, "name"))
+                rtn out
+            }
+        }
+        if (idx >= ai.elCount) {
+            g.bad("注解 " + ai.name + " 的实参太多")
+            rtn out
+        }
+        if (a.childCount < 1) {
+            g.bad("注解 " + ai.name + " 的实参缺值")
+            rtn out
+        }
+        out[idx] = a.children[0]
+        k = k + 1
+    }
+    rtn out
+}
+
+// 使用点上第 i 个元素的最终取值：显式实参 → 元素默认值 → ERROR（跳过）。
+fun annValueOf(ai : AnnInfo, expl : Node[], i : int) -> Node {
+    if (expl[i].kind != NodeKind.ERROR) { rtn expl[i] }
+    if (ai.els[i].hasDef) { rtn ai.els[i].def }
+    rtn new Node(NodeKind.ERROR)
+}
+
+// ---------------------------------------------------------------- 收集
+
+// ANNOTATIONS 子节点 → `gen.ains`（元素表 + 伴生类坐标）。
+fun collectAnnDecls(g : Gen, anns : Node) -> void {
+    var i = 0
+    while (i < anns.childCount) {
+        var an = anns.children[i]
+        var anm = prop(an, "name")
+        var ai = new AnnInfo(anm, anm)
+        ai.node = an
+        g.addAnn(ai)
+        var k = 0
+        while (k < an.childCount) {
+            var part = an.children[k]
+            if (part.kind == NodeKind.ANNOTATION_ELEMENTS) {
+                var ei = 0
+                while (ei < part.childCount) {
+                    var el = part.children[ei]
+                    var et = typeOfText(g, prop(el, "type"))
+                    if (et == null) { rtn }
+                    var hd = propBool(el, "hasDefault")
+                    var dv : Node = new Node(NodeKind.ERROR)
+                    if (hd && el.childCount > 0) { dv = el.children[0] }
+                    ai.addEl(new AnnEl(prop(el, "name"), et!!, dv, hd, el.line))
+                    ei = ei + 1
+                }
+            } else if (part.kind == NodeKind.COMPANION) {
+                ai.hasComp = true
+                ai.compNode = part
+                var cn = prop(part, "name")
+                if (cn.length() == 0 || cn == "-") { cn = "companion" }
+                ai.compName = anm + "$" + cn
+                ai.compInternal = g.pkgPrefix + ai.compName
+            }
+            k = k + 1
+        }
+        i = i + 1
+    }
+}
+
+// 伴生类 = 普通类 + 元素字段 + 合成主构造器。
+// 字段表：元素字段（前 `annElemCount` 个）→ 伴生体自己的字段。
+// 方法表：伴生体自己的构造器/方法；没写构造器就按元素表合成一个（Kotlin
+// `companionPrimaryConstructor`）。元素访问器不是 CMeth，发射时插在构造器之后。
+fun buildCompanion(g : Gen, ai : AnnInfo) -> void {
+    var ci = new CInfo(ai.compName, ai.compInternal)
+    ci.node = ai.compNode
+    ci.annComp = ai.name
+    ci.annCompInternal = ai.compInternal
+    ci.annElemCount = ai.elCount
+    // 父接口：注解接口**排在最前**（Kotlin 的 extraSupers 是前插），然后是伴生体自己的
+    ci.addSuper(ai.name)
+    var ei = 0
+    while (ei < ai.elCount) {
+        // 元素字段的初值节点只是占位：真正发 <init> 时它从构造器形参取。
+        // 但 `emitUserClass` 会先把所有字段初值走一遍收集类型，所以必须给个**合法**节点
+        // （NULL_LIT 最省事，走完什么也不登记）。
+        var ef = new CField(ai.els[ei].name, ai.els[ei].type, new Node(NodeKind.NULL_LIT), false)
+        ci.addField(ef)
+        ei = ei + 1
+    }
+    var k = 0
+    while (k < ai.compNode.childCount) {
+        var part = ai.compNode.children[k]
+        if (part.kind == NodeKind.FIELDS) {
+            var fi = 0
+            while (fi < part.childCount) {
+                var f = part.children[fi]
+                var ft = typeOfText(g, prop(f, "type"))
+                if (ft == null) { rtn }
+                var nf = new CField(prop(f, "name"), ft!!, f.children[0], prop(f, "mutable") == "true")
+                nf.node = f
+                ci.addField(nf)
+                fi = fi + 1
+            }
+        } else if (part.kind == NodeKind.METHODS) {
+            collectMethods(g, part, ci)
+            if (g.failed) { rtn }
+        } else if (part.kind == NodeKind.SUPERS) {
+            collectSuperNames(g, part, ci)
+            if (g.failed) { rtn }
+        } else if (part.kind == NodeKind.TYPE_PARAMS) {
+            // 伴生体不支持类型参数（Kotlin 的 CompanionEntityDecl 也没有）
+        } else {
+            g.bad("伴生体成员 " + kindName(part.kind))
+            rtn
+        }
+        k = k + 1
+    }
+    var hasCtor = false
+    var mi = 0
+    while (mi < ci.methCount) {
+        if (ci.meths[mi].ctor) { hasCtor = true }
+        mi = mi + 1
+    }
+    if (!hasCtor) {
+        var pts : BType[] = new BType[ai.elCount]
+        var pns : string[] = new string[ai.elCount]
+        var pi = 0
+        while (pi < ai.elCount) {
+            pts[pi] = ai.els[pi].type
+            pns[pi] = ai.els[pi].name
+            pi = pi + 1
+        }
+        var ct = new CMeth(new Node(NodeKind.ERROR), "<init>", pts, pns, tVoid(), false, "DEFAULT", true, true)
+        ct.synth = true
+        ci.addMeth(ct)
+    }
+    g.addClass(ci)
+}
+
+// 一个宿主节点上的使用点 → 访问器。宿主为空串（顶层函数）时**不登记** ——
+// 对齐 Kotlin `emitAnnotationAccessors` 的 `if (hostName == null) return`。
+fun regHostUses(g : Gen, node : Node, host : string, member : string) -> void {
+    if (host.length() == 0) { rtn }
+    var uses = annUsesOf(node)
+    if (uses.kind != NodeKind.ANNOTATION_USES) { rtn }
+    var i = 0
+    while (i < uses.childCount) {
+        var us = uses.children[i]
+        var nm = prop(us, "name")
+        var ai = g.findAnn(nm)
+        if (ai == null) {
+            g.bad("未知注解 " + nm)
+            rtn
+        }
+        if (ai!!.hasComp) {
+            g.addAcc(new AccInfo(ai!!.name, host, member, ai!!.compInternal, ai!!, us))
+        }
+        i = i + 1
+    }
+}
+
+// 登记顺序**必须**与 Kotlin `checkAnnotationUses`（Checker.kt:930-1029）一致：
+//   注解声明（自己 → 伴生体字段 → 伴生体非构造器方法）
+//   → 接口（自己 → 它的方法）→ 类（自己 → 字段 → 非构造器方法）→ 顶层函数（不登记）
+// 唯一会被字节码观察到的差别是「同一宿主上成员级访问器的先后」，正是这里定的。
+fun collectAnnotations(g : Gen, anns : Node, ifs : Node, classes : Node, funcs : Node) -> void {
+    collectAnnDecls(g, anns)
+    if (g.failed) { rtn }
+    var i = 0
+    while (i < g.aiCount) {
+        if (g.ains[i].hasComp) {
+            buildCompanion(g, g.ains[i])
+            if (g.failed) { rtn }
+        }
+        i = i + 1
+    }
+    // ---- 注解声明 ----
+    i = 0
+    while (i < g.aiCount) {
+        var ai = g.ains[i]
+        regHostUses(g, ai.node, ai.name, "")
+        if (g.failed) { rtn }
+        if (ai.hasComp) {
+            var cn = ai.compNode
+            var fk = 0
+            while (fk < cn.childCount) {
+                var part = cn.children[fk]
+                if (part.kind == NodeKind.FIELDS) {
+                    var fi = 0
+                    while (fi < part.childCount) {
+                        regHostUses(g, part.children[fi], ai.compName, prop(part.children[fi], "name"))
+                        if (g.failed) { rtn }
+                        fi = fi + 1
+                    }
+                } else if (part.kind == NodeKind.METHODS) {
+                    var mi = 0
+                    while (mi < part.childCount) {
+                        if (!propBool(part.children[mi], "ctor")) {
+                            regHostUses(g, part.children[mi], ai.compName, prop(part.children[mi], "name"))
+                            if (g.failed) { rtn }
+                        }
+                        mi = mi + 1
+                    }
+                }
+                fk = fk + 1
+            }
+        }
+        i = i + 1
+    }
+    // ---- 接口（父接口与接口方法在上一轮已经登记进 g.iis，这里只走 AST 取注解）----
+    i = 0
+    while (i < ifs.childCount) {
+        var in0 = ifs.children[i]
+        regHostUses(g, in0, prop(in0, "name"), "")
+        if (g.failed) { rtn }
+        var k1 = 0
+        while (k1 < in0.childCount) {
+            var p1 = in0.children[k1]
+            if (p1.kind == NodeKind.METHODS) {
+                var m1 = 0
+                while (m1 < p1.childCount) {
+                    regHostUses(g, p1.children[m1], prop(in0, "name"), prop(p1.children[m1], "name"))
+                    if (g.failed) { rtn }
+                    m1 = m1 + 1
+                }
+            }
+            k1 = k1 + 1
+        }
+        i = i + 1
+    }
+    // ---- 类（字段在方法**之前**：a3 的 `Doc(String)` 分支顺序 title→name 就是这么来的）----
+    i = 0
+    while (i < classes.childCount) {
+        var cn0 = classes.children[i]
+        regHostUses(g, cn0, prop(cn0, "name"), "")
+        if (g.failed) { rtn }
+        var k2 = 0
+        while (k2 < cn0.childCount) {
+            var p2 = cn0.children[k2]
+            if (p2.kind == NodeKind.FIELDS) {
+                var f2 = 0
+                while (f2 < p2.childCount) {
+                    regHostUses(g, p2.children[f2], prop(cn0, "name"), prop(p2.children[f2], "name"))
+                    if (g.failed) { rtn }
+                    f2 = f2 + 1
+                }
+            } else if (p2.kind == NodeKind.METHODS) {
+                var m2 = 0
+                while (m2 < p2.childCount) {
+                    if (!propBool(p2.children[m2], "ctor")) {
+                        regHostUses(g, p2.children[m2], prop(cn0, "name"), prop(p2.children[m2], "name"))
+                        if (g.failed) { rtn }
+                    }
+                    m2 = m2 + 1
+                }
+            }
+            k2 = k2 + 1
+        }
+        i = i + 1
+    }
+    // ---- 顶层函数：宿主是 null，Kotlin 直接 return，不登记 ----
+    i = 0
+    while (i < funcs.childCount) {
+        regHostUses(g, funcs.children[i], "", "")
+        i = i + 1
+    }
+}
+
+// ---------------------------------------------------------------- 发射
+
+// 注解接口的父接口数组：**永远**只有 `java/lang/annotation/Annotation` 一个元素。
+fun annSuperArr() -> string[] {
+    var out : string[] = new string[1]
+    out[0] = "java/lang/annotation/Annotation"
+    rtn out
+}
+
+// 注解接口的 .class（对齐 Kotlin `BytecodeCompiler.annotationClass` :945-983）。
+fun emitAnnotationClass(g : Gen, ai : AnnInfo) -> void {
+    g.newWriter(ai.name)
+    g.cur = null
+    g.curMeth = null
+    g.curStatic = false
+    g.cw.visit(v17(), accPublic() + accInterface() + accAbstract() + accAnnotation(), ai.name, null, "java/lang/Object", annSuperArr())
+    // visitSource 不能省：少写它类文件的字节就变了
+    g.cw.visitSource(g.sourceName, null)
+    // @Retention(RUNTIME) 固定写死（拍板 5），位置也固定：visitSource 之后、元素方法之前。
+    // 它是类级 RuntimeVisibleAnnotations 的**第 0 条**，元注解跟在后面。
+    var ret : AnnotationVisitor = g.cw.visitAnnotation("Ljava/lang/annotation/Retention;", true)
+    ret.visitEnum("value", "Ljava/lang/annotation/RetentionPolicy;", "RUNTIME")
+    ret.visitEnd()
+    var i = 0
+    while (i < ai.elCount) {
+        var el = ai.els[i]
+        var mv = g.cw.visitMethod(accPublic() + accAbstract(), el.name, "()" + el.type.desc(), null, null)
+        if (el.hasDef && el.def.kind != NodeKind.ERROR && el.def.kind != NodeKind.NULL_LIT) {
+            emitAnnDefault(g, mv, ai, i)
+            if (g.failed) { rtn }
+        }
+        mv.visitEnd()
+        i = i + 1
+    }
+    emitAnnSites(g, annUsesOf(ai.node))
+    if (g.failed) { rtn }
+    // 注解声明是**接口**宿主：访问器绝不能带同步位（带 0x29 加载期就是 ClassFormatError）
+    emitAnnotationAccessors(g, ai.name, false)
+    if (g.failed) { rtn }
+    g.cw.visitEnd()
+    g.cur = null
+    g.curMeth = null
+    g.curStatic = false
+}
+
+// 注解元素的默认值（`AnnotationDefault` 属性）。名字槽固定传 null（Kotlin :968）。
+fun emitAnnDefault(g : Gen, mv : MethodVisitor, ai : AnnInfo, i : int) -> void {
+    var el = ai.els[i]
+    var nm = el.name
+    var t = el.type
+    var v = el.def
+    var dv : AnnotationVisitor = mv.visitAnnotationDefault()
+    var ev = annEnumOf(g, v)
+    if (ev != null) {
+        var s = ev!!
+        var tab = s.indexOf("\t")
+        dv.visitEnum(null, "L" + s.substring(0, tab) + ";", s.substring(tab + 1, s.length()))
+        rtn
+    }
+    if (t.base == "bool") { dv.visit(null, Boolean.valueOf(annBoolVal(g, nm, t, v))); rtn }
+    if (t.base == "string") { dv.visit(null, annStrVal(g, nm, t, v)); rtn }
+    if (t.base == "char") { dv.visit(null, Character.valueOf(annCharVal(g, nm, t, v))); rtn }
+    if (t.base == "byte") { dv.visit(null, Byte.valueOf(toByte(annIntVal(g, nm, t, v)))); rtn }
+    if (t.base == "int") { dv.visit(null, Integer.valueOf(annIntVal(g, nm, t, v))); rtn }
+    if (t.base == "long") { dv.visit(null, Long.valueOf(annLongVal(g, nm, t, v))); rtn }
+    if (t.base == "float") { dv.visit(null, Float.valueOf(annFloatVal(g, nm, t, v))); rtn }
+    if (t.base == "double") { dv.visit(null, Double.valueOf(annDoubleVal(g, nm, t, v))); rtn }
+    annBad(g, nm, t, "这里拿不到常量")
+}
+
+// 类级使用点（接收者是 g.cw）。
+fun emitAnnSites(g : Gen, uses : Node) -> void {
+    if (uses.kind != NodeKind.ANNOTATION_USES) { rtn }
+    var i = 0
+    while (i < uses.childCount) {
+        var us = uses.children[i]
+        var ai = g.findAnn(prop(us, "name"))
+        if (ai == null) {
+            g.bad("未知注解 " + prop(us, "name"))
+            rtn
+        }
+        if (ai!!.hasComp) {
+            var av : AnnotationVisitor = g.cw.visitAnnotation("L" + ai!!.name + ";", true)
+            emitAnnArgs(g, av, us, ai!!)
+            if (g.failed) { rtn }
+            av.visitEnd()
+        }
+        i = i + 1
+    }
+}
+
+// 字段级使用点。
+fun emitAnnSitesF(g : Gen, uses : Node, fv : FieldVisitor) -> void {
+    if (uses.kind != NodeKind.ANNOTATION_USES) { rtn }
+    var i = 0
+    while (i < uses.childCount) {
+        var us = uses.children[i]
+        var ai = g.findAnn(prop(us, "name"))
+        if (ai == null) {
+            g.bad("未知注解 " + prop(us, "name"))
+            rtn
+        }
+        if (ai!!.hasComp) {
+            var av : AnnotationVisitor = fv.visitAnnotation("L" + ai!!.name + ";", true)
+            emitAnnArgs(g, av, us, ai!!)
+            if (g.failed) { rtn }
+            av.visitEnd()
+        }
+        i = i + 1
+    }
+}
+
+// 方法级使用点（接口抽象方法、用户方法、顶层函数共用）。
+fun emitAnnSitesM(g : Gen, uses : Node, mv : MethodVisitor) -> void {
+    if (uses.kind != NodeKind.ANNOTATION_USES) { rtn }
+    var i = 0
+    while (i < uses.childCount) {
+        var us = uses.children[i]
+        var ai = g.findAnn(prop(us, "name"))
+        if (ai == null) {
+            g.bad("未知注解 " + prop(us, "name"))
+            rtn
+        }
+        if (ai!!.hasComp) {
+            var av : AnnotationVisitor = mv.visitAnnotation("L" + ai!!.name + ";", true)
+            emitAnnArgs(g, av, us, ai!!)
+            if (g.failed) { rtn }
+            av.visitEnd()
+        }
+        i = i + 1
+    }
+}
+
+// 一条使用点的实参对：按**元素表顺序**逐条写（NullLit 与没值的跳过）。
+fun emitAnnArgs(g : Gen, av : AnnotationVisitor, us : Node, ai : AnnInfo) -> void {
+    var expl : Node[] = annExplicit(g, ai, us)
+    if (g.failed) { rtn }
+    var i = 0
+    while (i < ai.elCount) {
+        var v = annValueOf(ai, expl, i)
+        if (v.kind != NodeKind.ERROR && v.kind != NodeKind.NULL_LIT) {
+            emitAnnPair(g, av, ai, i, v)
+            if (g.failed) { rtn }
+        }
+        i = i + 1
+    }
+}
+
+// 一个元素 → 一个 `visit` / `visitEnum`。装箱按**元素声明类型**走（Kotlin :1069-1106）。
+fun emitAnnPair(g : Gen, av : AnnotationVisitor, ai : AnnInfo, i : int, v : Node) -> void {
+    var nm = ai.els[i].name
+    var t = ai.els[i].type
+    var ev = annEnumOf(g, v)
+    if (ev != null) {
+        var s = ev!!
+        var tab = s.indexOf("\t")
+        av.visitEnum(nm, "L" + s.substring(0, tab) + ";", s.substring(tab + 1, s.length()))
+        rtn
+    }
+    if (t.base == "bool") { av.visit(nm, Boolean.valueOf(annBoolVal(g, nm, t, v))); rtn }
+    if (t.base == "string") { av.visit(nm, annStrVal(g, nm, t, v)); rtn }
+    if (t.base == "char") { av.visit(nm, Character.valueOf(annCharVal(g, nm, t, v))); rtn }
+    if (t.base == "byte") { av.visit(nm, Byte.valueOf(toByte(annIntVal(g, nm, t, v)))); rtn }
+    if (t.base == "int") { av.visit(nm, Integer.valueOf(annIntVal(g, nm, t, v))); rtn }
+    if (t.base == "long") { av.visit(nm, Long.valueOf(annLongVal(g, nm, t, v))); rtn }
+    if (t.base == "float") { av.visit(nm, Float.valueOf(annFloatVal(g, nm, t, v))); rtn }
+    if (t.base == "double") { av.visit(nm, Double.valueOf(annDoubleVal(g, nm, t, v))); rtn }
+    annBad(g, nm, t, "这里拿不到常量")
+}
+
+// 元素访问器：伴生类上的 `public <元素类型> <元素名>()`，体是
+// `ALOAD 0; GETFIELD <伴生内部名>.<字段> <描述符>; <xRETURN>`。
+fun emitAnnElemAccessors(g : Gen, ci : CInfo) -> void {
+    var ai = g.findAnn(ci.annComp)
+    var i = 0
+    while (i < ci.annElemCount) {
+        var f = ci.fields[i]
+        var mv = g.cw.visitMethod(accPublic(), f.name, "()" + f.type.desc(), null, null)
+        mv.visitCode()
+        // Kotlin 的元素访问器带 `LineNumberTable: line <元素行> : 0`（见 §7 的 javap）。
+        // 行号来自 AST 的 ANNOTATION_ELEMENT.line；自举语法器还没记（恒 0）时按
+        // Kotlin `at == NONE` 的口径跳过 —— 只差这一处字节。
+        if (ai != null && i < ai!!.elCount && ai!!.els[i].line > 0) {
+            var lnLbl = new Label()
+            mv.visitLabel(lnLbl)
+            mv.visitLineNumber(ai!!.els[i].line, lnLbl)
+        }
+        mv.visitVarInsn(25, 0)
+        mv.visitFieldInsn(180, ci.internal, f.name, f.type.desc())
+        eReturnInsn(mv, f.type)
+        mv.visitMaxs(0, 0)
+        mv.visitEnd()
+        i = i + 1
+    }
+}
+
+// 伴生类上的访问器缓存字段（`static <伴生内部名> __rsf_ann$<宿主>$<成员>`，
+// 只有 ACC_STATIC —— 和 Kotlin 一样是包私有静态）。
+fun emitAnnCaches(g : Gen, ci : CInfo) -> void {
+    var i = 0
+    while (i < g.accCount) {
+        var a = g.accs[i]
+        if (a.comp == ci.internal) {
+            g.cw.visitField(accStatic(), annCacheName(a), "L" + ci.internal + ";", null, null).visitEnd()
+        }
+        i = i + 1
+    }
+}
+
+// 伴生类的 `annotationType()`：`LDC Type.getObjectType(注解接口简名); ARETURN`。
+fun emitAnnType(g : Gen, ci : CInfo) -> void {
+    var mv = g.cw.visitMethod(accPublic(), "annotationType", "()Ljava/lang/Class;", null, null)
+    mv.visitCode()
+    mv.visitLdcInsn(Type.getObjectType(ci.annComp))
+    mv.visitInsn(176)
+    mv.visitMaxs(0, 0)
+    mv.visitEnd()
+}
+
+// 宿主上的访问器。`sync`：宿主是**类**时带 ACC_SYNCHRONIZED（32），
+// 宿主是接口 / 注解声明时**绝不能带**（0x29 会 ClassFormatError）。
+fun emitAnnotationAccessors(g : Gen, host : string, sync : bool) -> void {
+    var idx : int[] = new int[g.accCount]
+    var n = 0
+    var i = 0
+    while (i < g.accCount) {
+        if (g.accs[i].host == host) {
+            idx[n] = i
+            n = n + 1
+        }
+        i = i + 1
+    }
+    if (n == 0) { rtn }
+    var done : bool[] = new bool[n]
+    var a = 0
+    while (a < n) {
+        if (!done[a]) {
+            var key = annKeyOf(g.accs[idx[a]])
+            if (g.accs[idx[a]].member.length() == 0) {
+                done[a] = true
+                emitAnnTypeAccessor(g, g.accs[idx[a]], sync)
+            } else {
+                var group : int[] = new int[n]
+                var gn = 0
+                var b = 0
+                while (b < n) {
+                    if (!done[b] && annKeyOf(g.accs[idx[b]]) == key) {
+                        done[b] = true
+                        group[gn] = idx[b]
+                        gn = gn + 1
+                    }
+                    b = b + 1
+                }
+                emitAnnMemberAccessor(g, group, gn, sync)
+            }
+            if (g.failed) { rtn }
+        }
+        a = a + 1
+    }
+}
+
+// 类型级访问器（Kotlin `emitTypeLevelAccessor` :1214-1234）
+fun emitAnnTypeAccessor(g : Gen, a : AccInfo, sync : bool) -> void {
+    var flags = accPublic() + accStatic()
+    if (sync) { flags = flags + accSync() }
+    var mv = g.cw.visitMethod(flags, a.ann, "()L" + a.comp + ";", null, null)
+    var cn = annCacheName(a)
+    mv.visitCode()
+    mv.visitFieldInsn(178, a.comp, cn, "L" + a.comp + ";")
+    mv.visitVarInsn(58, 0)
+    mv.visitVarInsn(25, 0)
+    var ready = new Label()
+    mv.visitJumpInsn(199, ready)
+    emitAnnNew(g, mv, a)
+    if (g.failed) { rtn }
+    mv.visitInsn(89)
+    mv.visitFieldInsn(179, a.comp, cn, "L" + a.comp + ";")
+    mv.visitVarInsn(58, 0)
+    mv.visitLabel(ready)
+    mv.visitVarInsn(25, 0)
+    mv.visitInsn(176)
+    mv.visitMaxs(0, 0)
+    mv.visitEnd()
+}
+
+// 成员级访问器（Kotlin `emitMemberLevelAccessor` :1236-1269）：
+// 一条成员一个分支，全不中就是 ACONST_NULL。
+fun emitAnnMemberAccessor(g : Gen, group : int[], gn : int, sync : bool) -> void {
+    var a0 = g.accs[group[0]]
+    var flags = accPublic() + accStatic()
+    if (sync) { flags = flags + accSync() }
+    var mv = g.cw.visitMethod(flags, a0.ann, "(Ljava/lang/String;)L" + a0.comp + ";", null, null)
+    mv.visitCode()
+    var i = 0
+    while (i < gn) {
+        var a = g.accs[group[i]]
+        var cn = annCacheName(a)
+        var next = new Label()
+        mv.visitVarInsn(25, 0)
+        mv.visitLdcInsn(a.member)
+        mv.visitMethodInsn(182, "java/lang/String", "equals", "(Ljava/lang/Object;)Z", false)
+        mv.visitJumpInsn(153, next)
+        mv.visitFieldInsn(178, a.comp, cn, "L" + a.comp + ";")
+        mv.visitVarInsn(58, 1)
+        mv.visitVarInsn(25, 1)
+        var ready = new Label()
+        mv.visitJumpInsn(199, ready)
+        emitAnnNew(g, mv, a)
+        if (g.failed) { rtn }
+        mv.visitInsn(89)
+        mv.visitFieldInsn(179, a.comp, cn, "L" + a.comp + ";")
+        mv.visitVarInsn(58, 1)
+        mv.visitLabel(ready)
+        mv.visitVarInsn(25, 1)
+        mv.visitInsn(176)
+        mv.visitLabel(next)
+        i = i + 1
+    }
+    mv.visitInsn(1)
+    mv.visitInsn(176)
+    mv.visitMaxs(0, 0)
+    mv.visitEnd()
+}
+
+// 访问器体里造伴生对象的那一段：`NEW 伴生; DUP; <逐个压元素实参>; INVOKESPECIAL <init>`。
+// 实参 = 显式实参 → 元素默认值，**没有就报错**（Kotlin `emitAccessorNew` :1275-1302）。
+fun emitAnnNew(g : Gen, mv : MethodVisitor, a : AccInfo) -> void {
+    var ai = a.ai
+    var expl : Node[] = annExplicit(g, ai, a.use)
+    if (g.failed) { rtn }
+    mv.visitTypeInsn(187, a.comp)
+    mv.visitInsn(89)
+    var i = 0
+    while (i < ai.elCount) {
+        var v = annValueOf(ai, expl, i)
+        if (v.kind == NodeKind.ERROR) {
+            g.bad("注解 " + ai.name + " 的元素 '" + ai.els[i].name + "' 没有值：既没写实参，声明里也没有默认值")
+            rtn
+        }
+        emitAnnPushArg(g, mv, ai, i, v)
+        if (g.failed) { rtn }
+        i = i + 1
+    }
+    mv.visitMethodInsn(183, a.comp, "<init>", ai.ctorDesc(), false)
+}
+
+// 构造器实参的压栈（Kotlin `pushAnnotationValue` :1126-1158）。
+// 枚举元素发 GETSTATIC；基本类型照各自的形态压（char/byte 压 int，JVM 认）。
+fun emitAnnPushArg(g : Gen, mv : MethodVisitor, ai : AnnInfo, i : int, v : Node) -> void {
+    var t = ai.els[i].type
+    var nm = ai.els[i].name
+    var ev = annEnumOf(g, v)
+    if (ev != null) {
+        var s = ev!!
+        var tab = s.indexOf("\t")
+        var en = s.substring(0, tab)
+        mv.visitFieldInsn(178, en, s.substring(tab + 1, s.length()), "L" + en + ";")
+        rtn
+    }
+    if (t.base == "bool") {
+        if (annBoolVal(g, nm, t, v)) { mv.visitInsn(4) } else { mv.visitInsn(3) }
+        rtn
+    }
+    if (t.base == "string") { mv.visitLdcInsn(annStrVal(g, nm, t, v)); rtn }
+    if (t.base == "char") { pushInt(mv, charToInt(annCharVal(g, nm, t, v))); rtn }
+    if (t.base == "byte") { pushInt(mv, annIntVal(g, nm, t, v)); rtn }
+    if (t.base == "int") { pushInt(mv, annIntVal(g, nm, t, v)); rtn }
+    if (t.base == "long") { mv.visitLdcInsn(Long.valueOf(annLongVal(g, nm, t, v))); rtn }
+    if (t.base == "float") { mv.visitLdcInsn(Float.valueOf(annFloatVal(g, nm, t, v))); rtn }
+    if (t.base == "double") { mv.visitLdcInsn(Double.valueOf(annDoubleVal(g, nm, t, v))); rtn }
+    annBad(g, nm, t, "这里拿不到常量")
 }
 
 // 全程序：先收集类型与签名（函数可以互相调用 / 递归），再发射
@@ -5829,6 +7003,7 @@ public fun compileProgram(g : Gen, ast : Node, sourceName : string) -> void {
     var classes : Node = new Node(NodeKind.ERROR)
     var enums : Node = new Node(NodeKind.ERROR)
     var ifaces : Node = new Node(NodeKind.ERROR)
+    var anns : Node = new Node(NodeKind.ERROR)
     var i = 0
     while (i < ast.childCount) {
         var c = ast.children[i]
@@ -5842,6 +7017,8 @@ public fun compileProgram(g : Gen, ast : Node, sourceName : string) -> void {
             enums = c
         } else if (c.kind == NodeKind.INTERFACES) {
             ifaces = c
+        } else if (c.kind == NodeKind.ANNOTATIONS) {
+            anns = c
         }
         i = i + 1
     }
@@ -5858,6 +7035,11 @@ public fun compileProgram(g : Gen, ast : Node, sourceName : string) -> void {
     collectInterfaces(g, ifaces)
     if (g.failed) { rtn }
     collectClasses(g, classes, enums)
+    if (g.failed) { rtn }
+    // 阶段 21：注解声明 / 伴生类 / 访问器表。必须在类与接口登记**之后**收集 ——
+    // 伴生类的父类型子句和元素类型都要查这两张表。伴生类在这里进 `g.cis`，
+    // 于是跟着上面的类循环一起发射。
+    collectAnnotations(g, anns, ifaces, classes, funcs)
     if (g.failed) { rtn }
 
     i = 0
@@ -5906,6 +7088,14 @@ public fun compileProgram(g : Gen, ast : Node, sourceName : string) -> void {
     i = 0
     while (i < g.eiCount) {
         emitEnumClass(g, g.eis[i])
+        if (g.failed) { rtn }
+        i = i + 1
+    }
+    // 注解接口排在最后（Kotlin `compile` :187-198：program → classes → interfaces
+    // → enums → annotations）。伴生类已经跟着上面的类循环发过了。
+    i = 0
+    while (i < g.aiCount) {
+        emitAnnotationClass(g, g.ains[i])
         if (g.failed) { rtn }
         i = i + 1
     }
