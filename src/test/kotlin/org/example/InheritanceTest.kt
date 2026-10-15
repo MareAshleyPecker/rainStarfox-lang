@@ -6,9 +6,13 @@ import org.example.complie.ast.ReturnStmt
 import org.example.complie.ast.SuperExpr
 import org.example.complie.diag.RsfError
 import org.example.complie.diag.SourceFile
+import org.example.complie.interp.Interpreter
 import org.example.complie.sema.RsfType
+import org.example.complie.sema.SemanticModel
 import org.example.complie.sema.UserMember
+import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.PrintStream
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -16,11 +20,13 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * 阶段 25 「类继承」的前端与语义（K1 刀）。
+ * 阶段 25 「类继承」的前端与语义（K1 刀）+ 解释器侧跑得动的回归（K3 刀）。
  *
- * 这里只测**前端**：语法收不收、Checker 放行还是报错、报什么、给后端留了什么模型。
- * 两端的支持是 K2（字节码）/ K3（解释器）的事，不在这里测——K1 阶段带父类的程序在
- * `build` / `run` 上会显式报「还没实现」，正例一律走 [Rsf.analyze] 这条 check 路径。
+ * 前半段只测**前端**：语法收不收、Checker 放行还是报错、报什么、给后端留了什么模型。
+ * 后半段（`K3：解释器侧` 那一节）测解释器真的把带父类的程序跑成什么样：构造链顺序、
+ * 字段绝对下标、父链方法查找、`super.f()` / `super(接口).f()`、JDK 父类那条链。
+ * 字节码端的支持是 K2 的事，不在这里测——K3 已撤掉解释器的守卫，`build` 仍会显式报
+ * 「K2 还没实现」（见下面 `带父类的程序 build 要显式报还没实现`），所以这里不碰 `Rsf.build`。
  *
  * 反例逐条对应 `DESIGN-25.md` §7 的判据清单。
  */
@@ -548,7 +554,7 @@ class InheritanceTest {
         assertTrue(e.detail.contains("类型实参"), e.detail)
     }
 
-    // ------------------------------------------------------------ 两端守卫（K2 / K3）
+    // ------------------------------------------------------------ 后端守卫（K2）
 
     @Test
     fun `带父类的程序 build 要显式报还没实现`() {
@@ -567,18 +573,31 @@ class InheritanceTest {
     }
 
     @Test
-    fun `带父类的程序 run 要显式报还没实现`() {
-        val src = rsfSource(
+    fun `带父类的程序 run 跑得动（K3 刀落地，K1 的解释器守卫撤了）`() {
+        // K1 时这条测的是「解释器显式报还没实现（K3）」；K3 落地后同一条程序必须真的跑出
+        // 结果——语义层 check 通过、解释器却跑不了的那种缝隙，就由这条测试盯着。
+        val out = runInterpreted(
             "open class Base(x : int) {\n" +
+                "    var v : int = x\n" +
+                "    public open fun tag() -> string {\n" +
+                "        rtn \"base\"\n" +
+                "    }\n" +
                 "}\n" +
                 "class D(y : int) : Base(y) {\n" +
+                "    override fun tag() -> string {\n" +
+                "        rtn super.tag() + \"+d\"\n" +
+                "    }\n" +
+                "}\n" +
+                "fun main() -> void {\n" +
+                "    var d : D = new D(7)\n" +
+                "    println(d.tag())\n" +
+                "    println(intToString(d.v))\n" +
+                "    rtn\n" +
                 "}\n",
         )
-        val model = Rsf.analyze(Rsf.parse(src), src)
-        val e = assertFailsWith<RsfError> { Rsf.interpret(model) }
-        assertEquals("interp", e.phase)
-        assertTrue(e.detail.contains("K3"), e.detail)
-        assertTrue(e.detail.contains("Base"), e.detail)
+        // `d.v` 是父类的字段：能读到 7 就说明字段绝对下标（父类在前）排对了，
+        // `super.tag()` 只跳一层就到 Base。
+        assertEquals("base+d\n7\n", out)
     }
 
     // ------------------------------------------- 父代理对拍探针暴露的 5 个缺口（G1–G5）
@@ -721,6 +740,246 @@ class InheritanceTest {
         assertEquals("java/lang/Throwable", resolved.method.owner)
     }
 
+    // ------------------------------------------------------------ K3：解释器侧（run 路径）
+
+    @Test
+    fun `K3 构造链顺序：父构造器 → 自己字段初值 → 构造体`() {
+        // 显式写 super(实参) 的那条路最容易错：K1 把它留给指令循环，字段初值必须在
+        // 父构造器**之后**、构造体**之前**跑。顺序错一个位置 stdout 就不一样。
+        val out = runInterpreted(
+            "open class Base {\n" +
+                "    constructor(msg : string) {\n" +
+                "        println(\"base:\" + msg)\n" +
+                "    }\n" +
+                "    constructor() {\n" +
+                "        println(\"base:default\")\n" +
+                "    }\n" +
+                "}\n" +
+                "open class Child : Base() {\n" +
+                "    var x : int = 1\n" +
+                "    constructor() {\n" +
+                "        super(\"explicit\")\n" +
+                "        println(\"child-body:x=\" + intToString(x))\n" +
+                "    }\n" +
+                "}\n" +
+                "open class Grand : Base() {\n" +
+                "    constructor() {\n" +
+                "        super()\n" +
+                "        println(\"grand-post\")\n" +
+                "    }\n" +
+                "}\n" +
+                "fun main() -> void {\n" +
+                "    println(\"grand-pre\")\n" +
+                "    var c : Child = new Child()\n" +
+                "    var g : Grand = new Grand()\n" +
+                "    rtn\n" +
+                "}\n",
+        )
+        assertEquals("grand-pre\nbase:explicit\nchild-body:x=1\nbase:default\ngrand-post\n", out)
+    }
+
+    @Test
+    fun `K3 字段绝对下标：父类字段排在前 子类字段跟着排 两边读的是同一格`() {
+        val out = runInterpreted(
+            "open class Base(p : int) {\n" +
+                "    var a : int = p\n" +
+                "    var b : int = 10\n" +
+                "    public fun sum() -> int {\n" +
+                "        rtn a + b\n" +
+                "    }\n" +
+                "    public fun bump() -> void {\n" +
+                "        b = b + 1\n" +
+                "        rtn\n" +
+                "    }\n" +
+                "}\n" +
+                "class Child(p : int, c : int) : Base(p) {\n" +
+                "    var d : int = c + 1\n" +
+                "    public fun total() -> int {\n" +
+                "        rtn sum() + d\n" +
+                "    }\n" +
+                "}\n" +
+                "fun main() -> void {\n" +
+                "    var o : Child = new Child(1, 2)\n" +
+                "    println(intToString(o.total()))\n" +
+                "    o.bump()\n" +
+                "    o.b = o.b + 100\n" +
+                "    println(intToString(o.total()))\n" +
+                "    println(intToString(o.sum()))\n" +
+                "    rtn\n" +
+                "}\n",
+        )
+        // a=0、b=1（父类）、d=2（子类）。若子类字段从 0 开始写，`d` 会把 `a` 盖掉，
+        // 这三行立刻不对。
+        assertEquals("14\n115\n112\n", out)
+    }
+
+    @Test
+    fun `K3 虚分派：静态类型是父类 跑的是子类那一份覆盖`() {
+        val out = runInterpreted(
+            "open class A {\n" +
+                "    public open fun t() -> string {\n" +
+                "        rtn \"A\"\n" +
+                "    }\n" +
+                "}\n" +
+                "open class B : A() {\n" +
+                "    override fun t() -> string {\n" +
+                "        rtn \"B>\" + super.t()\n" +
+                "    }\n" +
+                "}\n" +
+                "class C : B() {\n" +
+                "    override fun t() -> string {\n" +
+                "        rtn \"C>\" + super.t()\n" +
+                "    }\n" +
+                "}\n" +
+                "open class Animal(nm : string) {\n" +
+                "    var name : string = nm\n" +
+                "    public open fun sound() -> string {\n" +
+                "        rtn \"...\"\n" +
+                "    }\n" +
+                "    public fun who() -> string {\n" +
+                "        rtn name\n" +
+                "    }\n" +
+                "}\n" +
+                "class Dog(nm : string) : Animal(nm) {\n" +
+                "    override fun sound() -> string {\n" +
+                "        rtn \"woof\"\n" +
+                "    }\n" +
+                "}\n" +
+                "fun main() -> void {\n" +
+                "    var c : C = new C()\n" +
+                "    var b : B = c\n" +
+                "    var a : A = c\n" +
+                "    println(c.t())\n" +
+                "    println(b.t())\n" +
+                "    println(a.t())\n" +
+                "    var x : Animal = new Dog(\"d\")\n" +
+                "    println(x.who() + \":\" + x.sound())\n" +
+                "    rtn\n" +
+                "}\n",
+        )
+        // 三行都要是 C>B>A：静态类型换了一层，虚分派照样从运行期类起找；而 `super.t()`
+        // 每次只跳一层（C→B→A），跳多了会变成 C>C>A 之类。
+        assertEquals("C>B>A\nC>B>A\nC>B>A\nd:woof\n", out)
+    }
+
+    @Test
+    fun `K3 super(接口) 只跑指定接口那一份默认实现 不是虚分派`() {
+        val out = runInterpreted(
+            "public interface Greeter {\n" +
+                "    public fun greet() -> string {\n" +
+                "        rtn \"hi\"\n" +
+                "    }\n" +
+                "}\n" +
+                "public interface Named {\n" +
+                "    public fun name() -> string\n" +
+                "    public fun greet() -> string {\n" +
+                "        rtn \"named-hi\"\n" +
+                "    }\n" +
+                "}\n" +
+                "open class Base {\n" +
+                "    public fun base() -> string {\n" +
+                "        rtn \"base\"\n" +
+                "    }\n" +
+                "}\n" +
+                "class D : Base(), Greeter {\n" +
+                "    public fun greet2() -> string {\n" +
+                "        rtn super(Greeter).greet() + \"/\" + base()\n" +
+                "    }\n" +
+                "}\n" +
+                "class E : Base(), Greeter, Named {\n" +
+                "    override fun name() -> string {\n" +
+                "        rtn \"E\"\n" +
+                "    }\n" +
+                "    override fun greet() -> string {\n" +
+                "        rtn super(Named).greet()\n" +
+                "    }\n" +
+                "    public fun which() -> string {\n" +
+                "        rtn super(Greeter).greet() + \":\" + name()\n" +
+                "    }\n" +
+                "}\n" +
+                "fun main() -> void {\n" +
+                "    var d : D = new D()\n" +
+                "    println(d.greet())\n" +
+                "    println(d.greet2())\n" +
+                "    var e : E = new E()\n" +
+                "    println(e.greet())\n" +
+                "    println(e.which())\n" +
+                "    rtn\n" +
+                "}\n",
+        )
+        // E 自己覆盖了 greet，`super(Named).greet()` 仍必须拿到 Named 的默认实现
+        // （走虚分派会回到 E 自己，直接递归死）。
+        assertEquals("hi\nhi/base\nnamed-hi\nhi:E\n", out)
+    }
+
+    @Test
+    fun `K3 接口实现在父类里写、子类继承：按接口调用要沿类链找得到`() {
+        val out = runInterpreted(
+            "public interface Named {\n" +
+                "    public fun label() -> string\n" +
+                "}\n" +
+                "open class Base : Named {\n" +
+                "    override fun label() -> string {\n" +
+                "        rtn \"base-label\"\n" +
+                "    }\n" +
+                "}\n" +
+                "class Child : Base() {\n" +
+                "}\n" +
+                "fun main() -> void {\n" +
+                "    var n : Named = new Child()\n" +
+                "    println(n.label())\n" +
+                "    rtn\n" +
+                "}\n",
+        )
+        // 运行期类是 Child，实现却写在 Base 里——只查运行期类自己的方法表会报
+        // 「没有实现接口方法」。
+        assertEquals("base-label\n", out)
+    }
+
+    @Test
+    fun `K3 JDK 父类：反射造出父类实例 getMessage 能调`() {
+        val out = runInterpreted(
+            "import java.lang.Exception\n" +
+                "class MyError(msg : string) : Exception(msg) {\n" +
+                "    public fun describe() -> string {\n" +
+                "        rtn \"MyError:\" + getMessage()\n" +
+                "    }\n" +
+                "}\n" +
+                "fun main() -> void {\n" +
+                "    var e : MyError = new MyError(\"boom\")\n" +
+                "    println(e.describe())\n" +
+                "    println(e.getMessage())\n" +
+                "    rtn\n" +
+                "}\n",
+        )
+        // 两行分别走两条路：`getMessage()`（隐式 this，implicitJvmCalls）与
+        // `e.getMessage()`（显式成员访问，memberTargets→ResolvedMethod）。
+        // 两条都得把接收者换成配对出来的 JDK 父类实例（解释器里 MyError 没有真实 class）。
+        assertEquals("MyError:boom\nboom\n", out)
+    }
+
+    @Test
+    fun `K3 toString 把整条父链的字段都渲染出来（父类字段在前）`() {
+        val out = runInterpreted(
+            "open class Base(x : int) {\n" +
+                "    var a : int = x\n" +
+                "}\n" +
+                "class Child(x : int, y : int) : Base(x) {\n" +
+                "    var b : int = y\n" +
+                "}\n" +
+                "fun main() -> void {\n" +
+                "    var c : Child = new Child(1, 2)\n" +
+                "    println(c)\n" +
+                "    rtn\n" +
+                "}\n",
+        )
+        // 这是**两端约定**：字段布局是「父链在前 + 自己」，toString 也按这个顺序与命名来。
+        // 解释器这边按整条链渲染；字节码端（K2）的 emitUserToString 现在还只遍历自己的
+        // 字段，落地时必须对齐成同一条链，否则同一份程序两端打出 `Child(a=1, b=2)` 与
+        // `Child(b=2)` 两种文本。
+        assertEquals("Child(a=1, b=2)\n", out)
+    }
+
     // ------------------------------------------------------------ 助手
 
     private fun tempDir(): File = File.createTempFile("rsf-inherit", "").let {
@@ -728,6 +987,31 @@ class InheritanceTest {
         it.mkdirs()
         it
     }
+
+    /**
+     * 跑解释器并把 stdout 收成字符串（K3 的回归全部靠它）。
+     *
+     * 换行统一成 LF：`println` 用的是平台换行（本机上是 CRLF），断言里写 `\n` 更清楚，
+     * 也和「解释器源码里一行一行对」的读法一致。
+     */
+    private fun runInterpreted(text: String): String {
+        val src = rsfSource(text)
+        val model: SemanticModel = Rsf.analyze(Rsf.parse(src), src)
+        val buf = ByteArrayOutputStream()
+        val ps = PrintStream(buf, true, "UTF-8")
+        val saved = System.out
+        System.setOut(ps)
+        try {
+            Interpreter(model, ps).runEntry()
+        } finally {
+            System.setOut(saved)
+        }
+        ps.flush()
+        return normalize(buf.toString("UTF-8"))
+    }
+
+    /** 平台换行 → LF。 */
+    private fun normalize(s: String): String = s.replace("\r\n", "\n")
 
     private fun fails(text: String): RsfError {
         val src = rsfSource(text)

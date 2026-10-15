@@ -5,6 +5,7 @@ import org.example.complie.ast.BoolLit
 import org.example.complie.ast.CallExpr
 import org.example.complie.ast.CharLit
 import org.example.complie.ast.ClassDecl
+import org.example.complie.ast.ControlType
 import org.example.complie.ast.DoubleLit
 import org.example.complie.ast.ElvisExpr
 import org.example.complie.ast.Expr
@@ -53,6 +54,7 @@ import org.example.complie.sema.ObjectFormat
 import org.example.complie.sema.RsfBase
 import org.example.complie.sema.RsfType
 import org.example.complie.sema.SemanticModel
+import org.example.complie.sema.SuperDelegation
 import org.example.complie.sema.UserMember
 import java.io.PrintStream
 import java.nio.charset.StandardCharsets
@@ -134,19 +136,9 @@ class Interpreter(
 
     /** 从 main 开始执行。 */
     fun runEntry(): Any? {
-        // 阶段 25 K1 的**解释器守卫**：类继承只做到前端 + 语义，解释器（K3）还没实现。
-        // 显式报出来，绝不静默按「没有父类」跑——那样父类字段没了、覆盖也不分派，
-        // 跑出来的结果和字节码两端会不一致（那正是最坏的一种错）。
-        if (model.hasClassInheritance) {
-            val first = model.superClasses.values.first()
-            throw RsfError(
-                "interp",
-                "阶段 25 的类继承还只做到前端与语义（K1 刀）：解释器（K3 刀）还没实现，" +
-                    "带父类的类现在还不能 run。这份程序里第一个有父类的是 " +
-                    "'${model.superClasses.keys.first()}'（父类 ${first.display}）——" +
-                    "先用 `check` 验证语义，或者等 K2/K3 落地。",
-            )
-        }
+        // 阶段 25 K3 起类继承在解释器里**跑得动了**，K1 那道解释器守卫就撤了。
+        // 注意另一道守卫还在（`codegen/BytecodeCompiler.kt`，K2 的活）：`rsf build`
+        // 遇到带父类的程序仍然显式报「字节码后端还没实现」，那条由 K2 拆。
         // 阶段 19d：`main(a : int)` 是合法重载但不是入口——「有 main 却带参数」要说清
         // 是参数的问题，而不是「没有 main」（见 SemanticModel.entryProblem）。
         val problem = model.entryProblem
@@ -304,14 +296,15 @@ class Interpreter(
                         pc++
                     }
 
-                    // `super(实参)` —— **父类**构造委托（阶段 25 K1）。解释器是 K3 的活：
-                    // 这里显式报未实现，绝不按 `this(...)` 那条路糊过去（那不是同一条边）。
-                    is ISuperDelegate -> throw RsfError(
-                        "interp",
-                        "阶段 25 的类继承还只做到前端与语义（K1 刀）：父类构造委托 super(...) 的" +
-                            "解释器（K3 刀）还没实现。",
-                        instr.at.line, instr.at.column, null,
-                    )
+                    // `super(实参)` —— **父类**构造委托（阶段 25 K3）。
+                    //
+                    // 这条指令自己**不做事**：父类那一串构造器由 [runConstructor] 在本
+                    // 构造器体开跑**之前**就铺完了。必须是那个位置——父类构造要排在字段初值
+                    // 前面，而字段初值不是一条指令、是 runConstructor 直接跑的，指令流里
+                    // 没有它的位置。Checker 保证 `super(...)` 是构造器体的**第一句**，
+                    // 于是「体开跑之前」与「这条指令到达之前」正好是同一时刻。
+                    // 这里只推进 pc，免得父类构造器被跑两遍。
+                    is ISuperDelegate -> pc++
 
                     // `数组[下标] = 值`（阶段 13）。
                     //
@@ -606,6 +599,22 @@ class Interpreter(
             return java.lang.reflect.Array.getLength(eval(expr.receiver, slots, body))
         }
 
+        // 阶段 25 K3：`super.f()` / `super(接口).f()`——**从直接父类起**取那一份实现，
+        // 不做运行期虚分派（这正是 `super` 与 `this` 的区别）。Checker 已经把选中的
+        // 是哪一份声明记在 superCalls 里，这里只负责用它去调，**绝不重新查一遍**：
+        // 重查会命中本类刚写的那个 override，变成自我递归。
+        //
+        // 放在 `members` 之前：`super.f()` 走的是 Checker 里另一条解析路径（父链 / 接口
+        // 默认方法），members 表里没有它——落下去会到 `memberOf` 那里抛「没有解析到目标」。
+        model.classModel.superCallOf(expr)?.let { member ->
+            // 接收者恒是 `this`（`super` 只能当调用的接收者，源码里没有别的写法）
+            val self = thisObject(slots)
+            val args = expr.arguments.orEmpty().map { eval(it, slots, body) }
+            // `super(接口).f()` 选中的是**接口的默认方法**：直接跑那一份体。这里不能走
+            // [callInterfaceMethod]——那是虚分派，会去找运行期实现，`super` 的意思就没了。
+            return callMethod(member.className, member.decl, self, args)
+        }
+
         // 用户自定义类的成员（阶段 12）：先看这张表，再走 JVM 反射那条路
         when (val member = model.classModel.members[expr]) {
             is UserMember.Field -> {
@@ -626,7 +635,9 @@ class Interpreter(
                     return callInterfaceMethod(self, method, args)
                 }
                 val self = if (method.isStatic) null else eval(expr.receiver, slots, body) as RsfObject
-                return callMethod(member.className, method, self, args)
+                // 阶段 25 K3：静态类型是**类**的实例方法同样要虚分派（`INVOKEVIRTUAL`）——
+                // `var a : Animal = new Dog() ; a.sound()` 必须跑到 Dog 那份覆盖。
+                return invokeUserMethod(member.className, method, self, args)
             }
             null -> {}
         }
@@ -638,7 +649,9 @@ class Interpreter(
                 if (target.field.isStatic) {
                     field.get(null)
                 } else {
-                    field.get(eval(expr.receiver, slots, body))
+                    // 阶段 25 K3：字段是从**父类**继承来的（`java.lang.Exception` 之类），
+                    // 那就作用在配对出来的 JDK 父类实例上（见 [RsfObject.jdkParent]）
+                    field.get(jdkReceiver(eval(expr.receiver, slots, body)))
                 }
             }
 
@@ -662,7 +675,7 @@ class Interpreter(
                 val args = rawArgs.mapIndexed { i, v ->
                     adaptJdkArg(v, target.method.paramTypes.getOrNull(i))
                 }.toTypedArray()
-                val result = method.invoke(receiver, *args)
+                val result = method.invoke(jdkReceiver(receiver), *args)
                 // 泛型互操作：JVM 给回来的是擦除后的 Object，按静态类型还原成 int/string/…
                 // 结果被丢弃时（表达式语句）不还原——`m.put(k, v)` 的旧值可能是 null
                 if (discard || model.typeOf(expr) == target.method.returnType) result
@@ -691,10 +704,16 @@ class Interpreter(
      * 字段按**声明顺序**放在数组里（下标由 Checker 算好记在 model 里），
      * 所以这里只要一个类名 + 一个数组就够，不需要动态的字段表。
      *
+     * 阶段 25 起字段数组是**整条父链拼起来的那一条**（DESIGN-25 §5）：父类字段在前、
+     * 本类字段在后，下标就是 Checker 记下的**绝对下标**（`fieldBase + 段内下标`）。
+     * 所以子类对象读父类字段和读自己的字段走的是同一句 `fields[绝对下标]`，
+     * 换个说法——**对象只有一条字段数组**，父类那一段在子类视角下没有额外包装。
+     *
      * [fieldNames] / [fieldTypes] 是生成 `toString()` 用的：格式规则在
      * [org.example.complie.sema.ObjectFormat]，**和字节码后端生成的 `toString()`
      * 读的是同一段规则**，这样 `"p = " + p` 两端才会逐字节一致。
      * 拿不到（不该发生）时退化成空表，渲染出来就是 `Point()`。
+     * 继承下这两张表同样是**整条父链**（父类字段在前），与数组下标一一对应。
      */
     class RsfObject(
         val className: String,
@@ -709,6 +728,16 @@ class Interpreter(
          */
         private val isEnum: (RsfType) -> Boolean = { false },
     ) {
+        /**
+         * 阶段 25 K3：这个 rsf 对象的 **JDK 父类实例**（`class MyError(m : string) : Exception(m)`）。
+         *
+         * rsf 的类在解释器里没有真实 `.class`（一个字节码都不落地），所以「父类是 JDK 类」
+         * 这一跳只能靠**配一个真的 JDK 实例**：跑 `super(实参)` 时反射造一个父类实例挂在这里，
+         * 从父类继承来的 JDK 方法（`getMessage()`）与字段就反射作用到它身上。
+         * 父类是 rsf 类、或者根本没有父类时恒为 null——那些情况字段全在 [fields] 里。
+         */
+        var jdkParent: Any? = null
+
         override fun toString(): String =
             ObjectFormat.render(className, fieldNames, fieldTypes, fields, isEnum)
     }
@@ -764,6 +793,97 @@ class Interpreter(
         } finally {
             depth--
         }
+    }
+
+    /**
+     * 用户类实例方法的**运行期虚分派**（阶段 25 K3）——`INVOKEVIRTUAL` 的语义。
+     *
+     * 静态类型是个类、运行期对象却可能是子类：`var a : Animal = new Dog() ; a.sound()`
+     * 必须跑到 **Dog 那份覆盖**。Checker 记在 `members` 里的只是「按静态类型选中的那一份
+     * 声明」，拿它直接调就成了静态分派（跑父类那份），两端立刻分叉。
+     *
+     * 分派沿 [RsfObject.className] 的类链找**同名同签名**的方法，最近的类优先。两条
+     * 不参与分派的路和 JVM 一致：
+     * - `static` 方法没有接收者，谈不上覆盖（Checker 也不许覆盖 static）；
+     * - `private` 方法**不继承**（DESIGN-25 §3）：子类里同名同形的那个是另一个方法。
+     *
+     * 链上没有覆盖时跑静态类型那一份——本来就只有那一份，回退不算特例。
+     */
+    private fun invokeUserMethod(
+        owner: String,
+        method: FuncDecl,
+        self: RsfObject?,
+        args: List<Any?>,
+    ): Any? {
+        if (self == null || method.isStatic || method.control == ControlType.PRIVATE) {
+            return callMethod(owner, method, self, args)
+        }
+        val toCall = classImplCache.getOrPut(self.className to method) {
+            findClassImplementation(self.className, method) ?: method
+        }
+        return callMethod(self.className, toCall, self, args)
+    }
+
+    /**
+     * 虚分派结果的缓存：`(运行期类名, 静态类型选中的那份声明)` → 实际要跑的那一份
+     * （链上没有覆盖时就是静态那份本身）。
+     *
+     * 纯属省掉每次调用都重扫一遍类链（[paramsMatch] 要现算描述符），**语义上是恒等的**：
+     * 类表与方法表在一次运行里只读，同一个键的答案不会变。答案带「回退成静态那份」的
+     * 情形，所以存的一定是**非空**的 FuncDecl，`getOrPut` 才既缓存命中又缓存落空。
+     */
+    private val classImplCache = HashMap<Pair<String, FuncDecl>, FuncDecl>()
+
+    /** 沿类链（最近的类优先）找同名同签名的实例方法——虚分派的目标。 */
+    private fun findClassImplementation(runtimeClass: String, method: FuncDecl): FuncDecl? {
+        val wanted = model.paramTypesOf(method)
+        for (cls in model.classChainOf(runtimeClass)) {
+            cls.plainMethods.firstOrNull {
+                it.name == method.name && !it.isStatic && it.control != ControlType.PRIVATE &&
+                    paramsMatch(model.paramTypesOf(it), wanted)
+            }?.let { return it }
+        }
+        return null
+    }
+
+    /**
+     * 反射要作用在**哪个真身**上（阶段 25 K3）。
+     *
+     * 成员是从 **JDK 父类**继承来的时候（`class MyError(m : string) : Exception(m)` 的
+     * `getMessage()`），能在 JVM 上被反射调用的不是这个 rsf 对象，而是它配对出来的
+     * JDK 父类实例（见 [RsfObject.jdkParent]）。其余情况原样返回，一刀不改。
+     */
+    private fun jdkReceiver(v: Any?): Any? = (v as? RsfObject)?.jdkParent ?: v
+
+    /**
+     * 反射调一个**从 JDK 父类继承来的**实例方法（阶段 25 K3）。
+     *
+     * 用在隐式 this 调用那条路上（[SemanticModel.ClassModel.implicitJvmCalls]）：rsf 类里
+     * 没写这个方法的声明，只有 Checker 选中的 JvmMethod，以及构造时反射造出来、挂在
+     * [RsfObject.jdkParent] 上的那个 JDK 实例——`getMessage()` 打在它身上才有东西。
+     *
+     * 返回值不做泛型收敛：Checker 记的返回类型就是这个 `JvmMethod.returnType`，调用点的
+     * 静态类型与它一致。
+     */
+    private fun callInheritedJvmMethod(
+        self: RsfObject,
+        target: ResolvedMethod,
+        args: List<Any?>,
+    ): Any? {
+        val receiver = self.jdkParent
+            ?: throw RsfError(
+                "interp",
+                "内部错误：'${self.className}' 调继承来的 JVM 方法 '${target.method.name}' 时，" +
+                    "还没有建立它的 JDK 父类实例",
+                -1, -1, null,
+            )
+        val owner = Class.forName(target.method.owner.replace('/', '.'))
+        val paramClasses = target.method.paramTypes.map { toJavaClass(it) }.toTypedArray()
+        val method = publicMethod(owner, target.method.name, paramClasses)
+        val adapted = args.mapIndexed { i, v ->
+            adaptJdkArg(v, target.method.paramTypes.getOrNull(i))
+        }.toTypedArray()
+        return method.invoke(receiver, *adapted)
     }
 
     /**
@@ -825,15 +945,21 @@ class Interpreter(
         return callMethod(self.className, impl, self, args)
     }
 
-    /** 先在真实类的方法表里找实现，再沿接口链找带体的默认方法（[callInterfaceMethod]）。 */
+    /** 先在**真实类的类链**（自己 → 直接父类 → …）的方法表里找实现，再沿接口链找带体的默认方法（[callInterfaceMethod]）。 */
     private fun findInterfaceImplementation(
         runtimeClass: String,
         name: String,
         wanted: List<RsfType>,
     ): FuncDecl? {
-        model.classModel.classes[runtimeClass]?.plainMethods
-            ?.firstOrNull { it.name == name && paramsMatch(model.paramTypesOf(it), wanted) }
-            ?.let { return it }
+        // 阶段 25 K3：第一条路要沿**类链**走，不能只看运行期类自己。接口实现在父类里写、
+        // 子类不重复写是常规做法（`open class Base : Greeter { override fun greet() … }`
+        // 配 `class D : Base()`），只看自己会找不到实现。顺序是最近的类优先——和 JVM 的
+        // `INVOKEINTERFACE` / `INVOKEVIRTUAL` 解析同一套。
+        for (cls in model.classChainOf(runtimeClass)) {
+            cls.plainMethods
+                .firstOrNull { it.name == name && paramsMatch(model.paramTypesOf(it), wanted) }
+                ?.let { return it }
+        }
         return findInterfaceDefault(runtimeClass, name, wanted)
     }
 
@@ -1015,11 +1141,12 @@ class Interpreter(
                 expr.at.line, expr.at.column, null,
             )
 
+        val fields = chainFieldsOf(decl.name)
         val obj = RsfObject(
             decl.name,
-            arrayOfNulls(decl.fields.size),
-            decl.fields.map { it.name },
-            model.classModel.fieldTypes[decl].orEmpty(),
+            arrayOfNulls(fields.size),
+            fields.map { it.first },
+            fields.map { it.second },
             // 枚举字段要能打出值名（否则 `Holder(kind=...)` 白丢信息）；
             // 判断与字节码后端生成 toString() 时读的是同一份语义模型
             isEnum = { t -> model.isEnumType(t) },
@@ -1028,10 +1155,11 @@ class Interpreter(
 
         val ctor = model.classModel.ctorOf(expr)
         if (ctor == null) {
-            // 隐式无参构造器：只有字段初值。给一个只装着 this 的帧——
+            // 隐式无参构造器：先补齐**父类那一跳**，再跑字段初值。给一个只装着 this 的帧——
             // 字段初值里的 `this.字段` / 裸字段名都从这个槽拿对象。
             val frame = arrayOfNulls<Any?>(1)
             frame[0] = obj
+            model.classModel.implicitSuperDelegationOf(decl)?.let { runSuperDelegation(it, obj, frame, body) }
             runFieldInitializers(decl, obj, frame, body)
         } else {
             runConstructor(decl, ctor, obj, args)
@@ -1060,8 +1188,16 @@ class Interpreter(
                 if (i >= args.size) break
                 frame[params[i].slot] = coerce(args[i], params[i].type)
             }
-            // 不委托 = 链的根：先跑字段初值，再跑自己的体
+            // 不委托 = 链的根：先补齐**父类那一跳**，再跑自己的字段初值，最后跑自己的体。
             if (model.classModel.delegationOf(ctor) == null) {
+                // 阶段 25 K3：父类的那一串构造器在这里跑，**排在字段初值前面**（DESIGN-25 §6：
+                // 父类构造器跑完之前，子类那份状态一个字都还没有）。父类委托有两种写法，
+                // 这里一次都覆盖：
+                // - 类头 `: Base(实参)`（主构造）与隐式 `super()` 在指令流里**没有对应指令**；
+                // - 次构造体第一句的 `super(实参)` 有 [ISuperDelegate]，但那条指令是**空**的
+                //   （见指令循环那一段），真正干活的就是这一句。
+                // 实参在本构造器的帧里求值——和 Java 一样（`super(实参)` 的实参先算）。
+                model.classModel.superDelegationOf(ctor)?.let { runSuperDelegation(it, obj, frame, lowered) }
                 // 阶段 21：伴生类的元素字段值来自构造器形参槽，实测参数个数少于元素表的
                 // （`new Marker("hi")`）时要先把缺的元素补上——语义层不补齐，补齐是后端的事
                 val annotation = model.companionAnnotationOf(decl.name)
@@ -1089,6 +1225,9 @@ class Interpreter(
         args: List<Any?> = emptyList(),
     ) {
         val fieldTypes = model.classModel.fieldTypes[decl].orEmpty()
+        // 阶段 25 K3：本类这一段字段在对象数组里的**起始下标**（父链字段总数）。
+        // 没有父类时恒为 0，写盘位置和以前逐字节一致。
+        val base = model.fieldBaseOf(decl.name)
         // 阶段 21：伴生类的前 n 个字段是**合成的元素字段**，它们的 `initializer` 只是
         // 占位（默认值字面量，或与类型相配的零值）——有实参的取构造器形参槽（见
         // [fillElementDefaults]），省略的才落回这个占位。
@@ -1102,8 +1241,128 @@ class Interpreter(
                 // 传参——求值只用 [frame]（`this` 在 0 号槽）
                 eval(field.initializer, frame, owner)
             }
-            obj.fields[index] = coerce(value, fieldTypes.getOrElse(index) { RsfType.INT })
+            // 绝对下标 = 本类起始下标 + 段内下标（和 Checker 烘进 UserMember.Field.index
+            // 的是同一条公式）——父类字段与子类字段因此共用一条扁平数组
+            obj.fields[base + index] = coerce(value, fieldTypes.getOrElse(index) { RsfType.INT })
         }
+    }
+
+    /**
+     * 类 [name] 的**整条字段链**（父类在前、自己在后），每项是 `(字段名, 字段类型)`。
+     *
+     * 列表的第 i 项就落在对象字段数组的第 i 个格子上——[RsfObject] 的数组长度、字段名表、
+     * 字段类型表（`toString()` 用）都从这一份推出来，三张表不可能对不齐。顺序与语义层的
+     * [SemanticModel.fieldChainOf] 完全一致（那边多带一个声明类，这里只要渲染要的两样）。
+     *
+     * 泛型写法（`class Wrap(v : string) : Holder&<string>(v)`）下父类字段的类型取的是
+     * **声明处那一份**（`T` 本身），不做实参代换——与 `toString()` 对泛型字段的现有处理
+     * 一致；字段的**读取**走的是 `UserMember.Field.type`（Checker 已经代换过），不受影响。
+     */
+    private fun chainFieldsOf(name: String): List<Pair<String, RsfType>> {
+        val types = model.classModel.fieldTypes
+        val out = ArrayList<Pair<String, RsfType>>()
+        for (decl in model.fieldChainOf(name).map { it.first }.distinct()) {
+            val own = types[decl].orEmpty()
+            for ((index, field) in decl.fields.withIndex()) {
+                out.add(field.name to own.getOrElse(index) { RsfType.INT })
+            }
+        }
+        return out
+    }
+
+    /**
+     * 跑一次**父类构造委托**（阶段 25 K3）：`super(实参)` / 类头 `: Base(实参)` / 隐式 `super()`。
+     *
+     * 三种目标只在 [SuperDelegation] 的两个字段上有区别：
+     * - `target != null`——父类是 rsf 类且选中了它的某个构造器，递归进 [runConstructor]；
+     * - `target == null` 而父类有声明——父类一个构造器都没写（等价于隐式无参构造器），那就把
+     *   父类那条「隐式构造」照 [construct] 里 `ctor == null` 的路再走一遍；
+     * - 父类没有声明——**JDK 父类**：rsf 类在解释器里没有真实 `.class`，这一跳靠反射造一个
+     *   真的父类实例，挂在 [RsfObject.jdkParent] 上（从它继承来的成员都作用在它身上）。
+     *
+     * 三种情况都在**同一个对象**上继续：rsf 只有一条字段数组、一个对象身份，[owner] 与
+     * [frame] 是**发出委托的那个构造器**的（实参在那儿求值，和 Java 一样）。
+     */
+    private fun runSuperDelegation(
+        sup: SuperDelegation,
+        obj: RsfObject,
+        frame: Array<Any?>,
+        owner: LoweredFunction,
+    ) {
+        val args = sup.arguments.map { eval(it, frame, owner) }
+        val decl = sup.superClass.declaration
+        if (sup.target != null && decl != null) {
+            runConstructor(decl, sup.target, obj, args)
+            return
+        }
+        if (decl != null) {
+            // 父类是 rsf 类，但它一个构造器都没写：父类那一跳只剩它自己的父类 + 它自己的字段初值
+            model.classModel.implicitSuperDelegationOf(decl)?.let { runSuperDelegation(it, obj, frame, owner) }
+            runFieldInitializers(decl, obj, frame, owner)
+            return
+        }
+        obj.jdkParent = instantiateJdkParent(sup, args)
+    }
+
+    /**
+     * 造一个 **JDK 父类实例**（阶段 25 K3）：`class MyError(m : string) : Exception(m)` 的那个
+     * `java.lang.Exception`。
+     *
+     * 构造器的选法和 Checker 是同一个口径（精确类型优先、加宽其次、并列取先声明的），只是这里
+     * 手里只有**实参的值**——静态类型从语义模型取（[SemanticModel.typeOf]），逐个候选算代价
+     * （[ctorScore]）。候选顺序取 `ClassPath` 里类文件自己的顺序，**不用**
+     * `getConstructors()`：那个顺序 JVM 没有承诺，同一份源码换个 JDK 可能选到另一个构造器，
+     * 两端就分叉了。
+     */
+    private fun instantiateJdkParent(sup: SuperDelegation, args: List<Any?>): Any {
+        val internal = sup.superClass.internalName
+        val jvm = org.example.complie.interop.ClassPath.find(internal)
+            ?: throw RsfError(
+                "interp", "内部错误：JDK 父类 '$internal' 不在 classpath 上",
+                -1, -1, null,
+            )
+        val argTypes = sup.arguments.map { model.typeOf(it) }
+        val chosen = jvm.constructors
+            .filter { it.paramTypes.size == args.size }
+            .minByOrNull { ctor -> ctorScore(ctor, argTypes) }
+            ?: throw RsfError(
+                "interp",
+                "内部错误：${sup.superClass.display} '${sup.superClass.name}' 里没有匹配的构造器",
+                -1, -1, null,
+            )
+        val owner = Class.forName(internal.replace('/', '.'))
+        val paramClasses = chosen.paramTypes.map { toJavaClass(it) }.toTypedArray()
+        val javaCtor = owner.getDeclaredConstructor(*paramClasses).also { it.trySetAccessible() }
+        val adapted = args.mapIndexed { i, v ->
+            adaptJdkArg(v, chosen.paramTypes.getOrNull(i))
+        }.toTypedArray()
+        return try {
+            javaCtor.newInstance(*adapted)
+        } catch (e: java.lang.reflect.InvocationTargetException) {
+            // 父类构造器自己抛的异常原样往外扔（和直接调 Java 保持一致）
+            throw e.cause ?: e
+        }
+    }
+
+    /** 一个 JVM 构造器对这批实参的代价（越小越优先）；[Int.MAX_VALUE] 表示完全不匹配。 */
+    private fun ctorScore(
+        ctor: org.example.complie.interop.JvmMethod,
+        argTypes: List<RsfType>,
+    ): Int {
+        var total = 0
+        for ((i, want) in ctor.paramTypes.withIndex()) {
+            val got = argTypes.getOrNull(i) ?: return Int.MAX_VALUE
+            val cost = when {
+                got.descriptor == want.descriptor -> 0
+                got.isNullLiteral && !want.base.isPrimitive -> 1
+                // 基本类型加宽（int → long / double…）由 JVM 的反射代劳，代价 1
+                got.base.isPrimitive && want.base.isPrimitive -> 1
+                want.descriptor == "Ljava/lang/Object;" -> 1
+                else -> return Int.MAX_VALUE
+            }
+            total += cost
+        }
+        return total
     }
 
     /**
@@ -1379,7 +1638,16 @@ class Interpreter(
                 return callInterfaceMethod(self, method, args)
             }
             val self = if (method.isStatic) null else thisObject(slots)
-            return callMethod(member.className, method, self, args)
+            return invokeUserMethod(member.className, method, self, args)
+        }
+
+        // 阶段 25 K3：隐式 this 调**从 JDK 父类继承来的方法**——`class MyError(m : string) :
+        // Exception(m)` 里的 `getMessage()`。它在 rsf 侧没有任何声明，Checker 把选中的那个
+        // `java.lang.Throwable.getMessage` 记在 implicitJvmCalls 里，反射作用在对象配对出来的
+        // JDK 父类实例上（和显式 `e.getMessage()` 走同一条路）。
+        model.classModel.implicitJvmCallOf(expr)?.let { target ->
+            val args = expr.arguments.map { eval(it, slots, body) }
+            return callInheritedJvmMethod(thisObject(slots), target, args)
         }
 
         val target = model.callTargets[expr]

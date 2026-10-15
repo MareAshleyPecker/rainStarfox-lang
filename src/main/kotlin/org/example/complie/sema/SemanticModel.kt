@@ -792,6 +792,69 @@ class SemanticModel(
     /** 这个类的父类（已解析）；没写父类就是 null。 */
     fun superClassOf(name: String): SuperClass? = superClasses[name]
 
+    /**
+     * 阶段 25 K3：类 [name] 的**父类链**，从根祖先到直接父类（**不含自己**）。
+     *
+     * 与 Checker 算字段绝对下标时用的那条链是同一条（`ancestorsOf`），所以
+     * `[父链][自己]` 的字段拼起来，顺序恰好就是 Checker 烘进 `UserMember.Field.index`
+     * 的那套下标——解释器造对象、跑字段初值都只读这一条链，不再自己数一遍。
+     *
+     * **JDK 父类不算在内**：它的字段在 JVM 那个真实实例里（见解释器的
+     * `RsfObject.jdkParent`），不占 rsf 这条扁平字段数组的位置。
+     */
+    fun classAncestorsOf(name: String): List<ClassDecl> {
+        val out = ArrayList<ClassDecl>()
+        var cur = superClassOf(name)?.declaration
+        // 环（`class A : B` / `class B : A`）在 Checker 里已经报错，这里再去一次重
+        // 只是为了不把死循环留给运行期：链一旦回到见过的类就停。
+        while (cur != null && out.none { it === cur }) {
+            out.add(0, cur)
+            cur = superClassOf(cur.name)?.declaration
+        }
+        return out
+    }
+
+    /**
+     * 阶段 25 K3：类 [name] **自己那一段**字段在对象字段数组里的起始下标
+     * （= 父链上所有类的字段总数；没有父类就是 0）。
+     *
+     * 与 `Checker.fieldBase` 是同一条公式：绝对下标 = 本方法的返回值 + 段内下标。
+     */
+    fun fieldBaseOf(name: String): Int = classAncestorsOf(name).sumOf { it.fields.size }
+
+    /**
+     * 阶段 25 K3：类 [name] 的对象字段数组**总长度**（父链的 + 自己的）。
+     *
+     * 解释器 `new` 一个对象时按它分配数组：父类字段在前，本类字段在后。
+     */
+    fun fieldCountOf(name: String): Int = fieldBaseOf(name) + (classModel.classes[name]?.fields?.size ?: 0)
+
+    /**
+     * 阶段 25 K3：类 [name] 的整条字段链（**父类在前、自己在后**）。
+     *
+     * 返回的列表与对象字段数组**逐位对应**：第 i 项的声明类就是绝对下标 i 的归属。
+     */
+    fun fieldChainOf(name: String): List<Pair<ClassDecl, FieldDecl>> {
+        val out = ArrayList<Pair<ClassDecl, FieldDecl>>()
+        for (decl in classAncestorsOf(name)) {
+            for (f in decl.fields) out.add(decl to f)
+        }
+        classModel.classes[name]?.let { decl -> for (f in decl.fields) out.add(decl to f) }
+        return out
+    }
+
+    /**
+     * 阶段 25 K3：类 [name] 的**方法查找链**——从自己开始、到根祖先为止（最近的优先）。
+     *
+     * 虚分派（`INVOKEVIRTUAL` / `INVOKEINTERFACE`）按这个顺序找实现：先看运行期类自己，
+     * 再往父类走，第一个同名同签名的实例方法就是目标。和 [classAncestorsOf] 是同一条链，
+     * 只是反了个方向、并把自己放在最前面。
+     */
+    fun classChainOf(name: String): List<ClassDecl> =
+        classAncestorsOf(name).asReversed().let { parents ->
+            classModel.classes[name]?.let { listOf(it) + parents } ?: parents
+        }
+
     /** 这份程序里有没有类写了父类——两个后端的「阶段 25 后端未实现」守卫读它。 */
     val hasClassInheritance: Boolean get() = superClasses.isNotEmpty()
 
