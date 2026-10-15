@@ -49,6 +49,7 @@ import org.example.complie.ir.ISwitch
 import org.example.complie.ir.IVarDecl
 import org.example.complie.ir.LoweredFunction
 import org.example.complie.interop.ClassPath
+import org.example.complie.interop.JvmMethod
 import org.example.complie.interop.ResolvedField
 import org.example.complie.interop.ResolvedMethod
 import org.example.complie.lexing.TokenKind
@@ -114,21 +115,8 @@ class BytecodeCompiler(
      * 用户类跟着程序类的包走：`pkg a.b` 里的 `class Point` → `a/b/Point.class`。
      */
     fun compile(className: String, outDir: File): List<File> {
-        // 阶段 25 K1 的**后端守卫**：类继承这一刀只做到前端 + 语义，字节码后端（K2）还没实现。
-        // 这里必须显式报出来，绝不能让 `class D : Base` 静默生成一个「没有 extends 的 D」——
-        // 那种产物在 `java` 启动时才炸，或者更糟：跑出来一个字段布局不同的错对象。
-        // 判据只读语义模型那一份（model.superClasses），不在这里重新解析 AST。
-        if (model.hasClassInheritance) {
-            val first = model.superClasses.values.first()
-            throw RsfError(
-                "codegen",
-                "阶段 25 的类继承还只做到前端与语义（K1 刀）：字节码后端（K2 刀）还没实现，" +
-                    "带父类的类现在还不能 build。这份程序里第一个有父类的是 " +
-                    "'${model.superClasses.keys.first()}'（父类 ${first.display}）——" +
-                    "先用解释器（K3 到了之后）或者 `check` 验证语义，或者等 K2/K3 落地。",
-                1, 1, null,
-            )
-        }
+        // 阶段 25 K2：K1 在这里的那道守卫（「带父类的类还不能 build」）已经撤掉——
+        // 带父类的类现在真的生成 extends、父类构造链、父链字段与虚分派。
         programInternalName = className
         // 先把所有类都生成出来（生成期间可能报错），一个字节都还不落盘；
         // 全部成功之后再写文件——失败的一次构建不该留下半套产物。
@@ -230,12 +218,109 @@ class BytecodeCompiler(
 
     private fun newClassWriter(): ClassWriter =
         object : ClassWriter(ClassWriter.COMPUTE_FRAMES or ClassWriter.COMPUTE_MAXS) {
-            // 我们的引用类型只有 String 和用户自定义类。用户类之间没有继承关系
-            // （都直接继承 java/lang/Object），所以「同一个类型取它自己，否则取 Object」
-            // 就是正确的公共父类——顺带避免了去加载还没写盘的类。
+            /**
+             * 阶段 25 K2：**真的**最近公共祖先。
+             *
+             * 类继承之前，我们的引用类型之间没有继承关系（用户类都直接继承 Object），
+             * 「同一个类型取它自己，否则取 Object」就是对的。有了继承之后它就不够了：
+             * `COMPUTE_FRAMES` 在两条控制流汇合、同一个槽位上是两个不同的引用类型时会问
+             * 这个问题，答案会写进 StackMapTable。写成 Object 之后，那个槽位在合流点上
+             * 就变成 Object，紧接着一条「按父类用」的指令（invokevirtual 父类.方法 /
+             * putfield）会被校验器拒绝——`VerifyError: Bad type on operand stack`，
+             * 而解释器那边完全正常（又一处两端背离）。
+             *
+             * ASM 默认的实现是 `Class.forName` + `getSuperclass`，对本程序**正在生成**的类
+             * 必然抛异常（它们此刻还没写盘、更没被加载），所以只能自己算：
+             * 本程序的类沿 [SemanticModel.classChainOf] 走，链条尽头若是 JDK 父类就接
+             * [ClassPath.hierarchy]；类链找不到公共祖先时再看接口链（两个兄弟类实现同一个
+             * 接口、合流后按接口调用，是同一个坑的接口版本）。
+             */
             override fun getCommonSuperClass(type1: String, type2: String): String =
-                if (type1 == type2) type1 else "java/lang/Object"
+                commonSuperClassOf(type1, type2)
         }
+
+    /**
+     * 两个内部名的最近公共祖先（阶段 25 K2，见 [newClassWriter] 里的说明）。
+     *
+     * 返回**内部名**。数组只在两边完全相同时才相等（和 ASM 默认实现一致）——不同维数 /
+     * 不同组件的数组之间取 Object，那是校验器接受的最宽答案。
+     */
+    private fun commonSuperClassOf(type1: String, type2: String): String {
+        if (type1 == type2) return type1
+        if (type1.startsWith("[") || type2.startsWith("[")) return "java/lang/Object"
+        val classes1 = classAncestry(type1)
+        val classes2 = classAncestry(type2)
+        if (classes1.isEmpty() || classes2.isEmpty()) return "java/lang/Object"
+        val set2 = classes2.toHashSet()
+        // 类链是「自己 → 父类 → …」，两边都这么排，所以第一个命中的就是最近的公共类
+        for (t in classes1) if (t in set2) return t
+        val ifaces2 = interfaceAncestry(type2).toHashSet()
+        for (i in interfaceAncestry(type1)) if (i in ifaces2) return i
+        return "java/lang/Object"
+    }
+
+    /** 内部名 → 本程序里的类名（不是本程序的类就是 null）。 */
+    private fun rsfClassNameOf(internal: String): String? =
+        model.classModel.classes.keys.firstOrNull { classInternalName(it) == internal }
+
+    /**
+     * 一个类型的**类**祖先链（自己排最前，`java/lang/Object` 排最后）。
+     *
+     * 本程序的类从 [SemanticModel.classChainOf] 取（Checker 已经算好，后端不重算一遍）；
+     * 链顶那个类的父类若是 classpath 上的 JDK 类，接着沿 [ClassPath.hierarchy] 往上补。
+     * 纯 JDK 类型（`String` / `ArrayList`）直接走 classpath；找不到的（本程序生成的枚举名
+     * 之类）给空表，调用方会退回 Object。
+     */
+    private fun classAncestry(internal: String): List<String> {
+        val out = ArrayList<String>()
+        val rsf = rsfClassNameOf(internal)
+        if (rsf == null) {
+            addJvmChain(internal, out)
+            return out
+        }
+        val chain = model.classChainOf(rsf)
+        for (decl in chain) out.add(classInternalName(decl.name))
+        val top = chain.lastOrNull() ?: return out
+        val parent = model.superClassOf(top.name)
+        if (parent != null && parent.fromClassPath) addJvmChain(parent.internalName, out)
+        return out
+    }
+
+    private fun addJvmChain(internal: String, out: MutableList<String>) {
+        for (cls in ClassPath.hierarchy(internal)) {
+            if (!out.contains(cls.internalName)) out.add(cls.internalName)
+        }
+    }
+
+    /**
+     * 一个类型实现的**接口**链（含接口继承来的）。
+     *
+     * 本程序的类/接口从 [SemanticModel.superInterfacesOf] 取（接口名就是内部名），
+     * JDK 接口继续沿 [JvmClass.interfaces] 往下走。
+     */
+    private fun interfaceAncestry(internal: String): List<String> {
+        val out = LinkedHashSet<String>()
+        for (cls in classAncestry(internal)) collectSuperInterfaces(cls, out)
+        return out.toList()
+    }
+
+    private fun collectSuperInterfaces(internal: String, out: MutableSet<String>) {
+        // 本程序的接口用**内部名**当键（见 isInterfaceInternalName）；类用类名
+        val rsf = rsfClassNameOf(internal) ?: internal.takeIf { model.interfaces.containsKey(it) }
+        if (rsf != null) {
+            for (s in model.superInterfacesOf(rsf)) {
+                if (out.add(s.internalName)) collectSuperInterfaces(s.internalName, out)
+            }
+            return
+        }
+        val visited = HashSet<String>()
+        fun walk(name: String) {
+            if (!visited.add(name)) return
+            val cls = ClassPath.find(name) ?: return
+            for (i in cls.interfaces) if (out.add(i)) walk(i)
+        }
+        walk(internal)
+    }
 
     /** 程序类：顶层函数编译成它的静态方法，文件名主名就是类名。 */
     private fun programClass(className: String): ClassWriter {
@@ -642,10 +727,15 @@ class BytecodeCompiler(
      * 拿 `Ljava/lang/String;` 去取一个声明为 `Ljava/lang/Object;` 的字段会直接
      * `NoSuchFieldError`（编译能过、跑起来就炸，而解释器那边完全是好的——
      * 典型的两端不一致）。
+     * 阶段 25 K2：**继承来的字段**也在这一支上（`class Child : Base` 里读 `Base.b`），
+     * 而 [UserMember.Field.index] 报的是**对象里**的绝对槽位——父链字段排在本类字段前面，
+     * 所以这里必须先把父链字段数（[SemanticModel.fieldBaseOf]）减掉，才是本类
+     * [fieldTypesOf] 里的下标。没有父类时它恒为 0，既有产物一个字节都不变。
      */
     private fun declaredFieldType(className: String, index: Int, fallback: RsfType): RsfType {
         val decl = model.classModel.classes[className] ?: return fallback
-        return fieldTypesOf(decl).getOrNull(index) ?: fallback
+        val local = index - model.fieldBaseOf(className)
+        return fieldTypesOf(decl).getOrNull(local) ?: fallback
     }
 
     /**
@@ -660,8 +750,24 @@ class BytecodeCompiler(
         // 阶段 20：`class Dog : Greeter, Runnable` 的父类型进 **interfaces 数组**（不是父类）。
         // 这份名单由 Checker 算好（rsf 接口给接口名，JDK 接口给 `java/lang/Runnable` 这种
         // 内部名），后端照抄，不再自己解析一遍 `:` 子句——R1：同一个判定不做两遍。
+        //
+        // 阶段 25 K2：**父类**同样照抄 Checker 的决定（`model.superClassOf`）：本程序的父类
+        // 用 `classInternalName`（跟着包走），JDK 父类用 Checker 读出来的内部名。以前这里写死
+        // `java/lang/Object`，带上继承之后那就等于把父类整个丢了——子类会另起一套不兼容的
+        // 字段/方法表，`super.f()` 与上转型全都会在运行期炸。
+        val parent = model.superClassOf(decl.name)
+        val superName = when {
+            parent == null -> "java/lang/Object"
+            parent.declaration != null -> classInternalName(parent.declaration.name)
+            else -> parent.internalName
+        }
+        // 抽象类：有抽象方法（没有 MethodImpl 的那些）的类**必须**是 ACC_ABSTRACT，
+        // 否则 JVM 在调用到那条方法时抛 AbstractMethodError 的位置和报错都很怪；
+        // 「能不能 new」由 Checker 拦（见 DESIGN-25 §4），这里只把标志写对。
         cw.visit(
-            V17, ACC_PUBLIC or ACC_SUPER, internalName, null, "java/lang/Object",
+            V17,
+            ACC_PUBLIC or ACC_SUPER or (if (decl.isAbstract) ACC_ABSTRACT else 0),
+            internalName, null, superName,
             superInterfaceNames(decl.name),
         )
         cw.visitSource(sourceName, null)
@@ -691,7 +797,7 @@ class BytecodeCompiler(
             emitUserMethod(cw, internalName, method)
         }
         emitBridges(cw, internalName, decl)
-        emitUserToString(cw, internalName, decl, fieldTypes)
+        emitUserToString(cw, decl)
         emitOrElseMethods(cw)
         // 伴生类（`Marker$Impl`）额外要三样东西（阶段 21 M3，DESIGN-21 §5）：
         // 1) 访问器的**懒构造缓存字段**（每个使用点一个，方案 B 不写 <clinit>）；
@@ -1361,9 +1467,7 @@ class BytecodeCompiler(
      */
     private fun emitUserToString(
         cw: ClassWriter,
-        owner: String,
         decl: ClassDecl,
-        fieldTypes: List<RsfType>,
     ) {
         val userDefined = decl.plainMethods.any { it.name == "toString" && it.params.isEmpty() }
         if (userDefined) return
@@ -1383,20 +1487,32 @@ class BytecodeCompiler(
         }
 
         appendText(ObjectFormat.open(decl.name))
-        for ((i, f) in decl.fields.withIndex()) {
-            if (i > 0) appendText(ObjectFormat.SEP)
-            appendText(ObjectFormat.fieldPrefix(f.name))
-            val type = fieldTypes.getOrElse(i) { RsfType.INT }
-            // 枚举字段是可打印的（阶段 19c）：`append(Object)` 会调到它生成的
-            // `toString()`（返回值名），解释器渲染同一套规则（见 ObjectFormat）
-            val desc = ObjectFormat.appendDescriptor(type, model.isEnumType(type))
-            if (desc == null) {
-                // 数组 / 对象字段：不递归展开，写一个占位（两端同一条规则）
-                appendText(ObjectFormat.SKIPPED)
-            } else {
-                mv.visitVarInsn(ALOAD, 0)
-                mv.visitFieldInsn(GETFIELD, owner, f.name, descriptorOfType(type))
-                mv.visitMethodInsn(INVOKEVIRTUAL, sb, "append", desc, false)
+        // 阶段 25 K2：渲染**整条父链**的字段——父类字段在前、自己的在后（DESIGN-25 §7）。
+        // 这一段与解释器的 chainFieldsOf 是逐行同一个算法（先按父链顺序取 owner、再按
+        // 声明顺序取它的字段，类型取**声明时**那一份、不代换类型实参），两端才逐字节一致。
+        // 开头写 decl.name 而不是运行期类名：`toString` 是虚分派，跑起来的必然就是运行期
+        // 那一份（`println(child)` 在解释器里读的是 obj.className，这里由虚拟调用对上）。
+        var firstField = true
+        for (fieldOwner in model.fieldChainOf(decl.name).map { it.first }.distinct()) {
+            val ownerTypes = fieldTypesOf(fieldOwner)
+            for ((i, f) in fieldOwner.fields.withIndex()) {
+                if (!firstField) appendText(ObjectFormat.SEP)
+                firstField = false
+                appendText(ObjectFormat.fieldPrefix(f.name))
+                val type = ownerTypes.getOrElse(i) { RsfType.INT }
+                // 枚举字段是可打印的（阶段 19c）：`append(Object)` 会调到它生成的
+                // `toString()`（返回值名），解释器渲染同一套规则（见 ObjectFormat）
+                val desc = ObjectFormat.appendDescriptor(type, model.isEnumType(type))
+                if (desc == null) {
+                    // 数组 / 对象字段：不递归展开，写一个占位（两端同一条规则）
+                    appendText(ObjectFormat.SKIPPED)
+                } else {
+                    mv.visitVarInsn(ALOAD, 0)
+                    mv.visitFieldInsn(
+                        GETFIELD, classInternalName(fieldOwner.name), f.name, descriptorOfType(type),
+                    )
+                    mv.visitMethodInsn(INVOKEVIRTUAL, sb, "append", desc, false)
+                }
             }
         }
         appendText(ObjectFormat.CLOSE)
@@ -1450,8 +1566,10 @@ class BytecodeCompiler(
                 INVOKESPECIAL, owner, "<init>", descriptorOf(delegation.target), false,
             )
         } else {
-            mv.visitVarInsn(ALOAD, 0)
-            mv.visitMethodInsn(INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false)
+            // 阶段 25 K2：父类那一跳排在**字段初值前面**（DESIGN-25 §6：父类构造器跑完之前，
+            // 子类那份状态一个字都还没有）。解释器 K3 的 runConstructor 是同一顺序：
+            // 先 runSuperDelegation，再 runFieldInitializers。
+            emitParentCtor(mv, owner, decl, ctor)
 
             // 字段初值在「this 就是刚分配的这个对象」的上下文里求值：0 号槽正是 this。
             // 主构造的参数就在 1..n 号槽上，所以 `class P(x0 : int) { var x : int = x0 }`
@@ -1493,6 +1611,109 @@ class BytecodeCompiler(
     }
 
     /**
+     * `<init>` 序言里的**父类那一跳**（阶段 25 K2）。
+     *
+     * 三种写法到了语义模型里是同一条 SuperDelegation：
+     * - 类头 `class D(y : int) : Base(y)`（主构造，键是主构造那个 [FuncDecl]）；
+     * - 次构造体第一句的 `super(实参)`（键是该次构造）；
+     * - 编译器补的无参 `super()`：类写了构造器时挂在构造器上，一个构造器都没写时挂在类上
+     *   （[org.example.complie.sema.ClassModel.implicitSuperDelegationOf]）。
+     *
+     * 判据是 `superClass.declaration == null`（父类来自 classpath），**不是 target==null**
+     * ——rsf 父类一个构造器都没写时 target 也是 null（等价于隐式无参构造器）。
+     */
+    private fun emitParentCtor(mv: MethodVisitor, owner: String, decl: ClassDecl, ctor: FuncDecl?) {
+        val delegation = if (ctor != null) {
+            model.classModel.superDelegationOf(ctor)
+        } else {
+            model.classModel.implicitSuperDelegationOf(decl)
+        }
+        val parent = delegation?.superClass
+        if (delegation == null || parent == null) {
+            // 没有父类：还是那一条 `Object.<init>()V`，字节与阶段 24 完全一致
+            mv.visitVarInsn(ALOAD, 0)
+            mv.visitMethodInsn(INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false)
+            return
+        }
+
+        // 实参在**本构造器的帧**里求值（和 Java 一样：super(实参) 的实参先算），
+        // 主构造的形参就在 1..n 号槽上。Checker 保证这些实参碰不到 this / 自己的字段
+        // ——父类构造器返回之前，this 在 JVM 上还是 uninitializedThis，碰了会被校验器拒绝。
+        val ctx = ExprCtx(mv, owner, ctor?.let { model.loweredOf(it) }, localOffset = 0)
+        val args = delegation.arguments
+
+        if (parent.declaration != null) {
+            // rsf 父类：Checker 已经选好了要调哪个构造器（SuperDelegation.target）
+            val rsfOwner = classInternalName(parent.declaration.name)
+            val target = delegation.target
+            if (target == null) {
+                mv.visitVarInsn(ALOAD, 0)
+                mv.visitMethodInsn(INVOKESPECIAL, rsfOwner, "<init>", "()V", false)
+                return
+            }
+            val targetParams = model.paramTypesOf(target)
+            mv.visitVarInsn(ALOAD, 0)
+            for ((i, arg) in args.withIndex()) {
+                emitExpr(ctx, arg)
+                emitWiden(mv, model.typeOf(arg), targetParams[i])
+            }
+            mv.visitMethodInsn(INVOKESPECIAL, rsfOwner, "<init>", descriptorOf(target), false)
+            return
+        }
+
+        // JDK 父类（`class MyError(msg : string) : Exception(msg)`）。
+        //
+        // Checker 只在 checkParentArguments 里挑过一次构造器（MemberResolver.findConstructor），
+        // 那次选择**没有进语义模型**（SuperDelegation 里只有 superClass 和实参），所以这里
+        // 只能按**同一口径**再挑一次：按实参个数筛，再按「精确优先、加宽其次、并列取先声明」
+        // 打分取最小——与解释器的 instantiateJdkParent + ctorScore 逐条同构，两端才可能
+        // 选到同一个构造器（选不一样的话，同一份源码两端的行为就直接分叉了）。
+        val jvm = ClassPath.find(parent.internalName)
+            ?: throw RsfError(
+                "codegen",
+                "内部错误：JDK 父类 '${parent.internalName}' 不在 classpath 上",
+                decl.at.line, decl.at.column, null,
+            )
+        val argTypes = args.map { model.typeOf(it) }
+        val chosen = jvm.constructors
+            .filter { it.paramTypes.size == args.size }
+            .minByOrNull { jdkCtorScore(it, argTypes) }
+            ?: throw RsfError(
+                "codegen",
+                "内部错误：${parent.display} '${parent.name}' 里没有匹配的构造器",
+                decl.at.line, decl.at.column, null,
+            )
+        mv.visitVarInsn(ALOAD, 0)
+        for ((i, arg) in args.withIndex()) {
+            emitExpr(ctx, arg)
+            emitWiden(mv, model.typeOf(arg), chosen.paramTypes[i])
+        }
+        mv.visitMethodInsn(INVOKESPECIAL, parent.internalName, "<init>", chosen.descriptor, false)
+    }
+
+    /**
+     * 一个 JDK 构造器对这批实参的代价；[Int.MAX_VALUE] = 完全不匹配。
+     *
+     * 与 Interpreter.kt 的 `ctorScore` **逐条对应**（那一条注释写明了两端必须同口径）：
+     * 描述符完全相同 0 分；`null` 给非基本类型 1 分；两边都是基本类型 1 分；
+     * 目标是 `Ljava/lang/Object;`（泛型擦除后的形参 / Object 重载）1 分；其余出局。
+     */
+    private fun jdkCtorScore(ctor: JvmMethod, argTypes: List<RsfType>): Int {
+        var total = 0
+        for ((i, want) in ctor.paramTypes.withIndex()) {
+            val got = argTypes.getOrNull(i) ?: return Int.MAX_VALUE
+            total += when {
+                got.descriptor == want.descriptor -> 0
+                got.isNullLiteral && !want.base.isPrimitive -> 1
+                got.base.isPrimitive && want.base.isPrimitive -> 1
+                want.descriptor == "Ljava/lang/Object;" -> 1
+                else -> return Int.MAX_VALUE
+            }
+        }
+        return total
+    }
+
+    /**
      * 用户类的方法。
      *
      * 实例方法**不加** ACC_STATIC：0 号槽是 `this`，而 [org.example.complie.ir.Lowering]
@@ -1501,6 +1722,17 @@ class BytecodeCompiler(
      */
     private fun emitUserMethod(cw: ClassWriter, owner: String, fn: FuncDecl) {
         val access = accessOf(fn) or if (fn.isStatic) ACC_STATIC else 0
+        // 阶段 25 K2：抽象方法（`abstract fun area() -> int`）只发签名，**不写 Code 属性**
+        // ——带上 Code 的话类加载器会以 ClassFormatError 拒绝（JVMS 4.6：abstract / native
+        // 方法不许有 Code）。它仍然必须发出来：`Shape.describe()` 里那句隐式 this 的
+        // `area()` 编译成 `invokevirtual Shape.area`，类文件里没有这条声明时，方法解析
+        // 会在 NoSuchMethodError 上停下（而不是像预期那样落到子类的实现上）。
+        if (fn.isAbstract) {
+            val mv = cw.visitMethod(access or ACC_ABSTRACT, fn.name, descriptorOf(fn), null, null)
+            emitUseSites({ descriptor, visible -> mv.visitAnnotation(descriptor, visible) }, fn)
+            mv.visitEnd()
+            return
+        }
         val mv = cw.visitMethod(access, fn.name, descriptorOf(fn), null, null)
         // 方法级注解使用点（阶段 21 M3）：写在 mv.visitEnd() 之前
         emitUseSites({ descriptor, visible -> mv.visitAnnotation(descriptor, visible) }, fn)
@@ -1853,15 +2085,11 @@ class BytecodeCompiler(
                 // （见 emitUserConstructor），这里什么都不用发，委托之后的语句照常往下走。
                 is ICtorDelegate -> {}
 
-                // `super(实参)` —— **父类**构造委托（阶段 25 K1）。K1 只把它降到 IR，
-                // 字节码是 K2 的活：这里显式报未实现（发 `INVOKESPECIAL <父类>.<init>` 还要
-                // 连带处理「本类字段初值改在 super 之后跑」的次序，不能按 this(...) 糊过去）。
-                is ISuperDelegate -> throw RsfError(
-                    "codegen",
-                    "阶段 25 的类继承还只做到前端与语义（K1 刀）：父类构造委托 super(...) 的" +
-                        "字节码后端（K2 刀）还没实现。",
-                    instr.at.line, instr.at.column, null,
-                )
+                // `super(实参)` —— **父类**构造委托（阶段 25 K2）：和 `this(...)` 一样，
+                // 指令已经在 `<init>` 的序言里发过了（见 emitParentCtor），这里什么都不用发。
+                // 顺序也由此保证：父类构造器 → 本类字段初值 → 构造器体（DESIGN-25 §6），
+                // 与解释器 runConstructor 一致。
+                is ISuperDelegate -> {}
 
                 // `数组[下标] = 值`（阶段 13）。求值顺序与解释器逐字对齐：
                 // 接收者 → 长度 → 下标 → **越界检查** → 右值 → `*ASTORE`。
@@ -2145,6 +2373,16 @@ class BytecodeCompiler(
             }
 
             is MemberExpr -> {
+                // `super.方法(...)` / `super(接口).方法(...)`（阶段 25 K2）必须**最先**查这张表：
+                // Checker 把「super 调用到底落到哪一份」记在 superCalls 里（owner 是**声明**
+                // 那个方法的父类/接口；接口默认方法那一路 interfaceOwner = true），而
+                // `super.方法` 本身在 members / memberOf 两张表里都查不到东西——不先查就会走到
+                // `IllegalStateException("内部错误：未解析的成员")`。
+                val superCall = model.classModel.superCallOf(expr)
+                if (superCall != null) {
+                    emitSuperMember(ctx, expr, superCall, discard)
+                    return
+                }
                 // 阶段 19c：枚举常量 `TokenKind.IDENT` → `GETSTATIC TokenKind.IDENT LTokenKind;`。
                 // 它一定是 STATIC 字段：单例是在 `<clinit>` 里造好的（见 [enumClass]），
                 // 所以这条指令本身就是「取那个唯一实例」——两端因此拿到同一个对象，
@@ -2419,6 +2657,36 @@ class BytecodeCompiler(
                 if (!discard) emitResultCast(mv, model.returnTypeOf(decl), model.typeOf(expr))
             }
         }
+    }
+
+    /**
+     * `super.方法(...)` / `super(接口名).方法(...)`（阶段 25 K2）。
+     *
+     * 与普通成员调用只有两处不同，两处都是 `super` 语义的要害：
+     * - **指令一律 `INVOKESPECIAL`**（接口默认方法那一路 `itf = true`）。非虚调用：绕过
+     *   运行期类的覆盖，直接跑**声明**的那一份。发成 INVOKEVIRTUAL 的话
+     *   `override fun tag() -> string { rtn super.tag() }` 就是自己调自己，栈溢出。
+     * - **owner 是声明那个方法的类/接口**（Checker 记进 superCalls 的 `className`），
+     *   不是本类（本类压根没有这条方法的声明）。
+     *
+     * 接收者不看语法树：`super.f()` 的接收者语义上就是 this（0 号槽），`super(I).f()` 也一样
+     * ——接口默认方法体里的 this 就是实现类的那个对象。
+     */
+    private fun emitSuperMember(ctx: ExprCtx, expr: MemberExpr, member: UserMember.Method, discard: Boolean) {
+        val mv = ctx.mv
+        val decl = member.decl
+        requireInstanceScope(ctx, "super.${expr.name}(...)")
+        mv.visitVarInsn(ALOAD, 0)
+        val params = model.paramTypesOf(decl)
+        for ((i, arg) in expr.arguments.orEmpty().withIndex()) {
+            emitExpr(ctx, arg)
+            emitWiden(mv, model.typeOf(arg), params[i])
+        }
+        mv.visitMethodInsn(
+            INVOKESPECIAL, classInternalName(member.className), decl.name, descriptorOf(decl),
+            member.interfaceOwner,
+        )
+        if (!discard) emitResultCast(mv, model.returnTypeOf(decl), model.typeOf(expr))
     }
 
     /**
@@ -2808,6 +3076,37 @@ class BytecodeCompiler(
             mv.visitMethodInsn(
                 callOpcode(implicit), classInternalName(implicit.className), decl.name,
                 descriptorOf(decl), implicit.interfaceOwner,
+            )
+            return
+        }
+
+        // 阶段 25 K2：**继承来的 JDK 方法**（`class MyError(msg : string) : Exception(msg)` 里
+        // 直接写 `getMessage()`）。这条调用既不在 implicitCalls（那是 rsf 类链上的方法），
+        // 也不在 callTargets（它不是顶层函数），只有 Checker 解析出来的 JvmMethod 记录。
+        // 接收者是 this（继承来的 JDK 方法打在同一个对象上——我们真的 extends 了 JDK 类，
+        // 所以在 JVM 上这就是一条普通的 invokevirtual）。
+        val inheritedJvm = model.classModel.implicitJvmCallOf(expr)
+        if (inheritedJvm != null) {
+            val m = inheritedJvm.method
+            if (!m.isStatic) {
+                requireInstanceScope(ctx, "'${expr.name}(...)'（隐式 this 调用继承来的 JDK 方法）")
+                mv.visitVarInsn(ALOAD, 0)
+            }
+            for ((i, arg) in expr.arguments.withIndex()) {
+                emitExpr(ctx, arg)
+                emitWiden(mv, model.typeOf(arg), m.paramTypes[i])
+            }
+            // owner 是**声明**这个方法的 JDK 类（Checker 记的），不是当前类：
+            // 解析从接收者的真实类开始，所以 this 是 MyError 也能落到 Throwable.getMessage。
+            // 返回值不做泛型收敛——Checker 记的返回类型就是这个 JvmMethod.returnType
+            // （解释器那条路也一样，见 Interpreter.callInheritedJvmMethod）。
+            mv.visitMethodInsn(
+                when {
+                    m.isStatic -> INVOKESTATIC
+                    inheritedJvm.interfaceOwner -> INVOKEINTERFACE
+                    else -> INVOKEVIRTUAL
+                },
+                m.owner, m.name, m.descriptor, inheritedJvm.interfaceOwner,
             )
             return
         }

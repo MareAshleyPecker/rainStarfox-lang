@@ -10,6 +10,11 @@ import org.example.complie.interp.Interpreter
 import org.example.complie.sema.RsfType
 import org.example.complie.sema.SemanticModel
 import org.example.complie.sema.UserMember
+import org.objectweb.asm.ClassReader
+import org.objectweb.asm.ClassVisitor
+import org.objectweb.asm.Label
+import org.objectweb.asm.MethodVisitor
+import org.objectweb.asm.Opcodes
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.PrintStream
@@ -20,13 +25,15 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * 阶段 25 「类继承」的前端与语义（K1 刀）+ 解释器侧跑得动的回归（K3 刀）。
+ * 阶段 25 「类继承」的前端与语义（K1 刀）+ 解释器（K3 刀）与字节码（K2 刀）两侧的回归。
  *
  * 前半段只测**前端**：语法收不收、Checker 放行还是报错、报什么、给后端留了什么模型。
- * 后半段（`K3：解释器侧` 那一节）测解释器真的把带父类的程序跑成什么样：构造链顺序、
+ * 中段（`K3：解释器侧` 那一节）测解释器真的把带父类的程序跑成什么样：构造链顺序、
  * 字段绝对下标、父链方法查找、`super.f()` / `super(接口).f()`、JDK 父类那条链。
- * 字节码端的支持是 K2 的事，不在这里测——K3 已撤掉解释器的守卫，`build` 仍会显式报
- * 「K2 还没实现」（见下面 `带父类的程序 build 要显式报还没实现`），所以这里不碰 `Rsf.build`。
+ * 末段（`K2：字节码后端` 那一节）测 `Rsf.build` 出来的 .class：同一份源码两端 stdout
+ * **逐字节相同**（口径与 `InterfaceRuntimeTest.kt` 一致），另外用 ASM 读一遍产物，
+ * 把「子类构造器第一条是父类 `<init>`」「`super.f()` 发 invokespecial」「抽象方法没有 Code」
+ * 这几条只看 stdout 验不出来的判据锁住——相当于一份**可断言的 `javap -c`**。
  *
  * 反例逐条对应 `DESIGN-25.md` §7 的判据清单。
  */
@@ -554,22 +561,220 @@ class InheritanceTest {
         assertTrue(e.detail.contains("类型实参"), e.detail)
     }
 
-    // ------------------------------------------------------------ 后端守卫（K2）
+    // ------------------------------------------------------------ 字节码后端（K2）
 
+    /**
+     * K1 时代那条守卫已经撤掉：带父类的程序现在真的 build 得出来，而且两端 stdout 一致。
+     *
+     * 这一条同时压住四件事：父类字段的**绝对下标**（`value()` 读的是继承来的 `x`，
+     * 子类自己还加了一个字段）、子类构造器的**父类 `<init>` 链**（不调父类构造器
+     * `x` 就是 0）、**虚分派**（`var b : Base = d` 之后 `b.tag()` 必须打到 Derived 的
+     * 重写上）、以及 `super.tag()` 发的是 `invokespecial` 而不是又一次虚分派
+     * （发错就是无限递归）。
+     */
     @Test
-    fun `带父类的程序 build 要显式报还没实现`() {
-        val src = rsfSource(
-            "open class Base(x : int) {\n" +
-                "}\n" +
-                "class D(y : int) : Base(y) {\n" +
-                "}\n",
+    fun `带父类的程序 build 跑得动且两端 stdout 逐字节相同`() {
+        val program = """
+            open class Base(p : int) {
+                var x : int = p
+                fun value() -> int {
+                    rtn x
+                }
+                open fun tag() -> string {
+                    rtn "base"
+                }
+            }
+            class Derived(p : int) : Base(p) {
+                var y : int = p + 1
+                override fun tag() -> string {
+                    rtn super.tag() + "+derived/" + intToString(y)
+                }
+            }
+            fun main() -> void {
+                var d : Derived = new Derived(7)
+                println(d.tag())
+                println(intToString(d.value()))
+                var b : Base = d
+                println(b.tag())
+                rtn
+            }
+        """.trimIndent() + "\n"
+
+        assertEquals(listOf("base+derived/8", "7", "base+derived/8"), bothEnds(program, "RsfInheritBuild"))
+    }
+
+    /**
+     * 「子类构造器第一条指令是父类 `<init>`」「`super.f()` 是 invokespecial」这两条判据
+     * 只有看指令流才验得出来，所以这里读一遍 .class。
+     *
+     * `super.tag()` 若发成 `invokevirtual`，跑起来是**打到自己的重写上**（无限递归，
+     * StackOverflow 或者干脆死循环），而字段布局若把父类字段漏掉，两端 stdout 说不定
+     * 还能凑巧一样——所以这两个断言不能交给 stdout。
+     */
+    @Test
+    fun `子类构造器先调父类 init 且 super 方法发 invokespecial`() {
+        val program = """
+            open class Base(p : int) {
+                var x : int = p
+                open fun tag() -> string {
+                    rtn "base"
+                }
+            }
+            class Derived(p : int) : Base(p) {
+                var y : int = p + 1
+                override fun tag() -> string {
+                    rtn super.tag() + "!"
+                }
+            }
+            fun main() -> void {
+                rtn
+            }
+        """.trimIndent() + "\n"
+
+        val shape = compiledShape(program, "RsfInheritShape", "Derived.class")
+        // 父类名必须是真正的父类，而不是写死的 java/lang/Object
+        assertEquals("Base", shape.superName)
+
+        val ctor = shape.methods.single { it.name == "<init>" }
+        // `this` → 实参 → 父类 <init>：第一条永远是 ALOAD 0（接收者），第二条是父类构造器实参
+        assertEquals(
+            listOf("ALOAD 0", "ILOAD 1", "INVOKESPECIAL Base.<init>(I)V itf=false"),
+            ctor.instructions.take(3),
+            "构造器前三条必须是 this + 实参 + 父类 <init>：${ctor.instructions}",
         )
-        val model = Rsf.analyze(Rsf.parse(src), src)
-        val e = assertFailsWith<RsfError> { Rsf.build(model, src, "D", tempDir()) }
-        assertEquals("codegen", e.phase)
-        // 点名是 K2 那一刀，而且说出是哪个类有父类——绝不静默产错字节码
-        assertTrue(e.detail.contains("K2"), e.detail)
-        assertTrue(e.detail.contains("Base"), e.detail)
+
+        val tag = shape.methods.single { it.name == "tag" }
+        assertTrue(
+            tag.instructions.any { it == "INVOKESPECIAL Base.tag()Ljava/lang/String; itf=false" },
+            "super.tag() 必须发 invokespecial 且 owner 是声明它的父类：${tag.instructions}",
+        )
+    }
+
+    /** 抽象方法只发签名（`ACC_ABSTRACT`、没有 Code 属性），抽象类自己带 `ACC_ABSTRACT`。 */
+    @Test
+    fun `抽象方法与抽象类都带 ACC_ABSTRACT 且抽象方法没有 Code`() {
+        val program = """
+            abstract class Shape(nm : string) {
+                var name : string = nm
+                abstract fun area() -> int
+                fun describe() -> string {
+                    rtn name + "=" + intToString(area())
+                }
+            }
+            class Square(side0 : int) : Shape("square") {
+                var side : int = side0
+                override fun area() -> int {
+                    rtn side * side
+                }
+            }
+            fun main() -> void {
+                var s : Shape = new Square(3)
+                println(s.describe())
+                rtn
+            }
+        """.trimIndent() + "\n"
+
+        assertEquals(listOf("square=9"), bothEnds(program, "RsfInheritAbstract"))
+
+        val shape = compiledShape(program, "RsfInheritAbstractShape", "Shape.class")
+        assertTrue(shape.hasFlag(Opcodes.ACC_ABSTRACT), "抽象类本身要带 ACC_ABSTRACT")
+        val area = shape.methods.single { it.name == "area" }
+        assertTrue(area.hasFlag(Opcodes.ACC_ABSTRACT), "抽象方法要带 ACC_ABSTRACT")
+        assertTrue(area.instructions.isEmpty(), "抽象方法不能有 Code 属性：${area.instructions}")
+    }
+
+    /**
+     * toString 沿**整条父链**渲染（父类字段在前）——这是两端约定，见
+     * `K3 toString 把整条父链的字段都渲染出来（父类字段在前）` 与 `ObjectFormat.render`。
+     * 字节码端如果只遍历自己的字段，同一份程序就会打出 `Child(b=2)`，所以这条必须两端对。
+     */
+    @Test
+    fun `toString 沿整条父链渲染且两端逐字节一致`() {
+        val program = """
+            open class Base(x : int) {
+                var a : int = x
+            }
+            class Child(x : int, y : int) : Base(x) {
+                var b : int = y
+            }
+            fun main() -> void {
+                var c : Child = new Child(1, 2)
+                println(c)
+                rtn
+            }
+        """.trimIndent() + "\n"
+
+        assertEquals(listOf("Child(a=1, b=2)"), bothEnds(program, "RsfInheritToString"))
+    }
+
+    /**
+     * JDK 父类那条链：父类是 `java/lang/Exception`，构造器按实参静态类型选到
+     * `Exception(String)`，继承来的 `getMessage()` 有两条路（隐式 `this.getMessage()`
+     * 与显式 `e.getMessage()`）都得走通。
+     */
+    @Test
+    fun `JDK 父类的构造与继承来的方法两端一致`() {
+        val program = """
+            import java.lang.Exception
+            class MyError(msg : string) : Exception(msg) {
+                fun describe() -> string {
+                    rtn "MyError:" + getMessage()
+                }
+            }
+            fun main() -> void {
+                var e : MyError = new MyError("boom")
+                println(e.describe())
+                println(e.getMessage())
+                rtn
+            }
+        """.trimIndent() + "\n"
+
+        assertEquals(listOf("MyError:boom", "boom"), bothEnds(program, "RsfInheritJdkParent"))
+
+        val shape = compiledShape(program, "RsfInheritJdkParentShape", "MyError.class")
+        assertEquals("java/lang/Exception", shape.superName)
+    }
+
+    /** 类继承与接口默认方法混用：`super(Greeter).greet()` 要点到接口那一份，不是自己的重写。 */
+    @Test
+    fun `接口默认方法与类继承混用两端一致`() {
+        val program = """
+            interface Greeter {
+                fun greet() -> string {
+                    rtn "hi"
+                }
+            }
+            interface Named {
+                fun name() -> string
+                fun greet() -> string {
+                    rtn "named-hi"
+                }
+            }
+            open class Base {
+                fun base() -> string {
+                    rtn "base"
+                }
+            }
+            class E : Base(), Greeter, Named {
+                override fun name() -> string {
+                    rtn "E"
+                }
+                override fun greet() -> string {
+                    rtn super(Named).greet()
+                }
+                fun which() -> string {
+                    rtn super(Greeter).greet() + ":" + name()
+                }
+            }
+            fun main() -> void {
+                var e : E = new E()
+                println(e.greet())
+                println(e.which())
+                rtn
+            }
+        """.trimIndent() + "\n"
+
+        assertEquals(listOf("named-hi", "hi:E"), bothEnds(program, "RsfInheritIfaceMix"))
     }
 
     @Test
@@ -981,6 +1186,164 @@ class InheritanceTest {
     }
 
     // ------------------------------------------------------------ 助手
+
+    //
+    // 口径与 InterfaceRuntimeTest.kt / InteropTest.kt 同一套：源码 → Rsf.analyze →
+    // 解释执行一遍；Rsf.build 出 .class → 类加载器 → 反射调 main 再跑一遍；两边 stdout
+    // 逐字节比较。K2 起「只修了一端」会被这里咬住。
+
+    /** 两端各跑一遍，断言 stdout 逐字节相同，返回解释器那一侧的行列表。 */
+    private fun bothEnds(text: String, className: String): List<String> {
+        val interpreted = runInterpreted(text)
+        val compiled = runCompiled(text, className)
+        assertEquals(
+            normalize(interpreted),
+            normalize(compiled),
+            "解释器与字节码对类继承必须逐字节一致",
+        )
+        return normalize(interpreted).trim().lines()
+    }
+
+    /**
+     * `Rsf.build` 出来的 .class 跑一遍 main。
+     *
+     * 类加载器按需 `defineClass`（不是按 build 的文件顺序显式 define 一批）：
+     * 定义子类时 JVM 要解析它的父类，而父类那时可能还没被 define 过。
+     */
+    private fun runCompiled(text: String, className: String): String {
+        val src = rsfSource(text)
+        val dir = tempDir()
+        val out = Rsf.build(Rsf.analyze(Rsf.parse(src), src), src, className, dir)
+        val loader = object : ClassLoader(javaClass.classLoader) {
+            override fun findClass(name: String): Class<*> {
+                val file = File(dir, name.replace('.', '/') + ".class")
+                if (!file.isFile) throw ClassNotFoundException(name)
+                val bytes = file.readBytes()
+                return defineClass(name, bytes, 0, bytes.size)
+            }
+        }
+        val programName = out.classFiles.first().relativeTo(dir).path
+            .removeSuffix(".class")
+            .replace(File.separatorChar, '/')
+            .replace('/', '.')
+        return runMain(loader.loadClass(programName))
+    }
+
+    private fun runMain(cls: Class<*>): String {
+        val buf = ByteArrayOutputStream()
+        val ps = PrintStream(buf, true, "UTF-8")
+        val saved = System.out
+        System.setOut(ps)
+        try {
+            cls.getMethod("main", Array<String>::class.java).invoke(null, arrayOf<String>())
+        } finally {
+            System.setOut(saved)
+        }
+        ps.flush()
+        return buf.toString("UTF-8")
+    }
+
+    /** build 一遍，取出其中某个 .class 的形状（不跑）。 */
+    private fun compiledShape(text: String, className: String, fileName: String): ClassShape {
+        val src = rsfSource(text)
+        val dir = tempDir()
+        val out = Rsf.build(Rsf.analyze(Rsf.parse(src), src), src, className, dir)
+        val file = out.classFiles.firstOrNull { it.name == fileName }
+            ?: throw AssertionError("产物里没有 $fileName：${out.classFiles.map { it.name }}")
+        return shapeOf(file.readBytes())
+    }
+
+    /**
+     * 用 ASM 读一遍 .class，记下父类名、标志与指令文本——`javap -c` 的可断言版本。
+     *
+     * 帧与调试信息都跳过，只留指令；`visitCode` 没被调过的方法（抽象方法）指令列表为空。
+     */
+    private fun shapeOf(bytes: ByteArray): ClassShape {
+        val methods = ArrayList<MethodShape>()
+        var superName: String? = null
+        var access = 0
+        ClassReader(bytes).accept(
+            object : ClassVisitor(Opcodes.ASM9) {
+                override fun visit(
+                    version: Int,
+                    acc: Int,
+                    name: String,
+                    signature: String?,
+                    superClass: String?,
+                    interfaces: Array<out String>?,
+                ) {
+                    access = acc
+                    superName = superClass
+                }
+
+                override fun visitMethod(
+                    acc: Int,
+                    name: String,
+                    descriptor: String,
+                    signature: String?,
+                    exceptions: Array<out String>?,
+                ): MethodVisitor {
+                    val instructions = ArrayList<String>()
+                    methods.add(MethodShape(name, descriptor, acc, instructions))
+                    return object : MethodVisitor(Opcodes.ASM9) {
+                        private fun add(text: String) {
+                            instructions.add(text)
+                        }
+
+                        override fun visitInsn(opcode: Int) = add(opcodeName(opcode))
+                        override fun visitVarInsn(opcode: Int, v: Int) = add("${opcodeName(opcode)} $v")
+                        override fun visitTypeInsn(opcode: Int, type: String) = add("${opcodeName(opcode)} $type")
+                        override fun visitFieldInsn(opcode: Int, o: String, n: String, d: String) =
+                            add("${opcodeName(opcode)} $o.$n:$d")
+
+                        override fun visitMethodInsn(opcode: Int, o: String, n: String, d: String, itf: Boolean) =
+                            add("${opcodeName(opcode)} $o.$n$d itf=$itf")
+
+                        override fun visitJumpInsn(opcode: Int, label: Label) = add(opcodeName(opcode))
+                        override fun visitLdcInsn(value: Any?) = add("LDC $value")
+                        override fun visitIntInsn(opcode: Int, operand: Int) = add("${opcodeName(opcode)} $operand")
+                    }
+                }
+            },
+            ClassReader.SKIP_DEBUG or ClassReader.SKIP_FRAMES,
+        )
+        return ClassShape(superName, access, methods)
+    }
+
+    private fun opcodeName(opcode: Int): String = when (opcode) {
+        Opcodes.ALOAD -> "ALOAD"
+        Opcodes.ASTORE -> "ASTORE"
+        Opcodes.ILOAD -> "ILOAD"
+        Opcodes.ISTORE -> "ISTORE"
+        Opcodes.RETURN -> "RETURN"
+        Opcodes.IRETURN -> "IRETURN"
+        Opcodes.ARETURN -> "ARETURN"
+        Opcodes.DUP -> "DUP"
+        Opcodes.NEW -> "NEW"
+        Opcodes.GETFIELD -> "GETFIELD"
+        Opcodes.PUTFIELD -> "PUTFIELD"
+        Opcodes.GETSTATIC -> "GETSTATIC"
+        Opcodes.PUTSTATIC -> "PUTSTATIC"
+        Opcodes.INVOKESPECIAL -> "INVOKESPECIAL"
+        Opcodes.INVOKEVIRTUAL -> "INVOKEVIRTUAL"
+        Opcodes.INVOKESTATIC -> "INVOKESTATIC"
+        Opcodes.INVOKEINTERFACE -> "INVOKEINTERFACE"
+        else -> "#$opcode"
+    }
+
+    /** 一个类文件里我们关心的形状：父类名、类标志、每条方法的标志与指令序列。 */
+    private class ClassShape(val superName: String?, val access: Int, val methods: List<MethodShape>) {
+        fun hasFlag(flag: Int): Boolean = access and flag != 0
+    }
+
+    private class MethodShape(
+        val name: String,
+        val descriptor: String,
+        val access: Int,
+        val instructions: List<String>,
+    ) {
+        fun hasFlag(flag: Int): Boolean = access and flag != 0
+    }
 
     private fun tempDir(): File = File.createTempFile("rsf-inherit", "").let {
         it.delete()
