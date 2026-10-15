@@ -115,6 +115,18 @@ class Interpreter(
      */
     private val enumCache = HashMap<String, RsfEnumValue>()
 
+    /**
+     * rsf 对象 → 交给 JDK 用的那个代理（阶段 20 M4），按**同一性**索引。
+     *
+     * 一个对象只造一个：它实现哪些 JDK 接口在类声明上就定死了，形参要哪几个同一个
+     * 代理都满足；多次跨边界也必须是**同一个**代理，否则 JDK 那边的引用相等就散了。
+     * 反向表 [proxiedObjects] 让回调再进来的代理能被认回去（见 [unwrapProxy]）。
+     */
+    private val javaProxyCache = java.util.IdentityHashMap<RsfObject, Any>()
+
+    /** 代理 → 它代表的 rsf 对象（[javaProxyCache] 的反向表）。 */
+    private val proxiedObjects = java.util.IdentityHashMap<Any, RsfObject>()
+
     /** 静默模式：重放 REPL 会话前缀时不产生输出（用户函数里的输出也一并静音）。 */
     private var silent = false
 
@@ -613,7 +625,10 @@ class Interpreter(
                         receiver, target.method.name, target.method.paramTypes.size, args,
                     )
                 }
-                val args = expr.arguments.orEmpty().map { eval(it, slots, body) }.toTypedArray()
+                val rawArgs = expr.arguments.orEmpty().map { eval(it, slots, body) }
+                val args = rawArgs.mapIndexed { i, v ->
+                    adaptJdkArg(v, target.method.paramTypes.getOrNull(i))
+                }.toTypedArray()
                 val result = method.invoke(receiver, *args)
                 // 泛型互操作：JVM 给回来的是擦除后的 Object，按静态类型还原成 int/string/…
                 // 结果被丢弃时（表达式语句）不还原——`m.put(k, v)` 的旧值可能是 null
@@ -829,6 +844,117 @@ class Interpreter(
             w.isTypeParam || w.descriptor == "Ljava/lang/Object;" || own[i].descriptor == w.descriptor
         }
 
+    // ------------------------------------------- 把 rsf 对象交给 JDK 代码（阶段 20 M4）
+
+    /**
+     * 交给 JDK 反射调用的实参：**必须真的是那个 JDK 类型**。
+     *
+     * `Collections.sort(xs, new ByValue())` 里 `ByValue` 是按 `Comparator&<string>` 检查通过的
+     * rsf 类，可它在解释器里只是个 [RsfObject]——反射 `invoke` 会抛
+     * `IllegalArgumentException: argument type mismatch`。这里按形参类型补一层
+     * [java.lang.reflect.Proxy]（见 [javaProxyOf]），让 JDK 的回调能进 rsf 实现。
+     *
+     * 三条边界：
+     * 1. **只对接口形参套**：Proxy 只能实现接口；`Object` 形参更不该套——`xs.add(o)` 必须
+     *    存原对象，存进去一个代理、rsf 侧再取出来就不是同一个东西了；
+     * 2. 形参类型在 rsf 侧是**源码类型**时 `toJavaClass` 会抛，原样返回，让后面的报错照旧；
+     * 3. 这个类没有任何 JDK 接口时原样返回（说不清要哪个接口，交给反射抛）。
+     */
+    private fun adaptJdkArg(value: Any?, want: RsfType?): Any? {
+        if (value !is RsfObject || want == null) return value
+        val wantClass = try {
+            toJavaClass(want)
+        } catch (_: Throwable) {
+            return value
+        }
+        if (!wantClass.isInterface || wantClass.isInstance(value)) return value
+        val proxy = javaProxyOf(value) ?: return value
+        return if (wantClass.isInstance(proxy)) proxy else value
+    }
+
+    /** 回调再进来的代理认回它代表的 rsf 对象；不是我们造的代理就原样返回。 */
+    private fun unwrapProxy(value: Any?): Any? = proxiedObjects[value] ?: value
+
+    /**
+     * 造（并缓存）一个实现 rsf 类身上那些 JDK 接口的代理。
+     *
+     * 回调按「名字 + 个数」找 rsf 实现——尺子和 [callJdkInterfaceMethod] 一致：JVM 的接口
+     * 签名是**擦除后**的形态，rsf 侧写不出 `compare(Object, Object)`。
+     * 找不到实现时退给 JDK 接口自己的 `default` 方法（`Comparator.reversed()` 这种）。
+     */
+    private fun javaProxyOf(obj: RsfObject): Any? {
+        javaProxyCache[obj]?.let { return it }
+        val interfaces = javaInterfacesOf(obj.className)
+        if (interfaces.isEmpty()) return null
+        val loader = interfaces.first().classLoader ?: Interpreter::class.java.classLoader
+        val proxy = java.lang.reflect.Proxy.newProxyInstance(loader, interfaces.toTypedArray(), javaHandler(obj))
+        javaProxyCache[obj] = proxy
+        proxiedObjects[proxy] = obj
+        return proxy
+    }
+
+    /**
+     * rsf 类身上那些 JDK 接口的 [Class]（穿过 rsf 侧接口继承链，菱形只收一次）。
+     *
+     * 只收 classpath 上的：rsf 自己声明的接口不是 Java 类型，Proxy 实现不了。
+     */
+    private fun javaInterfacesOf(className: String): List<Class<*>> {
+        val out = LinkedHashSet<Class<*>>()
+        fun walk(owner: String) {
+            for (sup in model.superInterfacesOf(owner)) {
+                if (!sup.fromClassPath) {
+                    walk(sup.name)
+                    continue
+                }
+                val cls = try {
+                    Class.forName(sup.internalName.replace('/', '.'))
+                } catch (_: Throwable) {
+                    continue
+                }
+                if (!cls.isInterface || !out.add(cls)) continue
+                out.addAll(cls.interfaces)
+            }
+        }
+        walk(className)
+        return out.toList()
+    }
+
+    /**
+     * 代理收到一次 JDK 回调：翻回 rsf 侧执行。
+     *
+     * `equals`/`hashCode`/`toString` 三条按**代理自己**的语义办（和 rsf 对象的同一性对齐），
+     * 不去 rsf 方法表里找——rsf 类不声明它们，找了必然落空。
+     */
+    private fun javaHandler(obj: RsfObject): java.lang.reflect.InvocationHandler =
+        java.lang.reflect.InvocationHandler { proxy, method, rawArgs ->
+            val args = rawArgs?.toList().orEmpty()
+            when {
+                method.name == "equals" && args.size == 1 -> proxy === args[0]
+                method.name == "hashCode" && args.isEmpty() -> System.identityHashCode(obj)
+                method.name == "toString" && args.isEmpty() -> obj.toString()
+                else -> {
+                    val impl = findInterfaceImplementation(
+                        obj.className, method.name, List(args.size) { RsfType.OBJECT },
+                    )
+                    if (impl != null) {
+                        val params = model.paramTypesOf(impl)
+                        val values = args.mapIndexed { i, a ->
+                            coerce(unwrapProxy(a), params.getOrElse(i) { RsfType.OBJECT })
+                        }
+                        callMethod(obj.className, impl, obj, values)
+                    } else if (method.isDefault) {
+                        java.lang.reflect.InvocationHandler.invokeDefault(proxy, method, rawArgs)
+                    } else {
+                        throw RsfError(
+                            "interp",
+                            "内部错误：'${obj.className}' 没有实现接口方法 '${method.name}'",
+                            -1, -1, null,
+                        )
+                    }
+                }
+            }
+        }
+
     /**
      * 造一个对象（阶段 18 起：主构造 / 多个次构造 / `this(...)` 委托）。
      *
@@ -945,7 +1071,8 @@ class Interpreter(
         // try 版而不是 `isAccessible = true`：JDK 内部那些没 opens 出来的包
         // （`java.lang.AbstractStringBuilder` 之类）会让强制版直接抛异常
         val javaCtor = owner.getDeclaredConstructor(*paramClasses).also { it.trySetAccessible() }
-        val args = model.constructionArgs(expr).map { eval(it, slots, body) }.toTypedArray()
+        val rawArgs = model.constructionArgs(expr).map { eval(it, slots, body) }
+        val args = rawArgs.mapIndexed { i, v -> adaptJdkArg(v, ctor.paramTypes.getOrNull(i)) }.toTypedArray()
         return try {
             javaCtor.newInstance(*args)
         } catch (e: java.lang.reflect.InvocationTargetException) {

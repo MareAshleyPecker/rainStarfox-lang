@@ -3325,7 +3325,7 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
 */
     private val classImports = LinkedHashMap<String, String>()
     private val memberTargets = IdentityHashMap<MemberExpr, ResolvedMember>()
-    private val resolver = MemberResolver(classImports)
+    private val resolver = MemberResolver(classImports, ::isSourceSubtype)
 
     private fun collectImports() {
         for (imp in program.imports) {

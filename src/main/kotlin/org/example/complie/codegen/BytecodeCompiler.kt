@@ -42,6 +42,7 @@ import org.example.complie.ir.IReturn
 import org.example.complie.ir.ISwitch
 import org.example.complie.ir.IVarDecl
 import org.example.complie.ir.LoweredFunction
+import org.example.complie.interop.ClassPath
 import org.example.complie.interop.ResolvedField
 import org.example.complie.interop.ResolvedMethod
 import org.example.complie.lexing.TokenKind
@@ -627,6 +628,7 @@ class BytecodeCompiler(
         for (method in decl.plainMethods) {
             emitUserMethod(cw, internalName, method)
         }
+        emitBridges(cw, internalName, decl)
         emitUserToString(cw, internalName, decl, fieldTypes)
         emitOrElseMethods(cw)
         cw.visitEnd()
@@ -641,6 +643,169 @@ class BytecodeCompiler(
      */
     private fun superInterfaceNames(name: String): Array<String> =
         model.superInterfacesOf(name).map { it.internalName }.toTypedArray()
+
+    // ------------------------------------------------- 桥方法（阶段 20 M4-c）
+
+    /**
+     * 一条「接口要求实现的方法」，形态按**擦除后**记：
+     * 名字、类文件里的描述符、形参与返回类型。
+     */
+    private class BridgeRequirement(
+        val name: String,
+        val descriptor: String,
+        val paramTypes: List<RsfType>,
+        val returnType: RsfType,
+    )
+
+    /**
+     * 给一个类补**桥方法**（`ACC_BRIDGE | ACC_SYNTHETIC`）——阶段 20 M4-c。
+     *
+     * 为什么必须有：JVM 的接口方法签名是**擦除后**的。`class ByValue : Comparator&<string>`
+     * 里实现方法是 `compare(Ljava/lang/String;Ljava/lang/String;)I`，而 `Comparator` 声明的
+     * 是 `compare(Ljava/lang/Object;Ljava/lang/Object;)I`。javac 在这种「实现签名比接口签名窄」
+     * 的时候会合成一个桥（`Object` 版转调 `String` 版），JVM 的回调、`invokeinterface`
+     * 才找得到实现；rsf 不发桥，`Collections.sort` 这类 JDK 回调就会
+     * `AbstractMethodError: Method ByValue.compare(Ljava/lang/Object;Ljava/lang/Object;)I is abstract`。
+     *
+     * 只给**签名真的不同**的要求发桥：签名一样时桥是多余的，而多余的桥会改变既有产物的
+     * 字节（`run-probes.sh` 对那些类文件的 javap 形状有断言）。
+     */
+    private fun emitBridges(cw: ClassWriter, owner: String, decl: ClassDecl) {
+        val emitted = HashSet<String>()
+        for (req in collectBridgeRequirements(decl.name)) {
+            if (!emitted.add("${req.name}${req.descriptor}")) continue
+            val impl = decl.plainMethods.firstOrNull { m ->
+                m.name == req.name &&
+                    !m.isStatic &&
+                    m.control != ControlType.PRIVATE &&
+                    model.paramsOf(m).size == req.paramTypes.size &&
+                    descriptorOf(m) != req.descriptor &&
+                    bridgeFits(m, req)
+            } ?: continue
+            emitBridge(cw, owner, impl, req)
+        }
+    }
+
+    /**
+     * 一个类身上所有「接口要求实现」的方法（穿过 rsf 接口继承链与 JDK 接口继承链，菱形只走一次）。
+     *
+     * 两边的描述符来源不同：rsf 接口照 [descriptorOf] 现算（类型参数擦除到 `Object`，
+     * 和 [interfaceClass] 发出去的那份**逐字相同**）；JDK 接口直接取 classpath 上读到的
+     * 原始描述符（那是权威，不要自己按 rsf 类型重拼一遍）。
+     */
+    private fun collectBridgeRequirements(className: String): List<BridgeRequirement> {
+        val out = LinkedHashMap<String, BridgeRequirement>()
+        val seen = HashSet<String>()
+
+        fun addJvm(internalName: String) {
+            if (!seen.add(internalName)) return
+            val cls = ClassPath.find(internalName) ?: return
+            for (m in cls.methods) {
+                if (m.isStatic || m.name == "<init>" || isObjectSignature(m.name, m.paramTypes.size)) continue
+                out.putIfAbsent(
+                    "${m.name}${m.descriptor}",
+                    BridgeRequirement(m.name, m.descriptor, m.paramTypes, m.returnType),
+                )
+            }
+            cls.interfaces.forEach { addJvm(it) }
+        }
+
+        fun walk(name: String) {
+            for (sup in model.superInterfacesOf(name)) {
+                if (sup.fromClassPath) {
+                    addJvm(sup.internalName)
+                    continue
+                }
+                if (!seen.add(sup.name)) continue
+                val iface = model.interfaceOf(sup.name) ?: continue
+                for (m in iface.methods) {
+                    if (m.isStatic) continue
+                    val desc = descriptorOf(m)
+                    out.putIfAbsent(
+                        "${m.name}$desc",
+                        BridgeRequirement(m.name, desc, model.paramTypesOf(m), model.returnTypeOf(m)),
+                    )
+                }
+                walk(sup.name)
+            }
+        }
+
+        walk(className)
+        return out.values.toList()
+    }
+
+    /** `equals(Object)` / `hashCode()` / `toString()`——Object 自己的方法，不需要桥。 */
+    private fun isObjectSignature(name: String, arity: Int): Boolean = when (name) {
+        "equals" -> arity == 1
+        "hashCode", "toString" -> arity == 0
+        else -> false
+    }
+
+    /**
+     * 这条「要求」真的能由这个实现补出桥来吗？
+     *
+     * 桥的两头必须能用 `CHECKCAST` / 装箱拆箱连起来，而且方向只能是**收窄**：
+     * 形参 `Object → String`、`Object → int`（拆箱）都可以；反过来（要求的是 `int`、
+     * 实现收的是引用）在 JVM 上根本不是同一件事，宁可不发桥，也不要发一条跑起来才炸的。
+     */
+    private fun bridgeFits(impl: FuncDecl, req: BridgeRequirement): Boolean {
+        val ownParams = model.paramTypesOf(impl)
+        if (ownParams.size != req.paramTypes.size) return false
+        for (i in ownParams.indices) {
+            val from = req.paramTypes[i]
+            val to = ownParams[i]
+            val fromPrim = isJvmPrimitive(from)
+            val toPrim = isJvmPrimitive(to)
+            when {
+                fromPrim && toPrim -> if (from.descriptor != to.descriptor) return false
+                fromPrim && !toPrim -> return false
+                else -> {}
+            }
+        }
+        val ownRet = model.returnTypeOf(impl)
+        val reqRet = req.returnType
+        if (reqRet.isVoid) return ownRet.isVoid
+        if (isJvmPrimitive(reqRet)) {
+            return isJvmPrimitive(ownRet) && ownRet.descriptor == reqRet.descriptor
+        }
+        return !ownRet.isVoid
+    }
+
+    /** JVM 意义上真正的基本类型（可空基本类型已经装箱成引用，数组是引用）。 */
+    private fun isJvmPrimitive(type: RsfType): Boolean =
+        !type.isArray && !type.isTypeParam && !(type.nullable && type.base.isPrimitive) && type.base.isPrimitive
+
+    /**
+     * 一条桥：按**要求**的描述符收参数，转调实现方法。
+     *
+     * ```
+     * public Object get() {                       // 要求（接口里擦除后的形态）
+     *     return Integer.valueOf(this.get());      // 转调实现（`get() -> int`）
+     * }
+     * ```
+     */
+    private fun emitBridge(cw: ClassWriter, owner: String, impl: FuncDecl, req: BridgeRequirement) {
+        val mv = cw.visitMethod(
+            ACC_PUBLIC or ACC_BRIDGE or ACC_SYNTHETIC, req.name, req.descriptor, null, null,
+        )
+        mv.visitCode()
+        mv.visitVarInsn(ALOAD, 0)
+        val ownParams = model.paramTypesOf(impl)
+        var slot = 1
+        for ((i, from) in req.paramTypes.withIndex()) {
+            loadSlot(mv, from, slot)
+            slot += if (!from.isArray && !from.nullable &&
+                (from.base == RsfBase.LONG || from.base == RsfBase.DOUBLE)
+            ) 2 else 1
+            emitResultCast(mv, from, ownParams.getOrElse(i) { from })
+        }
+        mv.visitMethodInsn(INVOKEVIRTUAL, owner, impl.name, descriptorOf(impl), false)
+        val ownReturn = model.returnTypeOf(impl)
+        if (isJvmPrimitive(ownReturn) && !isJvmPrimitive(req.returnType)) boxValue(mv, ownReturn.base)
+        mv.visitInsn(returnInsn(req.returnType))
+        mv.visitMaxs(0, 0)
+        mv.visitEnd()
+    }
 
     /**
      * 一个接口编译出来的类（阶段 20）。
@@ -2573,6 +2738,9 @@ class BytecodeCompiler(
         // 阶段 20：接口的头与抽象方法的头（`ACC_INTERFACE | ACC_ABSTRACT`）。
         const val ACC_INTERFACE = Opcodes.ACC_INTERFACE
         const val ACC_ABSTRACT = Opcodes.ACC_ABSTRACT
+        // 阶段 20 M4-c：桥方法（泛型擦除后实现签名比接口窄时合成的那一条）
+        const val ACC_BRIDGE = Opcodes.ACC_BRIDGE
+        const val ACC_SYNTHETIC = Opcodes.ACC_SYNTHETIC
 
         // Java 17：既支持 StringConcatFactory 的 invokedynamic（Java 9+），也不至于太新
         const val V17 = Opcodes.V17

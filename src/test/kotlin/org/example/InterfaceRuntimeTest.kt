@@ -464,6 +464,8 @@ class InterfaceRuntimeTest {
     private class MethodShape(val access: Int, val name: String, val descriptor: String) {
         var hasCode = false
         val instructions = ArrayList<String>()
+
+        fun hasFlag(flag: Int): Boolean = (access and flag) != 0
     }
 
     /** 一个类：类头 + 方法。 */
@@ -531,6 +533,137 @@ class InterfaceRuntimeTest {
             0,
         )
         return shape
+    }
+
+    // ============ (i) 跨边界：rsf 对象交给 JDK 代码（阶段 20 M4，父代理，2026-10-15）
+
+    /**
+     * 源码里的实现类**当实参**交给 JDK 代码，由 JDK 回调它——M4 的三条缺口一次全踩到：
+     *
+     * 1. `Collections.sort(xs, new ByValue())` 的候选挑选要认「源码类 → JDK 接口」（M4-a/b，
+     *    修在 `MemberResolver.argCost` 的源码子类型谓词）；
+     * 2. 解释器里 `RsfObject` 不是真的 `Comparator`，得套代理（M4-3）；
+     * 3. 字节码侧 `Comparator.compare(Object,Object)` 要靠合成的桥方法顶到
+     *    `compare(String,String)`（M4-c）。
+     */
+    @Test
+    fun `源码实现类交给 JDK 代码回调时两端一致`() {
+        val program = """
+            import java.util.ArrayList
+            import java.util.Collections
+            import java.util.Comparator
+
+            class ByValue : Comparator&<string> {
+                public fun compare(a : string, b : string) -> int {
+                    var x = parseInt(a) ?: 0
+                    var y = parseInt(b) ?: 0
+                    rtn x - y
+                }
+            }
+
+            fun main() -> void {
+                var xs = new ArrayList&<string>()
+                xs.add("5")
+                xs.add("3")
+                Collections.sort(xs, new ByValue())
+                println(xs.get(0) + "," + xs.get(1))
+                rtn
+            }
+        """.trimIndent() + "\n"
+
+        assertEquals(listOf("3,5"), bothEnds(program, "RsfIfaceJdkCallback"))
+    }
+
+    /**
+     * 同一个缺口走**构造器**实参：`new Thread(rsf 对象)`。
+     *
+     * 断言的是 `isAlive()`（`false`，确定性输出）而不是跑线程——线程调度不可复现，
+     * 而这里要钉的是「实参能过」这件事，不是并发。
+     */
+    @Test
+    fun `rsf 对象当 JDK 构造器实参两端一致`() {
+        val program = """
+            class Job : Runnable {
+                public fun run() -> void {
+                    println("running")
+                }
+            }
+
+            fun main() -> void {
+                var t = new Thread(new Job())
+                println(t.isAlive())
+                rtn
+            }
+        """.trimIndent() + "\n"
+
+        assertEquals(listOf("false"), bothEnds(program, "RsfIfaceJdkCtor"))
+    }
+
+    /**
+     * **rsf 自己声明的泛型接口**也要桥：`interface Box&<T> { fun get() -> T }` 发到类文件里
+     * 是 `get()Ljava/lang/Object;`，而实现类写的是 `get() -> int`。没有桥，经接口回调
+     * （`b.get()` 静态类型是 `Box&<int>`）就是 `AbstractMethodError`。
+     */
+    @Test
+    fun `泛型 rsf 接口的实现类补桥方法两端一致`() {
+        val program = """
+            public interface Box&<T> {
+                fun get() -> T
+            }
+
+            class IntBox : Box&<int> {
+                public fun get() -> int {
+                    rtn 7
+                }
+            }
+
+            fun main() -> void {
+                var b : Box&<int> = new IntBox()
+                println(b.get())
+                rtn
+            }
+        """.trimIndent() + "\n"
+
+        assertEquals(listOf("7"), bothEnds(program, "RsfIfaceGenericBridge"))
+    }
+
+    /** 桥方法本身的形状：`ACC_BRIDGE | ACC_SYNTHETIC`，且实现方法**原样保留**。 */
+    @Test
+    fun `桥方法是 BRIDGE SYNTHETIC 且转调实现`() {
+        val program = """
+            import java.util.Comparator
+
+            class ByValue : Comparator&<string> {
+                public fun compare(a : string, b : string) -> int {
+                    rtn 0
+                }
+            }
+
+            fun main() -> void {
+                rtn
+            }
+        """.trimIndent() + "\n"
+
+        val src = source(program)
+        val dir = tempDir()
+        val out = Rsf.build(Rsf.analyze(src), src, "RsfIfaceBridgeShape", dir)
+        val file = out.classFiles.first { it.name == "ByValue.class" }
+        val shape = shapeOf(file.readBytes())
+
+        val bridge = shape.methods.single {
+            it.name == "compare" && it.descriptor == "(Ljava/lang/Object;Ljava/lang/Object;)I"
+        }
+        assertTrue(bridge.hasFlag(Opcodes.ACC_BRIDGE), "桥必须带 ACC_BRIDGE")
+        assertTrue(bridge.hasFlag(Opcodes.ACC_SYNTHETIC), "桥必须带 ACC_SYNTHETIC")
+        assertEquals(
+            listOf("INVOKEVIRTUAL ByValue.compare(Ljava/lang/String;Ljava/lang/String;)I itf=false"),
+            bridge.instructions,
+        )
+        // 实现方法自己还在，描述符是收窄后的那一份
+        assertTrue(
+            shape.methods.any { it.name == "compare" && it.descriptor == "(Ljava/lang/String;Ljava/lang/String;)I" },
+            "实现方法不能被桥顶掉",
+        )
     }
 
     // ================================================================== helper
