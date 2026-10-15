@@ -944,8 +944,9 @@ fun main() -> void {
 - **接口里只能写方法**（D3）：写字段/变量直接报「接口里只能写方法…」。接口也**不发字段、不发 `<init>`**，
   类文件里是 `ACC_INTERFACE | ACC_ABSTRACT` 的接口，抽象方法没有 `Code`。
 - **接口可以继承接口**（D4）：`public interface Loud : Greeter { }`；继承成环会报错。
-- **类继承本批不做**（D2）：`class A : SomeClass` 会显式报「rsf 现在还不支持类继承（本阶段只做接口）」——
-  `:` 后面只认接口。
+- **类继承**（阶段 25 起支持）：`class A : SomeClass` 里的父类唯一、排最前，后面跟接口
+  （`class D : Base, Greeter`）；父类在阶段 20 那会儿是**明确不做**的（D2），现在按 Kotlin 的写法做完了，
+  见下面的「`open` / `override` / `abstract`：类继承（阶段 25）」。
 - **实现配对**：rsf 接口按签名严格配（参数类型 + 返回类型都对得上），**JVM 接口按名字 + 参数个数配**
   （擦除后的签名 rsf 侧写不出来）；漏实现会列出缺哪些方法，签名/返回类型对不上会说明差在哪。
   **`private` / `protected` / `static` 方法不算实现**（`check` 会拦；不拦的话 JVM 一调就 `AbstractMethodError`）。
@@ -970,6 +971,53 @@ fun main() -> void {
 （类型位置 + 字段/形参位置 + `new Marker::Impl(...)`）。`Marker` 这类注解接口当静态类型时，
 元素**读**发 `getfield Marker$Impl.value`、元素**调用**发 `invokeinterface Marker.value()`。
 探针台 12 个正例（`p1`–`p7` / `a1`–`a6`）四列 stdout 一致且类字节差异 0，见 `BOOTSTRAP.md`。
+
+### `open` / `override` / `abstract`：类继承（阶段 25）
+
+```rsf
+public open class Base(x : int) {
+    public open fun tag() -> string { rtn "base" }       // open：子类可以覆盖
+    public fun only() -> string { rtn "only" }           // 默认 final，子类不能再定义同名的
+}
+
+public abstract class Shape(size : int) {
+    public abstract fun area() -> double                 // 没有函数体，子类必须实现
+}
+
+public class Box&<T>(v : T) : Base(1) { }                // 泛型类也能当父类
+
+public class D(y : int) : Base(y * 2), Greeter {         // 父类唯一且排最前，后面只跟接口
+    public override fun tag() -> string { rtn "derived" }
+    public fun use() -> string { rtn super.tag() + "/" + tag() }   // "base/derived"
+}
+
+public class D2(v : int) : Base(v) {
+    constructor() { super(1) }                           // 次构造的父类委托 = 第一句
+}
+
+fun main() -> void {
+    var base : Base = new D(3)
+    println(base.tag())        // derived（虚分派）
+    println(base.only())       // only
+    rtn
+}
+```
+
+几条定死的规矩（设计见 `DESIGN-25.md`，Q1–Q5 是用户批准过的口径）：
+
+- **默认 final**：不写 `open` 的类不能当父类（报「它没有写 'open'」），不写 `open` 的方法不能覆盖；
+  `override` 成员默认是 open 的，`final` 可以再收回去。禁止字段遮蔽（与 Kotlin 的故意偏离，
+  理由同样是「两端逐字节对拍」）。
+- **构造顺序**：父 `<init>(实参)` → 自己的字段初值 → 构造体；`super(...)` 与 `this(...)` 互斥且只能第一句。
+- **`super` 两种形态**：`super.f()` 走直接父类那一份实现，`super(Greeter).f()` 走指定接口的默认实现
+  （Q1 选了圆括号写法，因为 `<`/`&<` 已经占满了尖括号）。
+- **`abstract`**：`abstract class` 不能 `new`；它的抽象成员由具体子类实现，漏一个就报错并列出缺哪些；
+  抽象成员不能带函数体、不能是 `private`/`static`。
+- **`static` 不继承**：只能写 `类名.成员`；子类里写 `Base.make(...)` 是唯一写法，报错会点明这一点。
+- **可以继承 JDK 类**（Q3）：`class MyError(msg : string) : Exception(msg)` 能直接用，
+  `getMessage()` 这类继承来的方法照常调用、`super.getMessage()` 打到声明类（`java.lang.Throwable`）那一份。
+  父类必须是**非 final** 的类（`StringBuilder` 这类会被编译期拒掉）；`protected` 构造器（`ClassLoader()`）
+  两端都建得出来。**已知边界**见下面「语言限制」里的类继承三条。
 
 ### 注解 `annotation`（阶段 21）
 
@@ -1395,6 +1443,10 @@ gradlew.bat verifyPlugin          :: 官方校验器静态检查
   内建 `@Deprecated`；伴生实体只继承接口，注解也不能当父类型；`rsfSrc/**` 的注解**只到语法层**（自举链能解析、与 Kotlin 版 AST 逐字节一致，但忽略其语义）
 - **类型转换与类型判断**：`(byte) x` 那类窄化仍只能走内置函数；计划里的 `as` / `?as` / `is` / `!is`
   （`DESIGN-24.md`）还没实现
+- **类继承（阶段 25）**：不做多继承 / `sealed` / `data` / `super.字段`；继承 JDK 类时有三条已知限制——
+  ① **不能覆盖 JDK 父类的方法**（解释器把 JDK 父类对象建成真实 JVM 实例，rsf 的 `override` 落不到它身上，
+  所以这种源码在**编译期**就被拒，而不是留到运行期两端分叉）；② **JDK 父类的字段不能写**（只有读的那条路接了实例）；
+  ③ **JDK 父类只挂一跳**（`RsfObject.jdkParent` 只有一个槽位）。另外 `rsfSrc/**` 里的类继承**还没同步到自举链**（K5 待做）
 
 ## 路线图
 
@@ -1434,6 +1486,7 @@ gradlew.bat verifyPlugin          :: 官方校验器静态检查
 | 19d | **函数/方法重载**：顶层函数与类方法共用一套解析（个数 → 类型打分 → 同分报错）、擦除冲突编译期拒绝、`main` 唯一入口 | ✅ 2026-10-11 |
 | 20 | `interface`（抽象/默认方法、接口继承接口、`class X : A, B` 多接口实现、`override`、JVM 接口互操作与桥方法） | ✅ 2026-10-15 |
 | 21 | 注解 `annotation`：元素 + 默认值 + `companion entity` 行为、`@` 使用点、`Marker::Impl` 嵌套类型、字节码与解释器两端逐字节一致 | ✅ 2026-10-15 |
+| 25 | **类继承**（Kotlin 式单继承：`open` / `override` / `abstract` / `final`、`super.f()` 与 `super(接口).f()`、`static` 不继承、允许继承 JDK 类） | ✅ 2026-10-16（K1 前端+语义 / K3 解释器 / K2 字节码 / K4 收口；K5 自举同步 ⏳） |
 | 23 | 显式指针（`&` 取地址 / `*` 解引用，C 风格） | ⏳ 计划（2026-10-15，`DESIGN-23.md`，等预案） |
 | 24 | 类型转换与类型判断（`as` / `?as` / `is` / `!is`） | ⏳ 计划（2026-10-15，`DESIGN-24.md`） |
 
@@ -1700,7 +1753,10 @@ A 编自己得（B），B 再编自己得（C），**B 与 C 的输出 126 个 `
 `put|get|remove|containsKey|containsValue|size|isEmpty|clear` —— 判据是
 `interop/usejava.rsf` 与 `HashMap` 探针的 Kotlin 产物 vs 自举产物 `diff -r` 均为 0
 （`bash build/verify21/bootparity/backend-sweep.sh`）；表外成员仍显式报错，自举源自身也没有接口风格 /
-注解风格）；③ 语言层没有类继承；
+注解风格）；③ **阶段 25 的类继承还没同步到自举链**（Kotlin 版已经能编能跑：`open` / `override` /
+`abstract` / `final` / `super` / 继承 JDK 类，四刀 K1–K4 全落、探针台 `build/verify25/` 全绿；
+自举侧的 `Parser.rsf` / `Backend.rsf` / `Interp.rsf` 还没收这套语法与语义，K5 待做——自举源自身也还没写成
+类继承风格）；
 ④ 工具面（自举侧只有 4 个单文件 CLI，没有统一 CLI / LSP）。
 
 **每个阶段改哪些文件、验收标准、风险、以及要先拍板的 5 个语法点，都在 [`BOOTSTRAP.md`](BOOTSTRAP.md)。**

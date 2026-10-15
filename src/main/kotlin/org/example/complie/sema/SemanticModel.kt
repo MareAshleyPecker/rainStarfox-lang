@@ -22,6 +22,7 @@ import org.example.complie.ast.VarDeclStmt
 import org.example.complie.ast.VarExpr
 import org.example.complie.diag.Diagnostic
 import org.example.complie.diag.Severity
+import org.example.complie.interop.JvmMethod
 import org.example.complie.interop.ResolvedMember
 import org.example.complie.interop.ResolvedMethod
 import org.example.complie.ir.LoweredFunction
@@ -123,6 +124,40 @@ data class SuperClass(
 }
 
 /**
+ * `super.f(实参)` 解析到的**调用目标**（阶段 25 K1；K4 缺口 C 扩成两支）。
+ *
+ * 为什么不是 [UserMember.Method]：`super.getMessage()` 这种调用打的是 **JDK 父类**上
+ * 的方法，它没有 rsf 的 `FuncDecl` 可指——只有一条从 classpath 读出来的
+ * [ResolvedMethod]。
+ *
+ * 两支的**共同语义**（DESIGN-25 §7，缺口 C）：`super.` 一律是**非虚调用**——
+ * 打到**声明类那一份**实现，不许按运行期类再查一遍。rsf 父类上那条
+ * `INVOKESPECIAL` 本来就是非虚的；JDK 父类这条只能靠 [Jvm.owner] 是**声明类**
+ * 来保证（解释器侧对应 `Class.getDeclaredMethod` + `invoke`，不是按运行期类找）。
+ *
+ * `f` 若是 rsf 接口的默认方法（`super.<接口>.f()`），[Rsf.interfaceOwner] /
+ * [Jvm.interfaceOwner] 为 true，后端据此发 `INVOKEINTERFACE`（仍带非虚语义）。
+ */
+sealed interface SuperCall {
+    /** 目标是 rsf 父类（或 rsf 接口默认方法）上的方法：有 [FuncDecl] 可指。 */
+    data class Rsf(
+        /** 声明这个方法的类/接口（INVOKESPECIAL/INVOKEINTERFACE 的 owner）。 */
+        val className: String,
+        val decl: FuncDecl,
+        /** 声明者是**接口**（默认方法）⇒ 发 `INVOKEINTERFACE`。 */
+        val interfaceOwner: Boolean = false,
+    ) : SuperCall
+
+    /**
+     * 目标是 classpath 上那个 JDK 类里的方法（阶段 25 K4，缺口 C）。
+     *
+     * [member] 的 `owner` 必须是**声明类**（`java/lang/Throwable.getMessage`），
+     * 不是接收者的运行时类——这正是非虚调用的落点。
+     */
+    data class Jvm(val member: ResolvedMethod) : SuperCall
+}
+
+/**
  * 一条**父类构造委托**边（阶段 25 K1）：`constructor(...) { super(实参) ... }` 里那句。
  *
  * 和 [CtorDelegation]（`this(...)`）是一对，但语义不同：`this(...)` 是同类另一个构造器
@@ -130,13 +165,13 @@ data class SuperClass(
  * （实参挂在 [stmt] 上，在委托方自己的帧里求值）。
  *
  * [target] 为 null 只在一种情况下出现：父类来自 classpath（JDK 类）——它的构造器
- * 没有 rsf 的 `FuncDecl` 可指，K2/K3 那时按 [superClass] 的内部名 + 实参类型自己发
- * `INVOKESPECIAL <init>`。rsf 父类的构造器**永远非 null**。
+ * 没有 rsf 的 `FuncDecl` 可指，那时选中的是 [jvmCtor]（一个 `JvmMethod`），
+ * K2/K3 都只读它、自己不再挑一遍（阶段 25 K4 缺口 D）。rsf 父类的构造器**永远非 null**。
  */
 data class SuperDelegation(
     /** 解析出来的父类。 */
     val superClass: SuperClass,
-    /** 父类那个被选中的构造器；JDK 父类为 null。 */
+    /** 父类那个被选中的构造器；JDK 父类为 null（那时看 [jvmCtor]）。 */
     val target: FuncDecl?,
     /**
      * 实参表达式，**在委托方自己的帧里求值**。
@@ -148,6 +183,14 @@ data class SuperDelegation(
     val arguments: List<Expr>,
     /** 写 `super(...)` 的那条语句；主构造（类头实参）与隐式 `super()` 时为 null。 */
     val stmt: SuperCallStmt?,
+    /**
+     * JDK 父类那一趟选中的 `<init>`（阶段 25 K4，缺口 D）；rsf 父类时为 null。
+     *
+     * 选择放在**这一条边**上而不是「类 → 构造器」的一张表里：同一个类里两个构造器
+     * 可以委托给父类**不同的**构造器（`class E : Exception() { constructor(m : string)
+     * { super(m) } }` 那一支上），按类存会互相覆盖。挑一次、两个后端都只读这一份。
+     */
+    val jvmCtor: JvmMethod? = null,
 )
 
 /**
@@ -222,7 +265,7 @@ class ClassModel(
      * 能单独求值的表达式。后端只要从这张表里拿「哪个类/接口的哪个方法」就够，
      * 不必再看 AST 上的 `SuperExpr`。
      */
-    val superCalls: IdentityHashMap<MemberExpr, UserMember.Method> = IdentityHashMap(),
+    val superCalls: IdentityHashMap<MemberExpr, SuperCall> = IdentityHashMap(),
     /** 构造器 → 它的**父类构造委托**边（`super(...)`）；不写的构造器不在表里。 */
     val superDelegations: IdentityHashMap<FuncDecl, SuperDelegation> = IdentityHashMap(),
     /**
@@ -269,7 +312,7 @@ class ClassModel(
     fun implicitSuperDelegationOf(decl: ClassDecl): SuperDelegation? = implicitSuperDelegations[decl]
 
     /** `super.f()` 这条调用解析到的目标；不是 super 接收者就是 null。 */
-    fun superCallOf(expr: MemberExpr): UserMember.Method? = superCalls[expr]
+    fun superCallOf(expr: MemberExpr): SuperCall? = superCalls[expr]
 
     /** 类里隐式 this 调用**JDK 父类继承来的方法**的解析结果；不是那种调用就是 null。 */
     fun implicitJvmCallOf(expr: CallExpr): ResolvedMethod? = implicitJvmCalls[expr]

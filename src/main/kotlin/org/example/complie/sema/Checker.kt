@@ -497,7 +497,7 @@ class Checker(
     private val implicitSuperDelegations = IdentityHashMap<ClassDecl, SuperDelegation>()
 
     /** `super.方法(...)` / `super(接口).方法(...)` → 解析到的方法（两个后端只读这一份）。 */
-    private val superCalls = IdentityHashMap<MemberExpr, UserMember.Method>()
+    private val superCalls = IdentityHashMap<MemberExpr, SuperCall>()
 
     /** 隐式 this 调用**JDK 父类继承来**的方法（G5，阶段 25 K1）。 */
     private val implicitJvmCalls = IdentityHashMap<CallExpr, ResolvedMethod>()
@@ -687,6 +687,19 @@ class Checker(
                     ref.at,
                 )
             }
+            // final 的 JDK 类不能当父类（阶段 25 K4，缺口 A）。判据只能来自 classpath：
+            // `class SB : StringBuilder(...)` 解释器侧跑得通（rsf 的父类只是一条模型边），
+            // 字节码侧却是**真的** extends——JVM 装载时抛
+            // `IncompatibleClassChangeError: class SB cannot inherit from final class`。
+            if (jvm.isFinal) {
+                throw err(
+                    "$where 不能继承 '$display'：它在 JDK 里是 **final** 的（不可继承）。" +
+                        "两端都会崩——解释器现在放行，字节码产物一到 JVM 装载就抛 " +
+                        "IncompatibleClassChangeError（DESIGN-25 §4）。换一个非 final 的父类，" +
+                        "或者把这层关系写成**组合**（持有一个 '$display' 字段）",
+                    ref.at,
+                )
+            }
             // 抽象 JDK 类（`Thread` 之类）照样可以继承：抽象方法由子类实现（DESIGN-25 §3）
             jvm.typeParamCount?.let { checkArity(jvm.simpleName, it, args, ref.at) }
             classParentJvm[cls] = jvm
@@ -846,16 +859,54 @@ class Checker(
      * 是「接口方法」，父类自己的 abstract 方法属于类链）。
      */
     private fun checkUnimplementedInheritedAbstract(info: ClassInfo) {
+        // 抽象类不查：它本来就不该被 `new`，JDK 父类那几条抽象方法留给它这一支上的
+        // 具体子类去实现——那条路会在子类上再查一遍（[unimplementedJvmParentAbstract]
+        // 沿 rsf 父链找 JDK 父类，子类照样绕不过去）。
         if (info.decl.isAbstract) return
-        val missing = unimplementedAbstractMembers(info, includeInterfaces = false)
-        if (missing.isEmpty()) return
-        throw err(
-            "类 '${info.decl.name}' 还没有实现父类继承来的全部抽象方法，还缺 ${missing.size} 个：\n  - " +
-                missing.joinToString("\n  - ") +
-                "\n（在类 '${info.decl.name}' 里写一个同名、同参数类型的方法把它实现掉，" +
-                "或者把本类也写成 'abstract class ${info.decl.name}(...)'）",
-            info.decl.at,
-        )
+        val missing = unimplementedAbstractMembers(info, includeInterfaces = false) +
+            unimplementedJvmParentAbstract(info)
+        if (missing.isNotEmpty()) {
+            throw err(
+                "类 '${info.decl.name}' 还没有实现父类继承来的全部抽象方法，还缺 ${missing.size} 个：\n  - " +
+                    missing.joinToString("\n  - ") +
+                    "\n（在类 '${info.decl.name}' 里写一个同名、同参数类型的方法把它实现掉，" +
+                    "或者把本类也写成 'abstract class ${info.decl.name}(...)'）",
+                info.decl.at,
+            )
+        }
+    }
+
+    /**
+     * JDK 父**类**链上还没有被实现的抽象方法（阶段 25 K4，缺口 B）。
+     *
+     * 接口那一支由 [checkClassCovers] 报，rsf 父类那一支由 [unimplementedAbstractMembers]
+     * 报——这一支谁都没管：`class L : AbstractList<int>()` 会一路编到 JVM 装载之后才
+     * 抛 `AbstractMethodError`，而解释器侧因为父类实例是**真实**的 JDK 对象、
+     * 拿不到抽象方法体，表现完全不同。所以在这里一次性补齐。
+     *
+     * 判据与 [unimplementedAbstractMembers] 里的 JVM 口径一致：**名字 + 参数个数**
+     * （JDK 方法的签名是擦除形态，参数类型逐个比会假阳性）。`java/lang/Object`
+     * 自己的方法（[isObjectMethod]）天然跳过，`hashCode` / `equals` 不会被误报。
+     */
+    private fun unimplementedJvmParentAbstract(info: ClassInfo): List<String> {
+        val parent = jvmParentOf(info) ?: return emptyList()
+        val out = LinkedHashMap<String, String>()
+        // 从**直接**父类往上整条 JDK 链：`AbstractList` 的抽象方法可能是从
+        // `AbstractCollection` 继承来的，只认一层会漏。
+        for (jc in ClassPath.hierarchy(parent.internalName)) {
+            for (m in jc.methods) {
+                if (!m.isAbstract || m.isStatic) continue
+                if (isObjectMethod(m)) continue
+                val key = signatureKey(m.name, m.paramTypes)
+                if (out.containsKey(key)) continue
+                val implemented = methodOnChain(info, m.name) { own ->
+                    !own.isConstructor && !own.isStatic && !own.isAbstract &&
+                        own.params.size == m.paramTypes.size
+                } != null
+                if (!implemented) out[key] = "${m.name}(${m.paramTypes.joinToString(", ") { it.rsfName }})"
+            }
+        }
+        return out.values.toList()
     }
 
     /**
@@ -914,6 +965,35 @@ class Checker(
     }
 
     /**
+     * 父类构造实参的检查与**选中**（阶段 25 K4，缺口 D）。
+     *
+     * 返回值是「rsf 父类那个构造器 + JDK 父类那个选中 `<init>`」这一对——调用方立刻
+     * 把它们挂到**那条委托边**（[SuperDelegation]）上，两个后端都只读那一份，不再各自挑一遍。
+     * 这正是 K4 要收的口：`BytecodeCompiler.jdkCtorScore` 与 `Interpreter.ctorScore`
+     * 是同一套打分的**两份副本**，两边各有各的平局规则（`minByOrNull` 的先后、
+     * `descriptor == descriptor` 的快捷路径），一旦对不上就是「两端产物不一致」这种最坏的分叉。
+     */
+    private fun checkedParentCall(
+        info: ClassInfo,
+        args: List<Expr>,
+        at: SourceLine,
+        what: String,
+    ): Pair<FuncDecl?, JvmMethod?> {
+        val before = selectedParentCtor
+        selectedParentCtor = null
+        val decl = checkParentArguments(info, args, at, what)
+        val picked = selectedParentCtor
+        selectedParentCtor = before
+        return decl to picked
+    }
+
+    /**
+     * 上一次 [checkParentArguments] 在 JDK 父类上挑中的那个 `<init>`；rsf 父类或没跑过时是
+     * null。它只是 [`checkedParentCall`] 的**临时寄存器**（Kotlin 里没有多返回值），
+     * 出了那一趟就交回给调用方、挂到那条委托边上。
+     */
+    private var selectedParentCtor: JvmMethod? = null
+    /**
      * 父类构造实参的检查与**选中**（阶段 25 K1）。
      *
      * [args] 在当前作用域里求类型（主构造那条用的是主构造的参数作用域）；rsf 父类走
@@ -959,12 +1039,14 @@ class Checker(
                     )
                 }
             }
+            selectedParentCtor = ctor
             return null
         }
         val parentInfo = classTable[decl.name]
             ?: throw err("内部错误：父类 '${decl.name}' 不在类表里", at)
         if (parentInfo.constructors.isEmpty()) {
             // 父类一个构造器都没写 ⇒ 等价于一个隐式无参构造器
+            selectedParentCtor = null
             if (args.isEmpty()) return null
             throw err(
                 "父类 '${decl.name}' 没写构造器，只能 super()（或者 ${decl.name}()），" +
@@ -972,6 +1054,7 @@ class Checker(
                 at,
             )
         }
+        selectedParentCtor = null
         val subst = substitutionFor(parentInfo, parent.args)
         return resolveCtor(parentInfo, args, argTypes, subst, at)
     }
@@ -1057,8 +1140,8 @@ class Checker(
             val headerArgs = info.decl.superArgs
             val what = "父类 '${parent.name}' 的构造实参"
             checkParentArgPurity(info, headerArgs, what)
-            val target = checkParentArguments(info, headerArgs, primary.at, what)
-            superDelegations[primary] = SuperDelegation(parent, target, headerArgs, null)
+            val (target, jvmCtor) = checkedParentCall(info, headerArgs, primary.at, what)
+            superDelegations[primary] = SuperDelegation(parent, target, headerArgs, null, jvmCtor)
             return
         }
         if (info.decl.superArgs.isNotEmpty()) {
@@ -1068,8 +1151,9 @@ class Checker(
                 val headerArgs = info.decl.superArgs
                 val what = "父类 '${parent.name}' 的构造实参"
                 checkParentArgPurity(info, headerArgs, what)
-                val target = checkParentArguments(info, headerArgs, info.decl.at, what)
-                implicitSuperDelegations[info.decl] = SuperDelegation(parent, target, headerArgs, null)
+                val (target, jvmCtor) = checkedParentCall(info, headerArgs, info.decl.at, what)
+                implicitSuperDelegations[info.decl] =
+                    SuperDelegation(parent, target, headerArgs, null, jvmCtor)
                 return
             }
             throw err(
@@ -1093,16 +1177,17 @@ class Checker(
         for (ctor in info.constructors) {
             if (ctor.isPrimary) continue
             if (ctorDelegations[ctor] != null || superDelegations[ctor] != null) continue
-            val target = checkParentArguments(
+            val (target, jvmCtor) = checkedParentCall(
                 info, emptyList(), ctor.at, "父类 '${parent.name}' 的隐式 super()",
             )
-            superDelegations[ctor] = SuperDelegation(parent, target, emptyList(), null)
+            superDelegations[ctor] = SuperDelegation(parent, target, emptyList(), null, jvmCtor)
         }
         if (info.constructors.isEmpty() && implicitSuperDelegations[info.decl] == null) {
-            val target = checkParentArguments(
+            val (target, jvmCtor) = checkedParentCall(
                 info, emptyList(), info.decl.at, "父类 '${parent.name}' 的隐式 super()",
             )
-            implicitSuperDelegations[info.decl] = SuperDelegation(parent, target, emptyList(), null)
+            implicitSuperDelegations[info.decl] =
+                SuperDelegation(parent, target, emptyList(), null, jvmCtor)
         }
     }
 
@@ -1149,9 +1234,9 @@ class Checker(
                 stmt.at,
             )
         }
-        val target = checkParentArguments(info, stmt.arguments, stmt.at, "super(...) 的")
+        val (target, jvmCtor) = checkedParentCall(info, stmt.arguments, stmt.at, "super(...) 的")
         checkParentArgPurity(info, stmt.arguments, "super(...) 的实参")
-        superDelegations[fn] = SuperDelegation(parent, target, stmt.arguments, stmt)
+        superDelegations[fn] = SuperDelegation(parent, target, stmt.arguments, stmt, jvmCtor)
     }
 
     /**
@@ -1188,17 +1273,35 @@ class Checker(
             return checkSuperInterfaceDefault(info, target, expr, args, sup)
         }
 
+        val argTypes = args.map { type(it) }
+        // 阶段 25 K1（G4）+ K4（缺口 C）：查找顺序是 **rsf 父类链在前、JDK 父类链在后**。
+        // 顺序不是随口定的——rsf 父链上有一份实现时，`super.f()` 就该打到那一份
+        // （`class C : Base` 里 Base 自己写了 f，不能越过它去打 JDK 祖父的那一份）；
+        // 只有 rsf 链上根本没这个名字，才落到 JDK 父类链
+        // （`class MyErr : Exception` 里的 `super.getMessage()` 声明在 `java/lang/Throwable`）。
+        // 两端都按「非虚调用」打：目标是**声明类**那一份实现（DESIGN-25 §7）。
         val found = declaredMethodOnChain(info, expr.name, includeSelf = false) { !it.isConstructor }
-            ?: throw err(
+        if (found == null) {
+            inheritedJvmMethod(info, expr.name, argTypes)?.let { jvm ->
+                superCalls[expr] = SuperCall.Jvm(
+                    ResolvedMethod(jvm, ClassPath.find(jvm.owner)?.isInterface == true),
+                )
+                return if (jvm.returnType.isVoid) RsfType.VOID else jvm.returnType
+            }
+            throw err(
                 "类 '${info.decl.name}' 的父类链上没有方法 '${expr.name}'：" +
                     "super.${expr.name}(...) 走的是父类那一份实现" +
-                    if (info.methods[expr.name] != null) {
+                    (if (info.methods[expr.name] != null) {
                         "（'${expr.name}' 只在 '${info.decl.name}' 自己这里，直接写 ${expr.name}(...) 就行）"
+                    } else if (jvmParentOf(info) != null) {
+                        "（JDK 父类 '${jvmParentOf(info)!!.dottedName}' 里也没有这个名字；" +
+                            "static 方法不继承，只能写 类名.方法(...)，DESIGN-25 §3）"
                     } else {
                         ""
-                    },
+                    }),
                 expr.at,
             )
+        }
         val (owner, method) = found
         // 阶段 25 K1（G4）：父类方法的签名要按**它的类型参数**代换成子类里的具体类型
         // （`class IntHolder : Holder&<int>` 的 `super.get()` 给回 int）。
@@ -1212,7 +1315,6 @@ class Checker(
                 expr.at,
             )
         }
-        val argTypes = args.map { type(it) }
         val chosen = resolveOverload(
             what = "调用 '${expr.name}'", candidates = sameArity, args = args,
             argTypes = argTypes, at = expr.at,
@@ -1226,7 +1328,7 @@ class Checker(
                 expr.at,
             )
         }
-        superCalls[expr] = UserMember.Method(owner.decl.name, picked)
+        superCalls[expr] = SuperCall.Rsf(owner.decl.name, picked)
         if (picked.ret.mayError) {
             requireErrorHandled(picked.name, "!${picked.ret.type.display()}", expr, expr.at)
         }
@@ -1297,7 +1399,7 @@ class Checker(
         ) { c, i -> memberMismatch(expr.name, c, i, argTypes[i]) }
         val wanted = pickable.first { it.second === chosen }.first
         val method = wanted.decl!!
-        superCalls[expr] = UserMember.Method(
+        superCalls[expr] = SuperCall.Rsf(
             className = interfaceOwnerTable[method]?.name ?: wanted.ownerName,
             decl = method,
             interfaceOwner = true,
@@ -4025,6 +4127,22 @@ class Checker(
         return resolver.findField(jvm.internalName, name, wantStatic = false)
     }
 
+    /**
+     * 类链上叫 [name] 的**静态**方法声明在哪里（自己优先，然后沿 rsf 父链由近到远）。
+     *
+     * 阶段 25 K4（缺口 F）：static 不继承，子类里查不到它——这正是
+     * `class Child : Base` 写 `Child.make()` 时要拦住的那种调用。
+     * 光报「没有方法 'make'」会跟成员提示（提示里正好列着 `make`）自相矛盾，
+     * 所以这里把声明处找出来，好把话说清楚（DESIGN-25 §3）。
+     */
+    private fun staticOnChain(info: ClassInfo, name: String): Pair<ClassInfo, FuncDecl>? {
+        info.methods[name]?.firstOrNull { it.isStatic }?.let { return info to it }
+        for (anc in ancestorsOf(info).reversed()) {
+            anc.methods[name]?.firstOrNull { it.isStatic }?.let { return anc to it }
+        }
+        return null
+    }
+
     private fun checkUserMember(
         info: ClassInfo,
         expr: MemberExpr,
@@ -4087,6 +4205,18 @@ class Checker(
             // 继承的（`var d : Dog = new Dog(); d.shout()`，shout 写在 Greeter 里带体）。
             // 静态调用不走这条路——接口方法都是实例方法。
             if (!wantStatic) checkInheritedInterfaceDefault(info, expr, subst)?.let { return it }
+            // 阶段 25 K4（缺口 F）：名字是类链上某个**静态**方法时，别报「没有方法」+
+            // 成员提示（提示里正好列着这个名字，读起来自相矛盾）——static 不继承，
+            // 只能写在**声明它的那个类**上（DESIGN-25 §3）。
+            staticOnChain(info, expr.name)?.let { (owner, _) ->
+                val where = if (owner === info) "本类" else "类 '${owner.decl.name}'"
+                throw err(
+                    "$who 里没有方法 '${expr.name}'：'${expr.name}' 是${where}的**静态**方法，" +
+                        "static 不继承——子类里没有它，要写 '${owner.decl.name}.${expr.name}(...)'" +
+                        "（DESIGN-25 §3）",
+                    expr.at,
+                )
+            }
             throw err(
                 "$who 里没有方法 '${expr.name}'" + memberNamesHint(info, fields = false),
                 expr.at,

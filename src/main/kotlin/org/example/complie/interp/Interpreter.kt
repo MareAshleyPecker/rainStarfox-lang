@@ -26,6 +26,7 @@ import org.example.complie.ast.ThisExpr
 import org.example.complie.ast.UnaryExpr
 import org.example.complie.ast.VarExpr
 import org.example.complie.diag.RsfError
+import org.example.complie.interop.JvmMethod
 import org.example.complie.interop.ResolvedField
 import org.example.complie.interop.ResolvedMethod
 import org.example.complie.ir.IAssign
@@ -54,9 +55,13 @@ import org.example.complie.sema.ObjectFormat
 import org.example.complie.sema.RsfBase
 import org.example.complie.sema.RsfType
 import org.example.complie.sema.SemanticModel
+import org.example.complie.sema.SuperCall
 import org.example.complie.sema.SuperDelegation
 import org.example.complie.sema.UserMember
+import org.objectweb.asm.ClassWriter
+import org.objectweb.asm.Opcodes
 import java.io.PrintStream
+import java.lang.invoke.MethodHandles
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Paths
@@ -606,13 +611,20 @@ class Interpreter(
         //
         // 放在 `members` 之前：`super.f()` 走的是 Checker 里另一条解析路径（父链 / 接口
         // 默认方法），members 表里没有它——落下去会到 `memberOf` 那里抛「没有解析到目标」。
-        model.classModel.superCallOf(expr)?.let { member ->
+        model.classModel.superCallOf(expr)?.let { superCall ->
             // 接收者恒是 `this`（`super` 只能当调用的接收者，源码里没有别的写法）
             val self = thisObject(slots)
             val args = expr.arguments.orEmpty().map { eval(it, slots, body) }
-            // `super(接口).f()` 选中的是**接口的默认方法**：直接跑那一份体。这里不能走
-            // [callInterfaceMethod]——那是虚分派，会去找运行期实现，`super` 的意思就没了。
-            return callMethod(member.className, member.decl, self, args)
+            return when (superCall) {
+                // 父类（或接口默认方法）那一份是 **rsf 代码**，直接跑它那一份体。
+                // 这里不能走 [callInterfaceMethod]——那是虚分派，会去找运行期实现，
+                // `super` 的意思就没了。
+                is SuperCall.Rsf -> callMethod(superCall.className, superCall.decl, self, args)
+                // 阶段 25 K4（缺口 C）：父类那一份在 **classpath** 上（`super.getMessage()`
+                // 声明于 `java/lang/Throwable`）。必须**非虚**调用——打到声明类那一份，
+                // 不许按运行期类再查一遍（DESIGN-25 §7）。
+                is SuperCall.Jvm -> callSuperJvmMethod(superCall, self, args)
+            }
         }
 
         // 用户自定义类的成员（阶段 12）：先看这张表，再走 JVM 反射那条路
@@ -945,8 +957,85 @@ class Interpreter(
         return callMethod(self.className, impl, self, args)
     }
 
-    /** 先在**真实类的类链**（自己 → 直接父类 → …）的方法表里找实现，再沿接口链找带体的默认方法（[callInterfaceMethod]）。 */
-    private fun findInterfaceImplementation(
+    /**
+     * `super.f(...)` 打在 **classpath 上的父类方法**身上（阶段 25 K4，缺口 C）。
+     *
+     * 为什么不能像 [memberOf] 那条路一样 `owner.getDeclaredMethod(...)` 然后 `invoke`：
+     * 反射 `invoke` 永远是**虚**的。`super.getMessage()` 的语义是「打到
+     * `java/lang/Throwable` 那一份」，而反射会按运行期类再查一遍、可能命中子类
+     * 覆盖（rsf 覆盖 JDK 方法暂不支持，但这条路一旦写成虚的，将来就成了隐蔽的错）。
+     * 所以用 `MethodHandles.findSpecial`：`specialCaller` 恰好是 **rsf 生成的子类**，
+     * JVM 解析规则下它只能绑到父类的声明上——与字节码侧的 `INVOKESPECIAL` 是同一条指令语义。
+     *
+     * 接收者是**真的** JDK 实例（挂在 [RsfObject.jdkParent] 上，K3 起就如此），
+     * 所以不需要任何拆箱/包装转换：实参由 [adaptJdkArg] 按声明类型对齐即可。
+     */
+    /**
+     * `super.f(实参)` 落到 **JDK 父类**那一份实现上（阶段 25 K4，缺口 C）。
+     *
+     * 语义是 `INVOKESPECIAL`：**打到声明类那一份**，绝不按运行时类重新解析——所以方法
+     * 对象是从 [JvmMethod.owner]（Checker 按父类链选出来的**最近声明类**，例如
+     * `java/lang/Throwable.getMessage`）上取的，而不是从接收者的运行时类上取的。
+     *
+     * 解释器里发不出真正的 `invokespecial` 指令：`java.base` 没有向无名模块 opens
+     * （`MethodHandles.privateLookupIn` 抛 `IllegalAccessException`，`publicLookup` 的
+     * `findSpecial` 报 `no private access for invokespecial`），这里是反射 `invoke`。
+     * 它**不会**在这里分叉成虚分派，一条链式事实就能定死：
+     * 1. 接收者是 [RsfObject.jdkParent]，它的运行时类就是**直接父类**本身（或者缺口 E
+     *    那种只多带一个构造器的桥类）——rsf 类在解释器里没有 `.class`，覆盖不了 JDK
+     *    方法（n16 明确拒绝），所以运行时类之下没有任何覆盖点；
+     * 2. [JvmMethod.owner] 是父类链上**最近**的声明类（[MemberResolver] 沿
+     *    `ClassPath.hierarchy` 从直接父类往上找的第一个匹配）；
+     * 3. 于是「从接收者运行时类往上找第一个声明类」的结果必然是 [JvmMethod.owner] 本身。
+     *
+     * 也就是说这里与字节码侧发的 `INVOKESPECIAL <declaringClass>` 等价：都不看运行时类
+     * 有没有更近的覆盖，差别只在于 JVM 是拿指令保证的、这里是拿上面那条事实保证的。
+     */
+    private fun callSuperJvmMethod(
+        call: SuperCall.Jvm,
+        self: RsfObject,
+        args: List<Any?>,
+    ): Any? {
+        val m = call.member.method
+        val receiver = jdkReceiver(self)
+        val owner = try {
+            Class.forName(m.owner.replace('/', '.'))
+        } catch (e: ClassNotFoundException) {
+            throw RsfError(
+                "interp",
+                "内部错误：找不到父类 '${m.owner.replace('/', '.')}'",
+                -1, -1, null,
+            )
+        }
+        val paramClasses = m.paramTypes.map { toJavaClass(it) }.toTypedArray()
+        val target = try {
+            publicMethod(owner, m.name, paramClasses)
+        } catch (e: NoSuchMethodException) {
+            throw RsfError(
+                "interp",
+                "内部错误：父类 '${m.owner.replace('/', '.')}' 里没有方法 '${m.name}'",
+                -1, -1, null,
+            )
+        }
+        val actual = args.mapIndexed { i, v ->
+            adaptJdkArg(v, m.paramTypes.getOrNull(i))
+        }.toTypedArray()
+        return try {
+            target.invoke(receiver, *actual)
+        } catch (e: java.lang.reflect.InvocationTargetException) {
+            // 父类方法自己抛的异常原样往外扔（和直接调 Java 保持一致）
+            throw e.cause ?: e
+        } catch (e: ReflectiveOperationException) {
+            throw RsfError(
+                "interp",
+                "内部错误：调不到父类 '${m.owner.replace('/', '.')}' 的 '${m.name}'：" +
+                    (e.message ?: e.javaClass.simpleName),
+                -1, -1, null,
+            )
+        }
+    }
+
+    /** 先在**真实类的类链**（自己 → 直接父类 → …）的方法表里找实现，再沿接口链找带体的默认方法（[callInterfaceMethod]）。 */    private fun findInterfaceImplementation(
         runtimeClass: String,
         name: String,
         wanted: List<RsfType>,
@@ -1159,7 +1248,7 @@ class Interpreter(
             // 字段初值里的 `this.字段` / 裸字段名都从这个槽拿对象。
             val frame = arrayOfNulls<Any?>(1)
             frame[0] = obj
-            model.classModel.implicitSuperDelegationOf(decl)?.let { runSuperDelegation(it, obj, frame, body) }
+            model.classModel.implicitSuperDelegationOf(decl)?.let { runSuperDelegation(it, obj, frame, body, decl) }
             runFieldInitializers(decl, obj, frame, body)
         } else {
             runConstructor(decl, ctor, obj, args)
@@ -1197,7 +1286,7 @@ class Interpreter(
                 // - 次构造体第一句的 `super(实参)` 有 [ISuperDelegate]，但那条指令是**空**的
                 //   （见指令循环那一段），真正干活的就是这一句。
                 // 实参在本构造器的帧里求值——和 Java 一样（`super(实参)` 的实参先算）。
-                model.classModel.superDelegationOf(ctor)?.let { runSuperDelegation(it, obj, frame, lowered) }
+                model.classModel.superDelegationOf(ctor)?.let { runSuperDelegation(it, obj, frame, lowered, decl) }
                 // 阶段 21：伴生类的元素字段值来自构造器形参槽，实测参数个数少于元素表的
                 // （`new Marker("hi")`）时要先把缺的元素补上——语义层不补齐，补齐是后端的事
                 val annotation = model.companionAnnotationOf(decl.name)
@@ -1288,17 +1377,20 @@ class Interpreter(
         obj: RsfObject,
         frame: Array<Any?>,
         owner: LoweredFunction,
+        decl: ClassDecl,
     ) {
         val args = sup.arguments.map { eval(it, frame, owner) }
-        val decl = sup.superClass.declaration
-        if (sup.target != null && decl != null) {
-            runConstructor(decl, sup.target, obj, args)
+        val parentDecl = sup.superClass.declaration
+        if (sup.target != null && parentDecl != null) {
+            runConstructor(parentDecl, sup.target, obj, args)
             return
         }
-        if (decl != null) {
+        if (parentDecl != null) {
             // 父类是 rsf 类，但它一个构造器都没写：父类那一跳只剩它自己的父类 + 它自己的字段初值
-            model.classModel.implicitSuperDelegationOf(decl)?.let { runSuperDelegation(it, obj, frame, owner) }
-            runFieldInitializers(decl, obj, frame, owner)
+            model.classModel.implicitSuperDelegationOf(parentDecl)?.let {
+                runSuperDelegation(it, obj, frame, owner, parentDecl)
+            }
+            runFieldInitializers(parentDecl, obj, frame, owner)
             return
         }
         obj.jdkParent = instantiateJdkParent(sup, args)
@@ -1308,23 +1400,14 @@ class Interpreter(
      * 造一个 **JDK 父类实例**（阶段 25 K3）：`class MyError(m : string) : Exception(m)` 的那个
      * `java.lang.Exception`。
      *
-     * 构造器的选法和 Checker 是同一个口径（精确类型优先、加宽其次、并列取先声明的），只是这里
-     * 手里只有**实参的值**——静态类型从语义模型取（[SemanticModel.typeOf]），逐个候选算代价
-     * （[ctorScore]）。候选顺序取 `ClassPath` 里类文件自己的顺序，**不用**
-     * `getConstructors()`：那个顺序 JVM 没有承诺，同一份源码换个 JDK 可能选到另一个构造器，
-     * 两端就分叉了。
+     * 构造器**不再在这里挑**（阶段 25 K4，缺口 D）：Checker 已经按同一套打分选好了一条并挂在
+     * **这条委托边**上（[org.example.complie.sema.SuperDelegation.jvmCtor]），字节码侧也读同一份。
+     * 从前这里（`ctorScore`）与 `BytecodeCompiler.jdkCtorScore` 是两份副本，平局规则稍有出入，
+     * 同一份源码两端就会建出**不同的父类状态**。
      */
     private fun instantiateJdkParent(sup: SuperDelegation, args: List<Any?>): Any {
         val internal = sup.superClass.internalName
-        val jvm = org.example.complie.interop.ClassPath.find(internal)
-            ?: throw RsfError(
-                "interp", "内部错误：JDK 父类 '$internal' 不在 classpath 上",
-                -1, -1, null,
-            )
-        val argTypes = sup.arguments.map { model.typeOf(it) }
-        val chosen = jvm.constructors
-            .filter { it.paramTypes.size == args.size }
-            .minByOrNull { ctor -> ctorScore(ctor, argTypes) }
+        val chosen = sup.jvmCtor
             ?: throw RsfError(
                 "interp",
                 "内部错误：${sup.superClass.display} '${sup.superClass.name}' 里没有匹配的构造器",
@@ -1332,37 +1415,43 @@ class Interpreter(
             )
         val owner = Class.forName(internal.replace('/', '.'))
         val paramClasses = chosen.paramTypes.map { toJavaClass(it) }.toTypedArray()
-        val javaCtor = owner.getDeclaredConstructor(*paramClasses).also { it.trySetAccessible() }
+        val javaCtor = owner.getDeclaredConstructor(*paramClasses)
         val adapted = args.mapIndexed { i, v ->
             adaptJdkArg(v, chosen.paramTypes.getOrNull(i))
         }.toTypedArray()
+        // 构造器能反射调用就直接调；`protected` 而 `java.base` 又没 opens 的
+        // （`java.lang.ClassLoader()`，见缺口 E）`trySetAccessible()` 会返回 false，
+        // 这时改走子类桥——父类构造器**真的跑**，不是绕过它。
+        if (!javaCtor.trySetAccessible()) {
+            return JdkParentBridge.newInstance(internal, chosen.descriptor, paramClasses, adapted, chosen.paramTypes)
+        }
         return try {
             javaCtor.newInstance(*adapted)
         } catch (e: java.lang.reflect.InvocationTargetException) {
             // 父类构造器自己抛的异常原样往外扔（和直接调 Java 保持一致）
             throw e.cause ?: e
+        } catch (e: NoSuchMethodException) {
+            throw RsfError(
+                "interp",
+                "内部错误：调不到 JDK 父类 '$internal' 的构造器 ${chosen.descriptor}：" +
+                    (e.message ?: e.javaClass.simpleName),
+                -1, -1, null,
+            )
+        } catch (e: IllegalAccessException) {
+            throw RsfError(
+                "interp",
+                "内部错误：JDK 父类 '$internal' 的构造器 ${chosen.descriptor} 访问不了：" +
+                    (e.message ?: e.javaClass.simpleName),
+                -1, -1, null,
+            )
+        } catch (e: InstantiationException) {
+            throw RsfError(
+                "interp",
+                "内部错误：JDK 父类 '$internal' 建不出实例：" +
+                    (e.message ?: e.javaClass.simpleName),
+                -1, -1, null,
+            )
         }
-    }
-
-    /** 一个 JVM 构造器对这批实参的代价（越小越优先）；[Int.MAX_VALUE] 表示完全不匹配。 */
-    private fun ctorScore(
-        ctor: org.example.complie.interop.JvmMethod,
-        argTypes: List<RsfType>,
-    ): Int {
-        var total = 0
-        for ((i, want) in ctor.paramTypes.withIndex()) {
-            val got = argTypes.getOrNull(i) ?: return Int.MAX_VALUE
-            val cost = when {
-                got.descriptor == want.descriptor -> 0
-                got.isNullLiteral && !want.base.isPrimitive -> 1
-                // 基本类型加宽（int → long / double…）由 JVM 的反射代劳，代价 1
-                got.base.isPrimitive && want.base.isPrimitive -> 1
-                want.descriptor == "Ljava/lang/Object;" -> 1
-                else -> return Int.MAX_VALUE
-            }
-            total += cost
-        }
-        return total
     }
 
     /**
@@ -1949,5 +2038,122 @@ class Interpreter(
         private val COMPARISONS = setOf(
             TokenKind.EQ, TokenKind.NE, TokenKind.LT, TokenKind.GT, TokenKind.LE, TokenKind.GE,
         )
+    }
+}
+
+/**
+ * JDK 父类构造器的**子类桥**（阶段 25 K4，缺口 E）。
+ *
+ * 场景：`class MyLoader : ClassLoader()` 里的 `ClassLoader()` 是 `protected` 的，而
+ * `java.base` 没有向无名模块 opens `java.lang`——`Constructor.trySetAccessible()` 返回
+ * `false`，接着 `newInstance` 会抛 `IllegalAccessException`。从前这一条会以裸 Java 异常的
+ * 形式逃出解释器（用户看到一句没有文件:行:列 的 `IllegalAccessException`），而字节码产物
+ * 那边是能跑的：rsf 类在 JVM 上**真的**是 `ClassLoader` 的子类，`INVOKESPECIAL` 调
+ * `protected` 构造器本来就合法。
+ *
+ * 变通办法就是把这层子类关系补出来：现场生成一个**子类**，它在自己的构造器里调父类那条
+ * `protected` 构造器（子类做这件事是合法的 `invokespecial`），子类自己的构造器是 `public`、
+ * 反射调得动。语义上父类构造器**真的跑了**——不是绕过它、也不是 `allocateInstance` 那种
+ * 空壳，所以解释器与字节码两侧的状态一致。
+ *
+ * 生成的类必须落在**调用者自己的包**里（`Lookup.defineClass` 的硬性要求），所以它挂在
+ * 解释器的包下，一个 (父类, 构造器描述符) 只生成一次并缓存。父类构造器是 `private` 的
+ * （`Runtime` 那种）时子类同样调不到，那时按 rsf 错误报出来，消息里带文件:行:列。
+ */
+private object JdkParentBridge {
+    private val seq = java.util.concurrent.atomic.AtomicInteger()
+    private val cache = HashMap<String, Class<*>>()
+
+    fun newInstance(
+        parentInternal: String,
+        descriptor: String,
+        paramClasses: Array<Class<*>>,
+        args: Array<Any?>,
+        paramTypes: List<RsfType>,
+    ): Any {
+        val cls = synchronized(cache) {
+            cache.getOrPut("$parentInternal#$descriptor") {
+                define(parentInternal, descriptor, paramTypes)
+            }
+        }
+        val ctor = try {
+            cls.getDeclaredConstructor(*paramClasses)
+        } catch (e: NoSuchMethodException) {
+            throw RsfError(
+                "interp",
+                "内部错误：为 JDK 父类 '$parentInternal' 造的桥类里没有构造器 $descriptor：" +
+                    (e.message ?: e.javaClass.simpleName),
+                -1, -1, null,
+            )
+        }
+        return try {
+            ctor.newInstance(*args)
+        } catch (e: java.lang.reflect.InvocationTargetException) {
+            // 父类构造器自己抛的异常原样往外扔（和直接调 Java 保持一致）
+            throw e.cause ?: e
+        } catch (e: ReflectiveOperationException) {
+            throw RsfError(
+                "interp",
+                "内部错误：JDK 父类 '$parentInternal' 的构造器 $descriptor 调不动（模块系统不放行，" +
+                    "子类桥也够不着——父类构造器可能是 private 的）：" +
+                    (e.message ?: e.javaClass.simpleName),
+                -1, -1, null,
+            )
+        } catch (e: IllegalAccessError) {
+            throw RsfError(
+                "interp",
+                "内部错误：JDK 父类 '$parentInternal' 的构造器 $descriptor 对子类桥也不可见：" +
+                    (e.message ?: e.javaClass.simpleName),
+                -1, -1, null,
+            )
+        }
+    }
+
+    /** 造出 `extends <parentInternal>` 且只带一条构造器的类。 */
+    private fun define(parentInternal: String, descriptor: String, paramTypes: List<RsfType>): Class<*> {
+        val pkg = Interpreter::class.java.name.substringBeforeLast('.')
+        val internal = pkg.replace('.', '/') + "/RsfJdkParentBridge$" + seq.incrementAndGet()
+        val cw = ClassWriter(ClassWriter.COMPUTE_MAXS)
+        cw.visit(
+            Opcodes.V17,
+            Opcodes.ACC_PUBLIC or Opcodes.ACC_SUPER,
+            internal,
+            null,
+            parentInternal,
+            null,
+        )
+        val mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "<init>", descriptor, null, null)
+        mv.visitCode()
+        mv.visitVarInsn(Opcodes.ALOAD, 0)
+        var slot = 1
+        for (t in paramTypes) {
+            val d = t.descriptor
+            mv.visitVarInsn(loadOpcode(d), slot)
+            slot += if (d.first() == 'J' || d.first() == 'D') 2 else 1
+        }
+        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, parentInternal, "<init>", descriptor, false)
+        mv.visitInsn(Opcodes.RETURN)
+        // 方法里没有分支，不需要栈映射帧；最大值交给 ASM 算
+        mv.visitMaxs(0, 0)
+        mv.visitEnd()
+        cw.visitEnd()
+        return try {
+            MethodHandles.lookup().defineClass(cw.toByteArray())
+        } catch (e: Throwable) {
+            throw RsfError(
+                "interp",
+                "内部错误：为 JDK 父类 '$parentInternal' 造子类桥失败：" +
+                    (e.message ?: e.javaClass.simpleName),
+                -1, -1, null,
+            )
+        }
+    }
+
+    private fun loadOpcode(descriptor: String): Int = when (descriptor.first()) {
+        'J' -> Opcodes.LLOAD
+        'F' -> Opcodes.FLOAD
+        'D' -> Opcodes.DLOAD
+        'L', '[' -> Opcodes.ALOAD
+        else -> Opcodes.ILOAD
     }
 }

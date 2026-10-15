@@ -1,14 +1,17 @@
 package org.example
 
 import org.example.complie.Rsf
+import org.example.complie.ast.BinaryExpr
 import org.example.complie.ast.MemberExpr
 import org.example.complie.ast.ReturnStmt
 import org.example.complie.ast.SuperExpr
 import org.example.complie.diag.RsfError
 import org.example.complie.diag.SourceFile
+import org.example.complie.interop.ClassPath
 import org.example.complie.interp.Interpreter
 import org.example.complie.sema.RsfType
 import org.example.complie.sema.SemanticModel
+import org.example.complie.sema.SuperCall
 import org.example.complie.sema.UserMember
 import org.objectweb.asm.ClassReader
 import org.objectweb.asm.ClassVisitor
@@ -77,8 +80,8 @@ class InheritanceTest {
         // 不带接口名的 super → target 为 null（走直接父类那一份）
         assertNull((call.receiver as SuperExpr).target)
         val target = model.classModel.superCallOf(call)
-        assertTrue(target is UserMember.Method, target.toString())
-        assertEquals("Base", (target as UserMember.Method).className)
+        assertTrue(target is SuperCall.Rsf, target.toString())
+        assertEquals("Base", (target as SuperCall.Rsf).className)
         assertTrue(!target.interfaceOwner)
     }
 
@@ -157,9 +160,9 @@ class InheritanceTest {
         assertEquals("B", sup.target!!.name)
 
         val target = model.classModel.superCallOf(call)
-        assertTrue(target is UserMember.Method, target.toString())
+        assertTrue(target is SuperCall.Rsf, target.toString())
         // 挑中的是 B 那一份默认实现：接口归属 + 接口名
-        assertEquals("B", (target as UserMember.Method).className)
+        assertEquals("B", (target as SuperCall.Rsf).className)
         assertTrue(target.interfaceOwner, "super(接口).方法() 选中的默认实现要标成接口方法")
     }
 
@@ -1384,6 +1387,216 @@ class InheritanceTest {
             val program = Rsf.parse(src)
             Rsf.analyze(program, src)
         }
+    }
+
+    // ------------------------------------------------- 阶段 25 K4：JDK 父类那一支收口（缺口 A–F）
+
+    /**
+     * 缺口 A：classpath 上 `final` 的类不许当父类。
+     *
+     * 解释器侧本来能跑通（它只把父类实例挂在 `jdkParent` 上，不做真正的 `extends`），
+     * 字节码侧却在 JVM 装载时炸：`IncompatibleClassChangeError: class SB cannot inherit
+     * from final class java.lang.StringBuilder`。两端不许分叉，所以拦在编译期。
+     */
+    @Test
+    fun `缺口 A classpath 上 final 的类不能当父类`() {
+        val e = fails(
+            "import java.lang.StringBuilder\n" +
+                "class SB(s : string) : StringBuilder(s) {\n" +
+                "}\n" +
+                "fun main() -> void {\n" +
+                "    rtn\n" +
+                "}\n",
+        )
+        assertTrue(e.detail.contains("final"), e.detail)
+        assertTrue(e.detail.contains("StringBuilder"), e.detail)
+
+        // 元数据这一侧也得认得出 final 标志（Checker 拦人就靠它）
+        assertTrue(ClassPath.find("java/lang/StringBuilder")!!.isFinal, "StringBuilder 在 JDK 里是 final 的")
+        assertTrue(!ClassPath.find("java/lang/Exception")!!.isFinal, "Exception 不是 final")
+    }
+
+    /**
+     * 缺口 B：JDK 抽象父类继承来的抽象方法必须在这一支上被实现。
+     *
+     * `class L : AbstractList&<int>()` 现在放行的话，解释器能 `new` 出对象、字节码产物也能
+     * 装载，直到真去调 `get(0)` 才抛 `AbstractMethodError`——又是一处分叉。报错必须点名缺了谁。
+     */
+    @Test
+    fun `缺口 B 继承 JDK 抽象类要把它继承来的抽象方法实现掉`() {
+        val e = fails(
+            "import java.util.AbstractList\n" +
+                "class L : AbstractList&<int>() {\n" +
+                "}\n" +
+                "fun main() -> void {\n" +
+                "    rtn\n" +
+                "}\n",
+        )
+        assertTrue(e.detail.contains("get(int)"), e.detail)
+        assertTrue(e.detail.contains("size()"), e.detail)
+    }
+
+    /**
+     * 缺口 C：JDK 父类上的 `super.f()` 是**非虚调用**——打到声明类那一份实现。
+     *
+     * 字节码必须是 `INVOKESPECIAL java/lang/Throwable.getMessage`（声明类），不能是
+     * `INVOKEVIRTUAL`（那会按运行期类型重新分派）；解释器同理，取的是声明类的反射方法。
+     */
+    @Test
+    fun `缺口 C JDK 父类上的 super 调用打到声明类那一份`() {
+        val program = "import java.lang.Exception\n" +
+            "class MyErr(msg : string) : Exception(msg) {\n" +
+            "    fun describe() -> string {\n" +
+            "        rtn \"e:\" + super.getMessage()\n" +
+            "    }\n" +
+            "}\n" +
+            "fun main() -> void {\n" +
+            "    var e : MyErr = new MyErr(\"boom\")\n" +
+            "    println(e.describe())\n" +
+            "    rtn\n" +
+            "}\n"
+
+        assertEquals(listOf("e:boom"), bothEnds(program, "RsfInheritJdkSuper"))
+
+        // 语义模型：目标是 JDK 方法，owner 是**声明类**（getMessage 声明在 Throwable 上）
+        val src = rsfSource(program)
+        val ast = Rsf.parse(src)
+        val model = Rsf.analyze(ast, src)
+        val err = ast.classes.single { it.name == "MyErr" }
+        val ret = err.methods.single { it.name == "describe" }.body!!.statements[0] as ReturnStmt
+        val call = (ret.value as BinaryExpr).right as MemberExpr
+        val target = model.classModel.superCallOf(call)
+        assertTrue(target is SuperCall.Jvm, target.toString())
+        target as SuperCall.Jvm
+        assertEquals("java/lang/Throwable", target.member.method.owner)
+        assertEquals("getMessage", target.member.method.name)
+
+        // 字节码：INVOKESPECIAL，owner 是声明类而不是直接父类 Exception
+        val shape = compiledShape(program, "RsfInheritJdkSuperShape", "MyErr.class")
+        val insns = shape.methods.single { it.name == "describe" }.instructions
+        assertTrue(
+            insns.contains("INVOKESPECIAL java/lang/Throwable.getMessage()Ljava/lang/String; itf=false"),
+            insns.toString(),
+        )
+    }
+
+    /**
+     * 缺口 D：父类构造器只由语义模型选一次，两个后端都只读那一份。
+     *
+     * 在这之前 Checker 选完就扔掉，K2/K3 各自拿一份抄来的打分函数再选一遍——两处
+     * 打分的规则一旦走偏，同一段代码在两端就会选到不同的 `<init>`。
+     */
+    @Test
+    fun `缺口 D 父类构造器由语义模型选中 两端读同一份`() {
+        val program = "import java.lang.Exception\n" +
+            "class MyError(msg : string) : Exception(msg) {\n" +
+            "    fun describe() -> string {\n" +
+            "        rtn \"MyError:\" + getMessage()\n" +
+            "    }\n" +
+            "}\n" +
+            "fun main() -> void {\n" +
+            "    var e : MyError = new MyError(\"boom\")\n" +
+            "    println(e.describe())\n" +
+            "    rtn\n" +
+            "}\n"
+
+        assertEquals(listOf("MyError:boom"), bothEnds(program, "RsfInheritCtorJvm"))
+
+        val src = rsfSource(program)
+        val ast = Rsf.parse(src)
+        val model = Rsf.analyze(ast, src)
+        val decl = ast.classes.single { it.name == "MyError" }
+        val ctor = decl.methods.single { it.isPrimary }
+        val chosen = model.classModel.superDelegationOf(ctor)!!.jvmCtor!!
+        assertEquals("java/lang/Exception", chosen.owner)
+        assertEquals("(Ljava/lang/String;)V", chosen.descriptor)
+
+        // 字节码侧打的就是这一份：Exception(String)
+        val shape = compiledShape(program, "RsfInheritCtorJvmShape", "MyError.class")
+        val init = shape.methods.single { it.name == "<init>" }.instructions
+        assertTrue(
+            init.contains("INVOKESPECIAL java/lang/Exception.<init>(Ljava/lang/String;)V itf=false"),
+            init.toString(),
+        )
+
+        // 没有主构造、只有 `constructor(m) { super(m) }` 的那种类（p15 的形状）：
+        // 选中的 `<init>` 必须挂在**这条委托边**上——挂在「类 → 构造器」的一张表上，
+        // 同一个类的两条边就会互相覆盖。
+        val secondary = "import java.lang.Exception\n" +
+            "class E : Exception() {\n" +
+            "    constructor(m : string) {\n" +
+            "        super(m)\n" +
+            "    }\n" +
+            "}\n" +
+            "fun main() -> void {\n" +
+            "    var e : E = new E(\"boom\")\n" +
+            "    println(e.getMessage())\n" +
+            "    rtn\n" +
+            "}\n"
+        assertEquals(listOf("boom"), bothEnds(secondary, "RsfInheritCtorJvmSecondary"))
+
+        val secSrc = rsfSource(secondary)
+        val secAst = Rsf.parse(secSrc)
+        val secModel = Rsf.analyze(secAst, secSrc)
+        val secCtor = secAst.classes.single { it.name == "E" }.methods.single { !it.isPrimary }
+        assertEquals(
+            "(Ljava/lang/String;)V",
+            secModel.classModel.superDelegationOf(secCtor)!!.jvmCtor!!.descriptor,
+        )
+    }
+
+    /**
+     * 缺口 E：JDK 父类的 `protected` 构造器，解释器也得建得出父类实例。
+     *
+     * `ClassLoader()` 是 `protected` 的，`trySetAccessible()` 实测直接返回 false
+     * （java.base 不开 java.lang），反射调不动；解释器只能在自己包里 define 一个
+     * 「公开构造器 + 调父类那一个构造器」的桥（Interpreter.kt 末尾的 JdkParentBridge）。
+     * 一旦反射失败，报错要落成带 文件:行:列 的 RsfError，而不是让 Java 异常穿出去。
+     */
+    @Test
+    fun `缺口 E JDK 父类的 protected 构造器解释器也建得出来`() {
+        val program = "import java.lang.ClassLoader\n" +
+            "class MyLoader : ClassLoader() {\n" +
+            "    fun tag() -> string {\n" +
+            "        rtn \"loader\"\n" +
+            "    }\n" +
+            "}\n" +
+            "fun main() -> void {\n" +
+            "    var l : MyLoader = new MyLoader()\n" +
+            "    println(l.tag())\n" +
+            "    rtn\n" +
+            "}\n"
+
+        // 解释器这一侧走的是子类桥；字节码侧是正常的 invokespecial 到父类 protected 构造器
+        assertEquals(listOf("loader"), bothEnds(program, "RsfInheritProtectedCtor"))
+    }
+
+    /**
+     * 缺口 F：static 不继承，报文不许自相矛盾。
+     *
+     * 原来报「类 'Child' 里没有方法 'make'」后面还跟一句成员提示，提示里正好列着
+     * `make`（名字表不分 static/实例）——读起来像「没有，但有」。static 只能写在
+     * 声明它的类上（DESIGN-25 §3）。
+     */
+    @Test
+    fun `缺口 F static 方法不继承 报文不再自相矛盾`() {
+        val e = fails(
+            "open class Base {\n" +
+                "    static fun make() -> string {\n" +
+                "        rtn \"base-static\"\n" +
+                "    }\n" +
+                "}\n" +
+                "class Child : Base() {\n" +
+                "}\n" +
+                "fun main() -> void {\n" +
+                "    println(Child.make())\n" +
+                "    rtn\n" +
+                "}\n",
+        )
+        assertTrue(e.detail.contains("静态"), e.detail)
+        assertTrue(e.detail.contains("不继承"), e.detail)
+        assertTrue(e.detail.contains("Base.make"), e.detail)
+        assertTrue(!e.detail.contains("（有："), e.detail)
     }
 }
 

@@ -73,6 +73,17 @@ class JvmClass(
     /** 抽象类不能 `new`（接口同理，接口的 ACC_ABSTRACT 也置着）。 */
     val isAbstract: Boolean = false,
     /**
+     * 这个类是不是 `final`（阶段 25 K4，缺口 A）。
+     *
+     * `class SB : StringBuilder(...)` 在**解释器**里跑得通（rsf 的父类只是一条模型边、
+     * 不做真的 JVM 继承），可字节码产物是**真的** `extends java/lang/StringBuilder`，
+     * JVM 装载时直接抛
+     * `IncompatibleClassChangeError: class SB cannot inherit from final class java.lang.StringBuilder`。
+     * 两端因此分叉，必须在**编译期**就拒掉：判据只能从这里来（classpath 上的 `.class`
+     * 才记着 ACC_FINAL）。
+     */
+    val isFinal: Boolean = false,
+    /**
      * 这个类声明了几个类型参数（从泛型签名里数出来）。null = 说不准。
      *
      * 只在**元数检查**时用：`ArrayList&<int, int>` 要报「需要 1 个，实际给了 2 个」。
@@ -165,6 +176,7 @@ object ClassPath {
             var interfaces: List<String> = emptyList()
             var isInterface = false
             var isAbstract = false
+            var isFinal = false
             var isPublic = true
             var typeParamCount: Int? = null
             // 类的形式类型参数名（`HashMap` → ["K", "V"]）：ASM 保证 visit 先于 visitMethod，
@@ -189,6 +201,7 @@ object ClassPath {
                         interfaces = interfaces0?.toList() ?: emptyList()
                         isInterface = (access and Opcodes.ACC_INTERFACE) != 0
                         isAbstract = (access and Opcodes.ACC_ABSTRACT) != 0
+                        isFinal = (access and Opcodes.ACC_FINAL) != 0
                         isPublic = (access and Opcodes.ACC_PUBLIC) != 0
                         typeParamCount = typeParamCountOf(signature)
                         typeParams = classTypeParams(signature) ?: emptyList()
@@ -275,6 +288,7 @@ object ClassPath {
                 fields = fields,
                 constructors = constructors,
                 isAbstract = isAbstract,
+                isFinal = isFinal,
                 typeParamCount = typeParamCount,
                 typeParams = typeParams,
                 isPublic = isPublic,

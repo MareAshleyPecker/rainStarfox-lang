@@ -67,6 +67,7 @@ import org.example.complie.sema.ObjectFormat
 import org.example.complie.sema.RsfBase
 import org.example.complie.sema.RsfType
 import org.example.complie.sema.SemanticModel
+import org.example.complie.sema.SuperCall
 import org.example.complie.sema.UserMember
 import org.objectweb.asm.AnnotationVisitor
 import org.objectweb.asm.ClassWriter
@@ -1663,24 +1664,14 @@ class BytecodeCompiler(
 
         // JDK 父类（`class MyError(msg : string) : Exception(msg)`）。
         //
-        // Checker 只在 checkParentArguments 里挑过一次构造器（MemberResolver.findConstructor），
-        // 那次选择**没有进语义模型**（SuperDelegation 里只有 superClass 和实参），所以这里
-        // 只能按**同一口径**再挑一次：按实参个数筛，再按「精确优先、加宽其次、并列取先声明」
-        // 打分取最小——与解释器的 instantiateJdkParent + ctorScore 逐条同构，两端才可能
-        // 选到同一个构造器（选不一样的话，同一份源码两端的行为就直接分叉了）。
-        val jvm = ClassPath.find(parent.internalName)
+        // 用 **Checker 已经挑好的那一条** `<init>`（阶段 25 K4，缺口 D）：从前这里按
+        // 「同一口径」再挑一次，而解释器又有自己的第三份打分——三份 `minByOrNull` 的平局
+        // 规则只要有一处不同，同一份源码两端就会建出**不同的父类状态**。现在这条选择
+        // 只做一次、挂在**这条委托边**上（[org.example.complie.sema.SuperDelegation.jvmCtor]）。
+        val chosen = delegation.jvmCtor
             ?: throw RsfError(
                 "codegen",
-                "内部错误：JDK 父类 '${parent.internalName}' 不在 classpath 上",
-                decl.at.line, decl.at.column, null,
-            )
-        val argTypes = args.map { model.typeOf(it) }
-        val chosen = jvm.constructors
-            .filter { it.paramTypes.size == args.size }
-            .minByOrNull { jdkCtorScore(it, argTypes) }
-            ?: throw RsfError(
-                "codegen",
-                "内部错误：${parent.display} '${parent.name}' 里没有匹配的构造器",
+                "内部错误：没有为 '${decl.name}' 选中 JDK 父类 '${parent.internalName}' 的构造器",
                 decl.at.line, decl.at.column, null,
             )
         mv.visitVarInsn(ALOAD, 0)
@@ -1689,28 +1680,6 @@ class BytecodeCompiler(
             emitWiden(mv, model.typeOf(arg), chosen.paramTypes[i])
         }
         mv.visitMethodInsn(INVOKESPECIAL, parent.internalName, "<init>", chosen.descriptor, false)
-    }
-
-    /**
-     * 一个 JDK 构造器对这批实参的代价；[Int.MAX_VALUE] = 完全不匹配。
-     *
-     * 与 Interpreter.kt 的 `ctorScore` **逐条对应**（那一条注释写明了两端必须同口径）：
-     * 描述符完全相同 0 分；`null` 给非基本类型 1 分；两边都是基本类型 1 分；
-     * 目标是 `Ljava/lang/Object;`（泛型擦除后的形参 / Object 重载）1 分；其余出局。
-     */
-    private fun jdkCtorScore(ctor: JvmMethod, argTypes: List<RsfType>): Int {
-        var total = 0
-        for ((i, want) in ctor.paramTypes.withIndex()) {
-            val got = argTypes.getOrNull(i) ?: return Int.MAX_VALUE
-            total += when {
-                got.descriptor == want.descriptor -> 0
-                got.isNullLiteral && !want.base.isPrimitive -> 1
-                got.base.isPrimitive && want.base.isPrimitive -> 1
-                want.descriptor == "Ljava/lang/Object;" -> 1
-                else -> return Int.MAX_VALUE
-            }
-        }
-        return total
     }
 
     /**
@@ -2672,7 +2641,23 @@ class BytecodeCompiler(
      * 接收者不看语法树：`super.f()` 的接收者语义上就是 this（0 号槽），`super(I).f()` 也一样
      * ——接口默认方法体里的 this 就是实现类的那个对象。
      */
-    private fun emitSuperMember(ctx: ExprCtx, expr: MemberExpr, member: UserMember.Method, discard: Boolean) {
+    private fun emitSuperMember(ctx: ExprCtx, expr: MemberExpr, member: SuperCall, discard: Boolean) {
+        when (member) {
+            is SuperCall.Rsf -> emitSuperRsfMember(ctx, expr, member, discard)
+            // 阶段 25 K4（缺口 C）：父类那一份在 classpath 上（`super.getMessage()`）。
+            // 目标方法没有 rsf 的 FuncDecl，描述符与 owner 都从 classpath 那份 **JvmMethod**
+            // 来——owner 是**声明类**（`java/lang/Throwable`），这正是非虚调用的落点。
+            is SuperCall.Jvm -> emitSuperJvmMember(ctx, expr, member.member, discard)
+        }
+    }
+
+    /** [SuperCall.Rsf] 那一支：目标有 rsf 的 `FuncDecl`，描述符由它算出来。 */
+    private fun emitSuperRsfMember(
+        ctx: ExprCtx,
+        expr: MemberExpr,
+        member: SuperCall.Rsf,
+        discard: Boolean,
+    ) {
         val mv = ctx.mv
         val decl = member.decl
         requireInstanceScope(ctx, "super.${expr.name}(...)")
@@ -2687,6 +2672,31 @@ class BytecodeCompiler(
             member.interfaceOwner,
         )
         if (!discard) emitResultCast(mv, model.returnTypeOf(decl), model.typeOf(expr))
+    }
+
+    /**
+     * [SuperCall.Jvm] 那一支：目标是 **classpath 上的方法**（阶段 25 K4，缺口 C）。
+     *
+     * 与 rsf 那一支的差别只在「描述符与 owner 从哪来」：这里全部抄 [ResolvedMethod] 里
+     * 那条已解析的 `JvmMethod`（`owner` 是**声明类**、`descriptor` 是擦除形态）。
+     * 泛型擦除的收口交给 [emitResultCast]——和普通 JDK 调用走同一条规矩，两端一致。
+     */
+    private fun emitSuperJvmMember(
+        ctx: ExprCtx,
+        expr: MemberExpr,
+        member: ResolvedMethod,
+        discard: Boolean,
+    ) {
+        val mv = ctx.mv
+        val m = member.method
+        requireInstanceScope(ctx, "super.${expr.name}(...)")
+        mv.visitVarInsn(ALOAD, 0)
+        for ((i, arg) in expr.arguments.orEmpty().withIndex()) {
+            emitExpr(ctx, arg)
+            m.paramTypes.getOrNull(i)?.let { emitWiden(mv, model.typeOf(arg), it) }
+        }
+        mv.visitMethodInsn(INVOKESPECIAL, m.owner, m.name, m.descriptor, member.interfaceOwner)
+        if (!discard) emitResultCast(mv, m.returnType, model.typeOf(expr))
     }
 
     /**
