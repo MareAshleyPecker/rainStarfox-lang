@@ -1662,8 +1662,36 @@ fun wrapType(base : string) -> BType {
     rtn tExternal(boxWrap(base))
 }
 
-// JDK 静态成员：接收者写成类名的调用（`System.getProperty(...)`）
-fun jdkStatic(owner : string, nm : string, argc : int) -> ?Mem2 {
+// 实参的静态类型（只取 base 名）。调用点查表前已经把实参 walk 过一遍，
+// 类型表里一定有记录，所以这里能安全地问 `tOf`。
+fun argBase(g : Gen, argv : Node, i : int) -> string {
+    if (i >= argv.childCount) { rtn "" }
+    rtn tOf(g, argv.children[i]).base
+}
+
+// 一组实参里最宽的数值类型：4=double 3=float 2=long 1=int/byte/char/bool 0=其它。
+// `Math.max(...)` 这类**只看实参类型选重载**的 JDK 方法靠它选行。
+fun argNumericRank(g : Gen, argv : Node) -> int {
+    var r = 0
+    var i = 0
+    while (i < argv.childCount) {
+        var b = argBase(g, argv, i)
+        if (b == "double") { rtn 4 }
+        if (b == "float" && r < 3) { r = 3 }
+        if (b == "long" && r < 2) { r = 2 }
+        if ((b == "int" || b == "byte" || b == "char" || b == "bool") && r < 1) { r = 1 }
+        i = i + 1
+    }
+    rtn r
+}
+
+// JDK 静态成员：接收者写成类名的调用（`System.getProperty(...)`）。
+// `argv` 是**实参表节点**而不是个数：`Math.max(1, 2)` 与 `Math.max(1.5, 2.5)` 名字、个数
+// 都一样，只有实参类型能区分，所以查表必须带上实参。
+fun jdkStatic(g : Gen, owner : string, nm : string, argv : Node) -> ?Mem2 {
+    var argc = argv.childCount
+    var rank = argNumericRank(g, argv)
+    var a0 = argBase(g, argv, 0)
     if (owner == "java/lang/System") {
         if (nm == "getProperty" && argc == 1) {
             rtn staticM(owner, "getProperty", "(Ljava/lang/String;)Ljava/lang/String;", tString(), memP1(tString()))
@@ -1675,9 +1703,36 @@ fun jdkStatic(owner : string, nm : string, argc : int) -> ?Mem2 {
         rtn null
     }
     if (owner == "java/lang/Math") {
-        if (nm == "max" && argc == 2) { rtn staticM(owner, "max", "(II)I", tInt(), memP2(tInt(), tInt())) }
-        if (nm == "min" && argc == 2) { rtn staticM(owner, "min", "(II)I", tInt(), memP2(tInt(), tInt())) }
-        if (nm == "abs" && argc == 1) { rtn staticM(owner, "abs", "(I)I", tInt(), memP1(tInt())) }
+        // 重载按实参选：JDK 里 max/min/abs 各有 int/long/float/double 四份，
+        // 名字与个数完全一样，只有实参类型能区分（库的第一版只登记了 int 那份，
+        // 于是 `Math.max(1.5, 2.5)` / `Math.sqrt(2.0)` 一律「暂不支持」）。
+        if (nm == "max" || nm == "min") {
+            if (argc != 2) { rtn null }
+            if (rank == 4) { rtn staticM(owner, nm, "(DD)D", tDouble(), memP2(tDouble(), tDouble())) }
+            if (rank == 3) { rtn staticM(owner, nm, "(FF)F", tFloat(), memP2(tFloat(), tFloat())) }
+            if (rank == 2) { rtn staticM(owner, nm, "(JJ)J", tLong(), memP2(tLong(), tLong())) }
+            if (rank == 1) { rtn staticM(owner, nm, "(II)I", tInt(), memP2(tInt(), tInt())) }
+            rtn null
+        }
+        if (nm == "abs" && argc == 1) {
+            if (rank == 4) { rtn staticM(owner, nm, "(D)D", tDouble(), memP1(tDouble())) }
+            if (rank == 3) { rtn staticM(owner, nm, "(F)F", tFloat(), memP1(tFloat())) }
+            if (rank == 2) { rtn staticM(owner, nm, "(J)J", tLong(), memP1(tLong())) }
+            if (rank == 1) { rtn staticM(owner, nm, "(I)I", tInt(), memP1(tInt())) }
+            rtn null
+        }
+        if ((nm == "sqrt" || nm == "floor" || nm == "ceil") && argc == 1 && rank == 4) {
+            rtn staticM(owner, nm, "(D)D", tDouble(), memP1(tDouble()))
+        }
+        if (nm == "pow" && argc == 2 && rank == 4) {
+            rtn staticM(owner, nm, "(DD)D", tDouble(), memP2(tDouble(), tDouble()))
+        }
+        // `round` 是唯一返回整型的：double 那份返回 long，float 那份返回 int
+        if (nm == "round" && argc == 1) {
+            if (rank == 4) { rtn staticM(owner, nm, "(D)J", tLong(), memP1(tDouble())) }
+            if (rank == 3) { rtn staticM(owner, nm, "(F)I", tInt(), memP1(tFloat())) }
+            rtn null
+        }
         rtn null
     }
     // 17e：包装类的 valueOf / toString / parseXxx。rsf 版后端自己的源码就靠这几条：
@@ -1689,6 +1744,9 @@ fun jdkStatic(owner : string, nm : string, argc : int) -> ?Mem2 {
         if (nm == "valueOf" && argc == 1) { rtn staticM(owner, "valueOf", "(I)Ljava/lang/Integer;", wrapType("int"), memP1(tInt())) }
         if (nm == "toString" && argc == 1) { rtn staticM(owner, "toString", "(I)Ljava/lang/String;", tString(), memP1(tInt())) }
         if (nm == "parseInt" && argc == 1) { rtn staticM(owner, "parseInt", "(Ljava/lang/String;)I", tInt(), memP1(tString())) }
+        if (nm == "toHexString" && argc == 1) { rtn staticM(owner, "toHexString", "(I)Ljava/lang/String;", tString(), memP1(tInt())) }
+        if (nm == "toBinaryString" && argc == 1) { rtn staticM(owner, "toBinaryString", "(I)Ljava/lang/String;", tString(), memP1(tInt())) }
+        if (nm == "toOctalString" && argc == 1) { rtn staticM(owner, "toOctalString", "(I)Ljava/lang/String;", tString(), memP1(tInt())) }
         rtn null
     }
     if (owner == "java/lang/Long") {
@@ -1722,6 +1780,21 @@ fun jdkStatic(owner : string, nm : string, argc : int) -> ?Mem2 {
         if (nm == "parseDouble" && argc == 1) { rtn staticM(owner, "parseDouble", "(Ljava/lang/String;)D", tDouble(), memP1(tString())) }
         rtn null
     }
+    if (owner == "java/lang/String") {
+        // 源码里**显式**写 `String.valueOf(x)` 时走这里（`"a" + x` 拼串走 emitToString，
+        // 不查表）。重载同样只看实参类型。
+        if (nm == "valueOf" && argc == 1) {
+            if (a0 == "char") { rtn staticM(owner, "valueOf", "(C)Ljava/lang/String;", tString(), memP1(tChar())) }
+            if (a0 == "bool") { rtn staticM(owner, "valueOf", "(Z)Ljava/lang/String;", tString(), memP1(tBool())) }
+            if (rank == 4) { rtn staticM(owner, "valueOf", "(D)Ljava/lang/String;", tString(), memP1(tDouble())) }
+            if (rank == 3) { rtn staticM(owner, "valueOf", "(F)Ljava/lang/String;", tString(), memP1(tFloat())) }
+            if (rank == 2) { rtn staticM(owner, "valueOf", "(J)Ljava/lang/String;", tString(), memP1(tLong())) }
+            if (rank == 1) { rtn staticM(owner, "valueOf", "(I)Ljava/lang/String;", tString(), memP1(tInt())) }
+            // 其余（string / 用户类 / 数组 / 可空）走 Object 那份
+            rtn staticM(owner, "valueOf", "(Ljava/lang/Object;)Ljava/lang/String;", tString(), memP1(tObject()))
+        }
+        rtn null
+    }
     if (owner == "org/objectweb/asm/Type") {
         // 阶段 21：只开 `getObjectType(String) : Type` 这一个口子，给注解伴生类的
         // `annotationType()` 用 —— `mv.visitLdcInsn(Type)` 落盘的是 CONSTANT_Class，
@@ -1740,6 +1813,13 @@ fun jdkStaticField(owner : string, nm : string) -> ?FieldRef {
     if (owner == "java/lang/System") {
         if (nm == "out" || nm == "err") {
             rtn new FieldRef("java/lang/System", nm, "Ljava/io/PrintStream;", tExternal("java/io/PrintStream"), true)
+        }
+        rtn null
+    }
+    // 数学常数：`Math.PI` / `Math.E`（都是 double 静态字段）
+    if (owner == "java/lang/Math") {
+        if (nm == "PI" || nm == "E") {
+            rtn new FieldRef("java/lang/Math", nm, "D", tDouble(), true)
         }
         rtn null
     }
@@ -2580,6 +2660,19 @@ fun jdkMember(g : Gen, recv : BType, nm : string, argc : int) -> ?Mem2 {
             if (nm == "add" && argc == 1) { rtn new Mem2("java/util/ArrayList", "add", "(Ljava/lang/Object;)Z", tBool(), memP1(tObject()), false) }
             if (nm == "size" && argc == 0) { rtn new Mem2("java/util/ArrayList", "size", "()I", tInt(), memP0(), false) }
             if (nm == "get" && argc == 1) { rtn new Mem2("java/util/ArrayList", "get", "(I)Ljava/lang/Object;", tObject(), memP1(tInt()), false) }
+        }
+        // 泛型映射：擦除后键值都是 Object，调用点用接收者的两个类型实参还原
+        // （见 walkCall 的 `rta` 一段）。`put` 的 JVM 返回值是**旧值**，Kotlin 侧
+        // 拿它当语句用时会在后面补一条 `pop`（javap 实证），这里照抄同一套口径。
+        if (recv.name == "java/util/HashMap") {
+            if (nm == "put" && argc == 2) { rtn new Mem2("java/util/HashMap", "put", "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;", tObject(), memP2(tObject(), tObject()), false) }
+            if (nm == "get" && argc == 1) { rtn new Mem2("java/util/HashMap", "get", "(Ljava/lang/Object;)Ljava/lang/Object;", tObject(), memP1(tObject()), false) }
+            if (nm == "remove" && argc == 1) { rtn new Mem2("java/util/HashMap", "remove", "(Ljava/lang/Object;)Ljava/lang/Object;", tObject(), memP1(tObject()), false) }
+            if (nm == "containsKey" && argc == 1) { rtn new Mem2("java/util/HashMap", "containsKey", "(Ljava/lang/Object;)Z", tBool(), memP1(tObject()), false) }
+            if (nm == "containsValue" && argc == 1) { rtn new Mem2("java/util/HashMap", "containsValue", "(Ljava/lang/Object;)Z", tBool(), memP1(tObject()), false) }
+            if (nm == "size" && argc == 0) { rtn new Mem2("java/util/HashMap", "size", "()I", tInt(), memP0(), false) }
+            if (nm == "isEmpty" && argc == 0) { rtn new Mem2("java/util/HashMap", "isEmpty", "()Z", tBool(), memP0(), false) }
+            if (nm == "clear" && argc == 0) { rtn new Mem2("java/util/HashMap", "clear", "()V", tVoid(), memP0(), false) }
         }
         // 17e：rsf 版后端自己的诊断出口（`System.err.println(...)`）。
         // 实参在源码里一律是 string（`"[rsf-17d] " + 消息`），所以只要 String 重载。
@@ -3458,7 +3551,7 @@ public class Walker(g : Gen) {
                         walkExpr(argNode1.children[ai1], sc)
                         ai1 = ai1 + 1
                     }
-                    var m1 = jdkStatic(jc0!!, nm, argNode1.childCount)
+                    var m1 = jdkStatic(g, jc0!!, nm, argNode1)
                     if (m1 == null) {
                         g.bad("JDK 静态方法 " + recvName + "." + nm + "()")
                         rtn tVoid()
@@ -3609,9 +3702,20 @@ public class Walker(g : Gen) {
                 // 声明的擦除类型留在 origRet 里（emitResultCast 要用）
                 var rta = rt.extraArgs
                 if (rta.length > 0) {
-                    // JDK 泛型类的形参名不在类型表里，这里只按下标对应
-                    if (rta.length >= 1) { rrt = rta[0] }
+                    // 「第 1 个类型实参就是返回类型」只对**取元素**那一类方法成立（`ArrayList.get`）；
+                    // 以前是无条件套 `rta[0]`，`size()` 与 `HashMap.get` 都会被套错
+                    // （前者是 int、后者返回的是**第 2 个**实参）。
+                    if (rta.length == 1 && rt.name == "java/util/ArrayList" && nm == "get" && argc == 1) {
+                        rrt = rta[0]
+                    }
                     if (rt.name == "java/util/ArrayList" && nm == "add" && argc == 1 && rta.length == 1) { rparams = memP1(rta[0]) }
+                    if (rt.name == "java/util/HashMap" && rta.length == 2) {
+                        if (nm == "put" && argc == 2) { rrt = rta[1]; rparams = memP2(rta[0], rta[1]) }
+                        if (nm == "get" && argc == 1) { rrt = rta[1]; rparams = memP1(rta[0]) }
+                        if (nm == "remove" && argc == 1) { rrt = rta[1]; rparams = memP1(rta[0]) }
+                        if (nm == "containsKey" && argc == 1) { rparams = memP1(rta[0]) }
+                        if (nm == "containsValue" && argc == 1) { rparams = memP1(rta[1]) }
+                    }
                 }
                 // 注意：这里**不做**实参类型检查。Kotlin 的 Checker 已经查过一遍，
                 // 而后端的类型表只认得子集（它不知道 `string` 是 `CharSequence` 的子类型，

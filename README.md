@@ -1694,8 +1694,13 @@ A 编自己得（B），B 再编自己得（C），**B 与 C 的输出 126 个 `
 **阶段 21 的注解已整条同步**（第 3 刀 `Parser.rsf` 收声明 / 元素 / 伴生实体 / `@` 使用点，
 第 4a 刀 `Backend.rsf` 收代码生成，第 4b 刀 `Interp.rsf` 收解释器语义，第 5 刀收 `Marker::Impl`
 嵌套类型名；探针台 12 正例四列全绿、类字节差异 0）；② 后端 / 解释器的
-「暂不支持清单」（JDK 静态成员表只覆盖 `System` / `Math.max|min|abs` / 包装类三件套，没有
-`HashMap` / `Math.sqrt` 这类成员；自举源自身也没有接口风格 / 注解风格）；③ 语言层没有类继承；
+「暂不支持清单」（JDK 成员表是**手写白名单**；2026-10-16 已扩充到 `Math` 的全部数值重载 +
+`sqrt|floor|ceil|pow|round` + 静态字段 `PI|E`、`String.valueOf`（按实参选重载）、
+`Integer.toHexString|toBinaryString|toOctalString`、`java/util/HashMap` 的
+`put|get|remove|containsKey|containsValue|size|isEmpty|clear` —— 判据是
+`interop/usejava.rsf` 与 `HashMap` 探针的 Kotlin 产物 vs 自举产物 `diff -r` 均为 0
+（`bash build/verify21/bootparity/backend-sweep.sh`）；表外成员仍显式报错，自举源自身也没有接口风格 /
+注解风格）；③ 语言层没有类继承；
 ④ 工具面（自举侧只有 4 个单文件 CLI，没有统一 CLI / LSP）。
 
 **每个阶段改哪些文件、验收标准、风险、以及要先拍板的 5 个语法点，都在 [`BOOTSTRAP.md`](BOOTSTRAP.md)。**
