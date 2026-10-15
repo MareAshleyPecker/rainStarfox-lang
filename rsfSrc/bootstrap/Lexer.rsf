@@ -230,7 +230,7 @@ fun isNumberSuffix(c : char) -> bool {
 
 // ---------------------------------------------------------------- 关键字表
 //
-// 与 Kotlin 版 Lexer.kt 的 KEYWORDS **逐条对应**（那条 Map 有 51 个键；
+// 与 Kotlin 版 Lexer.kt 的 KEYWORDS **逐条对应**（那条 Map 有 55 个键；
 // str / boolean 是 string / bool 的别名，也各占一个键）。
 // 顺序无关紧要，只做查表。
 //
@@ -241,6 +241,10 @@ fun isNumberSuffix(c : char) -> bool {
 // 2026-10-15 自举同步（词法那一刀）：补上阶段 20 的 override / interface、
 // 阶段 21 的 annotation / companion / entity，以及阶段 22 先占位的 mathematic
 // （45 → 51 项）。同时 readPunct 收下注解前缀 `@`（AT）。
+//
+// 2026-10-16 自举同步（阶段 25 类继承，第 6 刀）：补上 open / final / abstract / super
+// （51 → 55 项），与 Kotlin 版 Lexer.kt:40-43 的四个 put 对齐。这四个词从这一刻起
+// 在两侧都是硬关键字，`rsfSrc/` 全库没有拿它们当标识符的地方（勘查已核）。
 
 fun keywordKind(word : string) -> string {
     if (word == "fun") { rtn "KW_FUN" }
@@ -258,6 +262,14 @@ fun keywordKind(word : string) -> string {
     if (word == "static") { rtn "KW_STATIC" }
     // 阶段 20：可选的 override（语义照 Java 的 @Override）
     if (word == "override") { rtn "KW_OVERRIDE" }
+    // 阶段 25：类继承的四个关键字（自举同步第 6 刀）。位置与 Kotlin 版 Lexer.kt:40-43
+    // 的四个 put 一一对应：`open`/`final`/`abstract` 是继承修饰词，`super` 是父类接收者
+    // （`super.f()` / `super(接口名).f()` / `super(实参)`）。**都是硬关键字**，
+    // 从此不能再当标识符用。
+    if (word == "open") { rtn "KW_OPEN" }
+    if (word == "final") { rtn "KW_FINAL" }
+    if (word == "abstract") { rtn "KW_ABSTRACT" }
+    if (word == "super") { rtn "KW_SUPER" }
     if (word == "class") { rtn "KW_CLASS" }
     // 阶段 20：接口声明（注意与注解是两个不同的关键字）
     if (word == "interface") { rtn "KW_INTERFACE" }
@@ -303,7 +315,7 @@ fun keywordKind(word : string) -> string {
     rtn ""
 }
 
-// 老写法 `varis` 的统一文案：**不在这张关键字表里**（表要跟 Kotlin 版逐条对齐，51 项不变），
+// 老写法 `varis` 的统一文案：**不在这张关键字表里**（表要跟 Kotlin 版逐条对齐，55 项不变），
 // 拦截改在 readIdentOrKeyword 里单独做一次。文案与 Kotlin 版 Lexer.kt 的
 // LEGACY_VAR_MESSAGE **逐字相同**——差分测试里有一条把两边取出来比。
 fun legacyVarMessage() -> string {
@@ -506,7 +518,7 @@ public class Lexer(source : string) {
         }
         // 老写法 `varis`（2026-10-11 改名为 `var`）：与 Kotlin 版 Lexer.kt 的
         // readIdentOrKeyword 里那条判断**一一对应**。它**不在**关键字表里
-        // （keywordKind 里的 51 项要跟 Kotlin 版逐条对齐，不能多一项），
+        // （keywordKind 里的 55 项要跟 Kotlin 版逐条对齐，不能多一项），
         // 所以单独拦一次；文案也跟 Kotlin 版逐字相同（有差分测试守着）。
         // 位置取这个词的开头，与 Kotlin 版 `RsfError(.., at.line, at.column, ..)` 同口径。
         if (word == "varis") {

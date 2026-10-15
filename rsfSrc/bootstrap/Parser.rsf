@@ -105,7 +105,15 @@ public enum NodeKind {
     // **一律追加在枚举末尾**：已有成员的名字与次序都不动，免得别处按序号读 NodeKind 时语义漂移。
     ANNOTATIONS, ANNOTATION, ANNOTATION_ELEMENTS, ANNOTATION_ELEMENT,
     ANNOTATION_USES, ANNOTATION_USE, ANNOTATION_ARGS, POSITIONAL_ARG, NAMED_ARG,
-    COMPANION
+    COMPANION,
+    // 阶段 25：类继承（自举同步第 6 刀）。同样**一律追加在枚举末尾**。
+    // SUPER_CLASS = 父类槽位（Kotlin 侧 ClassDecl.superClass），其下挂 ARGS 子节点；
+    // SUPER_CALL  = 构造体第一句 `super(实参)` 的委托（Kotlin 侧 SuperCallStmt）；
+    // OPEN / FINAL / ABSTRACT **不是 AST 节点**，只是「dump 行」的落点：AstDump.kt 在
+    // 类/方法**写了这个修饰词**时会多打一行 OPEN/FINAL/ABSTRACT，而 rsf 侧的 dumpAst
+    // 是通用递归（没有任何 per-kind 分支），所以只能靠一个空 text 的子节点把这一行带出来。
+    // 三个修饰词节点**只在写了时挂**：没写的既有语料一个孩子都不多，字节不变。
+    SUPER_CLASS, SUPER_CALL, OPEN, FINAL, ABSTRACT
 }
 
 // 枚举值 -> dump 里的名字。写成显式 switch（而不是靠 `"" + k` 拿 toString）有两个好处：
@@ -191,6 +199,12 @@ public fun kindName(k : NodeKind) -> string {
         NodeKind.POSITIONAL_ARG : rtn "POSITIONAL_ARG"
         NodeKind.NAMED_ARG : rtn "NAMED_ARG"
         NodeKind.COMPANION : rtn "COMPANION"
+        // 阶段 25：类继承（自举同步第 6 刀）
+        NodeKind.SUPER_CLASS : rtn "SUPER_CLASS"
+        NodeKind.SUPER_CALL : rtn "SUPER_CALL"
+        NodeKind.OPEN : rtn "OPEN"
+        NodeKind.FINAL : rtn "FINAL"
+        NodeKind.ABSTRACT : rtn "ABSTRACT"
     }
     // 上面那个 switch 已经穷尽了 NodeKind 的每一个值，这里只是给「函数一定有返回值」
     // 一个静态的落点（rsf 的返回值检查是看最后一条语句，不看 switch 的穷尽性）。
@@ -321,11 +335,21 @@ fun isStaticKeyword(kind : string) -> bool { rtn kind == "KW_STATIC" }
 
 fun isOverrideKeyword(kind : string) -> bool { rtn kind == "KW_OVERRIDE" }
 
-// 排在声明前面的三类修饰词（与 Kotlin 侧 TokenKind.isModifierKeyword 同口径：
-// 权限修饰词 / static / override）。接口体的成员循环要用它把一整个修饰词串数完。
+// 阶段 25：三个**继承修饰词**（与 Kotlin 侧 TokenKind.isInheritKeyword 同口径，
+// 见 src/main/kotlin/org/example/complie/lexing/Token.kt:279-280）。
+// 注意 `super` **不在**这里：它不是修饰词，而是表达式位置上的接收者。
+fun isInheritKeyword(kind : string) -> bool {
+    if (kind == "KW_OPEN") { rtn true }
+    if (kind == "KW_FINAL") { rtn true }
+    rtn kind == "KW_ABSTRACT"
+}
+
+// 排在声明前面的修饰词（与 Kotlin 侧 TokenKind.isModifierKeyword 同口径：
+// 权限修饰词 / static / override / 继承修饰词）。接口体的成员循环要用它把一整个修饰词串数完。
 fun isModifierKeyword(kind : string) -> bool {
     if (isControlKeyword(kind)) { rtn true }
     if (isStaticKeyword(kind)) { rtn true }
+    if (isInheritKeyword(kind)) { rtn true }
     rtn isOverrideKeyword(kind)
 }
 
@@ -505,6 +529,27 @@ fun doubleLiteralText(t : Token) -> string {
     rtn Double.toString(Double.parseDouble(t.text))
 }
 
+// ---------------------------------------------------------------- 阶段 25：类继承的小结构
+//
+// Kotlin 侧对应 `Parser.kt:945` 的 `SuperClause` 与 `:952` 的 `InheritModifiers`
+// （两个只装数据的私有类）。rsf 没有 `?` 可空类型，所以「父类槽位为空」用
+// **baseName 为空串**表示（类名不可能是空串，不会歧义）。
+// 父类型列表本身仍是一个 Node（SUPERS），与接口那条通路共用。
+
+public class SuperClause(baseName : string, baseDisplay : string, baseArgs : Node, interfaces : Node) {
+    var baseName : string = baseName
+    // dump 里 `SUPER_CLASS display=` 打的是**类型文本**（可能带 `&<T>`），不是裸名字
+    var baseDisplay : string = baseDisplay
+    var baseArgs : Node = baseArgs
+    var interfaces : Node = interfaces
+}
+
+public class InheritMods(isOpen : bool, isFinal : bool, isAbstract : bool) {
+    var isOpen : bool = isOpen
+    var isFinal : bool = isFinal
+    var isAbstract : bool = isAbstract
+}
+
 // ================================================================ 语法分析器本体
 
 public class Parser(tokens : Token[]) {
@@ -528,6 +573,11 @@ public class Parser(tokens : Token[]) {
     // `allowOverride` 开关（缺省 false：顶层写 `override fun` 要判失败）。同样用「置位/还原」
     // 的字段表达，不加参数，保住 parseFuncDecl 的既有调用点形状与顶层的既有行为。
     var overrideOk : bool = false
+    // `open` / `final` / `abstract` 只准写在**类头**与**类体里的方法**前面（阶段 25）——
+    // 这是 Kotlin 版 `parseInheritModifiers` 的 `allowInheritModifiers` 开关
+    // （Parser.kt:1505，缺省 false：接口体与顶层都不认这三个词）。同样用「置位/还原」
+    // 的字段表达，保住 parseFuncDecl 的既有调用点形状。
+    var inheritOk : bool = false
 
     // ------------------------------------------------------------ 出错
 
@@ -711,33 +761,48 @@ public class Parser(tokens : Token[]) {
         rtn t.text
     }
 
-    fun isClassDeclAhead() -> bool {
+    // 声明前面那一串修饰词的个数（权限 / static / override / open / final / abstract）。
+    // 阶段 25 起 `open class Base` 里 `class` 前面不再是「一个可选的权限修饰词」，
+    // 所以四个前瞻都要按 Kotlin 版 modifierRun 的口径**整串**跳过去再认声明关键字。
+    fun modifierRun() -> int {
         var offset = 0
-        if (isControlKeyword(peek().kind)) { offset = 1 }
-        rtn peekAt(offset).kind == "KW_CLASS"
+        while (isModifierKeyword(peekAt(offset).kind)) {
+            offset = offset + 1
+        }
+        rtn offset
+    }
+
+    // 继承修饰词后面是不是一个字段：`open var x` / `final var x`。
+    // 字段不吃继承修饰词（阶段 25 禁止字段遮蔽，DESIGN-25 §5），要单独给一句准确的报错
+    // （Kotlin 版 isFieldDeclAheadAfterInherit，Parser.kt:1422）。
+    fun isFieldDeclAheadAfterInherit() -> bool {
+        if (!isInheritKeyword(peek().kind)) { rtn false }
+        var n = 0
+        while (isInheritKeyword(peekAt(n).kind)) {
+            n = n + 1
+        }
+        rtn isVarKeyword(peekAt(n).kind)
+    }
+
+    fun isClassDeclAhead() -> bool {
+        rtn peekAt(modifierRun()).kind == "KW_CLASS"
     }
 
     fun isEnumDeclAhead() -> bool {
-        var offset = 0
-        if (isControlKeyword(peek().kind)) { offset = 1 }
-        rtn peekAt(offset).kind == "KW_ENUM"
+        rtn peekAt(modifierRun()).kind == "KW_ENUM"
     }
 
     // `interface` 是硬关键字，写接口不用修饰词也认；带了 public 也要认，
-    // 所以先跳过前缀里的权限修饰词（与 isClassDeclAhead 同一招）。
+    // 所以先跳过前缀里的修饰词（与 isClassDeclAhead 同一招）。
     fun isInterfaceDeclAhead() -> bool {
-        var offset = 0
-        if (isControlKeyword(peek().kind)) { offset = 1 }
-        rtn peekAt(offset).kind == "KW_INTERFACE"
+        rtn peekAt(modifierRun()).kind == "KW_INTERFACE"
     }
 
     // 阶段 21：`annotation` 跟 `interface` 一样是硬关键字，带了 public 也要认。
-    // 注意调用点（parseProgram）**已经把声明前的注解收掉了**，所以这里只需要跳过一个权限修饰词，
+    // 注意调用点（parseProgram）**已经把声明前的注解收掉了**，所以这里只需要跳过修饰词，
     // 与 isClassDeclAhead / isEnumDeclAhead / isInterfaceDeclAhead 完全同款。
     fun isAnnotationDeclAhead() -> bool {
-        var offset = 0
-        if (isControlKeyword(peek().kind)) { offset = 1 }
-        rtn peekAt(offset).kind == "KW_ANNOTATION"
+        rtn peekAt(modifierRun()).kind == "KW_ANNOTATION"
     }
 
     // 三种 import：点分路径（JVM 类）、字符串路径（rsf 源文件）、module 目录
@@ -804,6 +869,9 @@ public class Parser(tokens : Token[]) {
     // annotations：声明前收到的注解序列（`@Marker public class C { }`）；空表也要挂（count=0），
     // 而且**挂在最后**（位置索引铁律：Interp.rsf:792/805/888/919 与 Backend.rsf:5692 用位置读孩子）。
     fun parseClassDecl(annotations : Node) -> Node {
+        // 阶段 25：继承修饰词排在**最前面**（`open class` / `abstract class`），
+        // 位置与 Kotlin 版 parseClassDecl 一致：mods → control → `class`。
+        var mods = parseInheritModifiers("类")
         var control = "DEFAULT"
         if (isControlKeyword(peek().kind)) { control = controlName(advance().kind) }
         var classTok = expect("KW_CLASS", "class 声明缺少 'class'")
@@ -864,18 +932,22 @@ public class Parser(tokens : Token[]) {
             methods.add(primary)
         }
 
-        // `:` 父类型子句（类与接口共用同一个解析函数，与 Kotlin 版一致）。
+        // `:` 父类型子句：阶段 25 起「最前面那个带实参表的」是**父类**、其余是接口
+        // （Kotlin 版 parseSuperClause，Parser.kt:850）。类与接口共用同一个父类型列表解析函数。
         // **顺序固定为「主构造括号 → ':' 子句 → '{'」**：Kotlin 版 parseClassDecl 就是这样
         // 排的（主构造先吃掉类头那对括号，再解析父类型），`class Impl(x : int) : Greeter`
         // 里的 `:` 在括号**后面**——子句解析放前面会让那个 `:` 撞上 expect('{')。
-        var supers = parseSupertypeList()
+        var sup = parseSuperClause(nameTok.text)
 
         expect("LBRACE", "类 '" + nameTok.text + "' 缺少 '{'")
 
         var fields = new Node(NodeKind.FIELDS)
-        // 成员方法允许写 `override`（阶段 20）：循环期间打开开关，循环结束（含中途报错退出）还原
+        // 成员方法允许写 `override`（阶段 20）与 `open`/`final`/`abstract`（阶段 25）：
+        // 循环期间打开开关，循环结束（含中途报错退出）还原
         var oldOverrideOk = overrideOk
+        var oldInheritOk = inheritOk
         overrideOk = true
+        inheritOk = true
         while (!check("RBRACE") && !check("EOF") && !failed) {
             // 成员（字段 / 方法 / 次构造）也要行号：字段初始化块与函数体里的指令都要发
             // `LineNumberTable`，字段那条取的是**声明行**
@@ -888,13 +960,28 @@ public class Parser(tokens : Token[]) {
                 if (fld.line < 1) { fld.line = memberLine }
                 fields.add(fld)
             } else {
+                // 字段不吃继承修饰词（阶段 25 禁止字段遮蔽，DESIGN-25 §5）：`open var x` 要报一句
+                // 准确的错，而不是掉进 parseFuncDecl 撞「这里需要一个函数声明」
+                // （Kotlin 版 isFieldDeclAheadAfterInherit，Parser.kt:1422）。
+                if (isFieldDeclAheadAfterInherit()) {
+                    failAt(peek(), "字段不能写 'open' / 'final' / 'abstract'：子类不能重复声明父类已有的字段（阶段 25 禁止字段遮蔽，DESIGN-25 §5），所以字段没有「可被覆盖」这一说，把修饰词删掉")
+                }
+                // 构造器：`constructor` 以及「修饰词 + constructor」。修饰词可以排一串
+                // （阶段 25 起还包括 open/final/abstract），所以按 Kotlin 版 modifierRun
+                // 的口径整串跳过去再认（Parser.kt:721/738）。
                 var ctorAhead = peek().kind == "KW_CONSTRUCTOR" ||
-                    ((isControlKeyword(peek().kind) || isStaticKeyword(peek().kind)) && checkAt(1, "KW_CONSTRUCTOR"))
+                    (isModifierKeyword(peek().kind) && peekAt(modifierRun()).kind == "KW_CONSTRUCTOR")
                 var mem = new Node(NodeKind.ERROR)
                 if (ctorAhead) {
                     // 构造器上不能写注解（v1 的可标注位置里没有构造器）
                     if (memberAnnotations.childCount > 0) {
                         failAt(peek(), "构造器上不能写注解（'@'）：v1 的注解只标在类/接口/注解声明/方法/字段上")
+                    }
+                    // 阶段 25：构造器上的 open/final/abstract 收下来就丢掉（构造器不参与继承），
+                    // 与 Kotlin 版 parseClassDecl:745 完全同款——收下来是为了让 parseConstructor
+                    // 看到的第一个记号就是 `constructor` 本身。
+                    if (isInheritKeyword(peek().kind)) {
+                        parseInheritModifiers("构造器")
                     }
                     mem = parseConstructor(nameTok.text, memberAnnotations)
                 } else {
@@ -905,10 +992,27 @@ public class Parser(tokens : Token[]) {
             }
         }
         overrideOk = oldOverrideOk
+        inheritOk = oldInheritOk
         expect("RBRACE", "类 '" + nameTok.text + "' 没有闭合，缺少 '}'")
 
+        // 孩子顺序**必须**与 AstDump.kt 的 classDecl(:179) 一致：
+        //   CLASS → SUPERS → [SUPER_CLASS + 它的 ARGS] → [OPEN | FINAL | ABSTRACT] →
+        //   TYPE_PARAMS → FIELDS → METHODS → ANNOTATION_USES
+        // SUPERS/后四项一个都不能少（位置索引铁律：Interp.rsf:792/805/888/919 与
+        // Backend.rsf:5692 按位置读孩子）。父类槽位与三个修饰词节点**只在写了时**挂，
+        // 所以既有语料的字节一个都不变。
         var n = new Node(NodeKind.CLASS).put("control", control).put("name", escapeValue(nameTok.text))
-        n.add(supers)
+        n.add(sup.interfaces)
+        if (sup.baseName.length() > 0) {
+            var base = new Node(NodeKind.SUPER_CLASS)
+                .put("name", escapeValue(sup.baseName))
+                .put("display", escapeValue(sup.baseDisplay))
+            base.add(sup.baseArgs.countTag())
+            n.add(base)
+        }
+        if (mods.isOpen) { n.add(new Node(NodeKind.OPEN)) }
+        if (mods.isFinal) { n.add(new Node(NodeKind.FINAL)) }
+        if (mods.isAbstract) { n.add(new Node(NodeKind.ABSTRACT)) }
         n.add(typeParams.countTag())
         n.add(fields.countTag())
         n.add(methods.countTag())
@@ -924,6 +1028,10 @@ public class Parser(tokens : Token[]) {
         }
         if (isStaticKeyword(peek().kind)) {
             failAt(peek(), "constructor 不能是 static：构造器一定要有当前对象（this）")
+        }
+        // 阶段 25：`override constructor` 也不能写（Kotlin 版 parseConstructor Parser.kt:1303）
+        if (isOverrideKeyword(peek().kind)) {
+            failAt(peek(), "构造器不能写 override（'" + peek().text + "'）：override 的意思是「覆盖父类型里的方法」，构造器没有父类型方法可覆盖。直接写 constructor(参数) { ... }")
         }
         advance()   // constructor
 
@@ -952,8 +1060,147 @@ public class Parser(tokens : Token[]) {
         rtn n
     }
 
-    // `:` 父类型子句：类与接口共用。语法是 `:` 类型 (`,` 类型)*，类型可以带类型实参。
-    // 三条当场判失败（与 Kotlin 版 parseSupertypeList 同口径，文案不要求一致）：
+    // -------- 阶段 25：继承修饰词（类头 + 类体方法） ----------------------------
+
+    // 类头/方法前面那串继承修饰词（`open` / `final` / `abstract`）。与 Kotlin 版
+    // Parser.kt:790 的 parseInheritModifiers 一一对应：同一个词写两遍、`open` 与 `final`
+    // 同时写、`abstract` 与另两个一起写，都在**这里**当场判失败（报错位置指到后面那个词）。
+    // ⇒ 三个词**至多一个为真**。`super` 不在这条通路上（它是表达式接收者，不是修饰词）。
+    fun parseInheritModifiers(kindWord : string) -> InheritMods {
+        var sawOpen = false
+        var sawFinal = false
+        var sawAbstract = false
+        while (isInheritKeyword(peek().kind) && !failed) {
+            var t = advance()
+            if (t.kind == "KW_OPEN") {
+                if (sawOpen) { failAt(t, kindWord + "上 'open' 写了两遍——写一次就够了") }
+                sawOpen = true
+            } else {
+                if (t.kind == "KW_FINAL") {
+                    if (sawFinal) { failAt(t, kindWord + "上 'final' 写了两遍——写一次就够了") }
+                    sawFinal = true
+                } else {
+                    if (sawAbstract) { failAt(t, kindWord + "上 'abstract' 写了两遍——写一次就够了") }
+                    sawAbstract = true
+                }
+            }
+        }
+        if (sawOpen && sawFinal) {
+            failAt(peek(), kindWord + "上 'open' 与 'final' 不能同时写：'open' 是允许被继承/覆盖，'final' 是禁止（DESIGN-25 §4），删掉其中一个")
+        }
+        if (sawAbstract && (sawOpen || sawFinal)) {
+            failAt(peek(), kindWord + "上 'abstract' 不能和 'open' / 'final' 写在一起（DESIGN-25 §6），写 'abstract' 一个就够了")
+        }
+        rtn new InheritMods(sawOpen, sawFinal, sawAbstract)
+    }
+
+    // 两段修饰词合并（Kotlin 版 mergeInherit，Parser.kt:1724）：修饰词与注解可以夹着写
+    // （`open @M final fun f()`），所以 parseFuncDecl 的收集循环可能前后收到两段。
+    fun mergeInheritMods(cur : InheritMods, kindWord : string) -> InheritMods {
+        var next = parseInheritModifiers(kindWord)
+        if (cur.isOpen && next.isOpen) { failAt(peek(), kindWord + "上 'open' 写了两遍——写一次就够了") }
+        if (cur.isFinal && next.isFinal) { failAt(peek(), kindWord + "上 'final' 写了两遍——写一次就够了") }
+        if (cur.isAbstract && next.isAbstract) { failAt(peek(), kindWord + "上 'abstract' 写了两遍——写一次就够了") }
+        var o = cur.isOpen || next.isOpen
+        var f = cur.isFinal || next.isFinal
+        var a = cur.isAbstract || next.isAbstract
+        if (o && f) {
+            failAt(peek(), kindWord + "上 'open' 与 'final' 不能同时写：'open' 是允许被继承/覆盖，'final' 是禁止（DESIGN-25 §4），删掉其中一个")
+        }
+        if (a && (o || f)) {
+            failAt(peek(), kindWord + "上 'abstract' 不能和 'open' / 'final' 写在一起（DESIGN-25 §6），写 'abstract' 一个就够了")
+        }
+        rtn new InheritMods(o, f, a)
+    }
+
+    // -------- 阶段 25：类头的 `:` 子句（父类 + 父接口） ------------------------
+
+    // 类头 `:` 子句：父类可选（**最多一个**），父接口 0..n 个。
+    // 判据是**语法**的（「类型引用后面紧跟着 `(`」），Kotlin 版 parseSuperClause
+    // （Parser.kt:850）同口径：「这个名字到底是不是一份可以继承的类」留给语义层。
+    fun parseSuperClause(className : string) -> SuperClause {
+        if (!check("COLON")) {
+            rtn new SuperClause("", "", new Node(NodeKind.ARGS), new Node(NodeKind.SUPERS).countTag())
+        }
+        advance()   // ':'
+
+        // 第一个名字后面紧跟 '(' → 这是父类（实参表必须写，所以它一定是这个形状）
+        if (isBaseAhead()) {
+            var baseType = parseTypeRef()
+            var args = parseSuperArgs(className)
+            if (!check("COMMA")) {
+                rtn new SuperClause(baseType.name, baseType.text(), args, new Node(NodeKind.SUPERS).countTag())
+            }
+            advance()   // ','
+            if (isBaseAhead()) {
+                failAt(peek(), "类 '" + className + "' 只能有一个父类：'" + baseType.text() + "(...)' 后面又出现了带实参表的 '" + peek().text + "'。父类型列表里**最多一个**带实参的父类，其余都是接口（写法是 ': 父类名(实参), 接口名'），rsf 不做多继承（DESIGN-25 §6）")
+            }
+            var tail = new Node(NodeKind.SUPERS)
+            rtn new SuperClause(baseType.name, baseType.text(), args, parseSupertypeItems(tail, false))
+        }
+
+        var ifaces = parseSupertypeItems(new Node(NodeKind.SUPERS), true)
+        if (isBaseAhead()) {
+            var baseStart = peek()
+            var lateBase = parseTypeRef()
+            parseSuperArgs(className)
+            failAt(baseStart, "类 '" + className + "' 的父类 '" + lateBase.text() + "' 必须排在父类型列表的最前面：写法是 ': 父类名(实参), 接口名'，把 '" + lateBase.text() + "(...)' 挪到最前面")
+        }
+        rtn new SuperClause("", "", new Node(NodeKind.ARGS), ifaces)
+    }
+
+    // 下一个记号开始的是不是一个**带了实参表的父类**（`: X(...)`）。
+    // 只看两项：IDENT 加上紧跟的 `(`——因为父类的实参表是**必须写的**（DESIGN-25 §2），
+    // 「带括号的类型名」在 `:` 子句里只可能是父类。泛型父类要把 `&<...>` 尖括号对跳过去，
+    // 再看后面是不是构造实参表的 `(`（Kotlin 版 isBaseAhead，Parser.kt:893）。
+    fun isBaseAhead() -> bool {
+        if (!check("IDENT")) { rtn false }
+        var n = 1
+        if (peekAt(n).kind == "AMP") {
+            n = n + 1
+            if (peekAt(n).kind != "LT") { rtn false }
+            var depth = 0
+            var going = true
+            while (going) {
+                var k = peekAt(n).kind
+                if (k == "EOF") { rtn false }
+                if (k == "LT") { depth = depth + 1 }
+                if (k == "GT") {
+                    depth = depth - 1
+                    if (depth == 0) {
+                        n = n + 1
+                        going = false
+                    }
+                }
+                if (going) { n = n + 1 }
+            }
+        }
+        rtn peekAt(n).kind == "LPAREN"
+    }
+
+    // 父类构造实参表：`Base(实参)`。**必须写**——没有括号直接报错（DESIGN-25 §2）。
+    // 返回的是一个还没打 count 的 ARGS 节点，由调用方 countTag 后挂到 SUPER_CLASS 下面。
+    fun parseSuperArgs(className : string) -> Node {
+        if (!check("LPAREN")) {
+            failAt(peek(), "类 '" + className + "' 的父类后面必须写出构造实参：写法是 `: 父类名(实参)` 或 `: 父类名()`（父类可能没有无参构造器，所以这一对括号不能省），实际读到 '" + peek().text + "'")
+            rtn new Node(NodeKind.ARGS)
+        }
+        advance()   // '('
+        var args = new Node(NodeKind.ARGS)
+        if (!check("RPAREN")) {
+            var going = true
+            while (going && !failed) {
+                args.add(parseExpr())
+                if (!matchOne("COMMA")) { going = false }
+            }
+        }
+        expect("RPAREN", "类 '" + className + "' 的父类构造实参表没有闭合，缺少 ')'")
+        rtn args
+    }
+
+    // `:` 父类型子句：**接口声明 / 伴生体**走这条（类头走 parseSuperClause，父类是独立槽位）。
+    // 语法是 `:` 类型 (`,` 类型)*，类型可以带类型实参。
+    // 三条当场判失败（与 Kotlin 版 parseSupertypeItems 同口径，文案不要求一致）：
     // 父类型带 `?`、父类型不是类型名（例如 `:` 后面直接跟 `{`）、父类型是内置类型名或数组。
     // 类型本身交给 parseTypeRef 解析，免得正例的显示文本与别处的类型写法不一致。
     fun parseSupertypeList() -> Node {
@@ -962,34 +1209,44 @@ public class Parser(tokens : Token[]) {
         // 所以这里两条出口都要打 count：早点返回的那条也不能漏。
         if (!check("COLON")) { rtn supers.countTag() }
         advance()   // ':'
+        rtn parseSupertypeItems(supers, false)
+    }
 
+    // 父类型列表本体。`stopAtBase` = 碰到「带实参表的父类」就停下、把它留给调用方
+    // （Kotlin 版 parseSupertypeItems(owner, stopAtBase)，Parser.kt:1011）。
+    fun parseSupertypeItems(supers : Node, stopAtBase : bool) -> Node {
         var going = true
         while (going && !failed) {
-            var t = peek()
-            if (t.kind == "QUESTION") {
-                failAt(t, "父类型不能可空：'?' 只写在变量/参数/返回的类型上")
+            if (stopAtBase && isBaseAhead()) {
+                // 父类要排在最前面：这里停下来，让调用方去报那句「父类必须排最前面」
+                going = false
             } else {
-                if (!isTypeKeyword(t.kind) && t.kind != "IDENT") {
-                    failAt(t, "父类型列表里需要一个接口名（写法是 ': 名字, 名字'），实际读到 '" + t.text + "'")
+                var t = peek()
+                if (t.kind == "QUESTION") {
+                    failAt(t, "父类型不能可空：'?' 只写在变量/参数/返回的类型上")
                 } else {
-                    var superType = parseTypeRef()
-                    if (isTypeKeyword(t.kind)) {
-                        failAt(t, "'" + superType.name + "' 是内置类型，不能当父类型——父类型只能是接口名")
+                    if (!isTypeKeyword(t.kind) && t.kind != "IDENT") {
+                        failAt(t, "父类型列表里需要一个接口名（写法是 ': 名字, 名字'），实际读到 '" + t.text + "'")
                     } else {
-                        if (superType.depth > 0) {
-                            failAt(t, "父类型不能是数组（'" + superType.text() + "'）：父类型只能是接口名")
+                        var superType = parseTypeRef()
+                        if (isTypeKeyword(t.kind)) {
+                            failAt(t, "'" + superType.name + "' 是内置类型，不能当父类型——父类型只能是接口名")
                         } else {
-                            var superNode = new Node(NodeKind.SUPER)
-                                .put("name", escapeValue(superType.name))
-                                .put("display", escapeValue(superType.text()))
-                                .put("typeArgs", boolText(superType.args.length() > 0))
-                            superNode.line = t.line
-                            supers.add(superNode)
+                            if (superType.depth > 0) {
+                                failAt(t, "父类型不能是数组（'" + superType.text() + "'）：父类型只能是接口名")
+                            } else {
+                                var superNode = new Node(NodeKind.SUPER)
+                                    .put("name", escapeValue(superType.name))
+                                    .put("display", escapeValue(superType.text()))
+                                    .put("typeArgs", boolText(superType.args.length() > 0))
+                                superNode.line = t.line
+                                supers.add(superNode)
+                            }
                         }
                     }
                 }
+                if (!matchOne("COMMA")) { going = false }
             }
-            if (!matchOne("COMMA")) { going = false }
         }
         rtn supers.countTag()
     }
@@ -1411,12 +1668,16 @@ public class Parser(tokens : Token[]) {
         var control = "DEFAULT"
         var isOverride = false
         var isStatic = false
+        // 阶段 25：方法的继承修饰词（open / final / abstract）。缺省三个都为 false
+        // ⇒ 不写就一个 dump 行都不挂（AstDump 只在写了时打 OPEN / FINAL）。
+        var inherit = new InheritMods(false, false, false)
 
         collectLeadingAnnotations(anns)
 
         // 修饰词可以排好几个、顺序随意（`static override fun` / `override static fun`）：
         // 与 Kotlin 版 parseFuncDecl 同一个循环——权限修饰词与 static 各至多一次、
         // override 只置位，而且**只有类体/接口体**里才收（overrideOk，见字段上的注释）。
+        // 继承修饰词同理走 inheritOk（只有类体里才收；接口体/顶层写了会掉到下面那个报错）。
         var going = true
         while (going && !failed) {
             if (isControlKeyword(peek().kind)) {
@@ -1433,20 +1694,30 @@ public class Parser(tokens : Token[]) {
                         isOverride = true
                         collectLeadingAnnotations(anns)
                     } else {
-                        going = false
+                        if (inheritOk && isInheritKeyword(peek().kind)) {
+                            inherit = mergeInheritMods(inherit, "方法")
+                            collectLeadingAnnotations(anns)
+                        } else {
+                            going = false
+                        }
                     }
                 }
             }
         }
 
+        // 静态方法不参与继承（DESIGN-25 §3）：static 与 open/final/abstract 不能写到一起
+        if (isStatic && (inherit.isOpen || inherit.isFinal || inherit.isAbstract)) {
+            failAt(peek(), "静态方法不能是 'open' / 'final' / 'abstract'：静态方法只能写成 '类名.方法名' 调用（static 不参与继承，DESIGN-25 §3），把它上面的继承修饰词删掉")
+        }
+
         if (peek().kind != "KW_FUN") {
-            failAt(peek(), "顶层只能写函数声明，格式是 '[public|protected|private] [static] [override] fun [类型] 名字() 返回子句 函数体'")
+            failAt(peek(), "顶层只能写函数声明，格式是 '[public|protected|private] [static] [override] [open|final|abstract] fun [类型] 名字() 返回子句 函数体'")
             rtn emptyFunc(control, isStatic, isOverride)
         }
         advance()   // fun
 
         // 曾经写反的修饰符位置
-        if (isControlKeyword(peek().kind) || isStaticKeyword(peek().kind) || isOverrideKeyword(peek().kind)) {
+        if (isControlKeyword(peek().kind) || isStaticKeyword(peek().kind) || isOverrideKeyword(peek().kind) || isInheritKeyword(peek().kind)) {
             failAt(peek(), "修饰符要写在 fun 前面：改成 '" + peek().text + " fun ...'")
         }
 
@@ -1486,14 +1757,30 @@ public class Parser(tokens : Token[]) {
 
         // 接口里的抽象方法**只写签名不写体**：此时 abstractBodyOk 为真，既不打 BLOCK 也不报错。
         // 有体就是普通函数（放在接口里即「默认方法」）。
+        // 阶段 25：类里的 `abstract fun` 也只写签名（还没有体就没到实现），但**要写出返回子句**；
+        // 反过来说，抽象方法写了体就是当场判失败（DESIGN-25 §6，Kotlin 版 Parser.kt:1678 同序）。
         var hasBody = false
         var body = new Node(NodeKind.ERROR)
-        if (check("LBRACE")) {
-            body = parseBlock()
-            hasBody = true
+        if (abstractBodyOk && !check("LBRACE")) {
+            // 接口体里的方法必须是抽象方法：签名收完就结束
         } else {
-            if (!abstractBodyOk) {
-                failAt(peek(), "函数体需要以 '{' 开始")
+            if (inherit.isAbstract) {
+                if (check("LBRACE")) {
+                    failAt(peek(), "抽象方法不能写函数体：'abstract fun 名字(...)' 只写签名，没有 '{ ... }'。要么把 'abstract' 删掉、把体留下，要么把体删掉（DESIGN-25 §6）")
+                } else {
+                    if (retStyle == "OMITTED") {
+                        failAt(peek(), "抽象方法要写出返回子句：'abstract fun 名字(...) -> 返回类型'。没有体就没有返回值可以推断，返回类型必须写出来（DESIGN-25 §6）")
+                    }
+                }
+            } else {
+                if (check("LBRACE")) {
+                    body = parseBlock()
+                    hasBody = true
+                } else {
+                    if (!abstractBodyOk) {
+                        failAt(peek(), "函数体需要以 '{' 开始")
+                    }
+                }
             }
         }
         var n = new Node(NodeKind.FUNC)
@@ -1507,6 +1794,10 @@ public class Parser(tokens : Token[]) {
             .put("ctor", "false")
             .put("primary", "false")
             .put("override", boolText(isOverride))
+        // AstDump 的方法分支顺序是 FUNC 行 → OPEN → FINAL → PARAMS → [BLOCK] → ANNOTATION_USES，
+        // 而且**只在写了时**才有那两行（ABSTRACT 在方法上不打：抽象方法体现为没有 BLOCK 孩子）。
+        if (inherit.isOpen) { n.add(new Node(NodeKind.OPEN)) }
+        if (inherit.isFinal) { n.add(new Node(NodeKind.FINAL)) }
         n.add(params)
         if (hasBody) { n.add(body) }
         n.add(anns.countTag())
@@ -1735,6 +2026,9 @@ public class Parser(tokens : Token[]) {
 
         // `this(实参)` 是构造器委托，必须排在成员访问前面判断（靠后面跟 '(' 还是 '.' 分流）
         if (k == "KW_THIS" && checkAt(1, "LPAREN")) { rtn parseThisCall() }
+        // 阶段 25：`super(实参)` = 父类构造器委托，同样只能当构造体的第一句
+        // （顺序判据在语义层；自举侧这里是纯语法，与 Kotlin 版 Parser.kt:2098 同位置）。
+        if (k == "KW_SUPER" && checkAt(1, "LPAREN")) { rtn parseSuperCall() }
 
         if (k == "KW_CONSTRUCTOR") {
             failAt(t, "'constructor' 只能写在类体里（它是次构造：constructor(参数) { ... }）")
@@ -2035,6 +2329,85 @@ public class Parser(tokens : Token[]) {
         var n = new Node(NodeKind.THIS_CALL).put("argc", intToString(args.childCount))
         n.add(args.countTag())
         rtn n
+    }
+
+    // 阶段 25：父类构造器委托 `super(实参)`（Kotlin 版 parseSuperCall，Parser.kt:2184）。
+    // 与 this(实参) 完全同形，只是节点换成 SUPER_CALL——dump 是 `SUPER_CALL argc=N` + ARGS。
+    // 「只能写第一句」「与 this(...) 互斥」是语义层的判据，留给 K5b/K5c。
+    fun parseSuperCall() -> Node {
+        advance()   // super
+        expect("LPAREN", "'super' 后面需要 '('（父类构造器委托写成 super(实参)）")
+        var args = new Node(NodeKind.ARGS)
+        if (!check("RPAREN")) {
+            var going = true
+            while (going && !failed) {
+                args.add(parseExpr())
+                if (!matchOne("COMMA")) { going = false }
+            }
+        }
+        expect("RPAREN", "super(...) 的参数表没有闭合，缺少 ')'")
+        var n = new Node(NodeKind.SUPER_CALL).put("argc", intToString(args.childCount))
+        n.add(args.countTag())
+        rtn n
+    }
+
+    // 阶段 25：`super` 表达式（Kotlin 版 parseSuperExpr，Parser.kt:2808）。两种写法：
+    //   `super.f(实参)`         —— 直接父类的成员（target 打 `-`）
+    //   `super(接口名).f(实参)` —— 指名某个接口的默认实现（target 打接口名；带类型实参时
+    //                              打 `名字&<实参>`，与 AstDump.typeText 的口径一致）
+    // 单独一个 `super` 没有值可取，必须跟方法调用（rsf 不支持 `super.字段`）。
+    // **节点复用 NodeKind.SUPER**：dump 名 `SUPER` 本来就同时被「接口父类型」
+    // （`SUPER name=… display=… typeArgs=…`）与「super 表达式」（`SUPER target=…`）用。
+    fun parseSuperExpr() -> Node {
+        // `super(接口名)`
+        if (check("LPAREN")) {
+            advance()   // '('
+            if (!check("IDENT")) {
+                failAt(peek(), "super(接口名).方法名() 里的括号中要写一个接口名，例如 super(Greeter).tag()（这一步是消歧两个父接口的默认方法），实际读到 '" + peek().text + "'")
+                rtn new Node(NodeKind.SUPER).put("target", "-")
+            }
+            var ifaceTok = advance()
+            var args = ""
+            if (check("AMP")) { args = parseTypeArgs() }
+            var target = ifaceTok.text
+            if (args.length() > 0) { target = target + "&<" + args + ">" }
+            expect("RPAREN", "super(接口名).方法名() 里的括号没有闭合，缺少 ')'")
+            var sup = new Node(NodeKind.SUPER).put("target", escapeValue(target))
+            rtn parseSuperMember(sup, "super(" + ifaceTok.text + ")")
+        }
+        // 裸 `super.方法名(...)`
+        var sup2 = new Node(NodeKind.SUPER).put("target", "-")
+        if (!check("DOT")) {
+            failAt(peek(), "'super' 只能当方法调用的接收者：写法是 super.方法名(实参)，或者 super(接口名).方法名(实参)。单独一个 'super' 没有值可取，实际读到 '" + peek().text + "'")
+            rtn sup2
+        }
+        rtn parseSuperMember(sup2, "super")
+    }
+
+    // `super.成员名(实参)`：只认方法调用（Kotlin 版 parseSuperMember，Parser.kt:2847）。
+    // 落成的是普通 MEMBER 节点（与 parsePostfix 里 `a.b(实参)` 同形），
+    // 接收者孩子就是上面那个 SUPER 节点。
+    fun parseSuperMember(sup : Node, who : string) -> Node {
+        expect("DOT", "'" + who + "' 后面需要 '.'：写法是 " + who + ".方法名(实参)")
+        var nameTok = expect("IDENT", "'" + who + ".' 后面需要成员名")
+        if (!check("LPAREN")) {
+            failAt(peek(), "'" + who + "." + nameTok.text + "' 只能是方法调用：要写出实参表（" + who + "." + nameTok.text + "(...)）。rsf 不支持 super.字段（字段本来也不许遮蔽，DESIGN-25 §5/§6），实际读到 '" + peek().text + "'")
+            rtn sup
+        }
+        advance()   // '('
+        var args = new Node(NodeKind.ARGS)
+        if (!check("RPAREN")) {
+            var going = true
+            while (going && !failed) {
+                args.add(parseExpr())
+                if (!matchOne("COMMA")) { going = false }
+            }
+        }
+        expect("RPAREN", "'" + who + "." + nameTok.text + "(...)' 的参数表没有闭合，缺少 ')'")
+        var m = new Node(NodeKind.MEMBER).put("name", escapeValue(nameTok.text)).put("call", "true")
+        m.add(sup)
+        m.add(args.countTag())
+        rtn m
     }
 
     // ============================================================ for
@@ -2375,6 +2748,12 @@ public class Parser(tokens : Token[]) {
         if (k == "KW_THIS") {
             advance()
             rtn new Node(NodeKind.THIS)
+        }
+        // 阶段 25：`super` 只能当方法调用的接收者（裸 super / super(接口名)），
+        // 解析入口与修饰词分支完全无关（Kotlin 版 parsePrimary 同位置，Parser.kt:2894）。
+        if (k == "KW_SUPER") {
+            advance()
+            rtn parseSuperExpr()
         }
         if (k == "KW_NEW") {
             advance()
