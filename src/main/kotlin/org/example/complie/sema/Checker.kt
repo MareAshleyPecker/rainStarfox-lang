@@ -1282,7 +1282,7 @@ class Checker(
         // 两端都按「非虚调用」打：目标是**声明类**那一份实现（DESIGN-25 §7）。
         val found = declaredMethodOnChain(info, expr.name, includeSelf = false) { !it.isConstructor }
         if (found == null) {
-            inheritedJvmMethod(info, expr.name, argTypes)?.let { jvm ->
+            inheritedJvmMethod(info, expr.name, argTypes, expr.at)?.let { jvm ->
                 superCalls[expr] = SuperCall.Jvm(
                     ResolvedMethod(jvm, ClassPath.find(jvm.owner)?.isInterface == true),
                 )
@@ -4110,15 +4110,56 @@ class Checker(
      * 找的是**实例方法**：JDK 的 static 方法一样不继承（DESIGN-25 §3，只能写
      * `类名.方法(...)`）。
      */
-    private fun inheritedJvmMethod(info: ClassInfo, name: String, argTypes: List<RsfType>): JvmMethod? {
+    private fun inheritedJvmMethod(
+        info: ClassInfo,
+        name: String,
+        argTypes: List<RsfType>,
+        at: SourceLine,
+    ): JvmMethod? {
         val jvm = jvmParentOf(info) ?: return null
-        return resolver.findMethod(jvm.internalName, name, argTypes, wantStatic = false)
+        val found = resolver.findMethod(jvm.internalName, name, argTypes, wantStatic = false)
             ?: if (argTypes.isNotEmpty()) {
                 // 和 `接收者.成员` 那条路一致：基本类型实参再按装箱形态试一次
                 resolver.findMethod(jvm.internalName, name, argTypes.map { boxForInterop(it) }, wantStatic = false)
             } else {
                 null
             }
+        return found?.let { objectMemberGate(info, it, at) }
+    }
+
+    /**
+     * **`java/lang/Object` 的方法除了 rsf 自己定义语义的 `toString` / `equals` /
+     * `hashCode`，不得经 JDK 父链漏进用户类**（阶段 25 K4b）。
+     *
+     * 这三个名字两端能一致：字节码侧发的是 `invokevirtual <声明类>.<名字>`，运行期接收者
+     * 是 rsf 生成的类——它总是带着 rsf 生成的 `toString()`（ObjectFormat 渲染），
+     * `equals` 与 `hashCode` 落在 `java/lang/Object` 的同一性实现上；解释器侧由
+     * `Interpreter.rsfObjectFamily` 按同一套语义算。
+     *
+     * 其余的一律拦住：
+     * - `wait` / `notify` / `notifyAll` / `clone` / `finalize`：解释器手上只有配对出来的
+     *   JDK 父类实例，反射调它们要么打错真身、要么因 protected 直接抛 Java 异常，
+     *   索性按「查不到」处理（写 `xs.wait()` 会照旧报「没有方法」）。
+     * - `getClass()`：**两端拿不到同一个 `Class` 对象**——解释器里的对象是
+     *   `RsfObject`（类名 + 字段平数组），配出来的只有 JDK 父类实例，答出来是
+     *   `class java.lang.Exception`；字节码那边答的是 rsf 自己生成的类。这种分歧必须
+     *   在编译期拦住，而不是让它悄悄漏过去（`build/verify25/probes/n17`）。
+     */
+    private fun objectMemberGate(info: ClassInfo, m: JvmMethod, at: SourceLine): JvmMethod? {
+        if (m.owner != "java/lang/Object") return m
+        when (m.name) {
+            "toString" -> if (m.paramTypes.isEmpty()) return m
+            "equals" -> if (m.paramTypes.size == 1) return m
+            "hashCode" -> if (m.paramTypes.isEmpty()) return m
+            "getClass" -> throw err(
+                "类 '${info.decl.name}' 上调不到 'getClass()'：rsf 的类在解释器里没有真实的 Class 对象" +
+                    "（一个对象就是「类名 + 字段平数组」，从 JDK 父类配出来的也只是那个父类的实例），" +
+                    "字节码那边 a.getClass() 拿到的是它自己那个生成的类——两端拿不到同一个 Class。" +
+                    "要类名就在类里写一个返回它的方法（阶段 25 K4b）",
+                at,
+            )
+        }
+        return null
     }
 
     /** JDK 父类链上的实例字段（G5）；没有就是 null。 */
@@ -4195,7 +4236,7 @@ class Checker(
             // （`class MyError : Exception` 里的 `getMessage()`）。JVM 的规矩是
             // 父类的方法压过接口的默认方法，所以这一支排在默认方法前面。
             if (!wantStatic) {
-                val jvm = inheritedJvmMethod(info, expr.name, expr.arguments.map { type(it) })
+                val jvm = inheritedJvmMethod(info, expr.name, expr.arguments.map { type(it) }, expr.at)
                 if (jvm != null) {
                     memberTargets[expr] = ResolvedMethod(jvm, ClassPath.find(jvm.owner)?.isInterface == true)
                     return jvm.returnType
@@ -6021,7 +6062,7 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
     private fun checkImplicitJvmCall(info: ClassInfo, expr: CallExpr): RsfType? {
         if (jvmParentOf(info) == null) return null
         val argTypes = expr.arguments.map { type(it) }
-        val method = inheritedJvmMethod(info, expr.name, argTypes) ?: return null
+        val method = inheritedJvmMethod(info, expr.name, argTypes, expr.at) ?: return null
         implicitJvmCalls[expr] = ResolvedMethod(method, ClassPath.find(method.owner)?.isInterface == true)
         return if (method.returnType.isVoid) RsfType.VOID else method.returnType
     }

@@ -1598,6 +1598,176 @@ class InheritanceTest {
         assertTrue(e.detail.contains("Base.make"), e.detail)
         assertTrue(!e.detail.contains("（有："), e.detail)
     }
+
+    // ------------------------------- 阶段 25 K4b：JDK 父类用户类上的 Object 方法族
+
+    /**
+     * K4b①：`toString()` 与裸 `println(对象)` 是同一个字符串（ObjectFormat 渲染）。
+     *
+     * 字节码侧发的是 `invokevirtual <声明类>.toString`，运行期接收者是 rsf 生成的类，
+     * 它**总是**带着 rsf 生成的 `toString()`；解释器里的对象没有对应的 JVM 类，
+     * 原来会反射打到配对出来的 JDK 父类实例上，印出 `java.lang.Exception: x`。
+     * 这里把三种调用形态都钉住：显式 `a.toString()`、隐式 `toString()`、
+     * `this.toString()`，再加上静态类型是 JDK 父类的上转型接收者。
+     */
+    @Test
+    fun `K4b JDK 父类用户类的 toString 与裸 println 同一个字符串`() {
+        val program = "import java.lang.Exception\n" +
+            "class E2(m : string) : Exception(m) {\n" +
+            "    fun implicit() -> string {\n" +
+            "        rtn toString()\n" +
+            "    }\n" +
+            "    fun explicit() -> string {\n" +
+            "        rtn this.toString()\n" +
+            "    }\n" +
+            "}\n" +
+            "fun main() -> void {\n" +
+            "    var a : E2 = new E2(\"x\")\n" +
+            "    println(a.toString())\n" +
+            "    println(a.implicit())\n" +
+            "    println(a.explicit())\n" +
+            "    println(a)\n" +
+            "    var up : Exception = new E2(\"x\")\n" +
+            "    println(up.toString())\n" +
+            "    rtn\n" +
+            "}\n"
+
+        assertEquals(
+            listOf("E2()", "E2()", "E2()", "E2()", "E2()"),
+            bothEnds(program, "RsfK4bToString"),
+        )
+    }
+
+    /**
+     * K4b②：`equals(其他)` 按 **rsf 对象的同一性**算。
+     *
+     * 字节码侧继承来的是 `java/lang/Object.equals`（同一性），解释器里就得是
+     * `self === 其他`——反射打到 JDK 父类实例上会变成「拿父类实例比」，`a.equals(a)`
+     * 都会答 false。
+     */
+    @Test
+    fun `K4b JDK 父类用户类的 equals 按 rsf 对象同一性算`() {
+        val program = "import java.lang.Exception\n" +
+            "class E3(m : string) : Exception(m) {\n" +
+            "    fun same(o : E3) -> bool {\n" +
+            "        rtn this.equals(o)\n" +
+            "    }\n" +
+            "}\n" +
+            "fun main() -> void {\n" +
+            "    var a : E3 = new E3(\"x\")\n" +
+            "    var b : E3 = new E3(\"x\")\n" +
+            "    println(a.equals(a))\n" +
+            "    println(a.equals(b))\n" +
+            "    println(a.same(a))\n" +
+            "    println(b.same(a))\n" +
+            "    println(a.equals(null))\n" +
+            "    rtn\n" +
+            "}\n"
+
+        assertEquals(
+            listOf("true", "false", "true", "false", "false"),
+            bothEnds(program, "RsfK4bEquals"),
+        )
+    }
+
+    /**
+     * K4b③：`hashCode()` 用 identity hash，**只做单测、不进探针 golden**。
+     *
+     * 两端算出来的**数字**永远不可能一样（JVM 上 hash 的是 rsf 生成类的实例，解释器里
+     * hash 的是 `RsfObject`），所以只钉「同一性语义」这件事：同一个对象稳定同值、
+     * 不同对象不同值、显式与隐式调用同值。（两个活对象的 identity hash 撞车概率约
+     * 2^-31，真撞上算彩票。）
+     */
+    @Test
+    fun `K4b JDK 父类用户类的 hashCode 按 identity hash 算`() {
+        val program = "import java.lang.Exception\n" +
+            "class E4(m : string) : Exception(m) {\n" +
+            "    fun h() -> int {\n" +
+            "        rtn hashCode()\n" +
+            "    }\n" +
+            "}\n" +
+            "fun main() -> void {\n" +
+            "    var a : E4 = new E4(\"x\")\n" +
+            "    var b : E4 = new E4(\"x\")\n" +
+            "    println(a.hashCode() == a.hashCode())\n" +
+            "    println(a.hashCode() == b.hashCode())\n" +
+            "    println(a.h() == a.hashCode())\n" +
+            "    rtn\n" +
+            "}\n"
+
+        assertEquals(
+            listOf("true", "false", "true"),
+            bothEnds(program, "RsfK4bHashCode"),
+        )
+    }
+
+    /**
+     * K4b④：用户类上的 `getClass()` 编译期就被拒，理由写在报文里。
+     *
+     * 解释器里的对象是 `RsfObject`（类名 + 字段平数组），配对出来的只有 JDK 父类实例
+     * ——答出来是 `class java.lang.Exception`；字节码那边是 rsf 自己生成的类。两端拿不到
+     * 同一个 `Class` 对象，所以只能拦。**接收者本来就是 JDK 对象的那条路照旧可用**。
+     */
+    @Test
+    fun `K4b 用户类上的 getClass 编译期就被拒`() {
+        val e = fails(
+            "import java.lang.Exception\n" +
+                "class Err3(m : string) : Exception(m) {\n" +
+                "}\n" +
+                "fun main() -> void {\n" +
+                "    var a : Err3 = new Err3(\"x\")\n" +
+                "    println(a.getClass())\n" +
+                "    rtn\n" +
+                "}\n",
+        )
+        assertTrue(e.detail.contains("getClass"), e.detail)
+        assertTrue(e.detail.contains("Class"), e.detail)
+        assertTrue(e.detail.contains("两端拿不到同一个 Class"), e.detail)
+
+        // 合法路径：接收者真的是 JDK 对象，两端照旧一致
+        val jdk = "import java.lang.Exception\n" +
+            "fun main() -> void {\n" +
+            "    var e : Exception = new Exception(\"boom\")\n" +
+            "    println(e.getClass())\n" +
+            "    rtn\n" +
+            "}\n"
+        assertEquals(listOf("class java.lang.Exception"), bothEnds(jdk, "RsfK4bGetClassJdk"))
+    }
+
+    /**
+     * K4b⑤：`java/lang/Object` 上**别的**实例方法不经 JDK 父链漏进用户类。
+     *
+     * `wait` / `notify` / `clone` 这些在解释器里只能反射打到配对出来的 JDK 父类实例上
+     * （真身错了，`clone` 还因为 protected 直接抛 Java 异常），索性按「查不到」处理——
+     * 这就是那句原则：除了 rsf 自己定义语义的 `toString` / `equals` / `hashCode`，
+     * Object 的方法一个都不漏进来。
+     */
+    @Test
+    fun `K4b Object 上别的实例方法不经 JDK 父链漏进用户类`() {
+        val notify = fails(
+            "import java.lang.Exception\n" +
+                "class Err5(m : string) : Exception(m) {\n" +
+                "}\n" +
+                "fun main() -> void {\n" +
+                "    var a : Err5 = new Err5(\"x\")\n" +
+                "    a.notify()\n" +
+                "    rtn\n" +
+                "}\n",
+        )
+        assertTrue(notify.detail.contains("没有方法 'notify'"), notify.detail)
+
+        val clone = fails(
+            "import java.lang.Exception\n" +
+                "class Err6(m : string) : Exception(m) {\n" +
+                "}\n" +
+                "fun main() -> void {\n" +
+                "    var a : Err6 = new Err6(\"x\")\n" +
+                "    a.clone()\n" +
+                "    rtn\n" +
+                "}\n",
+        )
+        assertTrue(clone.detail.contains("没有方法 'clone'"), clone.detail)
+    }
 }
 
 private fun rsfSource(text: String): SourceFile = SourceFile.of("<test>", text)

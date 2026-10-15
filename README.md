@@ -1017,7 +1017,9 @@ fun main() -> void {
 - **可以继承 JDK 类**（Q3）：`class MyError(msg : string) : Exception(msg)` 能直接用，
   `getMessage()` 这类继承来的方法照常调用、`super.getMessage()` 打到声明类（`java.lang.Throwable`）那一份。
   父类必须是**非 final** 的类（`StringBuilder` 这类会被编译期拒掉）；`protected` 构造器（`ClassLoader()`）
-  两端都建得出来。**已知边界**见下面「语言限制」里的类继承三条。
+  两端都建得出来。`java/lang/Object` 的方法只放行 rsf 自己定义语义的 `toString` / `equals` / `hashCode`
+  （`toString()` 与裸 `println(对象)` 同一串，`equals` 是对象同一性），别的（`wait` / `notify` / `clone`）按
+  「没有这个方法」处理、`getClass()` 编译期直接报错。**已知边界**见下面「语言限制」里的类继承四条。
 
 ### 注解 `annotation`（阶段 21）
 
@@ -1443,10 +1445,13 @@ gradlew.bat verifyPlugin          :: 官方校验器静态检查
   内建 `@Deprecated`；伴生实体只继承接口，注解也不能当父类型；`rsfSrc/**` 的注解**只到语法层**（自举链能解析、与 Kotlin 版 AST 逐字节一致，但忽略其语义）
 - **类型转换与类型判断**：`(byte) x` 那类窄化仍只能走内置函数；计划里的 `as` / `?as` / `is` / `!is`
   （`DESIGN-24.md`）还没实现
-- **类继承（阶段 25）**：不做多继承 / `sealed` / `data` / `super.字段`；继承 JDK 类时有三条已知限制——
+- **类继承（阶段 25）**：不做多继承 / `sealed` / `data` / `super.字段`；继承 JDK 类时有四条已知限制——
   ① **不能覆盖 JDK 父类的方法**（解释器把 JDK 父类对象建成真实 JVM 实例，rsf 的 `override` 落不到它身上，
   所以这种源码在**编译期**就被拒，而不是留到运行期两端分叉）；② **JDK 父类的字段不能写**（只有读的那条路接了实例）；
-  ③ **JDK 父类只挂一跳**（`RsfObject.jdkParent` 只有一个槽位）。另外 `rsfSrc/**` 里的类继承**还没同步到自举链**（K5 待做）
+  ③ **JDK 父类只挂一跳**（`RsfObject.jdkParent` 只有一个槽位）；④ **用户类的 `getClass()` 在编译期被拒**
+  （两端拿不到同一个 `Class`；接收者本来就是 JDK 对象时照旧可用）。另外 `rsfSrc/**` 里的类继承**还没同步到自举链**（K5 待做）。
+  这一支上 `java/lang/Object` 的方法只放行 rsf 自己定义语义的 `toString` / `equals` / `hashCode`
+  （分别是 ObjectFormat 渲染、对象同一性、identity hash），`wait` / `notify` / `clone` 之类一律按「查不到」处理
 
 ## 路线图
 

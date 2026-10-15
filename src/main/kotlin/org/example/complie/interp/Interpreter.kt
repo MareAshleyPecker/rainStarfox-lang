@@ -684,6 +684,10 @@ class Interpreter(
                     )
                 }
                 val rawArgs = expr.arguments.orEmpty().map { eval(it, slots, body) }
+                // 阶段 25 K4b：`java/lang/Object` 的 `toString` / `equals` / `hashCode`
+                // 在 rsf 对象上按 rsf 的语义算，不反射打到配对出来的 JDK 父类实例上
+                val family = rsfObjectFamily(receiver, target.method.name, rawArgs)
+                if (family !== NOT_OBJECT_FAMILY) return family
                 val args = rawArgs.mapIndexed { i, v ->
                     adaptJdkArg(v, target.method.paramTypes.getOrNull(i))
                 }.toTypedArray()
@@ -867,6 +871,48 @@ class Interpreter(
      */
     private fun jdkReceiver(v: Any?): Any? = (v as? RsfObject)?.jdkParent ?: v
 
+    /** [rsfObjectFamily] 的「不归我管」标记——调用方照旧走反射。 */
+    private val NOT_OBJECT_FAMILY: Any = Any()
+
+    /**
+     * **`java/lang/Object` 的方法除了 rsf 自己定义语义的 `toString` / `equals` /
+     * `hashCode`，不得经 JDK 父链漏进用户类**（阶段 25 K4b）。
+     *
+     * 字节码侧这三个调用发的是 `invokevirtual <声明类>.<名字>`，运行期接收者是 rsf
+     * 生成的类：它**总是**带着 rsf 生成的 `toString()`（ObjectFormat 渲染，
+     * 和裸 `println(对象)` 同一个字符串），`equals` / `hashCode` 则落在
+     * `java/lang/Object` 的同一性实现上。解释器里的 rsf 对象没有对应的 JVM 类，
+     * 反射打到 [RsfObject.jdkParent]（配对出来的 JDK 父类实例）上会答成父类那一份
+     * ——`class E2 : Exception` 的 `toString()` 会印出 `java.lang.Exception: x`，
+     * `a.equals(a)` 会答 `false`。所以在这一层补上同一套语义
+     * （[javaHandler] 里给接口代理写的是同一套）。
+     *
+     * 只有这三个名字走这里：`wait` / `notify` / `clone` / `getClass` 之类在 Checker
+     * 的 `objectMemberGate` 里就被拦住了，根本到不了解释器。
+     *
+     * @return [NOT_OBJECT_FAMILY] 表示不归这条路管（接收者不是 rsf 对象，或者名字
+     *   不在这一族里），调用方继续反射。
+     */
+    private fun rsfObjectFamily(receiver: Any?, name: String, args: List<Any?>): Any? {
+        if (receiver !is RsfObject) return NOT_OBJECT_FAMILY
+        return when {
+            name == "toString" && args.isEmpty() -> receiver.toString()
+            name == "hashCode" && args.isEmpty() -> System.identityHashCode(receiver)
+            name == "equals" && args.size == 1 -> receiver === args[0]
+            // 静态类型是 JDK 类、运行期却拿到 rsf 对象时（`var e : Exception = new E2("x")`），
+            // 编译期的 objectMemberGate 管不到——这里把「两端拿不到同一个 Class」明着抛出来，
+            // 不让它悄悄答成父类的类。（真 JDK 对象走不到这里，上面第一行就弹回去了。）
+            name == "getClass" && args.isEmpty() -> throw RsfError(
+                "interp",
+                "rsf 的类在解释器里没有真实的 Class 对象：'${receiver.className}' 就是一个 RsfObject" +
+                    "（类名 + 字段平数组），从 JDK 父类配出来的也只是那个父类的实例——" +
+                    "两端拿不到同一个 Class（阶段 25 K4b）",
+                -1, -1, null,
+            )
+            else -> NOT_OBJECT_FAMILY
+        }
+    }
+
     /**
      * 反射调一个**从 JDK 父类继承来的**实例方法（阶段 25 K3）。
      *
@@ -882,6 +928,10 @@ class Interpreter(
         target: ResolvedMethod,
         args: List<Any?>,
     ): Any? {
+        // 阶段 25 K4b：Object 方法族先按 rsf 语义答（`class E2 : Exception` 的
+        // `getMessage()` 仍然落到下面反射父类实例那条路）
+        val family = rsfObjectFamily(self, target.method.name, args)
+        if (family !== NOT_OBJECT_FAMILY) return family
         val receiver = self.jdkParent
             ?: throw RsfError(
                 "interp",
