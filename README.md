@@ -462,7 +462,7 @@ var maybe : ?string = null
 | 条件 | `if (c) { ... } else { ... }` / `if c : 单条语句` |
 | 循环 | `while (c) { ... }` / `for (i in 0..9)` / `for (init; cond; step)` |
 | 跳出 / 下一轮 | `break` / `continue` |
-| 枚举分派 | `switch (k) { case TokenKind.IDENT : ... else : ... }` |
+| 枚举分派 | `switch (k) { TokenKind.IDENT : ... else : ... }` |
 | 抛错 | `fail "出错了"`（只能在 `!T` 函数里，或者 `try` 里） |
 | 接错 | `try { ... } catch (e : string) { ... }`（也接受老写法 `catch (e string)`） |
 | 标签 / 跳转 | `loop:` / `goto loop` |
@@ -865,31 +865,35 @@ public final class TokenKind extends java.lang.Object {
 `switch` / `EnumSet` / `values()` 去用它**（rsf 内部完全够用）。真要和 Java 的 enum 互操作，
 等将来有需求再补 `ACC_ENUM`。
 
-### `switch`：枚举分派（阶段 19c）
+### `switch`：枚举分派（阶段 19c；阶段 21 起分支不写 `case`）
 
 ```rsf
 switch (kind) {
-    case TokenKind.IDENT : println("标识符")
-    case TokenKind.INT_LIT : {
+    TokenKind.IDENT : println("标识符")
+    TokenKind.INT_LIT : {
         var n = parseInt(text) ?: 0
         println("数字 " + n)
     }
-    case TokenKind.STRING : println("字符串")
+    TokenKind.STRING : println("字符串")
     else : println("其它")
 }
 ```
 
+> **阶段 21**：分支头不用再写 `case`，直接写 `枚举名.值名 : 语句`——和 Kotlin `when` 的臂一个样子。
+> 旧写法 `case 枚举名.值名 : ...` 仍然能编译（`case` 还是关键字），只是每个分支会发一条弃用警告：
+> `'case' 已弃用（is deprecated since 0.9.0）：switch 的分支直接写 '枚举名.值名 : 语句'，不用再写 'case'`。
+
 四条定死的规矩：
 
 1. **被分派的值必须是枚举**（`switch` 只能对枚举做）。要按数值 / 字符串分派就写 `if` / `else if` 链。
-2. **`case` 后面只接受枚举常量**（`枚举名.值名`）：没有区间、没有比较、没有字面量。
+2. **分支头只接受枚举常量**（`枚举名.值名`）：没有区间、没有比较、没有字面量。
 3. **默认分支写 `else :`**，不是 Java 的 `default :`——语言里已经有一个「都不是就走这里」的关键字了。
 4. **没有 fallthrough**：每个分支执行完就跳出 `switch`，不需要（也不能）靠 `break` 收尾；
    分支体跟 `if c : 语句` 同一套规则（单条语句，或者 `{ ... }` 多句）。
 
 编译期的三道检查（都带「有哪些值」的提示）：
 
-- `case` 的值必须是**同一个枚举**的常量：写别的枚举的常量、写不存在的值名都直接报错；
+- 分支的值必须是**同一个枚举**的常量：写别的枚举的常量、写不存在的值名都直接报错；
 - **同一个值不能有两个分支**（先后顺序没有定义，与其定规矩不如拦住）；
 - **没有 `else` 时必须穷尽**：缺哪个值就报哪个值。只匹配枚举常量时穷尽性是编译期算得准的，
   而「漏了分支却静默什么都不做」是最难查的一类 bug，所以宁可不让它编译过。
@@ -954,8 +958,11 @@ fun main() -> void {
   补 `ACC_BRIDGE | ACC_SYNTHETIC` 桥方法，解释器会给对象套 `java.lang.reflect.Proxy`——两条路都走通，
   不会出现「解释器能跑、`java` 一跑 `AbstractMethodError`」。
 
-**已知边界**：`rsfSrc/**`（用 rsf 写的自举版编译器）**还没同步 `interface` / `override`**，
-所以自举链上写的代码暂时用不了这两个特性（详见 `BOOTSTRAP.md` 的「阶段 20 实际做法与结果」）。
+**已知边界**：`interface` / `override` **已同步到自举链**（2026-10-15，第 1 刀 `Parser.rsf` 收语法 +
+第 2 刀 `Backend.rsf` / `Interp.rsf` / `Sources.rsf` 收语义：接口类头、默认方法、`INVOKEINTERFACE`、
+多文件顶层接口），探针台 `build/verify21/bootbackend/run-probes.sh both` 四列全绿。
+自举源（`rsfSrc/bootstrap/**`）**自身**还没改写成接口风格——只是「能写」了。
+注解（阶段 21）**仍未同步**，见 `BOOTSTRAP.md`。
 
 ### 注解 `annotation`（阶段 21）
 
@@ -1372,7 +1379,8 @@ gradlew.bat verifyPlugin          :: 官方校验器静态检查
   没有 `values()` / `ordinal()` 这类反射接口，也没有「枚举 → 名字字符串」的内置函数
   （要文本就用字符串拼接：`"" + k`）
 - **`switch`（阶段 19c）**：只能对枚举做（数值 / 字符串的分派写 `if` / `else if` 链）；
-  是**语句**不是表达式（要取值用三目）；`case` 只接受枚举常量，不支持区间 / 比较 / 字面量；
+  是**语句**不是表达式（要取值用三目）；分支头只接受枚举常量，不支持区间 / 比较 / 字面量；
+  旧写法 `case 枚举名.值名 :` 仍可编译，但会发弃用警告（阶段 21）；
   没有 fallthrough，也不接受 `break` 跳出 `switch`（分支里写的 `break` 作用于外层循环）
 - **`&&` / `||`**：两边必须是 `bool`（`?bool` 要先解包 / 兜底）；没有按位运算（单独的 `|` 报错）
 - **注解（阶段 21）**：元素默认值只支持常量字面量（枚举常量 / 注解 / 数组都不行）；`@` 只能标
@@ -1430,7 +1438,7 @@ gradlew.bat verifyPlugin          :: 官方校验器静态检查
 | --- | --- | --- |
 | 没有 `&&` / `||` | `if (c == '/' && peek(1) == '/')` 只能写成三层嵌套 `if` | 一行写完，两侧必须是 `bool`，**真短路**（右边可能一次都不求值） |
 | 没有 `enum` | `TokenKind` 只能用一串 `static fun xxx() -> string` 拼字符串常量，**拼错名字编译器不吭声** | `TokenKind.IDENT` 写错值名当场报错并列出全部值；`==` 只管同类型 |
-| 没有 `switch` | 按 kind 分派只能写成十几条 `if (kind == ...)` 长链 | `switch (k) { case TokenKind.IDENT : ... }`；**漏分支会在编译期报错**（不用 else 时必须穷尽） |
+| 没有 `switch` | 按 kind 分派只能写成十几条 `if (kind == ...)` 长链 | `switch (k) { TokenKind.IDENT : ... }`；**漏分支会在编译期报错**（不用 else 时必须穷尽） |
 
 **对 17b 的直接结论**：`rsfSrc/bootstrap/Lexer.rsf` 里 `TokenKind` 的**全部**用法形态
 （字段、参数、查表返回、与字符串字面量比较、dump 需要名字文本、空串当「没找到」的哨兵）
@@ -1672,10 +1680,13 @@ A 编自己得（B），B 再编自己得（C），**B 与 C 的输出 126 个 `
 两端都在「结果被丢弃」时跳过泛型结果收敛（Java 的 `map.put(...)` 当语句也不拆箱）。
 细节见 [`BOOTSTRAP.md`](BOOTSTRAP.md) 的「17d 前置三件」与「17d 的下一步」。
 
-**2026-10-15 现状**：17e 闭环（B ≡ C）之后，离「rsf 版顶替 Kotlin 版」还差四类（详见
-[`BOOTSTRAP.md`](BOOTSTRAP.md)）：① `rsfSrc/bootstrap/**` 还没同步阶段 20 / 21 的新语法
-（**词法那一刀已同步**：关键字 45 → 51 项 + `@` 记号；下一刀是 `Parser.rsf` 的
-`interface` / `override`）；② 后端 / 解释器的「暂不支持清单」；③ 语言层没有类继承；
+**2026-10-15 现状**：17e 闭环（B ≡ C）之后，离「rsf 版顶替 Kotlin 版」还差三类（详见
+[`BOOTSTRAP.md`](BOOTSTRAP.md)）：① **阶段 20 的 `interface` / `override` 已同步**（词法 45 → 51 项 +
+`@` 记号 → 第 1 刀 `Parser.rsf` 语法 → 第 2 刀 `Backend.rsf` / `Interp.rsf` / `Sources.rsf` 语义；
+三件套 `bash build/verify21/knife-verify.sh` 全绿：J1 126 类 / diff 0、八示例一致）；
+**阶段 21 的注解仍未同步**（对自举链是加法，`@` 在现有自举源里零用法）；② 后端 / 解释器的
+「暂不支持清单」（JDK 静态成员表只覆盖 `System` / `Math.max|min|abs` / 包装类三件套，没有
+`HashMap` / `Math.sqrt` 这类成员；自举源自身也没有接口风格）；③ 语言层没有类继承；
 ④ 工具面（自举侧只有 4 个单文件 CLI，没有统一 CLI / LSP）。
 
 **每个阶段改哪些文件、验收标准、风险、以及要先拍板的 5 个语法点，都在 [`BOOTSTRAP.md`](BOOTSTRAP.md)。**

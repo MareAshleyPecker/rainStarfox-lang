@@ -33,13 +33,13 @@ enum Op {
 // 打印枚举就是打印**值名**：`println(k)` 与 `"kind = " + k` 都是 `IDENT`
 fun nameOf(k : TokenKind) -> string {
     switch (k) {
-        case TokenKind.IDENT : rtn "标识符"
-        case TokenKind.INT_LIT : rtn "整数"
-        case TokenKind.STRING : rtn "字符串"
-        case TokenKind.CHAR : rtn "字符"
-        case TokenKind.PLUS : rtn "加号"
-        case TokenKind.MINUS : rtn "减号"
-        case TokenKind.EOF : rtn "文件结束"
+        TokenKind.IDENT : rtn "标识符"
+        TokenKind.INT_LIT : rtn "整数"
+        TokenKind.STRING : rtn "字符串"
+        TokenKind.CHAR : rtn "字符"
+        TokenKind.PLUS : rtn "加号"
+        TokenKind.MINUS : rtn "减号"
+        TokenKind.EOF : rtn "文件结束"
     }
 }
 
@@ -47,13 +47,13 @@ fun nameOf(k : TokenKind) -> string {
 fun describe(k : TokenKind) -> string {
     var out = ""
     switch (k) {
-        case TokenKind.IDENT : out = "名字"
-        case TokenKind.INT_LIT : out = "数字"
-        case TokenKind.STRING : out = "一段文本"
-        case TokenKind.CHAR : out = "一个字符"
-        case TokenKind.PLUS : out = "二元运算符"
-        case TokenKind.MINUS : out = "二元运算符"
-        case TokenKind.EOF : out = "到头了"
+        TokenKind.IDENT : out = "名字"
+        TokenKind.INT_LIT : out = "数字"
+        TokenKind.STRING : out = "一段文本"
+        TokenKind.CHAR : out = "一个字符"
+        TokenKind.PLUS : out = "二元运算符"
+        TokenKind.MINUS : out = "二元运算符"
+        TokenKind.EOF : out = "到头了"
     }
     rtn out
 }
@@ -61,8 +61,8 @@ fun describe(k : TokenKind) -> string {
 // 带 `else` 的 switch：不必穷尽，剩下的都进 else
 fun isOperator(k : TokenKind) -> bool {
     switch (k) {
-        case TokenKind.PLUS : rtn true
-        case TokenKind.MINUS : rtn true
+        TokenKind.PLUS : rtn true
+        TokenKind.MINUS : rtn true
         else : rtn false
     }
 }
@@ -70,16 +70,16 @@ fun isOperator(k : TokenKind) -> bool {
 // 操作符 → 枚举：返回类型是枚举，参数也是枚举
 fun opOf(k : TokenKind) -> ?Op {
     switch (k) {
-        case TokenKind.PLUS : rtn Op.ADD
-        case TokenKind.MINUS : rtn Op.SUB
+        TokenKind.PLUS : rtn Op.ADD
+        TokenKind.MINUS : rtn Op.SUB
         else : rtn null
     }
 }
 
 fun apply(a : int, b : int, op : Op) -> int {
     switch (op) {
-        case Op.ADD : rtn a + b
-        case Op.SUB : rtn a - b
+        Op.ADD : rtn a + b
+        Op.SUB : rtn a - b
     }
 }
 
@@ -197,13 +197,13 @@ fun main() -> void {
         // 用的是**有 else** 的 switch（`all` 的元素可能是 null，交给 else 兜住）
         var tag = "其它"
         switch (all[i]) {
-            case TokenKind.IDENT : tag = "标识符"
-            case TokenKind.INT_LIT : tag = "整数字面量"
-            case TokenKind.STRING : tag = "字符串字面量"
-            case TokenKind.CHAR : tag = "字符字面量"
-            case TokenKind.PLUS : tag = "加号"
-            case TokenKind.MINUS : tag = "减号"
-            case TokenKind.EOF : tag = "文件结束"
+            TokenKind.IDENT : tag = "标识符"
+            TokenKind.INT_LIT : tag = "整数字面量"
+            TokenKind.STRING : tag = "字符串字面量"
+            TokenKind.CHAR : tag = "字符字面量"
+            TokenKind.PLUS : tag = "加号"
+            TokenKind.MINUS : tag = "减号"
+            TokenKind.EOF : tag = "文件结束"
             else : tag = "空值"
         }
         println(i + ": " + all[i] + " = " + tag + "（" + nameOf(all[i]) + "）")

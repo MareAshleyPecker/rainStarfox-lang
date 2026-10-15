@@ -245,12 +245,12 @@ public enum Kind {
 // 数值提升的档位（和 RsfBase.rank 同一张表：byte/char 与 int 同档，先提升成 int）
 fun kindRank(k : Kind) -> int {
     switch (k) {
-        case Kind.BYTEV : rtn 0
-        case Kind.CHARV : rtn 0
-        case Kind.INTV : rtn 0
-        case Kind.LONGV : rtn 1
-        case Kind.FLOATV : rtn 2
-        case Kind.DOUBLEV : rtn 3
+        Kind.BYTEV : rtn 0
+        Kind.CHARV : rtn 0
+        Kind.INTV : rtn 0
+        Kind.LONGV : rtn 1
+        Kind.FLOATV : rtn 2
+        Kind.DOUBLEV : rtn 3
         else : rtn -1
     }
     // 和 Parser.kindName 一样：rsf 的返回值检查看的是「最后一条语句」，
@@ -515,6 +515,44 @@ public class Cls(nm : string) {
     var ccount : int = 0
     var methods : Fn[] = new Fn[0]
     var mcount : int = 0
+    // 阶段 20：接口。接口也复用 Cls（另存一张表，不进 classes —— 这样 `new I()` 照旧报错）。
+    // `supers` 是父类型的**简单名**（与 `findCls` 同一套命名；JDK 接口在表里找不到就跳过）。
+    var isIface : bool = false
+    var supers : string[] = new string[0]
+    var scount : int = 0
+
+    public fun addSuper(nm2 : string) -> void {
+        var i = 0
+        while (i < scount) {
+            if (supers[i] == nm2) { rtn }
+            i = i + 1
+        }
+        if (scount >= supers.length) { supers = growText(supers, scount, nm2) }
+        supers[scount] = nm2
+        scount = scount + 1
+    }
+
+    // 这个接口自己声明的、**带体**的默认方法（接口抽象方法只有 PARAMS 一个孩子）。
+    public fun defaultNamed(nm2 : string, argc : int) -> ?Fn {
+        var i = 0
+        while (i < mcount) {
+            var m = methods[i]
+            if (m.name == nm2 && m.pcount == argc && m.body.kind == NodeKind.BLOCK) { rtn m }
+            i = i + 1
+        }
+        rtn null
+    }
+
+    // 接口里任意一个同名同形的方法（抽象也算）—— 静态类型是接口时用
+    public fun anyNamed(nm2 : string, argc : int) -> ?Fn {
+        var i = 0
+        while (i < mcount) {
+            var m = methods[i]
+            if (m.name == nm2 && m.pcount == argc) { rtn m }
+            i = i + 1
+        }
+        rtn null
+    }
 
     public fun fieldIndex(nm2 : string) -> int {
         var i = 0
@@ -635,6 +673,22 @@ fun growVal(a : Val[], used : int, add : Val) -> Val[] {
     rtn bigger
 }
 
+fun growText(a : string[], used : int, add : string) -> string[] {
+    if (used < a.length) {
+        a[used] = add
+        rtn a
+    }
+    var size = 8
+    if (a.length > 0) { size = a.length * 2 }
+    var bigger : string[] = new string[size]
+    var i = 0
+    while (i < used) {
+        bigger[i] = a[i]
+        i = i + 1
+    }
+    bigger[used] = add
+    rtn bigger
+}
 // 类型文本上的小工具：找字符 / 找子串（rsf 的 string 没有 indexOf）
 fun indexOfCharIn(s : string, want : char) -> int {
     var i = 0
@@ -702,6 +756,13 @@ public class Interp(prog : Node) {
     var ccount : int = 0
     var enums : Enm[] = new Enm[0]
     var ecount : int = 0
+    // 阶段 20：用户接口（另存一张表，**不混进 classes** —— `new I()` 因此照旧报错）。
+    // 接口链查找的出口（rsf 没有出参 / 元组，只能这么带出来）：
+    //   ifaceHit = 命中的默认方法，ifaceHitCount = 命中几个不同接口。
+    var ifcs : Cls[] = new Cls[0]
+    var icount : int = 0
+    var ifaceHit : ?Fn = null
+    var ifaceHitCount : int = 0
     var depth : int = 0
 
     // 最近一次 `rtn` 带出来的值（信号 `R` 的载荷走这里——信号消息只能是字符串）
@@ -720,6 +781,7 @@ public class Interp(prog : Node) {
             if (c.kind == NodeKind.FUNCS) { loadFuncs(c) }
             else if (c.kind == NodeKind.CLASSES) { loadClasses(c) }
             else if (c.kind == NodeKind.ENUMS) { loadEnums(c) }
+            else if (c.kind == NodeKind.INTERFACES) { loadIfaces(c) }
             i = i + 1
         }
         rtn
@@ -769,10 +831,45 @@ public class Interp(prog : Node) {
                 var part = cn.children[j]
                 if (part.kind == NodeKind.FIELDS) { loadFields(c, part) }
                 else if (part.kind == NodeKind.METHODS) { loadMethods(c, part) }
+                else if (part.kind == NodeKind.SUPERS) { loadSupers(c, part) }
                 j = j + 1
             }
             classes = growCls(classes, ccount, c)
             ccount = ccount + 1
+            i = i + 1
+        }
+        rtn
+    }
+
+    // 阶段 20：用户接口。方法装载完全复用 `loadMethods`（抽象方法只是没有 BLOCK，
+    // `makeFn` 会把 `body` 留成 ERROR 节点 —— 判据是 `body.kind == BLOCK`，不是「空」）。
+    fun loadIfaces(cs : Node) -> void {
+        var i = 0
+        while (i < cs.childCount) {
+            var cn = cs.children[i]
+            var c = new Cls(attr(cn, "name"))
+            c.isIface = true
+            var j = 0
+            while (j < cn.childCount) {
+                var part = cn.children[j]
+                if (part.kind == NodeKind.METHODS) { loadMethods(c, part) }
+                else if (part.kind == NodeKind.SUPERS) { loadSupers(c, part) }
+                j = j + 1
+            }
+            ifcs = growCls(ifcs, icount, c)
+            icount = icount + 1
+            i = i + 1
+        }
+        rtn
+    }
+
+    // 父类型子句：`SUPERS` 的孩子是 `SUPER`，`name` 属性是**简单名**（与 `findCls`
+    // 同一套命名）。JDK 接口不在表里，`findIface` 自然跳过（对齐 Kotlin
+    // `findInterfaceDefault` 里 `sup.fromClassPath` 那条 continue）。
+    fun loadSupers(c : Cls, part : Node) -> void {
+        var i = 0
+        while (i < part.childCount) {
+            c.addSuper(attr(part.children[i], "name"))
             i = i + 1
         }
         rtn
@@ -868,6 +965,88 @@ public class Interp(prog : Node) {
         rtn null
     }
 
+    // ------------------------------------------------------------ 接口分派（阶段 20）
+
+    public fun findIface(nm : string) -> ?Cls {
+        var i = 0
+        while (i < icount) {
+            if (ifcs[i].name == nm) { rtn ifcs[i] }
+            i = i + 1
+        }
+        rtn null
+    }
+
+    // 沿 root（**运行期真实类的名字**）的接口链找**带体**的同名同形默认方法。
+    // 与 Kotlin `findInterfaceDefault` 同口径：穿过父接口、菱形只走一次
+    // （visited 按名字）、JDK 接口跳过（findIface 找不到就跳过）。
+    // 命中写进 ifaceHit / ifaceHitCount：>1 就是歧义（两份默认方法并列），
+    // 调用方**必须报错**，绝不能按声明顺序挑一个（对齐 Kotlin Checker 的重载歧义判定）。
+    public fun ifaceDefaultScan(root : string, nm : string, argc : int) -> void {
+        ifaceHit = null
+        ifaceHitCount = 0
+        // 没有接口就整条路都不用走（自举的 9 个源都没有接口，这条守卫让它们零开销）
+        if (icount == 0) { rtn }
+        var seen : string[] = new string[4]
+        var sn = 0
+        var queue : string[] = new string[8]
+        var qn = 0
+        var head = 0
+        var c0 = findCls(root)
+        if (c0 != null) {
+            var s0 = 0
+            while (s0 < c0!!.scount) {
+                queue = growText(queue, qn, c0!!.supers[s0])
+                qn = qn + 1
+                s0 = s0 + 1
+            }
+        }
+        var i0 = findIface(root)
+        if (i0 != null) {
+            var s1 = 0
+            while (s1 < i0!!.scount) {
+                queue = growText(queue, qn, i0!!.supers[s1])
+                qn = qn + 1
+                s1 = s1 + 1
+            }
+        }
+        while (head < qn) {
+            var cur = queue[head]
+            head = head + 1
+            var dup = false
+            var vi = 0
+            while (vi < sn) {
+                if (seen[vi] == cur) { dup = true }
+                vi = vi + 1
+            }
+            if (!dup) {
+                seen = growText(seen, sn, cur)
+                sn = sn + 1
+                var ic = findIface(cur)
+                if (ic != null) {
+                    var hm = ic!!.defaultNamed(nm, argc)
+                    if (hm != null) {
+                        ifaceHitCount = ifaceHitCount + 1
+                        ifaceHit = hm
+                    }
+                    var s2 = 0
+                    while (s2 < ic!!.scount) {
+                        queue = growText(queue, qn, ic!!.supers[s2])
+                        qn = qn + 1
+                        s2 = s2 + 1
+                    }
+                }
+            }
+        }
+        rtn
+    }
+
+    // 运行期真实类 / 接口链上的默认方法：命中唯一才返回，0 或 ≥2 交给调用方报错。
+    fun ifaceDefaultOf(root : string, nm : string, argc : int) -> ?Fn {
+        ifaceDefaultScan(root, nm, argc)
+        if (ifaceHitCount == 1) { rtn ifaceHit }
+        rtn null
+    }
+
     // ------------------------------------------------------------------ 类型文本
     //
     // 类型在树上是**文本**（`int` / `?string` / `Point` / `int[]` / `Box&<int>`）。
@@ -905,9 +1084,9 @@ public class Interp(prog : Node) {
     // 真碰上就返回 0——不会静默算错一个「看起来像」的值。
     fun intOf(v : Val) -> int {
         switch (v.k) {
-            case Kind.INTV : rtn v.iv
-            case Kind.BYTEV : rtn v.yv
-            case Kind.CHARV : rtn charToInt(v.cv)
+            Kind.INTV : rtn v.iv
+            Kind.BYTEV : rtn v.yv
+            Kind.CHARV : rtn charToInt(v.cv)
             else : rtn 0
         }
         rtn 0
@@ -915,10 +1094,10 @@ public class Interp(prog : Node) {
 
     fun longOf(v : Val) -> long {
         switch (v.k) {
-            case Kind.INTV : rtn v.iv
-            case Kind.BYTEV : rtn v.yv
-            case Kind.CHARV : rtn charToInt(v.cv)
-            case Kind.LONGV : rtn v.lv
+            Kind.INTV : rtn v.iv
+            Kind.BYTEV : rtn v.yv
+            Kind.CHARV : rtn charToInt(v.cv)
+            Kind.LONGV : rtn v.lv
             else : rtn 0L
         }
         rtn 0L
@@ -926,11 +1105,11 @@ public class Interp(prog : Node) {
 
     fun floatOf(v : Val) -> float {
         switch (v.k) {
-            case Kind.INTV : rtn v.iv
-            case Kind.BYTEV : rtn v.yv
-            case Kind.CHARV : rtn charToInt(v.cv)
-            case Kind.LONGV : rtn v.lv
-            case Kind.FLOATV : rtn v.fv
+            Kind.INTV : rtn v.iv
+            Kind.BYTEV : rtn v.yv
+            Kind.CHARV : rtn charToInt(v.cv)
+            Kind.LONGV : rtn v.lv
+            Kind.FLOATV : rtn v.fv
             else : rtn 0.0f
         }
         rtn 0.0f
@@ -938,12 +1117,12 @@ public class Interp(prog : Node) {
 
     fun doubleOf(v : Val) -> double {
         switch (v.k) {
-            case Kind.INTV : rtn v.iv
-            case Kind.BYTEV : rtn v.yv
-            case Kind.CHARV : rtn charToInt(v.cv)
-            case Kind.LONGV : rtn v.lv
-            case Kind.FLOATV : rtn v.fv
-            case Kind.DOUBLEV : rtn v.dv
+            Kind.INTV : rtn v.iv
+            Kind.BYTEV : rtn v.yv
+            Kind.CHARV : rtn charToInt(v.cv)
+            Kind.LONGV : rtn v.lv
+            Kind.FLOATV : rtn v.fv
+            Kind.DOUBLEV : rtn v.dv
             else : rtn 0.0
         }
         rtn 0.0
@@ -1006,21 +1185,21 @@ public class Interp(prog : Node) {
 
     public fun render(v : Val) -> !string {
         switch (v.k) {
-            case Kind.NULLV : rtn "null"
-            case Kind.INTV : rtn "" + v.iv
-            case Kind.LONGV : rtn "" + v.lv
-            case Kind.FLOATV : rtn "" + v.fv
-            case Kind.DOUBLEV : rtn "" + v.dv
-            case Kind.BOOLV : rtn "" + v.bv
-            case Kind.CHARV : rtn "" + v.cv
-            case Kind.BYTEV : rtn "" + v.yv
-            case Kind.STRV : rtn v.sv
-            case Kind.ENUMV : rtn v.sv
-            case Kind.OBJV : rtn renderObj(v.ov!!)!!
-            case Kind.LISTV : rtn renderList(v.lsv!!)!!
-            case Kind.ARRV : rtn renderArray(v.av!!)!!
-            case Kind.CTYPEV : rtn v.cname
-            case Kind.FILEV : rtn v.sv
+            Kind.NULLV : rtn "null"
+            Kind.INTV : rtn "" + v.iv
+            Kind.LONGV : rtn "" + v.lv
+            Kind.FLOATV : rtn "" + v.fv
+            Kind.DOUBLEV : rtn "" + v.dv
+            Kind.BOOLV : rtn "" + v.bv
+            Kind.CHARV : rtn "" + v.cv
+            Kind.BYTEV : rtn "" + v.yv
+            Kind.STRV : rtn v.sv
+            Kind.ENUMV : rtn v.sv
+            Kind.OBJV : rtn renderObj(v.ov!!)!!
+            Kind.LISTV : rtn renderList(v.lsv!!)!!
+            Kind.ARRV : rtn renderArray(v.av!!)!!
+            Kind.CTYPEV : rtn v.cname
+            Kind.FILEV : rtn v.sv
         }
         rtn "?"
     }
@@ -1269,26 +1448,26 @@ public class Interp(prog : Node) {
 
     public fun ev(n : Node, env : Env) -> !Val {
         switch (n.kind) {
-            case NodeKind.INT_LIT : rtn vInt(parseInt(attr(n, "value")) ?: 0)
-            case NodeKind.LONG_LIT : rtn vLong(Long.parseLong(attr(n, "value")))
-            case NodeKind.FLOAT_LIT : rtn vFloat(Float.parseFloat(attr(n, "value")))
-            case NodeKind.DOUBLE_LIT : rtn vDouble(Double.parseDouble(attr(n, "value")))
-            case NodeKind.STRING_LIT : rtn vStr(attr(n, "value"))
-            case NodeKind.CHAR_LIT : rtn vChar(charOfLiteral(attr(n, "value")))
-            case NodeKind.BOOL_LIT : rtn vBool(attr(n, "value") == "true")
-            case NodeKind.NULL_LIT : rtn vNull()
-            case NodeKind.VAR : rtn evVar(n, env)!!
-            case NodeKind.CALL : rtn evCall(n, env)!!
-            case NodeKind.NEW : rtn evNew(n, env)!!
-            case NodeKind.NEW_ARRAY : rtn evNewArray(n, env)!!
-            case NodeKind.MEMBER : rtn evMember(n, env)!!
-            case NodeKind.INDEX : rtn evIndex(n, env)!!
-            case NodeKind.UNARY : rtn evUnary(n, env)!!
-            case NodeKind.BINARY : rtn evBinary(n, env)!!
-            case NodeKind.IF_EXPR : rtn evIfExpr(n, env)!!
-            case NodeKind.ELVIS : rtn evElvis(n, env)!!
-            case NodeKind.FORCE : rtn evForce(n, env)!!
-            case NodeKind.THIS : rtn evThis(n, env)!!
+            NodeKind.INT_LIT : rtn vInt(parseInt(attr(n, "value")) ?: 0)
+            NodeKind.LONG_LIT : rtn vLong(Long.parseLong(attr(n, "value")))
+            NodeKind.FLOAT_LIT : rtn vFloat(Float.parseFloat(attr(n, "value")))
+            NodeKind.DOUBLE_LIT : rtn vDouble(Double.parseDouble(attr(n, "value")))
+            NodeKind.STRING_LIT : rtn vStr(attr(n, "value"))
+            NodeKind.CHAR_LIT : rtn vChar(charOfLiteral(attr(n, "value")))
+            NodeKind.BOOL_LIT : rtn vBool(attr(n, "value") == "true")
+            NodeKind.NULL_LIT : rtn vNull()
+            NodeKind.VAR : rtn evVar(n, env)!!
+            NodeKind.CALL : rtn evCall(n, env)!!
+            NodeKind.NEW : rtn evNew(n, env)!!
+            NodeKind.NEW_ARRAY : rtn evNewArray(n, env)!!
+            NodeKind.MEMBER : rtn evMember(n, env)!!
+            NodeKind.INDEX : rtn evIndex(n, env)!!
+            NodeKind.UNARY : rtn evUnary(n, env)!!
+            NodeKind.BINARY : rtn evBinary(n, env)!!
+            NodeKind.IF_EXPR : rtn evIfExpr(n, env)!!
+            NodeKind.ELVIS : rtn evElvis(n, env)!!
+            NodeKind.FORCE : rtn evForce(n, env)!!
+            NodeKind.THIS : rtn evThis(n, env)!!
             else : fail unsupported("表达式节点 " + kindName(n.kind))
         }
         rtn vNull()
@@ -1357,12 +1536,12 @@ public class Interp(prog : Node) {
         // `IllegalStateException: 一元减号的操作数不是数值`——这是 17c 期间实测到的
         // 编译器缺陷（本阶段不动 Kotlin 编译器，先在自己的 rsf 源码里绕开）。
         switch (v.k) {
-            case Kind.INTV : rtn vInt(-v.iv)
-            case Kind.BYTEV : rtn vInt(0 - v.yv)
-            case Kind.CHARV : rtn vInt(0 - charToInt(v.cv))
-            case Kind.LONGV : rtn vLong(-v.lv)
-            case Kind.FLOATV : rtn vFloat(-v.fv)
-            case Kind.DOUBLEV : rtn vDouble(-v.dv)
+            Kind.INTV : rtn vInt(-v.iv)
+            Kind.BYTEV : rtn vInt(0 - v.yv)
+            Kind.CHARV : rtn vInt(0 - charToInt(v.cv))
+            Kind.LONGV : rtn vLong(-v.lv)
+            Kind.FLOATV : rtn vFloat(-v.fv)
+            Kind.DOUBLEV : rtn vDouble(-v.dv)
             else : fail unsupported("一元 '-' 用在 " + ("" + v.k) + " 上")
         }
         rtn vNull()
@@ -1692,6 +1871,21 @@ public class Interp(prog : Node) {
         if (cur != null) {
             var m = cur!!.methodNamed(nm)
             if (m != null) { rtn callFn(m!!, env.thisObj(), cur!!, args)!! }
+            // 阶段 20：本类（或本接口）没有这个成员 —— 沿接口链找带体的默认方法。
+            // root 优先取**运行期真实类**（有 this 时），这样默认方法体里的下一次隐式
+            // 调用同样是动态分派（对齐 Kotlin `callInterfaceMethod` 的 self.className）。
+            var self0 = env.thisObj()
+            var root = cur!!.name
+            if (self0 != null) { root = self0!!.cls }
+            ifaceDefaultScan(root, nm, args.length)
+            if (ifaceHitCount > 1) {
+                fail "调用 '" + nm + "' 无法确定用哪个默认实现（接口链上有 " + render(vInt(ifaceHitCount))!! + " 个候选）"
+            }
+            if (ifaceHitCount == 1) {
+                var rc = findCls(root)
+                if (rc != null) { rtn callFn(ifaceHit!!, self0, rc!!, args)!! }
+                rtn callFn(ifaceHit!!, self0, cur!!, args)!!
+            }
         }
         var f = findFunc(nm)
         if (f != null) { rtn callFn(f!!, null, null, args)!! }
@@ -1842,8 +2036,17 @@ public class Interp(prog : Node) {
         var c = findCls(o.cls)
         if (c == null) { fail "17c 解释器：类 '" + o.cls + "' 不在本程序里" }
         var m = c!!.methodNamed(nm)
-        if (m == null) { fail "类 '" + o.cls + "' 里没有方法 '" + nm + "'" }
-        rtn callFn(m!!, o, c!!, args)!!
+        if (m != null) { rtn callFn(m!!, o, c!!, args)!! }
+        // 阶段 20：运行期真实类自己没有这个成员 —— 沿接口链找带体的默认方法。
+        // `this` 与**帧的类**都用运行期真实类（对齐 Kotlin `callMethod(self.className, decl, self, args)`），
+        // 这样默认方法体里的隐式调用经 `env.curClass()` 拿到的是实现类，动态分派才对。
+        ifaceDefaultScan(o.cls, nm, args.length)
+        if (ifaceHitCount > 1) {
+            fail "调用 '" + nm + "' 无法确定用哪个默认实现（接口链上有 " + render(vInt(ifaceHitCount))!! + " 个候选）"
+        }
+        if (ifaceHitCount == 1) { rtn callFn(ifaceHit!!, o, c!!, args)!! }
+        fail "类 '" + o.cls + "' 里没有方法 '" + nm + "'"
+        rtn vNull()
     }
 
     public fun staticMember(clsName : string, nm : string, args : Val[], env : Env) -> !Val {
@@ -1887,6 +2090,13 @@ public class Interp(prog : Node) {
                 var m = classes[i].methodNamed(nm)
                 if (m != null && m!!.mayError) { rtn true }
                 i = i + 1
+            }
+            // 阶段 20：接口里的方法也要算（默认方法可能是 `!T`）
+            var j = 0
+            while (j < icount) {
+                var im = ifcs[j].methodNamed(nm)
+                if (im != null && im!!.mayError) { rtn true }
+                j = j + 1
             }
             rtn false
         }
@@ -1984,24 +2194,24 @@ public class Interp(prog : Node) {
 
     public fun st(n : Node, env : Env) -> !int {
         switch (n.kind) {
-            case NodeKind.BLOCK : rtn blk(n, new Env(env))!!
-            case NodeKind.VAR_DECL : rtn stVarDecl(n, env)!!
-            case NodeKind.ASSIGN : rtn stAssign(n, env)!!
-            case NodeKind.MEMBER_ASSIGN : rtn stMemberAssign(n, env)!!
-            case NodeKind.INDEX_ASSIGN : rtn stIndexAssign(n, env)!!
-            case NodeKind.RETURN : rtn stReturn(n, env)!!
-            case NodeKind.EXPR_STMT : rtn stExpr(n, env)!!
-            case NodeKind.LABEL : rtn 0
-            case NodeKind.THIS_CALL : rtn stThisCall(n, env)!!
-            case NodeKind.SWITCH : rtn stSwitch(n, env)!!
-            case NodeKind.GOTO : rtn stGoto(n)!!
-            case NodeKind.IF : rtn stIf(n, env)!!
-            case NodeKind.WHILE : rtn stWhile(n, env)!!
-            case NodeKind.FOR : rtn stFor(n, env)!!
-            case NodeKind.BREAK : rtn stBreak()!!
-            case NodeKind.CONTINUE : rtn stContinue()!!
-            case NodeKind.FAIL : rtn stFail(n, env)!!
-            case NodeKind.TRY : rtn stTry(n, env)!!
+            NodeKind.BLOCK : rtn blk(n, new Env(env))!!
+            NodeKind.VAR_DECL : rtn stVarDecl(n, env)!!
+            NodeKind.ASSIGN : rtn stAssign(n, env)!!
+            NodeKind.MEMBER_ASSIGN : rtn stMemberAssign(n, env)!!
+            NodeKind.INDEX_ASSIGN : rtn stIndexAssign(n, env)!!
+            NodeKind.RETURN : rtn stReturn(n, env)!!
+            NodeKind.EXPR_STMT : rtn stExpr(n, env)!!
+            NodeKind.LABEL : rtn 0
+            NodeKind.THIS_CALL : rtn stThisCall(n, env)!!
+            NodeKind.SWITCH : rtn stSwitch(n, env)!!
+            NodeKind.GOTO : rtn stGoto(n)!!
+            NodeKind.IF : rtn stIf(n, env)!!
+            NodeKind.WHILE : rtn stWhile(n, env)!!
+            NodeKind.FOR : rtn stFor(n, env)!!
+            NodeKind.BREAK : rtn stBreak()!!
+            NodeKind.CONTINUE : rtn stContinue()!!
+            NodeKind.FAIL : rtn stFail(n, env)!!
+            NodeKind.TRY : rtn stTry(n, env)!!
             else : fail unsupported("语句 " + kindName(n.kind))
         }
         rtn 0

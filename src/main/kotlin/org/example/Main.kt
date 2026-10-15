@@ -53,6 +53,7 @@ class Cli {
         val file = requireFile(rest.firstOrNull(), "run <file.rsf>")
         val loaded = Rsf.load(file)
         val model = Rsf.analyze(loaded)
+        for (warning in model.warnings) System.err.println("[rsf] 警告: $warning")
         requireEntry(model)
         Rsf.interpret(model, System.out)
         return 0
@@ -90,6 +91,7 @@ class Cli {
         val name = className ?: Rsf.deriveClassName(source)
 
         val result = Rsf.build(model, source, name, outDir)
+        for (warning in model.warnings) System.err.println("[rsf] 警告: $warning")
         for (w in result.warnings) System.err.println("[rsf] 警告: $w")
         println("[rsf] 已生成 ${result.classFile.path}")
         // 带用户自定义类的程序会一起生成每个类自己的 .class（类文件在同一个包目录下）

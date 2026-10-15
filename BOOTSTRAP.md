@@ -609,7 +609,7 @@ fc kt.txt rsf2.txt
 
 #### 测试能否失败（自验，实测过两次）
 
-1. 把 `render` 里 `case Kind.INTV : rtn "" + v.iv` 改成 `"" + (v.iv + 1)`
+1. 把 `render` 里 `Kind.INTV : rtn "" + v.iv` 改成 `"" + (v.iv + 1)`
    （一处静默算错）→ 两条对拍测试立刻红，并打出「第 N 行应该是 X、实际是 Y」的差异
    （`add(1, 2) = 3` vs `= 4`、`fact(5) = 120` vs `121`…）。
 2. 把 `&&` 的短路拆掉（右边无条件求值）→ **刁钻语料**那条测试报出
@@ -829,7 +829,7 @@ ASM 在**编译器的运行期 classpath** 上（`build.gradle` 的
    `visitLabel` + `visitLineNumber(line, label)`，行号下限 1。
 2. **最隐蔽的一个真因**：自由函数走的是 `emitFunction`，它**原先自己抄了一份发射循环**，
    绕过了统一的 `flushBody` → 行号只有用户方法里有。把它并回 `flushBody` 才通。
-3. **行号的归属要一个个对**：else-if 链上每个 `if` 属于自己那一行；`case 枚举.X : 语句` 的
+3. **行号的归属要一个个对**：else-if 链上每个 `if` 属于自己那一行；`枚举.X : 语句` 的
    分支体标签属于**分支体**，而 `else` 标签与末尾标签属于 **`switch` 本身**；
    块的行号 = 它第一条语句的行号。
 4. 中途还修掉三处**结构性**差异（后端漏发/发错指令，与行号无关，会连带把后面的偏移全部带偏）：
@@ -853,7 +853,7 @@ ASM 在**编译器的运行期 classpath** 上（`build.gradle` 的
 | 控制流                | `循环外的 break`、`循环外的 continue`、`switch`（形状不对）、`switch 的表达式不是枚举（T）`、`switch 分支的枚举常量 E.V`、`switch 分支枚举类型不一致（A / B）`、`goto / 分支的标签没有定义（内部错误）`                                                                                                                                                                                                                                       |
 | 枚举                 | `对枚举 R 调方法`、`枚举 R 没有常量 x`                                                                                                                                                                                                                                                                                                                                                      |
 | `this`             | `… 需要 this，但当前是 static 方法`、`…（不在类里）`                                                                                                                                                                                                                                                                                                                                           |
-| 阶段 20 的新语法（D10 缺口） | `interface` / `override`：`rsfSrc/bootstrap/{Lexer,Parser,Backend}.rsf` **尚未同步**，rsf 版编译器编到这类源码在**解析层**就退出——实测 `[rsf-17d] 解析失败：顶层只能写函数声明，格式是 '[public\|protected\|private] [static] fun [类型] 名字() 返回子句 函数体'`（`public interface Greeter { … }` 与类里写 `override fun` 两种写法实测**同一条**，探针 `build/verify20/scratch/rsfIf/{I,O}.rsf`）。补表时**必须按接口发 `INVOKEINTERFACE`**，否则 B 与 Kotlin 产物分叉 |
+| 阶段 20 的新语法（D10 缺口） | `interface` / `override`：**已同步（2026-10-15，两刀）**——第 1 刀 `Parser.rsf`（`interface` / `override` / 父类型子句 + AST 与 Kotlin 版逐字节对拍）、第 2 刀 `Backend.rsf` / `Interp.rsf` / `Sources.rsf`（`ACC_INTERFACE` / 默认方法 / `INVOKEINTERFACE` / 接口链查找 / 多文件顶层 `INTERFACES`）。旧状（已修复，留档）：rsf 版编译器编到这类源码在**解析层**就退出——`[rsf-17d] 解析失败：顶层只能写函数声明…`（探针 `build/verify20/scratch/rsfIf/{I,O}.rsf`）。补表时**必须按接口发 `INVOKEINTERFACE`**，否则 B 与 Kotlin 产物分叉（第 2 刀已按此实现：`Backend.rsf` 四处 `visitMethodInsn` 末位布尔改动态） |
 
 **测试与回归**：本阶段**只动 rsf 源码**（`rsfSrc/bootstrap/Backend.rsf`、`Parser.rsf`）与文档，
 Kotlin 主源码一行没改 → 测试仍是 **248 全绿**（RsfTest 221 + InteropTest 13 + OverloadTest 14，
@@ -1009,7 +1009,7 @@ rsf 侧 `walkStmt` 的 `THIS_CALL` 分支原来什么都不登记，行号便无
 |----------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------|
 | `class TokenKind { public static fun eof() -> string { rtn "EOF" } ... }`  | `enum TokenKind { EOF, IDENT, INT_LIT, ... }` + `TokenKind.EOF`                                        |
 | `var kind : string = TokenKind.intLit()`                                   | `var kind : TokenKind = TokenKind.INT_LIT`                                                             |
-| `if (kind == TokenKind.longLit()) { rtn "Long" }`（`typeNameOf` 那种十几条 if 链） | `switch (kind) { case TokenKind.LONG_LIT : rtn "Long" ... }`；**保留 if 链也照样能编译**                         |
+| `if (kind == TokenKind.longLit()) { rtn "Long" }`（`typeNameOf` 那种十几条 if 链） | `switch (kind) { TokenKind.LONG_LIT : rtn "Long" ... }`；**保留 if 链也照样能编译**                         |
 | `if (kind == "KW_TRUE") { ... }`（和字符串字面量比）                                 | `if (kind == TokenKind.KW_TRUE) { ... }`                                                               |
 | `fun keywordKind(word : string) -> string { ... rtn "" }`（**空串**当「没找到」）    | `fun keywordKind(word : string) -> ?TokenKind { ... rtn null }` + `if (k == null)` / `k!!` / `k ?: 兜底` |
 | `fun punctKind(c : char) -> string`                                        | 同上，返回 `?TokenKind`                                                                                     |
@@ -1177,7 +1177,7 @@ IDEA 插件那张表漏了 `enum`/`switch`/`case`——那边还有一条「与 
 
 1. **自举不需要接口。** 17a 与 17b 已经用事实证明了：只靠类、构造器、`enum`、数组、`!T` 就能写出词法器（1011 行）与语法器（1919
    行），token 流与语法树都与 Kotlin 版逐字节/逐行一致。而且 `switch` 到位之后，「按 kind 分派的树遍历」（
-   `switch (node.kind) { case NodeKind.BINARY : ... }`）就是这门语言的惯用写法，访问者模式不是必需的——17b 的 `kindName`
+   `switch (node.kind) { NodeKind.BINARY : ... }`）就是这门语言的惯用写法，访问者模式不是必需的——17b 的 `kindName`
    那个穷尽 switch 还顺手换来了「漏一个节点种类就编译报错」。把接口插在 17c/17d 前面只会推迟自举，不会让它更容易。
     - 例外：如果希望自举版编译器**用访问者模式写得漂亮**，接口就得提前——先让它跑起来、之后再重构，是更划算的顺序。
 2. **`@interface` 必须排在 `interface` 后面，顺序不能反。** 这是 JVM 的硬约束：`public @interface Marker { }` 在字节码里就是
@@ -1280,11 +1280,13 @@ class Dog2(name : string) : Greeter {
 
 **遗留与暂不支持（都显式报错或已定格，不静默算错）**：
 
-- **自举版还没同步**：`rsfSrc/**` 的 `Lexer.rsf` / `Parser.rsf` / `Backend.rsf` **还没有 `interface` 与 `override`**
-  （D10：本阶段刻意不碰自举源，否则 17e 的 126 类不动点与八示例锚点全要重记）。`RsfTest` 里有一条
-  「rsf 版词法器尚未收 interface（自举同步前的已知差异）」用例把这条差异钉成可见。将来补表时*
-  *同样要按接口发 `INVOKEINTERFACE`**，
-  否则 B 与 Kotlin 产物又会分叉；`Backend.rsf` 的 JDK 成员表仍没有 `iterator()` 这类成员（落在既有的「暂不支持清单」里）。
+- **自举版已同步（2026-10-15，两刀）**：`rsfSrc/bootstrap/` 的 `Lexer.rsf`（关键字 45 → 51 + `@` 记号）、
+  `Parser.rsf`（`interface` / `override` / 父类型子句，AST 与 Kotlin 版逐字节一致）、`Backend.rsf` +
+  `Interp.rsf` + `Sources.rsf`（按接口发 `ACC_INTERFACE` / `INVOKEINTERFACE`、默认方法分派、
+  接口链查找、多文件顶层 `INTERFACES` 保序）。**注意**：自举源自身的代码风格还没改写成接口
+  （17e 的 126 类不动点与八示例锚点因此保持不变）；`RsfTest` 那条「rsf 版词法器尚未收 interface
+  （自举同步前的已知差异）」用例已在第 1 刀里反转成「已收」。`Backend.rsf` 的 JDK 成员表仍没有
+  `iterator()` 这类成员（落在既有的「暂不支持清单」里）。
 - **类继承不做**（D2）：`class A : SomeClass` 会在 Checker 里显式报「rsf 现在还不支持类继承（本阶段只做接口）」。
 - **跨边界时不支持 `Object` 成员**：`p.toString()` 仍报「类 'P' 里没有方法 'toString'」（属 D2/类继承遗留）。
 - **`pkg a.b` 下的接口落在默认包**（`classInternalName` 只给 `classes`/`enums` 加包前缀）：实测两端都跑通、

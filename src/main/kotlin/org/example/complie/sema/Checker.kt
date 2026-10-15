@@ -61,6 +61,7 @@ import org.example.complie.ast.VarDeclStmt
 import org.example.complie.ast.VarExpr
 import org.example.complie.ast.WhileStmt
 import org.example.complie.ast.exprText
+import org.example.complie.Rsf
 import org.example.complie.diag.Diagnostic
 import org.example.complie.diag.RsfError
 import org.example.complie.diag.Severity
@@ -3617,6 +3618,21 @@ class Checker(
 
         val seen = LinkedHashMap<String, SourceLine>()
         for (c in stmt.cases) {
+            // 阶段 21：`case` 弃用——旧写法照收，但每个分支提醒一次（位置在 AST 里记着）
+            val deprecatedCaseAt = c.deprecatedCaseAt
+            if (deprecatedCaseAt != null) {
+                diagnostics.add(
+                    Diagnostic(
+                        Severity.WARNING,
+                        "parser",
+                        "'case' 已弃用（is deprecated since ${Rsf.VERSION}）：" +
+                            "switch 的分支直接写 '枚举名.值名 : 语句'，不用再写 'case'",
+                        currentSource.name,
+                        deprecatedCaseAt.line,
+                        deprecatedCaseAt.column,
+                    ),
+                )
+            }
             if (c.enumName != enumName) {
                 throw err(
                     if (enumTable.containsKey(c.enumName)) {

@@ -72,6 +72,38 @@ fun accStatic() -> int { rtn 8 }
 fun accSuper() -> int { rtn 32 }
 fun v17() -> int { rtn 61 }
 fun computeAll() -> int { rtn 3 }
+// 阶段 20：接口类头 = ACC_PUBLIC | ACC_INTERFACE | ACC_ABSTRACT = 1 | 512 | 1024 = 1537
+fun accInterface() -> int { rtn 512 }
+fun accAbstract() -> int { rtn 1024 }
+
+// ============================================================ 字符串数组工具
+
+// rsf 没有 List/Set，接口链的「已访问」「待访问」队列都只能手写扩容数组。
+fun strArrHas(a : string[], n : int, s : string) -> bool {
+    var i = 0
+    while (i < n) {
+        if (a[i] == s) { rtn true }
+        i = i + 1
+    }
+    rtn false
+}
+
+// 追加一个元素，满了翻倍。返回值必须重新赋回原变量。
+fun strArrPush(a : string[], n : int, s : string) -> string[] {
+    var b = a
+    if (n >= a.length) {
+        var cap = 4
+        if (a.length > 0) { cap = a.length * 2 }
+        b = new string[cap]
+        var i = 0
+        while (i < n) {
+            b[i] = a[i]
+            i = i + 1
+        }
+    }
+    b[n] = s
+    rtn b
+}
 
 // ============================================================ 属性读取
 
@@ -475,9 +507,14 @@ fun byteRangeLiteral(e : Node) -> bool {
     rtn n >= -128 && n <= 127
 }
 
-// Checker.acceptsValue：accepts 之外，只对 byte + 字面量开一个口子
-fun acceptsValue(target : BType, value : Node, source : BType) -> bool {
+// Checker.acceptsValue：accepts 之外，只对 byte + 字面量开一个口子。
+// 阶段 20 起还要认「接口子类型」——`var g : Greeter = new Dog()` 里的 Dog → Greeter，
+// 数据源在 `Gen.isSubtypeName`（类 → 接口、接口 → 父接口）。
+fun acceptsValue(g : Gen, target : BType, value : Node, source : BType) -> bool {
     if (accepts(target, source)) { rtn true }
+    if (target.base == "external" && source.base == "external" && target.depth == 0 && source.depth == 0) {
+        if (!(source.nullable && !target.nullable) && g.isSubtypeName(source.name, target.name)) { rtn true }
+    }
     if (target.base != "byte" || target.depth > 0 || target.nullable) { rtn false }
     rtn byteRangeLiteral(value)
 }
@@ -643,6 +680,13 @@ public class Gen(owner : string) {
     // ---- 17d M4：用户类 / 枚举 ----
     var cis : CInfo[] = new CInfo[4]
     var ciCount : int = 0
+    // ---- 阶段 20：用户接口（同样用 CInfo 表示，isIface = true）----
+    var iis : CInfo[] = new CInfo[4]
+    var iiCount : int = 0
+    // 接口方法查找的出口（rsf 没有出参也没有元组，只能这么带出来）
+    var ifaceHit : ?CMeth = null
+    var ifaceHitOwner : ?CInfo = null
+    var ifaceHitCount : int = 0
     var eis : EInfo[] = new EInfo[4]
     var eiCount : int = 0
     var imports : string[] = new string[4]        // 简单名
@@ -706,6 +750,163 @@ public class Gen(owner : string) {
         }
         cis[ciCount] = c
         ciCount = ciCount + 1
+    }
+
+    public fun addIface(c : CInfo) -> void {
+        if (iiCount >= iis.length) {
+            var b : CInfo[] = new CInfo[iis.length * 2]
+            for (var i = 0; i < iiCount; i = i + 1) { b[i] = iis[i] }
+            iis = b
+        }
+        iis[iiCount] = c
+        iiCount = iiCount + 1
+    }
+
+    public fun findIface(nm : string) -> ?CInfo {
+        var i = 0
+        while (i < iiCount) {
+            if (iis[i].name == nm || iis[i].internal == nm) { rtn iis[i] }
+            i = i + 1
+        }
+        rtn null
+    }
+
+    // 内部名是不是 rsf 接口（`?:` 合成方法里的 INVOKESTATIC 末位布尔要用它）
+    public fun isIfaceInternal(nm : string) -> bool {
+        rtn findIface(nm) != null
+    }
+
+    // 一个**简单名**是不是 rsf 接口（父类型子句里写的就是简单名）
+    public fun isIfaceName(nm : string) -> bool {
+        rtn findIface(nm) != null
+    }
+
+    // 接口链查找（阶段 20）。root 可以是类的内部名，也可以是接口的内部名。
+    //   includeSelf = true：root 自己就是接口时先扫它自己的方法
+    //                       （接口接收者那条路，对齐 Kotlin `interfaceMethodsByName` 的「先 own」）；
+    //   bodyOnly    = true：只认带体的默认方法
+    //                       （类接收者那条路，对齐 Kotlin `checkInheritedInterfaceDefault`）。
+    // 结果走 ifaceHit / ifaceHitOwner / ifaceHitCount 三个字段：命中 >1 个不同接口就是歧义，
+    // 调用方必须报错（对齐 Kotlin 的重载歧义判定），绝不能按声明顺序挑一个。
+    public fun ifaceLookup(root : string, nm : string, argc : int, includeSelf : bool, bodyOnly : bool) -> void {
+        ifaceHit = null
+        ifaceHitOwner = null
+        ifaceHitCount = 0
+        var visited : string[] = new string[4]
+        var vn = 0
+        var queue : string[] = new string[8]
+        var qn = 0
+        var head = 0
+        var start = findIface(root)
+        if (includeSelf && start != null) {
+            visited = strArrPush(visited, vn, root)
+            vn = vn + 1
+            scanIfaceHit(start!!, nm, argc, bodyOnly)
+            var s0 = 0
+            while (s0 < start!!.scount) {
+                queue = strArrPush(queue, qn, start!!.supers[s0])
+                qn = qn + 1
+                s0 = s0 + 1
+            }
+        } else {
+            var r0 = findClass(root)
+            if (r0 != null) {
+                var s1 = 0
+                while (s1 < r0!!.scount) {
+                    queue = strArrPush(queue, qn, r0!!.supers[s1])
+                    qn = qn + 1
+                    s1 = s1 + 1
+                }
+            } else if (start != null) {
+                var s2 = 0
+                while (s2 < start!!.scount) {
+                    queue = strArrPush(queue, qn, start!!.supers[s2])
+                    qn = qn + 1
+                    s2 = s2 + 1
+                }
+            }
+        }
+        while (head < qn) {
+            var cur = queue[head]
+            head = head + 1
+            // 菱形：同一个接口只走一次（对齐 Kotlin findInterfaceDefault 的 visited）
+            if (!strArrHas(visited, vn, cur)) {
+                visited = strArrPush(visited, vn, cur)
+                vn = vn + 1
+                var ic = findIface(cur)
+                if (ic != null) {
+                    scanIfaceHit(ic!!, nm, argc, bodyOnly)
+                    var s3 = 0
+                    while (s3 < ic!!.scount) {
+                        queue = strArrPush(queue, qn, ic!!.supers[s3])
+                        qn = qn + 1
+                        s3 = s3 + 1
+                    }
+                }
+            }
+        }
+    }
+
+    public fun scanIfaceHit(ic : CInfo, nm : string, argc : int, bodyOnly : bool) -> void {
+        var m = ic.ifaceMethOf(nm, argc, bodyOnly)
+        if (m != null) {
+            ifaceHitCount = ifaceHitCount + 1
+            ifaceHit = m
+            ifaceHitOwner = ic
+        }
+    }
+
+    // sub 是不是 sup 的子类型（只认「接口实现 / 父接口」这一层；类没有继承）。
+    // 两边都是**内部名**。用来给 acceptsValue 补上「Dog 可以赋给 Greeter」这条。
+    public fun isSubtypeName(sub : string, sup : string) -> bool {
+        if (sub == sup) { rtn true }
+        if (sup == "java/lang/Object") { rtn true }
+        var visited : string[] = new string[4]
+        var vn = 0
+        var queue : string[] = new string[8]
+        var qn = 0
+        var head = 0
+        // 类的直接父接口
+        var c0 = findClass(sub)
+        if (c0 != null) {
+            var i = 0
+            while (i < c0!!.scount) {
+                queue = strArrPush(queue, qn, c0!!.supers[i])
+                qn = qn + 1
+                i = i + 1
+            }
+        }
+        // 接口的直接父接口
+        var i0 = findIface(sub)
+        if (i0 != null) {
+            var j = 0
+            while (j < i0!!.scount) {
+                queue = strArrPush(queue, qn, i0!!.supers[j])
+                qn = qn + 1
+                j = j + 1
+            }
+        }
+        while (head < qn) {
+            var cur = queue[head]
+            head = head + 1
+            if (cur == sup) { rtn true }
+            if (strArrHas(visited, vn, cur)) {
+                // 已展开过
+            } else {
+                visited = strArrPush(visited, vn, cur)
+                vn = vn + 1
+                var ic = findIface(cur)
+                if (ic != null) {
+                    var k = 0
+                    while (k < ic!!.scount) {
+                        queue = strArrPush(queue, qn, ic!!.supers[k])
+                        qn = qn + 1
+                        k = k + 1
+                    }
+                }
+            }
+        }
+        rtn false
     }
 
     public fun addEnum(e : EInfo) -> void {
@@ -1108,6 +1309,15 @@ fun typeOfText(g : Gen, text : string) -> ?BType {
             if (en != null) { in2 = en!!.internal }
         }
         rtn new BType("external", in2, nullable, depth).withArgs(ta)
+    }
+    // 阶段 20：用户接口（与用户类同一个命名空间，但是另一种类型）
+    var ifc0 = g.findIface(rest)
+    if (ifc0 != null) {
+        if (ta.length > 0) {
+            g.bad("类型实参个数不符 " + text)
+            rtn null
+        }
+        rtn new BType("external", ifc0!!.internal, nullable, depth)
     }
     // 已知的 JVM 引用类型（互操作要用的那几个）
     var jvm = jvmInternalName(rest)
@@ -1642,6 +1852,9 @@ public class Mem2(owner : string, name : string, desc : string, ret : BType, par
     // 擦除类型——按它做加宽才会插装箱（`Box&<int>.set(T)` 的形参在 JVM 里是 Object）
     var declParams : BType[] = new BType[0]
     var subst : ?Subst = null
+    // 阶段 20：owner 是不是 rsf 接口 —— 是的话 opcode 记 185（INVOKEINTERFACE），
+    // 且 `visitMethodInsn` 的末位布尔必须是 true。
+    var itf : bool = false
 }
 
 // 字段引用：owner/name/desc 直接发给 ASM；type 是声明类型（读回来的静态类型）
@@ -1742,6 +1955,46 @@ public class CInfo(name : string, internal : string) {
     // 成员调用的实参替换靠这张表对齐（与 Kotlin 的 `ClassInfo.typeParams` 对齐）
     var typeParams : string[] = new string[4]
     var typeParamCount : int = 0
+    // 阶段 20：接口标记 + 父类型子句。类的 supers 只记接口（rsf 没有类继承），
+    // 接口的 supers 是它的父接口。用可变字段而不是构造参数 —— CInfo 有两处构造调用，
+    // 改签名要连着动两处，没必要。
+    var isIface : bool = false
+    var supers : string[] = new string[4]
+    var scount : int = 0
+
+    public fun addSuper(nm2 : string) -> void {
+        if (nm2.length() == 0) { rtn }
+        var i = 0
+        while (i < scount) {
+            if (supers[i] == nm2) { rtn }
+            i = i + 1
+        }
+        if (scount >= supers.length) {
+            var b : string[] = new string[supers.length * 2]
+            var k = 0
+            while (k < scount) {
+                b[k] = supers[k]
+                k = k + 1
+            }
+            supers = b
+        }
+        supers[scount] = nm2
+        scount = scount + 1
+    }
+
+    // 接口方法：名字 + 实参个数相同。bodyOnly=true 时只认带体的默认方法
+    // （类接收者的那条路：抽象方法不算被继承）；false 时抽象方法也算（接口接收者）。
+    public fun ifaceMethOf(nm2 : string, argc : int, bodyOnly : bool) -> ?CMeth {
+        var i = 0
+        while (i < methCount) {
+            var m = meths[i]
+            if (!m.ctor && m.name == nm2 && m.params.length == argc) {
+                if (!bodyOnly || m.node.childCount > 1) { rtn m }
+            }
+            i = i + 1
+        }
+        rtn null
+    }
 
     public fun addTypeParam(nm : string) -> void {
         if (typeParamCount >= typeParams.length) {
@@ -2362,7 +2615,7 @@ public class Walker(g : Gen) {
                 g.putBind(st, declared, slot0)
                 sc.add(name, declared, slot0)
                 var it0 = walkExpr(init, sc)
-                if (!acceptsValue(declared, init, it0)) {
+                if (!acceptsValue(g, declared, init, it0)) {
                     g.bad("把 " + it0.desc() + " 赋给 " + declared.desc())
                     rtn
                 }
@@ -2398,7 +2651,7 @@ public class Walker(g : Gen) {
                     g.bad("给不可变字段赋值：" + prop(st, "name"))
                     rtn
                 }
-                if (!acceptsValue(f!!.type, value, vt)) {
+                if (!acceptsValue(g, f!!.type, value, vt)) {
                     g.bad("把 " + vt.desc() + " 赋给字段 " + f!!.type.desc())
                     rtn
                 }
@@ -2411,7 +2664,7 @@ public class Walker(g : Gen) {
                 emit(ins0)
                 rtn
             }
-            if (!acceptsValue(target!!, value, vt)) {
+            if (!acceptsValue(g, target!!, value, vt)) {
                 g.bad("把 " + vt.desc() + " 赋给 " + target!!.desc())
                 rtn
             }
@@ -2470,7 +2723,7 @@ public class Walker(g : Gen) {
                 g.bad("给不可变字段赋值：" + nm)
                 rtn
             }
-            if (!acceptsValue(f!!.type, value, vt)) {
+            if (!acceptsValue(g, f!!.type, value, vt)) {
                 g.bad("把 " + vt.desc() + " 赋给字段 " + f!!.type.desc())
                 rtn
             }
@@ -2776,7 +3029,7 @@ public class Walker(g : Gen) {
             var i = 0
             while (i < args.childCount) {
                 var at = walkExpr(args.children[i], sc)
-                if (!acceptsValue(target!!.params[i], args.children[i], at)) {
+                if (!acceptsValue(g, target!!.params[i], args.children[i], at)) {
                     g.bad("this(...) 第 " + intToString(i + 1) + " 个实参类型不匹配")
                     rtn
                 }
@@ -2963,7 +3216,7 @@ public class Walker(g : Gen) {
                     }
                     var k0 = 0
                     while (k0 < argNode0.childCount) {
-                        if (!acceptsValue(m0!!.params[k0], argNode0.children[k0], tOf(g, argNode0.children[k0]))) {
+                        if (!acceptsValue(g, m0!!.params[k0], argNode0.children[k0], tOf(g, argNode0.children[k0]))) {
                             g.bad(nm + " 的第 " + intToString(k0 + 1) + " 个实参类型不匹配")
                             rtn tVoid()
                         }
@@ -3018,9 +3271,61 @@ public class Walker(g : Gen) {
                 // 用户类的实例方法（数组不是类：`Box[]` 不能在这里当成 `Box` 的成员）
                 if (rt.base == "external" && !rt.isArray()) {
                     var uc = g.findClass(rt.name)
+                    // 阶段 20：接收者的**静态类型**就是 rsf 接口 —— 调哪一份实现看运行期对象，
+                    // 字节码必须发 INVOKEINTERFACE（发 INVOKEVIRTUAL 会在加载期
+                    // IncompatibleClassChangeError: Found interface ..., but class was expected）。
+                    // 查找口径对齐 Kotlin `interfaceMethodsByName`：先 own 再沿父接口链，抽象方法也算。
+                    var ifc0 = g.findIface(rt.name)
+                    if (uc == null && ifc0 != null) {
+                        g.ifaceLookup(rt.name, nm, argc, true, false)
+                        if (g.ifaceHitCount == 0) {
+                            g.bad("接口 " + rt.name + " 的方法 " + nm + "()（" + intToString(argc) + " 个参数）")
+                            rtn tVoid()
+                        }
+                        if (g.ifaceHitCount > 1) {
+                            g.bad("调用 '" + nm + "' 无法确定用哪个重载：实参类型（）下有 " + intToString(g.ifaceHitCount) + " 个候选")
+                            rtn tVoid()
+                        }
+                        var hk0 = 0
+                        while (hk0 < argc) {
+                            if (!acceptsValue(g, g.ifaceHit!!.params[hk0], argNode.children[hk0], tOf(g, argNode.children[hk0]))) {
+                                g.bad(nm + " 的第 " + intToString(hk0 + 1) + " 个实参类型不匹配")
+                                rtn tVoid()
+                            }
+                            hk0 = hk0 + 1
+                        }
+                        var hi0 = ifaceMem2(g, rt)
+                        g.putMem(e, hi0)
+                        t = hi0.ret
+                        g.putType(e, t)
+                        rtn t
+                    }
                     if (uc != null) {
                         var um = uc!!.methOf(nm, argc)
                         if (um == null) {
+                            // 类自己没声明这个成员 —— 可能是沿接口链继承来的**默认方法**
+                            // （Kotlin `checkClassMember` → `checkInheritedInterfaceDefault`，
+                            // 只认带体的：抽象方法不算被类继承）。
+                            g.ifaceLookup(uc!!.internal, nm, argc, false, true)
+                            if (g.ifaceHitCount > 1) {
+                                g.bad("调用 '" + nm + "' 无法确定用哪个默认实现（接口链上有 " + intToString(g.ifaceHitCount) + " 个候选）")
+                                rtn tVoid()
+                            }
+                            if (g.ifaceHitCount == 1) {
+                                var hk1 = 0
+                                while (hk1 < argc) {
+                                    if (!acceptsValue(g, g.ifaceHit!!.params[hk1], argNode.children[hk1], tOf(g, argNode.children[hk1]))) {
+                                        g.bad(nm + " 的第 " + intToString(hk1 + 1) + " 个实参类型不匹配")
+                                        rtn tVoid()
+                                    }
+                                    hk1 = hk1 + 1
+                                }
+                                var hi1 = ifaceMem2(g, rt)
+                                g.putMem(e, hi1)
+                                t = hi1.ret
+                                g.putType(e, t)
+                                rtn t
+                            }
                             if (nm == "toString" && argc == 0 && uc!!.hasToString()) {
                                 var ti = new Mem2(uc!!.internal, "toString", "()Ljava/lang/String;", tString(), memP0(), false)
                                 g.putMem(e, ti)
@@ -3042,7 +3347,7 @@ public class Walker(g : Gen) {
                         }
                         var k = 0
                         while (k < argc) {
-                            if (!acceptsValue(uparams[k], argNode.children[k], tOf(g, argNode.children[k]))) {
+                            if (!acceptsValue(g, uparams[k], argNode.children[k], tOf(g, argNode.children[k]))) {
                                 g.bad(nm + " 的第 " + intToString(k + 1) + " 个实参类型不匹配")
                                 rtn tVoid()
                             }
@@ -3216,7 +3521,7 @@ public class Walker(g : Gen) {
             }
             var k = 0
             while (k < argc) {
-                if (!acceptsValue(cparams[k], argNode.children[k], tOf(g, argNode.children[k]))) {
+                if (!acceptsValue(g, cparams[k], argNode.children[k], tOf(g, argNode.children[k]))) {
                     g.bad("构造 " + clsName + " 的第 " + intToString(k + 1) + " 个实参类型不匹配")
                     rtn tVoid()
                 }
@@ -3242,7 +3547,7 @@ public class Walker(g : Gen) {
         }
         var k2 = 0
         while (k2 < argc) {
-            if (!acceptsValue(nr!!.params[k2], argNode.children[k2], tOf(g, argNode.children[k2]))) {
+            if (!acceptsValue(g, nr!!.params[k2], argNode.children[k2], tOf(g, argNode.children[k2]))) {
                 g.bad("构造 " + clsName + " 的第 " + intToString(k2 + 1) + " 个实参类型不匹配")
                 rtn tVoid()
             }
@@ -3287,18 +3592,41 @@ public class Walker(g : Gen) {
         var ci = g.cur
         if (ci != null) {
             var m = ci!!.methOf(name, args.childCount)
+            var mOwner = ci!!
+            if (m == null) {
+                // 阶段 20：自己没声明这个成员 —— 可能是接口方法。当前类就是接口时
+                // （默认方法体里的隐式 this 调用）沿自己 + 父接口链找，**抽象也算**
+                // （Kotlin `checkImplicitInterfaceCall` 用 `interfaceMethodsByName`，
+                // 里面既有默认方法也有抽象方法）；在类里则只算带体的默认方法
+                // （Kotlin `checkClassMember` → `checkInheritedInterfaceDefault`）。
+                g.ifaceLookup(ci!!.internal, name, args.childCount, ci!!.isIface, !ci!!.isIface)
+                if (g.ifaceHitCount > 1) {
+                    g.bad("调用 '" + name + "' 无法确定用哪个默认实现（接口链上有 " + intToString(g.ifaceHitCount) + " 个候选）")
+                    rtn tVoid()
+                }
+                if (g.ifaceHitCount == 1) {
+                    m = g.ifaceHit
+                    mOwner = g.ifaceHitOwner!!
+                }
+            }
             if (m != null) {
                 var k = 0
                 while (k < args.childCount) {
-                    if (!acceptsValue(m!!.params[k], args.children[k], tOf(g, args.children[k]))) {
+                    if (!acceptsValue(g, m!!.params[k], args.children[k], tOf(g, args.children[k]))) {
                         g.bad(name + " 的第 " + intToString(k + 1) + " 个实参类型不匹配")
                         rtn tVoid()
                     }
                     k = k + 1
                 }
-                var mi = new Mem2(ci!!.internal, name, m!!.mdesc(), m!!.ret, m!!.params, m!!.isStatic)
-                mi.opcode = m!!.opcode()
-                mi.recv = new BType("external", ci!!.internal, false, 0)
+                var mi = new Mem2(mOwner.internal, name, m!!.mdesc(), m!!.ret, m!!.params, m!!.isStatic)
+                if (mOwner.isIface) {
+                    // 接口方法一律 INVOKEINTERFACE（owner 是**声明它**的那个接口）
+                    mi.opcode = 185
+                    mi.itf = true
+                } else {
+                    mi.opcode = m!!.opcode()
+                }
+                mi.recv = new BType("external", mOwner.internal, false, 0)
                 g.putMem(e, mi)
                 rtn m!!.ret
             }
@@ -3933,7 +4261,7 @@ fun emitCall(g : Gen, mv : MethodVisitor, e : Node, off : int) -> void {
             emitWiden(g, mv, tOf(g, args.children[q]), mi0.params[q])
             q = q + 1
         }
-        mv.visitMethodInsn(mi0.opcode, mi0.owner, mi0.name, mi0.desc, false)
+        mv.visitMethodInsn(mi0.opcode, mi0.owner, mi0.name, mi0.desc, mi0.itf)
         rtn
     }
     var s = g.findSig(name, args.childCount)
@@ -3972,10 +4300,26 @@ public class OrElse(name : string, desc : string, opcode : int, owner : string, 
     var params : BType[] = params
     var result : BType = result
     var entryArg : bool = entryArg
+    // 阶段 20：`?:` 合成方法里那次调用是不是接口调用（INVOKEINTERFACE + itf=true）
+    var itf : bool = false
 }
 
 // 这个表达式是不是一次「可能失败」的调用（`!T` 函数 / 内置的 mayError 函数）
 fun isEntrySig(s : Sig) -> bool { rtn s.name == "main" && s.count == 0 }
+
+// 接口链查找命中（`Gen.ifaceLookup`）之后包一个 Mem2：owner 是**声明它**的那个接口，
+// 指令固定 INVOKEINTERFACE(185)，且 `visitMethodInsn` 的末位布尔为 true。
+fun ifaceMem2(g : Gen, rt : BType) -> Mem2 {
+    var hm = g.ifaceHit!!
+    var ho = g.ifaceHitOwner!!
+    var mi = new Mem2(ho.internal, hm.name, hm.mdesc(), hm.ret, hm.params, false)
+    mi.opcode = 185
+    mi.itf = true
+    mi.recv = rt
+    mi.origRet = hm.ret
+    mi.declParams = hm.params
+    rtn mi
+}
 
 fun isErrorCallExpr(g : Gen, e : Node) -> bool {
     // `对象.方法()!!`：按接收者的类型找出那个类的同名方法，看它是不是 `!T`
@@ -3995,9 +4339,21 @@ fun isErrorCallExpr(g : Gen, e : Node) -> bool {
         var rt = tOf(g, mrecv)
         if (rt.base != "external" || rt.depth != 0) { rtn false }
         var rc = g.findClass(rt.name)
-        if (rc == null) { rtn false }
+        if (rc == null) {
+            // 阶段 20：接收者的静态类型就是接口 —— 沿接口链找（抽象也算，
+            // 静态类型是接口时调的就是 `decl` 那一份）
+            if (g.findIface(rt.name) == null) { rtn false }
+            g.ifaceLookup(rt.name, mnm, margc, true, false)
+            if (g.ifaceHitCount != 1) { rtn false }
+            rtn propBool(g.ifaceHit!!.node, "mayError")
+        }
         var rm = rc!!.methOf(mnm, margc)
-        if (rm == null) { rtn false }
+        if (rm == null) {
+            // 阶段 20：类自己没声明这个成员 —— 只认接口链上带体的默认方法
+            g.ifaceLookup(rc!!.internal, mnm, margc, false, true)
+            if (g.ifaceHitCount != 1) { rtn false }
+            rtn propBool(g.ifaceHit!!.node, "mayError")
+        }
         rtn propBool(rm!!.node, "mayError")
     }
     if (e.kind != NodeKind.CALL) { rtn false }
@@ -4100,7 +4456,9 @@ fun orElseOfMemberCall(g : Gen, mv : MethodVisitor, left : Node, mi : Mem2, off 
         ps[i + base] = want
         i = i + 1
     }
-    rtn g.addOrElse(mi.opcode, mi.owner, mi.name, mi.desc, ps, orElseResultType(mi), false)
+    var oeitf = g.addOrElse(mi.opcode, mi.owner, mi.name, mi.desc, ps, orElseResultType(mi), false)
+    oeitf.itf = mi.itf
+    rtn oeitf
 }
 
 // `?:` 左边的**类内隐式调用**（`f() ?: v`，f 是本类 / 隐式 this 的方法）：静态方法
@@ -4124,7 +4482,9 @@ fun orElseOfImplicitCall(g : Gen, mv : MethodVisitor, left : Node, mi : Mem2, of
         ps[i + base] = want
         i = i + 1
     }
-    rtn g.addOrElse(mi.opcode, mi.owner, mi.name, mi.desc, ps, orElseResultType(mi), false)
+    var oeitf = g.addOrElse(mi.opcode, mi.owner, mi.name, mi.desc, ps, orElseResultType(mi), false)
+    oeitf.itf = mi.itf
+    rtn oeitf
 }
 
 // 合成方法体里要不要装箱，看**声明**（擦除后）的返回类型，所以优先 `origRet`；
@@ -4211,7 +4571,7 @@ fun emitErrorCallElvis(g : Gen, mv : MethodVisitor, e : Node, off : int) -> void
     // 类名，不能是 `g.owner`（那是程序类的名字）。Kotlin 侧对应 `ctx.owner`
     // （BytecodeCompiler.kt:1719）。写成 `g.owner` 时，用户类方法里的 `?:` 会去
     // 程序类找 `__rsf_orelse$N`，运行时 NoSuchMethodError。
-    mv.visitMethodInsn(184, g.cwNames[g.cwCount - 1], spec.name, spec.desc, false)
+    mv.visitMethodInsn(184, g.cwNames[g.cwCount - 1], spec.name, spec.desc, g.isIfaceInternal(g.cwNames[g.cwCount - 1]))
     var ok = new Label()
     var done = new Label()
     mv.visitInsn(89)
@@ -4267,7 +4627,7 @@ fun emitOrElseMethods(g : Gen) -> void {
             slot = slot + m.params[k].slots()
             k = k + 1
         }
-        mv.visitMethodInsn(m.opcode, m.owner, m.target, m.targetDesc, false)
+        mv.visitMethodInsn(m.opcode, m.owner, m.target, m.targetDesc, m.itf)
         if (m.result.isPrimitive()) { eBox(mv, m.result.base) }
         mv.visitLabel(end)
         mv.visitInsn(176)
@@ -4470,7 +4830,7 @@ fun emitExpr(g : Gen, mv : MethodVisitor, e : Node, off : int) -> void {
                 emitWiden(g, mv, tOf(g, argNode.children[ai]), want)
                 ai = ai + 1
             }
-            mv.visitMethodInsn(mi.opcode, mi.owner, mi.name, mi.desc, false)
+            mv.visitMethodInsn(mi.opcode, mi.owner, mi.name, mi.desc, mi.itf)
             // 泛型：`get()` 擦除后返回 Object，静态类型来自类型实参。
             // 结果被丢弃时不做这一步（`m.put(k, v)` 的返回值可能为 null，白白拆箱会 NPE）
             if (!disc && !mi.origRet.isVoid()) {
@@ -4842,30 +5202,13 @@ fun collectClasses(g : Gen, classes : Node, enums : Node) -> void {
                     fi = fi + 1
                 }
             } else if (part.kind == NodeKind.METHODS) {
-                var mi = 0
-                while (mi < part.childCount) {
-                    var m = part.children[mi]
-                    var isCtor = propBool(m, "ctor")
-                    var ret : BType = tVoid()
-                    if (!isCtor) {
-                        var rt = typeOfText(g, prop(m, "retType"))
-                        if (rt == null) { rtn }
-                        ret = rt!!
-                    }
-                    var ps = m.children[0]
-                    var pts : BType[] = new BType[ps.childCount]
-                    var pns : string[] = new string[ps.childCount]
-                    var pi = 0
-                    while (pi < ps.childCount) {
-                        var pt = typeOfText(g, prop(ps.children[pi], "type"))
-                        if (pt == null) { rtn }
-                        pts[pi] = pt!!
-                        pns[pi] = prop(ps.children[pi], "name")
-                        pi = pi + 1
-                    }
-                    ci.addMeth(new CMeth(m, prop(m, "name"), pts, pns, ret, propBool(m, "static"), prop(m, "control"), isCtor, propBool(m, "primary")))
-                    mi = mi + 1
-                }
+                collectMethods(g, part, ci)
+                if (g.failed) { rtn }
+            } else if (part.kind == NodeKind.SUPERS) {
+                // 阶段 20：父类型子句。rsf 的类只可能有接口父类型（没有类继承），
+                // 逐个解析成内部名存进 ci.supers —— 类头与 INVOKEINTERFACE 的判定都用它。
+                collectSuperNames(g, part, ci)
+                if (g.failed) { rtn }
             } else {
                 g.bad("类成员 " + kindName(part.kind))
                 rtn
@@ -5113,7 +5456,7 @@ fun emitOrElseRange(g : Gen, from : int, to : int) -> void {
             slot = slot + m.params[k].slots()
             k = k + 1
         }
-        mv.visitMethodInsn(m.opcode, m.owner, m.target, m.targetDesc, false)
+        mv.visitMethodInsn(m.opcode, m.owner, m.target, m.targetDesc, m.itf)
         if (m.result.isPrimitive()) { eBox(mv, m.result.base) }
         mv.visitLabel(end)
         mv.visitInsn(176)
@@ -5126,10 +5469,22 @@ fun emitOrElseRange(g : Gen, from : int, to : int) -> void {
     }
 }
 
+// 类头 `cw.visit` 的父接口数组（阶段 20）。没有父类型子句时是长度 0 的数组 ——
+// ASM 写出来的 `interfaces_count` 与传 `null` 完全一样，所以无接口的源产物一个字节不变。
+fun superArr(ci : CInfo) -> string[] {
+    var out : string[] = new string[ci.scount]
+    var i = 0
+    while (i < ci.scount) {
+        out[i] = ci.supers[i]
+        i = i + 1
+    }
+    rtn out
+}
+
 fun emitUserClass(g : Gen, ci : CInfo) -> void {
     g.newWriter(ci.internal)
     g.cur = ci
-    g.cw.visit(v17(), accPublic() + accSuper(), ci.internal, null, "java/lang/Object", null)
+    g.cw.visit(v17(), accPublic() + accSuper(), ci.internal, null, "java/lang/Object", superArr(ci))
     g.cw.visitSource(g.sourceName, null)
     var i = 0
     while (i < ci.fieldCount) {
@@ -5294,6 +5649,151 @@ fun pkgPathOf(name : string) -> string {
     rtn out
 }
 
+// 父类型子句（阶段 20）：把一个类 / 接口的 `SUPERS` 子节点解析成内部名存进 `ci.supers`。
+// rsf 没有类继承，父类型只可能是接口：先找用户接口，再退到 import 进来的 JDK 接口。
+fun collectSuperNames(g : Gen, part : Node, ci : CInfo) -> void {
+    var i = 0
+    while (i < part.childCount) {
+        var sp = part.children[i]
+        var snm = prop(sp, "name")
+        var ic = g.findIface(snm)
+        if (ic != null) {
+            ci.addSuper(ic!!.internal)
+        } else {
+            var im = g.findImport(snm)
+            if (im != null) {
+                ci.addSuper(im!!)
+            } else {
+                var jv = jvmInternalName(snm)
+                if (jv.length() > 0) {
+                    ci.addSuper(jv)
+                } else {
+                    g.bad("未知的父类型 " + snm)
+                    rtn
+                }
+            }
+        }
+        i = i + 1
+    }
+}
+
+// 一个 METHODS 子节点 → CMeth 列表（类与接口共用）。
+fun collectMethods(g : Gen, part : Node, ci : CInfo) -> void {
+    var mi = 0
+    while (mi < part.childCount) {
+        var m = part.children[mi]
+        var isCtor = propBool(m, "ctor")
+        var ret : BType = tVoid()
+        if (!isCtor) {
+            var rt = typeOfText(g, prop(m, "retType"))
+            if (rt == null) { rtn }
+            ret = rt!!
+        }
+        var ps = m.children[0]
+        var pts : BType[] = new BType[ps.childCount]
+        var pns : string[] = new string[ps.childCount]
+        var pi = 0
+        while (pi < ps.childCount) {
+            var pt = typeOfText(g, prop(ps.children[pi], "type"))
+            if (pt == null) { rtn }
+            pts[pi] = pt!!
+            pns[pi] = prop(ps.children[pi], "name")
+            pi = pi + 1
+        }
+        ci.addMeth(new CMeth(m, prop(m, "name"), pts, pns, ret, propBool(m, "static"), prop(m, "control"), isCtor, propBool(m, "primary")))
+        mi = mi + 1
+    }
+}
+
+// 用户接口：登记成 CInfo（`isIface = true`）另存一张表，**不进 classes**——
+// 这样 `findClass("I")` 仍然是 null，`new I()` 会照旧报「构造对象 new I」（接口不能 new）。
+// 与用户类一样分两遍：先登记名字与类型参数，再填方法与父接口。
+fun collectInterfaces(g : Gen, ifs : Node) -> void {
+    var infos : CInfo[] = new CInfo[ifs.childCount]
+    var i = 0
+    while (i < ifs.childCount) {
+        var in0 = ifs.children[i]
+        var inm = prop(in0, "name")
+        var ic = new CInfo(inm, g.pkgPrefix + inm)
+        ic.isIface = true
+        ic.node = in0
+        g.addIface(ic)
+        infos[i] = ic
+        var tpi = 0
+        while (tpi < in0.childCount) {
+            var tpp = in0.children[tpi]
+            if (tpp.kind == NodeKind.TYPE_PARAMS) {
+                var tpk = 0
+                while (tpk < tpp.childCount) {
+                    ic.addTypeParam(prop(tpp.children[tpk], "name"))
+                    tpk = tpk + 1
+                }
+            }
+            tpi = tpi + 1
+        }
+        i = i + 1
+    }
+    var gi = 0
+    while (gi < ifs.childCount) {
+        var in1 = ifs.children[gi]
+        var ic = infos[gi]
+        g.cur = ic
+        var k = 0
+        while (k < in1.childCount) {
+            var part = in1.children[k]
+            if (part.kind == NodeKind.TYPE_PARAMS) {
+                // 已经在上面登记过了
+            } else if (part.kind == NodeKind.SUPERS) {
+                collectSuperNames(g, part, ic)
+                if (g.failed) { rtn }
+            } else if (part.kind == NodeKind.METHODS) {
+                collectMethods(g, part, ic)
+                if (g.failed) { rtn }
+            } else {
+                g.bad("接口成员 " + kindName(part.kind))
+                rtn
+            }
+            k = k + 1
+        }
+        gi = gi + 1
+    }
+}
+
+// 接口的字节码（对齐 Kotlin `BytecodeCompiler.interfaceClass`）：
+//   `ACC_PUBLIC|ACC_INTERFACE|ACC_ABSTRACT`（=1537）、超类写死 `java/lang/Object`、
+//   父接口数组照发、**也要 visitSource**。
+//   抽象方法（FUNC 只有 PARAMS 一个孩子）：`ACC_PUBLIC|ACC_ABSTRACT` + 直接 `visitEnd()`，
+//   **绝不 visitCode / visitMaxs**（漏了 ACC_ABSTRACT 会 ClassFormatError：
+//   "Absent Code attribute in method that is not native or abstract"）。
+//   默认方法：与类方法完全同一条发射路径。
+//   接口不发字段、不发 `<init>`、不发 toString 兜底。
+fun emitUserInterface(g : Gen, ci : CInfo) -> void {
+    g.newWriter(ci.internal)
+    g.cur = ci
+    g.curMeth = null
+    g.curStatic = false
+    var orFrom = g.orCount
+    g.cw.visit(v17(), accPublic() + accInterface() + accAbstract(), ci.internal, null, "java/lang/Object", superArr(ci))
+    g.cw.visitSource(g.sourceName, null)
+    var i = 0
+    while (i < ci.methCount) {
+        var m = ci.meths[i]
+        if (m.node.childCount < 2) {
+            var mv = g.cw.visitMethod(accPublic() + accAbstract(), m.name, m.mdesc(), null, null)
+            mv.visitEnd()
+        } else {
+            emitUserMethod(g, ci, m)
+            if (g.failed) { rtn }
+        }
+        i = i + 1
+    }
+    emitOrElseRange(g, orFrom, g.orCount)
+    g.cw.visitEnd()
+    g.cur = null
+    g.curMeth = null
+    g.curStatic = false
+}
+
 // 全程序：先收集类型与签名（函数可以互相调用 / 递归），再发射
 public fun compileProgram(g : Gen, ast : Node, sourceName : string) -> void {
     g.sourceName = sourceName
@@ -5314,6 +5814,7 @@ public fun compileProgram(g : Gen, ast : Node, sourceName : string) -> void {
     var funcs : Node = new Node(NodeKind.ERROR)
     var classes : Node = new Node(NodeKind.ERROR)
     var enums : Node = new Node(NodeKind.ERROR)
+    var ifaces : Node = new Node(NodeKind.ERROR)
     var i = 0
     while (i < ast.childCount) {
         var c = ast.children[i]
@@ -5325,6 +5826,8 @@ public fun compileProgram(g : Gen, ast : Node, sourceName : string) -> void {
             classes = c
         } else if (c.kind == NodeKind.ENUMS) {
             enums = c
+        } else if (c.kind == NodeKind.INTERFACES) {
+            ifaces = c
         }
         i = i + 1
     }
@@ -5337,6 +5840,9 @@ public fun compileProgram(g : Gen, ast : Node, sourceName : string) -> void {
         j = j + 1
     }
     collectImports(g, imps)
+    // 接口必须先登记：类的父类型子句、字段与方法签名都可能引用它们
+    collectInterfaces(g, ifaces)
+    if (g.failed) { rtn }
     collectClasses(g, classes, enums)
     if (g.failed) { rtn }
 
@@ -5368,10 +5874,18 @@ public fun compileProgram(g : Gen, ast : Node, sourceName : string) -> void {
     emitOrElseRange(g, 0, g.orCount)
     g.cw.visitEnd()
 
-    // 用户类与枚举（顺序决定常量池与方法顺序，必须固定）
+    // 用户类、用户接口与枚举（顺序决定常量池与方法顺序，必须固定）
+    // 接口排在类与枚举**之间**，与 Kotlin `BytecodeCompiler.compile` 的
+    // program → classes → interfaces → enums 一致（`__rsf_orelse$N` 的编号也跟着一致）。
     i = 0
     while (i < g.ciCount) {
         emitUserClass(g, g.cis[i])
+        if (g.failed) { rtn }
+        i = i + 1
+    }
+    i = 0
+    while (i < g.iiCount) {
+        emitUserInterface(g, g.iis[i])
         if (g.failed) { rtn }
         i = i + 1
     }

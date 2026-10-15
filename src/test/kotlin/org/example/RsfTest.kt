@@ -5826,9 +5826,9 @@ class RsfTest {
                         "}\n\n" +
                         "public fun describe(k : TokenKind) -> string {\n" +
                         "    switch (k) {\n" +
-                        "        case TokenKind.IDENT : rtn \"标识符\"\n" +
-                        "        case TokenKind.INT_LIT : rtn \"整数\"\n" +
-                        "        case TokenKind.EOF : rtn \"结束\"\n" +
+                        "        TokenKind.IDENT : rtn \"标识符\"\n" +
+                        "        TokenKind.INT_LIT : rtn \"整数\"\n" +
+                        "        TokenKind.EOF : rtn \"结束\"\n" +
                         "    }\n" +
                         "}\n"
                     ),
@@ -5897,10 +5897,10 @@ class RsfTest {
         val program = switchPrelude + """
         fun classify(k : TokenKind) -> string {
             switch (k) {
-                case TokenKind.IDENT : rtn "标识符"
-                case TokenKind.INT_LIT : rtn "整数"
-                case TokenKind.STRING : rtn "字符串"
-                case TokenKind.EOF : rtn "结束"
+                TokenKind.IDENT : rtn "标识符"
+                TokenKind.INT_LIT : rtn "整数"
+                TokenKind.STRING : rtn "字符串"
+                TokenKind.EOF : rtn "结束"
             }
         }
 
@@ -5912,13 +5912,13 @@ class RsfTest {
 
             var k = TokenKind.STRING
             switch (k) {
-                case TokenKind.IDENT : println("第一支")
-                case TokenKind.STRING : println("中间支")
-                case TokenKind.EOF : println("最后一支")
+                TokenKind.IDENT : println("第一支")
+                TokenKind.STRING : println("中间支")
+                TokenKind.EOF : println("最后一支")
                 else : println("兜底支")
             }
             switch (k) {
-                case TokenKind.IDENT : println("只有 IDENT 这一支")
+                TokenKind.IDENT : println("只有 IDENT 这一支")
                 else : println("else 命中")
             }
             rtn
@@ -5957,16 +5957,16 @@ class RsfTest {
             var c = Counter()
             var k = TokenKind.INT_LIT
             switch (k) {
-                case TokenKind.IDENT : hit(c, "IDENT")
-                case TokenKind.INT_LIT : hit(c, "INT_LIT")
-                case TokenKind.STRING : hit(c, "STRING")
-                case TokenKind.EOF : hit(c, "EOF")
+                TokenKind.IDENT : hit(c, "IDENT")
+                TokenKind.INT_LIT : hit(c, "INT_LIT")
+                TokenKind.STRING : hit(c, "STRING")
+                TokenKind.EOF : hit(c, "EOF")
             }
             println("穷尽无 else 时的调用次数 = " + c.n)
 
             switch (k) {
-                case TokenKind.IDENT : hit(c, "A")
-                case TokenKind.EOF : hit(c, "B")
+                TokenKind.IDENT : hit(c, "A")
+                TokenKind.EOF : hit(c, "B")
                 else : hit(c, "ELSE")
             }
             println("带 else 时的调用次数 = " + c.n)
@@ -5998,8 +5998,8 @@ class RsfTest {
                         "fun main() -> void {\n" +
                         "    var k = TokenKind.IDENT\n" +
                         "    switch (k) {\n" +
-                        "        case TokenKind.IDENT : println(\"i\")\n" +
-                        "        case TokenKind.EOF : println(\"e\")\n" +
+                        "        TokenKind.IDENT : println(\"i\")\n" +
+                        "        TokenKind.EOF : println(\"e\")\n" +
                         "    }\n" +
                         "    rtn\n}\n",
                 ),
@@ -6021,7 +6021,7 @@ class RsfTest {
                     "fun main() -> void {\n" +
                     "    var k = TokenKind.IDENT\n" +
                     "    switch (k) {\n" +
-                    "        case TokenKind.IDENT : println(\"i\")\n" +
+                    "        TokenKind.IDENT : println(\"i\")\n" +
                     "        else : println(\"其他\")\n" +
                     "    }\n" +
                     "    rtn\n}\n",
@@ -6038,8 +6038,8 @@ class RsfTest {
                         "fun main() -> void {\n" +
                         "    var k = TokenKind.IDENT\n" +
                         "    switch (k) {\n" +
-                        "        case TokenKind.IDENT : println(\"一\")\n" +
-                        "        case TokenKind.IDENT : println(\"二\")\n" +
+                        "        TokenKind.IDENT : println(\"一\")\n" +
+                        "        TokenKind.IDENT : println(\"二\")\n" +
                         "        else : println(\"其他\")\n" +
                         "    }\n" +
                         "    rtn\n}\n",
@@ -6048,6 +6048,62 @@ class RsfTest {
         }
         assertTrue(e.detail.contains("重复"), e.detail)
         assertTrue(e.detail.contains("TokenKind.IDENT"), e.detail)
+    }
+
+    @Test
+    fun `阶段 21 起 switch 分支不写 case（旧写法只发弃用警告）`() {
+        // 新写法：分支直接写「枚举名.值名 : 语句」，一条警告都没有
+        val clean = Rsf.analyze(
+            source(
+                switchPrelude +
+                    "fun main() -> void {\n" +
+                    "    var k = TokenKind.IDENT\n" +
+                    "    switch (k) {\n" +
+                    "        TokenKind.IDENT : println(\"一\")\n" +
+                    "        else : println(\"其他\")\n" +
+                    "    }\n" +
+                    "    rtn\n}\n",
+            ),
+        )
+        assertTrue(clean.warnings.isEmpty(), "新写法不该有警告：${clean.warnings}")
+
+        // 旧写法照收，但每个 `case` 发一条弃用警告——和 Kotlin 的 @Deprecated(since = …) 一个风格
+        val legacy = Rsf.analyze(
+            source(
+                switchPrelude +
+                    "fun main() -> void {\n" +
+                    "    var k = TokenKind.IDENT\n" +
+                    "    switch (k) {\n" +
+                    "        case TokenKind.IDENT : println(\"一\")\n" +
+                    "        case TokenKind.EOF : println(\"末\")\n" +
+                    "        else : println(\"其他\")\n" +
+                    "    }\n" +
+                    "    rtn\n}\n",
+            ),
+        )
+        assertEquals(2, legacy.warnings.size, legacy.warnings.toString())
+        for (w in legacy.warnings) {
+            assertTrue(w.startsWith("<test>:"), w)
+            assertTrue(w.contains("'case' 已弃用"), w)
+            assertTrue(w.contains("is deprecated since ${Rsf.VERSION}"), w)
+            assertTrue(w.contains("枚举名.值名 : 语句"), w)
+        }
+    }
+
+    @Test
+    fun `case 写到 switch 外面报错并指路`() {
+        val e = assertFailsWith<RsfError> {
+            Rsf.analyze(
+                source(
+                    switchPrelude +
+                        "fun main() -> void {\n" +
+                        "    case TokenKind.IDENT : println(\"一\")\n" +
+                        "    rtn\n}\n",
+                ),
+            )
+        }
+        assertTrue(e.detail.contains("switch 的块里"), e.detail)
+        assertTrue(e.detail.contains("可以不写"), e.detail)
     }
 
     @Test
@@ -6061,7 +6117,7 @@ class RsfTest {
                         "fun main() -> void {\n" +
                         "    var k = TokenKind.IDENT\n" +
                         "    switch (k) {\n" +
-                        "        case Other.IDENT : println(\"别的枚举\")\n" +
+                        "        Other.IDENT : println(\"别的枚举\")\n" +
                         "        else : println(\"其他\")\n" +
                         "    }\n" +
                         "    rtn\n}\n",
@@ -6078,7 +6134,7 @@ class RsfTest {
                         "fun main() -> void {\n" +
                         "    var k = TokenKind.IDENT\n" +
                         "    switch (k) {\n" +
-                        "        case TokenKind.NOPE : println(\"?\")\n" +
+                        "        TokenKind.NOPE : println(\"?\")\n" +
                         "        else : println(\"其他\")\n" +
                         "    }\n" +
                         "    rtn\n}\n",
@@ -6096,7 +6152,7 @@ class RsfTest {
                         "fun main() -> void {\n" +
                         "    var k = TokenKind.IDENT\n" +
                         "    switch (k) {\n" +
-                        "        case TokenKind.IDENT : println(\"i\")\n" +
+                        "        TokenKind.IDENT : println(\"i\")\n" +
                         "        default : println(\"其他\")\n" +
                         "    }\n" +
                         "    rtn\n}\n",
@@ -6117,7 +6173,7 @@ class RsfTest {
                         "fun main() -> void {\n" +
                         "    var n = 1\n" +
                         "    switch (n) {\n" +
-                        "        case TokenKind.IDENT : println(\"i\")\n" +
+                        "        TokenKind.IDENT : println(\"i\")\n" +
                         "        else : println(\"其他\")\n" +
                         "    }\n" +
                         "    rtn\n}\n",
@@ -6134,7 +6190,7 @@ class RsfTest {
                         "fun main() -> void {\n" +
                         "    var s = \"a\"\n" +
                         "    switch (s) {\n" +
-                        "        case TokenKind.IDENT : println(\"i\")\n" +
+                        "        TokenKind.IDENT : println(\"i\")\n" +
                         "        else : println(\"其他\")\n" +
                         "    }\n" +
                         "    rtn\n}\n",
@@ -6168,7 +6224,7 @@ class RsfTest {
                         "fun main() -> void {\n" +
                         "    var k : ?TokenKind = null\n" +
                         "    switch (k) {\n" +
-                        "        case TokenKind.IDENT : println(\"i\")\n" +
+                        "        TokenKind.IDENT : println(\"i\")\n" +
                         "        else : println(\"其他\")\n" +
                         "    }\n" +
                         "    rtn\n}\n",
@@ -6183,10 +6239,10 @@ class RsfTest {
         val program = switchPrelude + """
         fun classify(k : TokenKind) -> string {
             switch (k) {
-                case TokenKind.IDENT : rtn "标识符"
-                case TokenKind.INT_LIT : rtn "整数"
-                case TokenKind.STRING : rtn "字符串"
-                case TokenKind.EOF : rtn "结束"
+                TokenKind.IDENT : rtn "标识符"
+                TokenKind.INT_LIT : rtn "整数"
+                TokenKind.STRING : rtn "字符串"
+                TokenKind.EOF : rtn "结束"
             }
         }
 
@@ -6201,7 +6257,7 @@ class RsfTest {
             while (i < 4) {
                 var k = if i < 2 ? TokenKind.IDENT : TokenKind.EOF
                 switch (k) {
-                    case TokenKind.IDENT : {
+                    TokenKind.IDENT : {
                         seen = seen + "i" + i + " "
                         i = i + 1
                     }
@@ -6220,7 +6276,7 @@ class RsfTest {
             while (j < 4) {
                 j = j + 1
                 switch (TokenKind.EOF) {
-                    case TokenKind.EOF : continue
+                    TokenKind.EOF : continue
                     else : skipped = skipped + 100
                 }
             }
@@ -6270,31 +6326,31 @@ class RsfTest {
 
             fun bucket(c : Counters, k : Kind) -> void {
                 switch (k) {
-                    case Kind.IDENT : c.idents = c.idents + 1
-                    case Kind.INT : c.numbers = c.numbers + 1
-                    case Kind.LONG : c.numbers = c.numbers + 1
-                    case Kind.FLOAT : c.numbers = c.numbers + 1
-                    case Kind.DOUBLE : c.numbers = c.numbers + 1
-                    case Kind.STRING : println("字符串字面量")
-                    case Kind.CHAR : println("字符字面量")
-                    case Kind.PLUS : c.punct = c.punct + 1
-                    case Kind.MINUS : c.punct = c.punct + 1
-                    case Kind.EOF : println("结束")
+                    Kind.IDENT : c.idents = c.idents + 1
+                    Kind.INT : c.numbers = c.numbers + 1
+                    Kind.LONG : c.numbers = c.numbers + 1
+                    Kind.FLOAT : c.numbers = c.numbers + 1
+                    Kind.DOUBLE : c.numbers = c.numbers + 1
+                    Kind.STRING : println("字符串字面量")
+                    Kind.CHAR : println("字符字面量")
+                    Kind.PLUS : c.punct = c.punct + 1
+                    Kind.MINUS : c.punct = c.punct + 1
+                    Kind.EOF : println("结束")
                 }
             }
 
             fun label(k : Kind) -> string {
                 switch (k) {
-                    case Kind.IDENT : rtn "标识符"
-                    case Kind.INT : rtn "整数"
-                    case Kind.LONG : rtn "长整数"
-                    case Kind.FLOAT : rtn "单精度"
-                    case Kind.DOUBLE : rtn "双精度"
-                    case Kind.STRING : rtn "字符串"
-                    case Kind.CHAR : rtn "字符"
-                    case Kind.PLUS : rtn "加号"
-                    case Kind.MINUS : rtn "减号"
-                    case Kind.EOF : rtn "文件结束"
+                    Kind.IDENT : rtn "标识符"
+                    Kind.INT : rtn "整数"
+                    Kind.LONG : rtn "长整数"
+                    Kind.FLOAT : rtn "单精度"
+                    Kind.DOUBLE : rtn "双精度"
+                    Kind.STRING : rtn "字符串"
+                    Kind.CHAR : rtn "字符"
+                    Kind.PLUS : rtn "加号"
+                    Kind.MINUS : rtn "减号"
+                    Kind.EOF : rtn "文件结束"
                 }
             }
 
@@ -6361,10 +6417,10 @@ class RsfTest {
             var kinds : TokenKind[] = new TokenKind[2]
             try {
                 switch (kinds[1]) {
-                    case TokenKind.IDENT : println("IDENT")
-                    case TokenKind.INT_LIT : println("INT_LIT")
-                    case TokenKind.STRING : println("STRING")
-                    case TokenKind.EOF : println("EOF")
+                    TokenKind.IDENT : println("IDENT")
+                    TokenKind.INT_LIT : println("INT_LIT")
+                    TokenKind.STRING : println("STRING")
+                    TokenKind.EOF : println("EOF")
                 }
                 println("不该走到这里")
             } catch (e : string) {
@@ -6373,10 +6429,10 @@ class RsfTest {
 
             // 带 else 时 null 走 else（不抛错）
             switch (kinds[0]) {
-                case TokenKind.IDENT : println("IDENT")
-                case TokenKind.INT_LIT : println("INT_LIT")
-                case TokenKind.STRING : println("STRING")
-                case TokenKind.EOF : println("EOF")
+                TokenKind.IDENT : println("IDENT")
+                TokenKind.INT_LIT : println("INT_LIT")
+                TokenKind.STRING : println("STRING")
+                TokenKind.EOF : println("EOF")
                 else : println("null 走了 else")
             }
             rtn
@@ -6998,22 +7054,22 @@ class RsfTest {
 
                 fun name(c : Color) -> string {
                     switch (c) {
-                        case Color.RED : rtn "r"
-                        case Color.GREEN : {
+                        Color.RED : rtn "r"
+                        Color.GREEN : {
                             var t = 1
                             rtn "g"
                         }
-                        case Color.BLUE : rtn "b"
+                        Color.BLUE : rtn "b"
                     }
                 }
 
                 fun partial(c : Color) -> void {
                     switch (c) {
-                        case Color.RED : println("r")
+                        Color.RED : println("r")
                         else : println("other")
                     }
-                    switch (c) { case Color.RED : rtn }
-                    switch (c) { ; ; case Color.RED : rtn ; }
+                    switch (c) { Color.RED : rtn }
+                    switch (c) { ; ; Color.RED : rtn ; }
                     rtn
                 }
             """.trimIndent() + "\n",
@@ -7148,6 +7204,35 @@ class RsfTest {
                 "    // 行注释\n" +
                 "    rtn\n" +
                 "}\n",
+
+            // 阶段 20：`interface` / `override` / `:` 父类型子句（类与接口共用同一个子句解析）。
+            // 覆盖：抽象方法（只写签名、不打 BLOCK）、默认方法（写体）、override（类体与接口体
+            // 都能写，且与权限修饰词/static 混写、顺序随意）、空接口、泛型接口、接口继承接口、
+            // 类实现多个父类型（含泛型实参）、方法后面可选的分号。
+            "接口与父类型子句" to """
+                public interface Greeter {
+                    fun greet(name : string) -> string
+                    fun loud(name : string) -> string { rtn "HI" }
+                }
+
+                interface Empty { }
+
+                interface Box&<T> : Greeter {
+                    override fun greet(name : string) -> string
+                    fun get() -> T
+                }
+
+                interface Semi {
+                    fun p() -> void ;
+                }
+
+                class Impl(x0 : int) : Greeter, Box&<int> {
+                    var x : int = x0
+                    public override fun greet(name : string) -> string { rtn name }
+                    override public fun get() -> int { rtn x }
+                    override static fun make() -> int { rtn 1 }
+                }
+            """.trimIndent() + "\n",
         )
 
         var corpusLines = 0
@@ -7197,6 +7282,23 @@ class RsfTest {
             "fun main() -> void { var x : = 1 }\n",
             "class C { constructor(v : int) -> void { } }\n",
             "fun main() -> int { rtn 1 -> int }\n",
+
+            // 阶段 20 的语法边界。前半段是父类型子句四条必须失败的写法，中间是接口体的
+            // 四条禁令，最后两条钉 `override` 的**位置**：顶层函数、构造器上都不准写
+            // （Kotlin 版靠 parseFuncDecl/parseConstructor 的开关拦，rsf 版靠 overrideOk）。
+            "class C : { }\n",
+            "class C : ?Greeter { }\n",
+            "class C : Greeter? { }\n",
+            "class C : int { }\n",
+            "class C : int[] { }\n",
+            "interface I : { }\n",
+            "interface I { var x : int = 1 }\n",
+            "interface I { constructor() { } }\n",
+            "interface I { static fun f() -> void { rtn } }\n",
+            "interface I { private fun f() -> void { rtn } }\n",
+            "interface I { fun f() -> void { rtn } extra }\n",
+            "override fun f() -> void { rtn }\n",
+            "class C { override constructor() { } }\n",
         )
 
         for (src in bad) {
@@ -7903,9 +8005,9 @@ class RsfTest {
 
         fun name(c : Color) -> string {
             switch (c) {
-                case Color.RED : rtn "红"
-                case Color.GREEN : rtn "绿"
-                case Color.BLUE : rtn "蓝"
+                Color.RED : rtn "红"
+                Color.GREEN : rtn "绿"
+                Color.BLUE : rtn "蓝"
             }
             rtn "?"
         }
@@ -7913,9 +8015,9 @@ class RsfTest {
         fun weight(k : TokenKind) -> int {
             var out = 0
             switch (k) {
-                case TokenKind.IDENT : out = 1
-                case TokenKind.INT_LIT : out = 2
-                case TokenKind.PLUS : out = 3
+                TokenKind.IDENT : out = 1
+                TokenKind.INT_LIT : out = 2
+                TokenKind.PLUS : out = 3
                 else : out = 0 - 1
             }
             rtn out
@@ -7940,9 +8042,9 @@ class RsfTest {
             var sum = 0
             for (var i = 0; i < all.length; i = i + 1) {
                 switch (all[i]) {
-                    case TokenKind.IDENT : sum = sum + 1
-                    case TokenKind.INT_LIT : sum = sum + 10
-                    case TokenKind.PLUS : sum = sum + 100
+                    TokenKind.IDENT : sum = sum + 1
+                    TokenKind.INT_LIT : sum = sum + 10
+                    TokenKind.PLUS : sum = sum + 100
                     else : sum = sum + 1000
                 }
             }

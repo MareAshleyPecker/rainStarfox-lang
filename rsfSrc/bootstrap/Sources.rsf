@@ -215,6 +215,10 @@ class SrcLoader(rootDir : string) {
     var clsCount : int = 0
     var ens : Node[] = new Node[8]
     var enCount : int = 0
+    // 阶段 20：用户接口。Kotlin 侧 SourceLoader 的合并顺序是
+    // functions → classes → enums → **interfaces**，这里保持一致。
+    var ifcs : Node[] = new Node[8]
+    var ifcCount : int = 0
 
     // IMPORTS 只收 CLASS_IMPORT，按首次出现顺序；同名简单名后来者覆盖前者的内部名
     var imps : Node[] = new Node[4]
@@ -270,6 +274,18 @@ class SrcLoader(rootDir : string) {
             if (enCount >= ens.length) { ens = srcGrowNodes(ens, enCount) }
             ens[enCount] = l.children[i]
             enCount = enCount + 1
+            i = i + 1
+        }
+    }
+
+    fun appendIfcs(list : ?Node) -> void {
+        if (list == null) { rtn }
+        var l = list!!
+        var i = 0
+        while (i < l.childCount) {
+            if (ifcCount >= ifcs.length) { ifcs = srcGrowNodes(ifcs, ifcCount) }
+            ifcs[ifcCount] = l.children[i]
+            ifcCount = ifcCount + 1
             i = i + 1
         }
     }
@@ -476,10 +492,11 @@ class SrcLoader(rootDir : string) {
             if (isRoot) { rootPkg = pn }
         }
 
-        // 先本文件的 fun / class / enum
+        // 先本文件的 fun / class / enum / interface
         appendFns(srcChildOf(ast, NodeKind.FUNCS))
         appendClasses(srcChildOf(ast, NodeKind.CLASSES))
         appendEnums(srcChildOf(ast, NodeKind.ENUMS))
+        appendIfcs(srcChildOf(ast, NodeKind.INTERFACES))
 
         // 再按 import 出现顺序深度优先就地递归
         var dir = srcDirOf(path)
@@ -545,6 +562,14 @@ class SrcLoader(rootDir : string) {
             i = i + 1
         }
         program.add(en.countTag())
+
+        var ifc = new Node(NodeKind.INTERFACES)
+        i = 0
+        while (i < ifcCount) {
+            ifc.add(ifcs[i])
+            i = i + 1
+        }
+        program.add(ifc.countTag())
 
         rtn program
     }

@@ -91,6 +91,8 @@ public enum NodeKind {
     FUNCS, FUNC, PARAMS, PARAM,
     CLASSES, CLASS, TYPE_PARAMS, TYPE_PARAM, FIELDS, FIELD, METHODS,
     ENUMS, ENUM, VALUES, ENUM_VALUE,
+    // 阶段 20：接口声明与 `:` 父类型子句（自举同步第 1 刀）
+    INTERFACES, INTERFACE, SUPERS, SUPER,
     BLOCK, VAR_DECL, ASSIGN, MEMBER_ASSIGN, INDEX_ASSIGN, RETURN, EXPR_STMT,
     LABEL, THIS_CALL, SWITCH, CASES, CASE, GOTO, IF, WHILE, FOR, BREAK, CONTINUE,
     FAIL, TRY,
@@ -105,70 +107,74 @@ public enum NodeKind {
 // 名字和 AstDump.kt 里写死的字符串**能一眼对上**，而且这一层穷尽性由编译器把关。
 public fun kindName(k : NodeKind) -> string {
     switch (k) {
-        case NodeKind.PROGRAM : rtn "PROGRAM"
-        case NodeKind.PKG : rtn "PKG"
-        case NodeKind.IMPORTS : rtn "IMPORTS"
-        case NodeKind.CLASS_IMPORT : rtn "CLASS_IMPORT"
-        case NodeKind.SOURCE_IMPORT : rtn "SOURCE_IMPORT"
-        case NodeKind.MODULE_IMPORT : rtn "MODULE_IMPORT"
-        case NodeKind.FUNCS : rtn "FUNCS"
-        case NodeKind.FUNC : rtn "FUNC"
-        case NodeKind.PARAMS : rtn "PARAMS"
-        case NodeKind.PARAM : rtn "PARAM"
-        case NodeKind.CLASSES : rtn "CLASSES"
-        case NodeKind.CLASS : rtn "CLASS"
-        case NodeKind.TYPE_PARAMS : rtn "TYPE_PARAMS"
-        case NodeKind.TYPE_PARAM : rtn "TYPE_PARAM"
-        case NodeKind.FIELDS : rtn "FIELDS"
-        case NodeKind.FIELD : rtn "FIELD"
-        case NodeKind.METHODS : rtn "METHODS"
-        case NodeKind.ENUMS : rtn "ENUMS"
-        case NodeKind.ENUM : rtn "ENUM"
-        case NodeKind.VALUES : rtn "VALUES"
-        case NodeKind.ENUM_VALUE : rtn "ENUM_VALUE"
-        case NodeKind.BLOCK : rtn "BLOCK"
-        case NodeKind.VAR_DECL : rtn "VAR_DECL"
-        case NodeKind.ASSIGN : rtn "ASSIGN"
-        case NodeKind.MEMBER_ASSIGN : rtn "MEMBER_ASSIGN"
-        case NodeKind.INDEX_ASSIGN : rtn "INDEX_ASSIGN"
-        case NodeKind.RETURN : rtn "RETURN"
-        case NodeKind.EXPR_STMT : rtn "EXPR_STMT"
-        case NodeKind.LABEL : rtn "LABEL"
-        case NodeKind.THIS_CALL : rtn "THIS_CALL"
-        case NodeKind.SWITCH : rtn "SWITCH"
-        case NodeKind.CASES : rtn "CASES"
-        case NodeKind.CASE : rtn "CASE"
-        case NodeKind.GOTO : rtn "GOTO"
-        case NodeKind.IF : rtn "IF"
-        case NodeKind.WHILE : rtn "WHILE"
-        case NodeKind.FOR : rtn "FOR"
-        case NodeKind.BREAK : rtn "BREAK"
-        case NodeKind.CONTINUE : rtn "CONTINUE"
-        case NodeKind.FAIL : rtn "FAIL"
-        case NodeKind.TRY : rtn "TRY"
-        case NodeKind.ARGS : rtn "ARGS"
-        case NodeKind.DIMS : rtn "DIMS"
-        case NodeKind.INT_LIT : rtn "INT_LIT"
-        case NodeKind.LONG_LIT : rtn "LONG_LIT"
-        case NodeKind.FLOAT_LIT : rtn "FLOAT_LIT"
-        case NodeKind.DOUBLE_LIT : rtn "DOUBLE_LIT"
-        case NodeKind.STRING_LIT : rtn "STRING_LIT"
-        case NodeKind.CHAR_LIT : rtn "CHAR_LIT"
-        case NodeKind.BOOL_LIT : rtn "BOOL_LIT"
-        case NodeKind.NULL_LIT : rtn "NULL_LIT"
-        case NodeKind.VAR : rtn "VAR"
-        case NodeKind.CALL : rtn "CALL"
-        case NodeKind.NEW : rtn "NEW"
-        case NodeKind.NEW_ARRAY : rtn "NEW_ARRAY"
-        case NodeKind.MEMBER : rtn "MEMBER"
-        case NodeKind.INDEX : rtn "INDEX"
-        case NodeKind.UNARY : rtn "UNARY"
-        case NodeKind.BINARY : rtn "BINARY"
-        case NodeKind.IF_EXPR : rtn "IF_EXPR"
-        case NodeKind.ELVIS : rtn "ELVIS"
-        case NodeKind.FORCE : rtn "FORCE"
-        case NodeKind.THIS : rtn "THIS"
-        case NodeKind.ERROR : rtn "ERROR"
+        NodeKind.PROGRAM : rtn "PROGRAM"
+        NodeKind.PKG : rtn "PKG"
+        NodeKind.IMPORTS : rtn "IMPORTS"
+        NodeKind.CLASS_IMPORT : rtn "CLASS_IMPORT"
+        NodeKind.SOURCE_IMPORT : rtn "SOURCE_IMPORT"
+        NodeKind.MODULE_IMPORT : rtn "MODULE_IMPORT"
+        NodeKind.FUNCS : rtn "FUNCS"
+        NodeKind.FUNC : rtn "FUNC"
+        NodeKind.PARAMS : rtn "PARAMS"
+        NodeKind.PARAM : rtn "PARAM"
+        NodeKind.CLASSES : rtn "CLASSES"
+        NodeKind.CLASS : rtn "CLASS"
+        NodeKind.TYPE_PARAMS : rtn "TYPE_PARAMS"
+        NodeKind.TYPE_PARAM : rtn "TYPE_PARAM"
+        NodeKind.FIELDS : rtn "FIELDS"
+        NodeKind.FIELD : rtn "FIELD"
+        NodeKind.METHODS : rtn "METHODS"
+        NodeKind.ENUMS : rtn "ENUMS"
+        NodeKind.ENUM : rtn "ENUM"
+        NodeKind.VALUES : rtn "VALUES"
+        NodeKind.ENUM_VALUE : rtn "ENUM_VALUE"
+        NodeKind.INTERFACES : rtn "INTERFACES"
+        NodeKind.INTERFACE : rtn "INTERFACE"
+        NodeKind.SUPERS : rtn "SUPERS"
+        NodeKind.SUPER : rtn "SUPER"
+        NodeKind.BLOCK : rtn "BLOCK"
+        NodeKind.VAR_DECL : rtn "VAR_DECL"
+        NodeKind.ASSIGN : rtn "ASSIGN"
+        NodeKind.MEMBER_ASSIGN : rtn "MEMBER_ASSIGN"
+        NodeKind.INDEX_ASSIGN : rtn "INDEX_ASSIGN"
+        NodeKind.RETURN : rtn "RETURN"
+        NodeKind.EXPR_STMT : rtn "EXPR_STMT"
+        NodeKind.LABEL : rtn "LABEL"
+        NodeKind.THIS_CALL : rtn "THIS_CALL"
+        NodeKind.SWITCH : rtn "SWITCH"
+        NodeKind.CASES : rtn "CASES"
+        NodeKind.CASE : rtn "CASE"
+        NodeKind.GOTO : rtn "GOTO"
+        NodeKind.IF : rtn "IF"
+        NodeKind.WHILE : rtn "WHILE"
+        NodeKind.FOR : rtn "FOR"
+        NodeKind.BREAK : rtn "BREAK"
+        NodeKind.CONTINUE : rtn "CONTINUE"
+        NodeKind.FAIL : rtn "FAIL"
+        NodeKind.TRY : rtn "TRY"
+        NodeKind.ARGS : rtn "ARGS"
+        NodeKind.DIMS : rtn "DIMS"
+        NodeKind.INT_LIT : rtn "INT_LIT"
+        NodeKind.LONG_LIT : rtn "LONG_LIT"
+        NodeKind.FLOAT_LIT : rtn "FLOAT_LIT"
+        NodeKind.DOUBLE_LIT : rtn "DOUBLE_LIT"
+        NodeKind.STRING_LIT : rtn "STRING_LIT"
+        NodeKind.CHAR_LIT : rtn "CHAR_LIT"
+        NodeKind.BOOL_LIT : rtn "BOOL_LIT"
+        NodeKind.NULL_LIT : rtn "NULL_LIT"
+        NodeKind.VAR : rtn "VAR"
+        NodeKind.CALL : rtn "CALL"
+        NodeKind.NEW : rtn "NEW"
+        NodeKind.NEW_ARRAY : rtn "NEW_ARRAY"
+        NodeKind.MEMBER : rtn "MEMBER"
+        NodeKind.INDEX : rtn "INDEX"
+        NodeKind.UNARY : rtn "UNARY"
+        NodeKind.BINARY : rtn "BINARY"
+        NodeKind.IF_EXPR : rtn "IF_EXPR"
+        NodeKind.ELVIS : rtn "ELVIS"
+        NodeKind.FORCE : rtn "FORCE"
+        NodeKind.THIS : rtn "THIS"
+        NodeKind.ERROR : rtn "ERROR"
     }
     // 上面那个 switch 已经穷尽了 NodeKind 的每一个值，这里只是给「函数一定有返回值」
     // 一个静态的落点（rsf 的返回值检查是看最后一条语句，不看 switch 的穷尽性）。
@@ -292,6 +298,16 @@ public fun isControlKeyword(kind : string) -> bool {
 }
 
 fun isStaticKeyword(kind : string) -> bool { rtn kind == "KW_STATIC" }
+
+fun isOverrideKeyword(kind : string) -> bool { rtn kind == "KW_OVERRIDE" }
+
+// 排在声明前面的三类修饰词（与 Kotlin 侧 TokenKind.isModifierKeyword 同口径：
+// 权限修饰词 / static / override）。接口体的成员循环要用它把一整个修饰词串数完。
+fun isModifierKeyword(kind : string) -> bool {
+    if (isControlKeyword(kind)) { rtn true }
+    if (isStaticKeyword(kind)) { rtn true }
+    rtn isOverrideKeyword(kind)
+}
 
 fun isVarKeyword(kind : string) -> bool {
     if (kind == "KW_VAR") { rtn true }
@@ -483,6 +499,15 @@ public class Parser(tokens : Token[]) {
     var failMessage : string = ""
     var failLine : int = 0
     var failCol : int = 0
+    // 接口里的方法**可以没有体**（抽象方法）——这是接口与类在语法上唯一的分叉。
+    // parseInterfaceDecl 在成员循环期间把它置 true、循环结束还原；parseFuncDecl 靠它
+    // 决定「没有 '{' 时不打 BLOCK、也不报错」。不给 parseFuncDecl 加参数，是为了不动
+    // 它在别处的既有调用点（顶层 / 类体）。
+    var abstractBodyOk : bool = false
+    // `override` 只准写在**类体 / 接口体**的方法上——这是 Kotlin 版 parseFuncDecl 的
+    // `allowOverride` 开关（缺省 false：顶层写 `override fun` 要判失败）。同样用「置位/还原」
+    // 的字段表达，不加参数，保住 parseFuncDecl 的既有调用点形状与顶层的既有行为。
+    var overrideOk : bool = false
 
     // ------------------------------------------------------------ 出错
 
@@ -575,6 +600,8 @@ public class Parser(tokens : Token[]) {
         var funcs = new Node(NodeKind.FUNCS)
         var classes = new Node(NodeKind.CLASSES)
         var enums = new Node(NodeKind.ENUMS)
+        // 阶段 20：接口会归到单独的 INTERFACES 桶里，dump 时排在 ENUMS 后面（与 AstDump.kt 一致）
+        var interfaces = new Node(NodeKind.INTERFACES)
 
         while (!check("EOF") && !failed) {
             if (check("KW_IMPORT") || check("KW_MODULE")) {
@@ -583,20 +610,24 @@ public class Parser(tokens : Token[]) {
                 if (check("KW_PKG")) {
                     failAt(peek(), "'pkg' 只能写在文件最前面（在所有 import 之前）")
                 } else {
-                    if (check("KW_ENUM") || isEnumDeclAhead()) {
-                        enums.add(parseEnumDecl())
+                    if (check("KW_INTERFACE") || isInterfaceDeclAhead()) {
+                        interfaces.add(parseInterfaceDecl())
                     } else {
-                        if (check("KW_CLASS") || isClassDeclAhead()) {
-                            classes.add(parseClassDecl())
+                        if (check("KW_ENUM") || isEnumDeclAhead()) {
+                            enums.add(parseEnumDecl())
                         } else {
-                            funcs.add(parseFuncDecl())
+                            if (check("KW_CLASS") || isClassDeclAhead()) {
+                                classes.add(parseClassDecl())
+                            } else {
+                                funcs.add(parseFuncDecl())
+                            }
                         }
                     }
                 }
             }
         }
 
-        // 孩子顺序固定为 PKG / IMPORTS / FUNCS / CLASSES / ENUMS（与 AstDump.kt 一致）
+        // 孩子顺序固定为 PKG / IMPORTS / FUNCS / CLASSES / ENUMS / INTERFACES（与 AstDump.kt 一致）
         if (hasPkg) {
             program.add(new Node(NodeKind.PKG).put("name", escapeValue(pkgName)))
         }
@@ -604,6 +635,7 @@ public class Parser(tokens : Token[]) {
         program.add(funcs.countTag())
         program.add(classes.countTag())
         program.add(enums.countTag())
+        program.add(interfaces.countTag())
         rtn program
     }
 
@@ -652,6 +684,14 @@ public class Parser(tokens : Token[]) {
         var offset = 0
         if (isControlKeyword(peek().kind)) { offset = 1 }
         rtn peekAt(offset).kind == "KW_ENUM"
+    }
+
+    // `interface` 是硬关键字，写接口不用修饰词也认；带了 public 也要认，
+    // 所以先跳过前缀里的权限修饰词（与 isClassDeclAhead 同一招）。
+    fun isInterfaceDeclAhead() -> bool {
+        var offset = 0
+        if (isControlKeyword(peek().kind)) { offset = 1 }
+        rtn peekAt(offset).kind == "KW_INTERFACE"
     }
 
     // 三种 import：点分路径（JVM 类）、字符串路径（rsf 源文件）、module 目录
@@ -768,14 +808,24 @@ public class Parser(tokens : Token[]) {
                 .put("retType", "void")
                 .put("ctor", "true")
                 .put("primary", "true")
+                .put("override", "false")
             primary.add(ctorParams)
             primary.add(new Node(NodeKind.BLOCK).countTag())
             methods.add(primary)
         }
 
+        // `:` 父类型子句（类与接口共用同一个解析函数，与 Kotlin 版一致）。
+        // **顺序固定为「主构造括号 → ':' 子句 → '{'」**：Kotlin 版 parseClassDecl 就是这样
+        // 排的（主构造先吃掉类头那对括号，再解析父类型），`class Impl(x : int) : Greeter`
+        // 里的 `:` 在括号**后面**——子句解析放前面会让那个 `:` 撞上 expect('{')。
+        var supers = parseSupertypeList()
+
         expect("LBRACE", "类 '" + nameTok.text + "' 缺少 '{'")
 
         var fields = new Node(NodeKind.FIELDS)
+        // 成员方法允许写 `override`（阶段 20）：循环期间打开开关，循环结束（含中途报错退出）还原
+        var oldOverrideOk = overrideOk
+        overrideOk = true
         while (!check("RBRACE") && !check("EOF") && !failed) {
             // 成员（字段 / 方法 / 次构造）也要行号：字段初始化块与函数体里的指令都要发
             // `LineNumberTable`，字段那条取的是**声明行**
@@ -797,9 +847,11 @@ public class Parser(tokens : Token[]) {
                 methods.add(mem)
             }
         }
+        overrideOk = oldOverrideOk
         expect("RBRACE", "类 '" + nameTok.text + "' 没有闭合，缺少 '}'")
 
         var n = new Node(NodeKind.CLASS).put("control", control).put("name", escapeValue(nameTok.text))
+        n.add(supers)
         n.add(typeParams.countTag())
         n.add(fields.countTag())
         n.add(methods.countTag())
@@ -834,8 +886,149 @@ public class Parser(tokens : Token[]) {
             .put("retType", "void")
             .put("ctor", "true")
             .put("primary", "false")
+            .put("override", "false")
         n.add(params)
         n.add(body)
+        rtn n
+    }
+
+    // `:` 父类型子句：类与接口共用。语法是 `:` 类型 (`,` 类型)*，类型可以带类型实参。
+    // 三条当场判失败（与 Kotlin 版 parseSupertypeList 同口径，文案不要求一致）：
+    // 父类型带 `?`、父类型不是类型名（例如 `:` 后面直接跟 `{`）、父类型是内置类型名或数组。
+    // 类型本身交给 parseTypeRef 解析，免得正例的显示文本与别处的类型写法不一致。
+    fun parseSupertypeList() -> Node {
+        var supers = new Node(NodeKind.SUPERS)
+        // Kotlin 版 `supers()` 的那一行**总是**带 `count=`（没有父类型就是 SUPERS count=0），
+        // 所以这里两条出口都要打 count：早点返回的那条也不能漏。
+        if (!check("COLON")) { rtn supers.countTag() }
+        advance()   // ':'
+
+        var going = true
+        while (going && !failed) {
+            var t = peek()
+            if (t.kind == "QUESTION") {
+                failAt(t, "父类型不能可空：'?' 只写在变量/参数/返回的类型上")
+            } else {
+                if (!isTypeKeyword(t.kind) && t.kind != "IDENT") {
+                    failAt(t, "父类型列表里需要一个接口名（写法是 ': 名字, 名字'），实际读到 '" + t.text + "'")
+                } else {
+                    var superType = parseTypeRef()
+                    if (isTypeKeyword(t.kind)) {
+                        failAt(t, "'" + superType.name + "' 是内置类型，不能当父类型——父类型只能是接口名")
+                    } else {
+                        if (superType.depth > 0) {
+                            failAt(t, "父类型不能是数组（'" + superType.text() + "'）：父类型只能是接口名")
+                        } else {
+                            var superNode = new Node(NodeKind.SUPER)
+                                .put("name", escapeValue(superType.name))
+                                .put("display", escapeValue(superType.text()))
+                                .put("typeArgs", boolText(superType.args.length() > 0))
+                            superNode.line = t.line
+                            supers.add(superNode)
+                        }
+                    }
+                }
+            }
+            if (!matchOne("COMMA")) { going = false }
+        }
+        rtn supers.countTag()
+    }
+
+    // 接口声明（阶段 20）：`[public] interface 名字[&<T>][: 父接口, ...] { 方法* }`
+    // 接口体里**只能写方法**：不能有字段、不能有构造器、不能 static、不能写非 public 的权限修饰词。
+    // 方法可以没有体（抽象方法，dump 里不打 BLOCK），也可以有体（默认方法）；接口方法允许 override。
+    fun parseInterfaceDecl() -> Node {
+        var control = "DEFAULT"
+        if (isControlKeyword(peek().kind)) { control = controlName(advance().kind) }
+        expect("KW_INTERFACE", "interface 声明缺少 'interface'")
+        var nameTok = expect("IDENT", "'interface' 后面缺少接口名")
+
+        // 类型参数子句与类完全同形（`interface Box&<T>`），重名检查同 parseClassDecl
+        var typeParams = new Node(NodeKind.TYPE_PARAMS)
+        var seenParams = new string[8]
+        var seenCount = 0
+        if (check("AMP")) {
+            advance()
+            expect("LT", "'&' 后面缺少 '<'：类型参数要写成 interface " + nameTok.text + "&<T>")
+            var going = true
+            while (going && !failed) {
+                var paramTok = expect("IDENT", "类型参数需要一个名字，写法是 interface " + nameTok.text + "&<T>")
+                for (var i = 0; i < seenCount; i = i + 1) {
+                    if (seenParams[i] == paramTok.text) {
+                        failAt(paramTok, "接口 '" + nameTok.text + "' 的类型参数 '" + paramTok.text + "' 重名了")
+                    }
+                }
+                if (paramTok.text == nameTok.text) {
+                    failAt(paramTok, "类型参数不能和接口同名（都叫 '" + nameTok.text + "'）")
+                }
+                if (seenCount >= seenParams.length) {
+                    var bigger : string[] = new string[seenParams.length * 2]
+                    for (var i = 0; i < seenCount; i = i + 1) { bigger[i] = seenParams[i] }
+                    seenParams = bigger
+                }
+                seenParams[seenCount] = paramTok.text
+                seenCount = seenCount + 1
+                typeParams.add(new Node(NodeKind.TYPE_PARAM).put("name", escapeValue(paramTok.text)))
+                if (!matchOne("COMMA")) { going = false }
+            }
+            expect("GT", "接口 '" + nameTok.text + "' 的类型参数表没有闭合，缺少 '>'")
+        }
+
+        var supers = parseSupertypeList()
+
+        expect("LBRACE", "接口 '" + nameTok.text + "' 缺少 '{'")
+
+        var methods = new Node(NodeKind.METHODS)
+        // 只有接口体的成员循环允许「方法没有体」，循环结束（含中途报错退出）立刻还原；
+        // 接口方法同样允许 `override`，所以 overrideOk 一起打开
+        var oldAbstractOk = abstractBodyOk
+        var oldOverrideOkHere = overrideOk
+        abstractBodyOk = true
+        overrideOk = true
+        while (!check("RBRACE") && !check("EOF") && !failed) {
+            var memberLine = peek().line
+            if (isVarKeyword(peek().kind)) {
+                failAt(peek(), "接口里只能写方法：'" + peek().text + "' 是字段/变量声明，接口没有字段")
+            } else {
+                if (peek().kind == "KW_CONSTRUCTOR") {
+                    failAt(peek(), "接口里不能写构造器：接口没有字段要初始化，也不会被 new")
+                } else {
+                    // 修饰词可以排好几个、顺序随意（`override public fun`），所以先把这一串数完：
+                    // 检查要落在**真正写了那个词**的位置上（`override private fun` 也得拦住）
+                    var offset = 0
+                    while (isModifierKeyword(peekAt(offset).kind)) {
+                        var m = peekAt(offset)
+                        if (isStaticKeyword(m.kind)) {
+                            failAt(m, "接口里暂时不支持 static 方法：去掉 'static' 写成普通方法")
+                        }
+                        if (isControlKeyword(m.kind) && m.kind != "KW_PUBLIC") {
+                            failAt(m, "接口里的方法只能是 public：'" + m.text + "' 会让实现类没法实现它（不写修饰词就是 public）")
+                        }
+                        offset = offset + 1
+                    }
+                    if (failed) {
+                        // 上面已经报过错、报错位置已定住：别再往下解析成员
+                    } else {
+                        if (peekAt(offset).kind != "KW_FUN") {
+                            failAt(peek(), "接口里只能写方法（格式是 'fun 名字(参数) 返回子句'，可以有方法体），实际读到 '" + peek().text + "'")
+                        } else {
+                            var mem = parseFuncDecl()
+                            if (mem.line < 1) { mem.line = memberLine }
+                            methods.add(mem)
+                            while (matchOne("SEMI")) { }   // 可选的分号，吃掉
+                        }
+                    }
+                }
+            }
+        }
+        abstractBodyOk = oldAbstractOk
+        overrideOk = oldOverrideOkHere
+        expect("RBRACE", "接口 '" + nameTok.text + "' 没有闭合，缺少 '}'")
+
+        var n = new Node(NodeKind.INTERFACE).put("control", control).put("name", escapeValue(nameTok.text))
+        n.add(supers)
+        n.add(typeParams.countTag())
+        n.add(methods.countTag())
         rtn n
     }
 
@@ -864,22 +1057,39 @@ public class Parser(tokens : Token[]) {
 
     fun parseFuncDecl() -> Node {
         var control = "DEFAULT"
-        if (isControlKeyword(peek().kind)) { control = controlName(advance().kind) }
-
+        var isOverride = false
         var isStatic = false
-        if (isStaticKeyword(peek().kind)) {
-            advance()
-            isStatic = true
+
+        // 修饰词可以排好几个、顺序随意（`static override fun` / `override static fun`）：
+        // 与 Kotlin 版 parseFuncDecl 同一个循环——权限修饰词与 static 各至多一次、
+        // override 只置位，而且**只有类体/接口体**里才收（overrideOk，见字段上的注释）。
+        var going = true
+        while (going) {
+            if (isControlKeyword(peek().kind)) {
+                control = controlName(advance().kind)
+            } else {
+                if (isStaticKeyword(peek().kind)) {
+                    advance()
+                    isStatic = true
+                } else {
+                    if (overrideOk && isOverrideKeyword(peek().kind)) {
+                        advance()
+                        isOverride = true
+                    } else {
+                        going = false
+                    }
+                }
+            }
         }
 
         if (peek().kind != "KW_FUN") {
-            failAt(peek(), "顶层只能写函数声明，格式是 '[public|protected|private] [static] fun [类型] 名字() 返回子句 函数体'")
-            rtn emptyFunc(control, isStatic)
+            failAt(peek(), "顶层只能写函数声明，格式是 '[public|protected|private] [static] [override] fun [类型] 名字() 返回子句 函数体'")
+            rtn emptyFunc(control, isStatic, isOverride)
         }
         advance()   // fun
 
         // 曾经写反的修饰符位置
-        if (isControlKeyword(peek().kind) || isStaticKeyword(peek().kind)) {
+        if (isControlKeyword(peek().kind) || isStaticKeyword(peek().kind) || isOverrideKeyword(peek().kind)) {
             failAt(peek(), "修饰符要写在 fun 前面：改成 '" + peek().text + " fun ...'")
         }
 
@@ -917,7 +1127,18 @@ public class Parser(tokens : Token[]) {
             }
         }
 
-        var body = parseBlock()
+        // 接口里的抽象方法**只写签名不写体**：此时 abstractBodyOk 为真，既不打 BLOCK 也不报错。
+        // 有体就是普通函数（放在接口里即「默认方法」）。
+        var hasBody = false
+        var body = new Node(NodeKind.ERROR)
+        if (check("LBRACE")) {
+            body = parseBlock()
+            hasBody = true
+        } else {
+            if (!abstractBodyOk) {
+                failAt(peek(), "函数体需要以 '{' 开始")
+            }
+        }
         var n = new Node(NodeKind.FUNC)
             .put("control", control)
             .put("static", boolText(isStatic))
@@ -928,12 +1149,13 @@ public class Parser(tokens : Token[]) {
             .put("retType", retType)
             .put("ctor", "false")
             .put("primary", "false")
+            .put("override", boolText(isOverride))
         n.add(params)
-        n.add(body)
+        if (hasBody) { n.add(body) }
         rtn n
     }
 
-    fun emptyFunc(control : string, isStatic : bool) -> Node {
+    fun emptyFunc(control : string, isStatic : bool, isOverride : bool) -> Node {
         var n = new Node(NodeKind.FUNC)
             .put("control", control)
             .put("static", boolText(isStatic))
@@ -944,6 +1166,7 @@ public class Parser(tokens : Token[]) {
             .put("retType", "void")
             .put("ctor", "false")
             .put("primary", "false")
+            .put("override", boolText(isOverride))
         n.add(new Node(NodeKind.PARAMS).countTag())
         n.add(new Node(NodeKind.BLOCK).countTag())
         rtn n
@@ -1108,7 +1331,7 @@ public class Parser(tokens : Token[]) {
         if (k == "KW_FOR") { rtn parseFor() }
         if (k == "KW_SWITCH") { rtn parseSwitch() }
         if (k == "KW_CASE") {
-            failAt(t, "'case' 只能写在 switch 的块里，写法是 switch (值) { case 枚举名.值名 : 语句 ... }")
+            failAt(t, "'case' 只能写在 switch 的块里（而且从 0.9.0 起可以不写了）：写法是 switch (值) { 枚举名.值名 : 语句 ... }")
             rtn errorNode()
         }
         if (k == "KW_BREAK") {
@@ -1343,7 +1566,7 @@ public class Parser(tokens : Token[]) {
         rtn n
     }
 
-    // 枚举分派（阶段 19c）：`switch (值) { case 枚举名.值名 : 语句 / else : 语句 }`
+    // 枚举分派（阶段 19c；阶段 21 起分支不写 `case`）：`switch (值) { 枚举名.值名 : 语句 / else : 语句 }`
     fun parseSwitch() -> Node {
         var switchTok = advance()   // switch
         expect("LPAREN", "'switch' 后面需要 '('（写法是 switch (值) { ... }）")
@@ -1370,23 +1593,39 @@ public class Parser(tokens : Token[]) {
                     if (check("IDENT") && peek().text == "default") {
                         failAt(peek(), "rsf 的默认分支写成 'else :'（不是 Java 的 'default :'）")
                     }
-                    expect("KW_CASE", "switch 的块里只能写 'case 枚举名.值名 : 语句' 或者 'else : 语句'")
-                    var enumTok = expect("IDENT", "'case' 后面需要一个枚举名（写法是 case 枚举名.值名 : 语句）")
-                    expect("DOT", "'case " + enumTok.text + "' 后面需要 '.'——case 只接受枚举常量")
-                    var valueTok = expect("IDENT", "'case " + enumTok.text + ".' 后面需要一个值名")
+                    // 阶段 21：`case` 弃用——分支直接写「枚举名.值名 : 语句」，旧写法照收（提醒一次）
+                    var oldCase = false
+                    var caseTok = peek()
+                    if (check("KW_CASE")) {
+                        caseTok = advance()
+                        oldCase = true
+                    }
+                    if (!check("IDENT")) {
+                        if (oldCase) {
+                            failAt(peek(), "'case' 后面需要一个枚举名（现在可以不写 'case'，直接写「枚举名.值名 : 语句」）")
+                        } else {
+                            failAt(peek(), "switch 的块里只能写 '枚举名.值名 : 语句' 或者 'else : 语句'")
+                        }
+                    }
+                    var enumTok = expect("IDENT", "分支需要一个枚举名（写法是 枚举名.值名 : 语句）")
+                    expect("DOT", "'" + enumTok.text + "' 后面需要 '.'——分支只接受枚举常量")
+                    var valueTok = expect("IDENT", "'" + enumTok.text + ".' 后面需要一个值名")
                     var caseBody = parseBody("case")
                     var c = new Node(NodeKind.CASE)
                         .put("enum", escapeValue(enumTok.text))
                         .put("value", escapeValue(valueTok.text))
                     c.add(caseBody)
                     cases.add(c)
+                    if (oldCase) {
+                        System.err.println("[rsf] 警告: 第 " + intToString(caseTok.line) + " 行: 'case' 已弃用（is deprecated since 0.9.0）：switch 的分支直接写 '枚举名.值名 : 语句'，不用再写 'case'")
+                    }
                 }
             }
         }
         expect("RBRACE", "switch 没有闭合，缺少 '}'")
 
         if (cases.childCount == 0 && !hasElse) {
-            failAt(switchTok, "switch 里什么都没有：至少要有一个 'case 枚举名.值名 : 语句' 分支")
+            failAt(switchTok, "switch 里什么都没有：至少要有一个 '枚举名.值名 : 语句' 分支")
         }
 
         var n = new Node(NodeKind.SWITCH)

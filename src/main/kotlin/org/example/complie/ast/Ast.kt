@@ -820,6 +820,12 @@ data class SwitchCase(
     val valueName: String,
     val body: Block,
     override val at: SourceLine,
+    /**
+     * 旧写法里 `case` 关键字的位置；写的是新写法（直接 `枚举名.值名 :`）时是 null。
+     *
+     * 阶段 21 起 `case` 弃用：留这个位置只是为了让 Checker 发一条带行号的弃用警告。
+     */
+    val deprecatedCaseAt: SourceLine? = null,
 ) : Node
 
 /** `goto 名字` —— C/C++ 意义上的无条件跳转。 */

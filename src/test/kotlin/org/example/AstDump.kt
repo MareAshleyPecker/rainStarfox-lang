@@ -27,6 +27,7 @@ import org.example.complie.ast.IfStmt
 import org.example.complie.ast.IndexAssignStmt
 import org.example.complie.ast.IndexExpr
 import org.example.complie.ast.IntLit
+import org.example.complie.ast.InterfaceDecl
 import org.example.complie.ast.LabelStmt
 import org.example.complie.ast.LongLit
 import org.example.complie.ast.MemberAssignStmt
@@ -89,7 +90,7 @@ import org.example.complie.ast.WhileStmt
  *   两端是各写各的，逼它一致等于在比实现细节而不是比语法结构。语法结构一致才是本阶段的目标；
  * - `TypeRef` / `ReturnSpec` 是**内联**成字段的（`type=int[]`、`ret=ARROW` + `mayError=false`
  *   + `retType=!int` 这种拆法），不单独成节点——它们没有孩子，拆成节点只会让 dump 变长；
- * - `Program` 固定打 5 个子节点（`PKG` 缺省时**整行不打**、其余四个永远打，空表也打 `count=0`）。
+ * - `Program` 固定打 6 个子节点（`PKG` 缺省时**整行不打**、其余五个永远打，空表也打 `count=0`）。
  *
  * 用法（测试里）：
  * ```
@@ -124,6 +125,10 @@ object AstDump {
         line(out, 1, "ENUMS", "count" to program.enums.size.toString())
         for (e in program.enums) enumDecl(out, 2, e)
 
+        // 阶段 20：接口单独一桶，排在 ENUMS 之后（rsf 侧 Parser.rsf 的 PROGRAM 孩子顺序同此）
+        line(out, 1, "INTERFACES", "count" to program.interfaces.size.toString())
+        for (i in program.interfaces) interfaceDecl(out, 2, i)
+
         return out.toString()
     }
 
@@ -141,6 +146,7 @@ object AstDump {
             "retType" to typeText(f.ret.type),
             "ctor" to bool(f.isConstructor),
             "primary" to bool(f.isPrimary),
+            "override" to bool(f.isOverride),
         )
         line(out, depth + 1, "PARAMS", "count" to f.params.size.toString())
         for (p in f.params) {
@@ -153,6 +159,9 @@ object AstDump {
     private fun classDecl(out: StringBuilder, depth: Int, c: ClassDecl) {
         line(out, depth, "CLASS", "control" to c.control.name, "name" to esc(c.name))
 
+        // 阶段 20：`:` 父类型子句。空表也打一行 `count=0`（和别的列表节点一个规矩）。
+        supers(out, depth + 1, c.supertypes)
+
         line(out, depth + 1, "TYPE_PARAMS", "count" to c.typeParams.size.toString())
         for (tp in c.typeParams) line(out, depth + 2, "TYPE_PARAM", "name" to esc(tp))
 
@@ -163,6 +172,38 @@ object AstDump {
         // 顺序本身就是 AST 的一部分，重排会让两边的「主构造在第几个」对不上。
         line(out, depth + 1, "METHODS", "count" to c.methods.size.toString())
         for (m in c.methods) func(out, depth + 2, m)
+    }
+
+    /**
+     * `:` 父类型子句（类与接口**共用**同一种表示：`ClassDecl.supertypes` / `InterfaceDecl.supertypes`）。
+     *
+     * `display` 用的是本文件的 [typeText]（逗号后**不空格**），不是 `TypeRef.display()`
+     * （那个带空格）：值里不允许出现空格。rsf 侧对应 `TypeInfo.text()`。
+     */
+    private fun supers(out: StringBuilder, depth: Int, list: List<TypeRef>) {
+        line(out, depth, "SUPERS", "count" to list.size.toString())
+        for (t in list) {
+            line(
+                out, depth + 1, "SUPER",
+                "name" to esc(t.name),
+                "display" to typeText(t),
+                "typeArgs" to bool(t.typeArgs.isNotEmpty()),
+            )
+        }
+    }
+
+    /** 接口声明：头一行 + `SUPERS` / `TYPE_PARAMS` / `METHODS`，与 [classDecl] 同形（少 FIELDS）。 */
+    private fun interfaceDecl(out: StringBuilder, depth: Int, i: InterfaceDecl) {
+        line(out, depth, "INTERFACE", "control" to i.control.name, "name" to esc(i.name))
+
+        supers(out, depth + 1, i.supertypes)
+
+        line(out, depth + 1, "TYPE_PARAMS", "count" to i.typeParams.size.toString())
+        for (tp in i.typeParams) line(out, depth + 2, "TYPE_PARAM", "name" to esc(tp))
+
+        // 接口体里只有方法（字段在 Parser 就被拦下），抽象方法没有 BLOCK 子节点（见 [func]）
+        line(out, depth + 1, "METHODS", "count" to i.methods.size.toString())
+        for (m in i.methods) func(out, depth + 2, m)
     }
 
     private fun fieldDecl(out: StringBuilder, depth: Int, f: FieldDecl) {

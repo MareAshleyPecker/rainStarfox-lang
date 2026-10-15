@@ -1700,7 +1700,8 @@ class Parser(
             // `case` / 单独一个 else 跑到这里都是「位置不对」，给出的提示要说清它该待在哪
             t.kind == TokenKind.KW_CASE -> throw error(
                 t,
-                "'case' 只能写在 switch 的块里，写法是 switch (值) { case 枚举名.值名 : 语句 ... }",
+                "'case' 只能写在 switch 的块里（而且从 0.9.0 起可以不写了）：" +
+                    "写法是 switch (值) { 枚举名.值名 : 语句 ... }",
             )
 
             t.kind == TokenKind.KW_BREAK -> {
@@ -1901,33 +1902,47 @@ class Parser(
                 )
             }
 
-            val caseTok = expect(
-                TokenKind.KW_CASE,
-                "switch 的块里只能写 'case 枚举名.值名 : 语句' 或者 'else : 语句'，" +
-                    "实际读到 ${peek().describe()}",
-            )
-            val enumTok = expect(
-                TokenKind.IDENT,
-                "'case' 后面需要一个枚举名（写法是 case 枚举名.值名 : 语句）",
-            )
+            // 阶段 21：`case` 弃用——分支直接写「枚举名.值名 : 语句」，省掉一个关键字。
+            // 旧写法先照收（位置记进 AST），由 Checker 统一发一条弃用警告。
+            val caseTok = if (check(TokenKind.KW_CASE)) advance() else null
+            if (!check(TokenKind.IDENT)) {
+                throw error(
+                    peek(),
+                    if (caseTok != null) {
+                        "'case' 后面需要一个枚举名（现在可以不写 'case'，直接写「枚举名.值名 : 语句」）"
+                    } else {
+                        "switch 的块里只能写 '枚举名.值名 : 语句' 或者 'else : 语句'，" +
+                            "实际读到 ${peek().describe()}"
+                    },
+                )
+            }
+            val enumTok = advance()
             expect(
                 TokenKind.DOT,
-                "'case ${enumTok.lexeme}' 后面需要 '.'——case 只接受枚举常量，" +
-                    "写法是 case ${enumTok.lexeme}.值名（不支持区间、比较、字面量）",
+                "'${enumTok.lexeme}' 后面需要 '.'——分支只接受枚举常量，" +
+                    "写法是 ${enumTok.lexeme}.值名（不支持区间、比较、字面量）",
             )
             val valueTok = expect(
                 TokenKind.IDENT,
-                "'case ${enumTok.lexeme}.' 后面需要一个值名（写法是 case ${enumTok.lexeme}.值名）",
+                "'${enumTok.lexeme}.' 后面需要一个值名（写法是 ${enumTok.lexeme}.值名）",
             )
             val body = parseBody("case")
-            cases.add(SwitchCase(enumTok.lexeme, valueTok.lexeme, body, caseTok.at))
+            cases.add(
+                SwitchCase(
+                    enumTok.lexeme,
+                    valueTok.lexeme,
+                    body,
+                    (caseTok ?: enumTok).at,
+                    caseTok?.at,
+                ),
+            )
         }
         expect(TokenKind.RBRACE, "switch 没有闭合，缺少 '}'")
 
         if (cases.isEmpty() && elseBody == null) {
             throw error(
                 switchTok,
-                "switch 里什么都没有：至少要有一个 'case 枚举名.值名 : 语句' 分支" +
+                "switch 里什么都没有：至少要有一个 '枚举名.值名 : 语句' 分支" +
                     "（想全部落到一个分支就写 else : ...）",
             )
         }
