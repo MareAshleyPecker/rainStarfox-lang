@@ -159,10 +159,38 @@ public fun propInt(n : Node, key : string) -> int {
 // 阶段 21：FUNC 的孩子形状是 `PARAMS → [BLOCK] → ANNOTATION_USES`（注解表恒在最后），
 // 所以「有没有函数体」**不能再看 childCount**：抽象方法的 childCount 从 1 变成了 2
 // （PARAMS + 空注解表），只看数量会把抽象方法错当成默认方法、给它发一段抛异常的体。
-// 判据改成「第二个孩子是不是 BLOCK」——有体就是默认方法，没体就是抽象方法。
+// 阶段 25 再更正一次：K5a 给方法加了 `[OPEN] [FINAL]` 两个孩子，位置在 PARAMS
+// **之前**（Parser.rsf:1797-1803），于是「第二个孩子是不是 BLOCK」对 `open fun`
+// 也失效了 —— 会把它当抽象方法发出去，运行期
+// `AbstractMethodError: Receiver class X does not define or inherit an
+// implementation of the resolved method 'abstract ...'`。改成扫一遍找 BLOCK。
 fun hasBodyNode(fn : Node) -> bool {
-    if (fn.childCount < 2) { rtn false }
-    rtn fn.children[1].kind == NodeKind.BLOCK
+    var i = 0
+    while (i < fn.childCount) {
+        if (fn.children[i].kind == NodeKind.BLOCK) { rtn true }
+        i = i + 1
+    }
+    rtn false
+}
+
+// 方法（FUNC）的形参表 —— 同上，不能假定下标是 0。
+fun paramsOf(fn : Node) -> Node {
+    var i = 0
+    while (i < fn.childCount) {
+        if (fn.children[i].kind == NodeKind.PARAMS) { rtn fn.children[i] }
+        i = i + 1
+    }
+    rtn new Node(NodeKind.PARAMS)
+}
+
+// 方法（FUNC）的函数体 —— 同上，不能假定下标是 1。
+fun bodyOf(fn : Node) -> Node {
+    var i = 0
+    while (i < fn.childCount) {
+        if (fn.children[i].kind == NodeKind.BLOCK) { rtn fn.children[i] }
+        i = i + 1
+    }
+    rtn new Node(NodeKind.BLOCK)
 }
 
 fun hexValue(c : char) -> int {
@@ -953,8 +981,8 @@ public class Gen(owner : string) {
         }
     }
 
-    // sub 是不是 sup 的子类型（只认「接口实现 / 父接口」这一层；类没有继承）。
-    // 两边都是**内部名**。用来给 acceptsValue 补上「Dog 可以赋给 Greeter」这条。
+    // sub 是不是 sup 的子类型（接口实现 / 父接口，以及阶段 25 起的**类父链**）。
+    // 两边都是**内部名**。用来给 acceptsValue 补上「Dog 可以赋给 Greeter」「B 可以赋给 A」。
     public fun isSubtypeName(sub : string, sup : string) -> bool {
         if (sub == sup) { rtn true }
         if (sup == "java/lang/Object") { rtn true }
@@ -963,15 +991,19 @@ public class Gen(owner : string) {
         var queue : string[] = new string[8]
         var qn = 0
         var head = 0
-        // 类的直接父接口
+        // 类的整条类父链：每个祖先都算子类型，每个祖先的直接父接口也入队
         var c0 = findClass(sub)
-        if (c0 != null) {
+        var cc : ?CInfo = null
+        cc = c0
+        while (cc != null) {
+            if (cc!!.internal == sup) { rtn true }
             var i = 0
-            while (i < c0!!.scount) {
-                queue = strArrPush(queue, qn, c0!!.supers[i])
+            while (i < cc!!.scount) {
+                queue = strArrPush(queue, qn, cc!!.supers[i])
                 qn = qn + 1
                 i = i + 1
             }
+            cc = cc!!.parent
         }
         // 接口的直接父接口
         var i0 = findIface(sub)
@@ -2160,6 +2192,11 @@ public class CMeth(node : Node, name : string, params : BType[], paramNames : st
     var primary : bool = primary
     var delegation : Node = new Node(NodeKind.ERROR)   // 次构造器里的 this(...)
     var delegTarget : ?CMeth = null                    // this(...) 指向的构造器
+    // 阶段 25：次构造器第一句写的 `super(实参)`（Kotlin 的 superDelegations）。
+    // 和 delegation 一样是**走一遍 body 时**才登记的，emitUserCtor 里读它必须排在
+    // prepBody 之后。主构造器 / 隐式构造器的父类实参则来自类头子句（CInfo.parentArgs）。
+    var parentCall : Node = new Node(NodeKind.ERROR)
+    var parentCallTarget : ?CMeth = null               // super(...) 指向的父类构造器
     // 阶段 21：注解伴生类的**合成主构造器**。Kotlin 侧 `companionPrimaryConstructor`
     // 在伴生体没写构造器时按元素表造一个（形参 = 元素表），这里对齐它：
     // 合成构造器没有 AST（node 是 ERROR 占位），体也不发 —— 字段初始化改走
@@ -2214,6 +2251,13 @@ public class CInfo(name : string, internal : string) {
     var isIface : bool = false
     var supers : string[] = new string[4]
     var scount : int = 0
+    // 阶段 25：类父（`SUPER_CLASS`）。接口父仍走上面的 `supers`，类父单独一个槽 ——
+    // 类头 `cw.visit` 的 superName、构造器序言、字段/方法沿链查找都靠它。
+    // **JDK 父类本刀不支持**：`collectSuperClass` 见到就直接报错，绝不静默当 Object。
+    var parent : ?CInfo = null
+    var parentArgs : Node = new Node(NodeKind.ERROR)   // 类头父类子句的实参表
+    var parentDisplay : string = ""                    // 父类子句的 display（带泛型文本）
+    var isAbstract : bool = false
     // 阶段 21：这是某个注解的**伴生类**时记下注解简名（否则空串）。
     // 前 `annElemCount` 个字段是注解元素字段 —— 它们的类型描述符、toString 的
     // 拼接规则、元素访问器方法、以及「从构造器形参取初值」都靠这两个字段区分。
@@ -2240,6 +2284,29 @@ public class CInfo(name : string, internal : string) {
         }
         supers[scount] = nm2
         scount = scount + 1
+    }
+
+    // 阶段 25：字段 / 方法查找沿**类父链**走，返回**声明那一层**的 CInfo ——
+    // GETFIELD / PUTFIELD / INVOKEVIRTUAL 的 owner 要用它（对齐 Kotlin member.className）。
+    // 没有继承时第一轮就命中自己，与旧行为逐字节一致。
+    public fun fieldOwnerInChain(nm2 : string) -> ?CInfo {
+        var cur : ?CInfo = null
+        cur = this
+        while (cur != null) {
+            if (cur!!.fieldOf(nm2) != null) { rtn cur }
+            cur = cur!!.parent
+        }
+        rtn null
+    }
+
+    public fun methOwnerInChain(nm2 : string, argc : int) -> ?CInfo {
+        var cur : ?CInfo = null
+        cur = this
+        while (cur != null) {
+            if (cur!!.methOf(nm2, argc) != null) { rtn cur }
+            cur = cur!!.parent
+        }
+        rtn null
     }
 
     // 接口方法：名字 + 实参个数相同。bodyOnly=true 时只认带体的默认方法
@@ -2946,7 +3013,13 @@ public class Walker(g : Gen) {
                     g.bad("对未声明变量赋值：" + prop(st, "name"))
                     rtn
                 }
-                var f = ci!!.fieldOf(prop(st, "name"))
+                // 阶段 25：字段查找沿类链（父类字段也在作用域里），owner 写**声明**那一层。
+                var fowner = ci!!.fieldOwnerInChain(prop(st, "name"))
+                if (fowner == null) {
+                    g.bad("对未声明变量赋值：" + prop(st, "name"))
+                    rtn
+                }
+                var f = fowner!!.fieldOf(prop(st, "name"))
                 if (f == null) {
                     g.bad("对未声明变量赋值：" + prop(st, "name"))
                     rtn
@@ -2959,7 +3032,7 @@ public class Walker(g : Gen) {
                     g.bad("把 " + vt.desc() + " 赋给字段 " + f!!.type.desc())
                     rtn
                 }
-                var fr0 = new FieldRef(ci!!.internal, prop(st, "name"), f!!.type.desc(), f!!.type, false)
+                var fr0 = new FieldRef(fowner!!.internal, prop(st, "name"), f!!.type.desc(), f!!.type, false)
                 fr0.thisRecv = true
                 g.putFld(st, fr0)
                 var ins0 = new Ins("fieldassign")
@@ -3018,7 +3091,13 @@ public class Walker(g : Gen) {
                 g.bad("给字段赋值 " + rt.name + "." + nm + "（不是用户类）")
                 rtn
             }
-            var f = ci!!.fieldOf(nm)
+            // 阶段 25：字段查找沿类链，owner 写**声明**那一层。
+            var fowner = ci!!.fieldOwnerInChain(nm)
+            if (fowner == null) {
+                g.bad("类 " + rt.name + " 没有字段 " + nm)
+                rtn
+            }
+            var f = fowner!!.fieldOf(nm)
             if (f == null) {
                 g.bad("类 " + rt.name + " 没有字段 " + nm)
                 rtn
@@ -3031,7 +3110,7 @@ public class Walker(g : Gen) {
                 g.bad("把 " + vt.desc() + " 赋给字段 " + f!!.type.desc())
                 rtn
             }
-            var fr = new FieldRef(ci!!.internal, nm, f!!.type.desc(), f!!.type, false)
+            var fr = new FieldRef(fowner!!.internal, nm, f!!.type.desc(), f!!.type, false)
             fr.thisRecv = isThis
             fr.recvNode = recv
             g.putFld(st, fr)
@@ -3355,6 +3434,47 @@ public class Walker(g : Gen) {
             emit(dl)
             rtn
         }
+        if (k == NodeKind.SUPER_CALL) {
+            // 阶段 25：父类委托 `super(实参)`。与 this(...) 完全同形，只是目标
+            // 换成**父类**的构造器、登记到 parentCall 而不是 delegation。
+            var args = st.children[0]
+            var ci = g.cur
+            var curM = g.curMeth
+            if (ci == null || curM == null) {
+                g.bad("构造器委托 super(...)")
+                rtn
+            }
+            if (ci!!.parent == null) {
+                g.bad("构造器委托 super(...)：本类没有父类")
+                rtn
+            }
+            var target = ci!!.parent!!.ctorOf(args.childCount)
+            if (target == null) {
+                g.bad("构造器委托 super(...)：父类 " + ci!!.parent!!.name + " 没有 " + intToString(args.childCount) + " 个参数的构造器")
+                rtn
+            }
+            var si = 0
+            while (si < args.childCount) {
+                var sat = walkExpr(args.children[si], sc)
+                if (!acceptsValue(g, target!!.params[si], args.children[si], sat)) {
+                    g.bad("super(...) 第 " + intToString(si + 1) + " 个实参类型不匹配")
+                    rtn
+                }
+                si = si + 1
+            }
+            curM!!.parentCall = st
+            curM!!.parentCallTarget = target
+            // 与 this(...) 一样**本身不发码**（`aload_0`/实参/`invokespecial` 由
+            // emitUserCtor 的序言发），但补一条零码 label 保 LineNumberTable：
+            // Kotlin 的 p4_ctor_chain 里 `super("explicit")`（第 8 行）确实有一条
+            // 与下一条语句同偏移的 line 8 条目。
+            var sl = new Ins("label")
+            sl.lbl = new Label()
+            sl.node = st
+            sl.line = st.line
+            emit(sl)
+            rtn
+        }
         g.bad("语句 " + kindName(k))
     }
 
@@ -3427,12 +3547,13 @@ public class Walker(g : Gen) {
                     // 裸字段名（实例方法 / 构造器里直接写 x、y）→ this.x
                     if (!requireInstanceScope("字段 " + nm)) { rtn tVoid() }
                     var ci = g.cur
-                    var f = ci!!.fieldOf(nm)
-                    if (f == null) {
+                    var fowner = ci!!.fieldOwnerInChain(nm)
+                    if (fowner == null) {
                         g.bad("未声明的变量 " + nm)
                         rtn tVoid()
                     }
-                    var fr = new FieldRef(ci!!.internal, nm, f!!.type.desc(), f!!.type, false)
+                    var f = fowner!!.fieldOf(nm)
+                    var fr = new FieldRef(fowner!!.internal, nm, f!!.type.desc(), f!!.type, false)
                     fr.thisRecv = true
                     fr.declType = f!!.type
                     g.putFld(e, fr)
@@ -3572,6 +3693,76 @@ public class Walker(g : Gen) {
                     ai = ai + 1
                 }
                 var argc = argNode.childCount
+                if (recv.kind == NodeKind.SUPER) {
+                    // 阶段 25：`super.f()` / `super(接口名).f()`。
+                    // 两条路都发 INVOKESPECIAL（**非虚**，Kotlin :2638/2671），
+                    // owner 是**声明那个方法**的类/接口；接口那一路 itf=true
+                    // （`:2698`）。接收者语义上就是 this —— 语法树里的 SUPER
+                    // 节点由 emitExpr 发 `aload_0`。
+                    var starget = prop(recv, "target")
+                    // 裸 `super.f()` 的 target 是字面量 "-"（Parser.rsf:2365/2374），
+                    // `super(接口名)` 才记接口名（可能带 `&<实参>`）。
+                    if (starget.length() > 0 && starget != "-") {
+                        // `super(接口名).f()`：只在那个接口的**默认方法**里找（Q1 消歧）
+                        var sif = g.findIface(starget)
+                        if (sif == null) {
+                            g.bad("super(" + starget + ")：" + starget + " 不是接口")
+                            rtn tVoid()
+                        }
+                        var sm = sif!!.ifaceMethOf(nm, argc, true)
+                        if (sm == null) {
+                            sm = sif!!.ifaceMethOf(nm, argc, false)
+                        }
+                        if (sm == null) {
+                            g.bad("接口 " + starget + " 没有方法 " + nm + "()（" + intToString(argc) + " 个参数）")
+                            rtn tVoid()
+                        }
+                        var smi = new Mem2(sif!!.internal, nm, sm!!.mdesc(), sm!!.ret, sm!!.params, false)
+                        smi.opcode = 183
+                        smi.itf = true
+                        smi.recv = rt
+                        smi.origRet = sm!!.ret
+                        smi.declParams = sm!!.params
+                        g.putMem(e, smi)
+                        t = sm!!.ret
+                        g.putType(e, t)
+                        rtn t
+                    }
+                    if (rt.base != "external" || rt.isArray()) {
+                        g.bad("super 只能用在类里")
+                        rtn tVoid()
+                    }
+                    var sc0 = g.findClass(rt.name)
+                    if (sc0 == null || sc0!!.parent == null) {
+                        g.bad("super." + nm + "()：本类没有父类")
+                        rtn tVoid()
+                    }
+                    // 沿**父类链**找最近的声明（从父类起，跳开本类自己的 override）
+                    var soc = sc0!!.parent!!.methOwnerInChain(nm, argc)
+                    if (soc == null) {
+                        g.bad("父类没有方法 " + nm + "()（" + intToString(argc) + " 个参数）")
+                        rtn tVoid()
+                    }
+                    var som = soc!!.methOf(nm, argc)
+                    var ssub = chainSubst(sc0!!, rt.extraArgs, soc!!)
+                    var sret = substApply(som!!.ret, ssub)
+                    var spars : BType[] = new BType[som!!.params.length]
+                    var spi = 0
+                    while (spi < spars.length) {
+                        spars[spi] = substApply(som!!.params[spi], ssub)
+                        spi = spi + 1
+                    }
+                    var smi2 = new Mem2(soc!!.internal, nm, som!!.mdesc(), sret, spars, false)
+                    smi2.opcode = 183
+                    smi2.recv = rt
+                    smi2.origRet = som!!.ret
+                    smi2.declParams = som!!.params
+                    smi2.subst = ssub
+                    g.putMem(e, smi2)
+                    t = sret
+                    g.putType(e, t)
+                    rtn t
+                }
                 // 用户类的实例方法（数组不是类：`Box[]` 不能在这里当成 `Box` 的成员）
                 if (rt.base == "external" && !rt.isArray()) {
                     var uc = g.findClass(rt.name)
@@ -3625,7 +3816,12 @@ public class Walker(g : Gen) {
                         rtn t
                     }
                     if (uc != null) {
-                        var um = uc!!.methOf(nm, argc)
+                        // 阶段 25：方法查找沿**类链**（Kotlin `checkClassMember` 沿父类链
+                        // 找最近的声明），owner 用**声明**那一层 —— 不是接收者的静态类型，
+                        // 否则连常量池顺序都和 Kotlin 产物不同，`diff -r` 不可能零差异。
+                        var oc = uc!!.methOwnerInChain(nm, argc)
+                        var um : ?CMeth = null
+                        if (oc != null) { um = oc!!.methOf(nm, argc) }
                         if (um == null) {
                             // 类自己没声明这个成员 —— 可能是沿接口链继承来的**默认方法**
                             // （Kotlin `checkClassMember` → `checkInheritedInterfaceDefault`，
@@ -3661,7 +3857,7 @@ public class Walker(g : Gen) {
                             rtn tVoid()
                         }
                         // 泛型：用接收者的类型实参还原声明里的 `T`（`b.get()` → int）
-                        var sub = substOf(rt.extraArgs, uc!!.typeParams)
+                        var sub = chainSubst(uc!!, rt.extraArgs, oc!!)
                         var uret = substApply(um!!.ret, sub)
                         var uparams : BType[] = new BType[um!!.params.length]
                         var pk = 0
@@ -3677,7 +3873,7 @@ public class Walker(g : Gen) {
                             }
                             k = k + 1
                         }
-                        var mi = new Mem2(uc!!.internal, nm, um!!.mdesc(), uret, uparams, um!!.isStatic)
+                        var mi = new Mem2(oc!!.internal, nm, um!!.mdesc(), uret, uparams, um!!.isStatic)
                         mi.opcode = um!!.opcode()
                         mi.recv = rt
                         mi.origRet = um!!.ret
@@ -3750,15 +3946,17 @@ public class Walker(g : Gen) {
                     }
                     var uc2 = g.findClass(rt.name)
                     if (uc2 != null) {
-                        var f2 = uc2!!.fieldOf(nm)
-                        if (f2 == null) {
+                        // 阶段 25：字段查找沿类链，owner 写**声明**那一层。
+                        var fowner2 = uc2!!.fieldOwnerInChain(nm)
+                        if (fowner2 == null) {
                             g.bad("类 " + rt.name + " 没有字段 " + nm)
                             rtn tVoid()
                         }
+                        var f2 = fowner2!!.fieldOf(nm)
                         // 泛型字段：描述符用**声明**类型（擦除后），静态类型用替换后的
-                        var sub2 = substOf(rt.extraArgs, uc2!!.typeParams)
+                        var sub2 = chainSubst(uc2!!, rt.extraArgs, fowner2!!)
                         var ft2 = substApply(f2!!.type, sub2)
-                        var fr2 = new FieldRef(uc2!!.internal, nm, f2!!.type.desc(), ft2, false)
+                        var fr2 = new FieldRef(fowner2!!.internal, nm, f2!!.type.desc(), ft2, false)
                         fr2.recvNode = recv
                         fr2.declType = f2!!.type
                         g.putFld(e, fr2)
@@ -3800,6 +3998,11 @@ public class Walker(g : Gen) {
             if (!requireInstanceScope("this")) { rtn tVoid() }
             var ci = g.cur
             t = new BType("external", ci!!.internal, false, 0)
+        } else if (k == NodeKind.SUPER) {
+            // 阶段 25：`super` 表达式 —— 接收者语义上就是 this，类型是本类。
+            if (!requireInstanceScope("super")) { rtn tVoid() }
+            var ci = g.cur
+            t = new BType("external", ci!!.internal, false, 0)
         } else {
             g.bad("表达式 " + kindName(k))
             rtn tVoid()
@@ -3820,6 +4023,41 @@ public class Walker(g : Gen) {
             i = i + 1
         }
         rtn new BType(et!!.base, et!!.name, et!!.nullable, et!!.depth + dims.childCount).withArgs(et!!.extraArgs)
+    }
+
+    // 阶段 25：类头父类子句的实参表（`class IntHolder(...) : Holder&<int>(v0)` 里的
+    // `int`）。Parser 只给了 `display` 那段文本（`Holder&<int>`），类名在 `name` 里
+    // 是不带泛型的 —— 所以实参只能在**用的时候**从 display 里切出来再解析。
+    public fun superArgsOf(ci : CInfo) -> BType[] {
+        var disp = ci.parentDisplay
+        var amp = disp.indexOf("&<")
+        if (amp < 0 || disp.length() <= amp + 3) { rtn new BType[0] }
+        rtn typeArgsFrom(g, disp.substring(amp + 2, disp.length() - 1))
+    }
+
+    // 阶段 25：沿类链把 `from` 那一层的类型实参代换到 `decl` 那一层。
+    // 同层（from 就是 decl）时退化成 `substOf(fromArgs, decl.typeParams)` —— 与旧行为一致；
+    // 跨层时逐级把父类子句的实参代入，`class IntHolder : Holder&<int>` 就能把
+    // `Holder.get()->T` 里的 T 换成 int（`intToString(h.get())` 靠这个才对得上）。
+    public fun chainSubst(from : CInfo, fromArgs : BType[], decl : CInfo) -> Subst {
+        var s = substOf(fromArgs, from.typeParams)
+        var cur : ?CInfo = null
+        cur = from
+        while (cur != null) {
+            if (cur!!.internal == decl.internal) { rtn s }
+            var nxt = cur!!.parent
+            if (nxt == null) { rtn s }
+            var pa = superArgsOf(cur!!)
+            var conc : BType[] = new BType[pa.length]
+            var i = 0
+            while (i < pa.length) {
+                conc[i] = substApply(pa[i], s)
+                i = i + 1
+            }
+            s = substOf(conc, nxt!!.typeParams)
+            cur = nxt
+        }
+        rtn s
     }
 
     // `new X(...)`（含省略 new 的构造）——用户类 / 枚举走 findClass，
@@ -3980,8 +4218,15 @@ public class Walker(g : Gen) {
         // 类内按名字直接调自己的实例/静态方法（优先于顶层函数，与 Kotlin 一致）
         var ci = g.cur
         if (ci != null) {
-            var m = ci!!.methOf(name, args.childCount)
+            // 阶段 25：类内按名字直接调 —— 先沿**类链**找（继承来的方法也算），
+            // owner 用声明那一层。
+            var mOwner0 = ci!!.methOwnerInChain(name, args.childCount)
+            var m : ?CMeth = null
             var mOwner = ci!!
+            if (mOwner0 != null) {
+                m = mOwner0!!.methOf(name, args.childCount)
+                mOwner = mOwner0!!
+            }
             if (m == null) {
                 // 阶段 20：自己没声明这个成员 —— 可能是接口方法。当前类就是接口时
                 // （默认方法体里的隐式 this 调用）沿自己 + 父接口链找，**抽象也算**
@@ -4721,7 +4966,10 @@ fun isErrorCallExpr(g : Gen, e : Node) -> bool {
         if (mrecv.kind == NodeKind.VAR) {
             var rc0 = g.findClass(prop(mrecv, "name"))
             if (rc0 != null) {
-                var rm0 = rc0!!.methOf(mnm, margc)
+                // 阶段 25：沿类链找（继承来的 `!T` 方法也要认）
+                var ro0 = rc0!!.methOwnerInChain(mnm, margc)
+                var rm0 : ?CMeth = null
+                if (ro0 != null) { rm0 = ro0!!.methOf(mnm, margc) }
                 if (rm0 != null) { rtn propBool(rm0!!.node, "mayError") }
             }
         }
@@ -4736,7 +4984,10 @@ fun isErrorCallExpr(g : Gen, e : Node) -> bool {
             if (g.ifaceHitCount != 1) { rtn false }
             rtn propBool(g.ifaceHit!!.node, "mayError")
         }
-        var rm = rc!!.methOf(mnm, margc)
+        // 阶段 25：沿类链找
+        var ro = rc!!.methOwnerInChain(mnm, margc)
+        var rm : ?CMeth = null
+        if (ro != null) { rm = ro!!.methOf(mnm, margc) }
         if (rm == null) {
             // 阶段 20：类自己没声明这个成员 —— 只认接口链上带体的默认方法
             g.ifaceLookup(rc!!.internal, mnm, margc, false, true)
@@ -4754,7 +5005,10 @@ fun isErrorCallExpr(g : Gen, e : Node) -> bool {
     // （Kotlin 侧对应 `model.classModel.implicitCalls[expr]?.decl`）。
     var ci = g.cur
     if (ci != null) {
-        var m = ci!!.methOf(nm, e.children[0].childCount)
+        // 阶段 25：沿类链找
+        var mo1 = ci!!.methOwnerInChain(nm, e.children[0].childCount)
+        var m : ?CMeth = null
+        if (mo1 != null) { m = mo1!!.methOf(nm, e.children[0].childCount) }
         if (m != null) { rtn propBool(m!!.node, "mayError") }
     }
     var s = g.findSig(nm, e.children[0].childCount)
@@ -5071,6 +5325,11 @@ fun emitExpr(g : Gen, mv : MethodVisitor, e : Node, off : int) -> void {
     // 实例方法（含构造器）的 0 号槽就是 this（对齐 `BytecodeCompiler.kt:1273`）。
     // 类型在 Walker 那边（`NodeKind.THIS` 分支）已经算好了，这里只补发码。
     if (k == NodeKind.THIS) {
+        mv.visitVarInsn(25, 0)
+        rtn
+    }
+    if (k == NodeKind.SUPER) {
+        // 阶段 25：`super` 的接收者就是 this。
         mv.visitVarInsn(25, 0)
         rtn
     }
@@ -5615,6 +5874,18 @@ fun collectClasses(g : Gen, classes : Node, enums : Node) -> void {
                 // 逐个解析成内部名存进 ci.supers —— 类头与 INVOKEINTERFACE 的判定都用它。
                 collectSuperNames(g, part, ci)
                 if (g.failed) { rtn }
+            } else if (part.kind == NodeKind.SUPER_CLASS) {
+                // 阶段 25：类父槽位（`class D : Base()` 里的 Base）。Parser 保证它排在
+                // SUPERS 之后、TYPE_PARAMS 之前，且只在写了类父时才挂。
+                collectSuperClass(g, part, ci)
+                if (g.failed) { rtn }
+            } else if (part.kind == NodeKind.OPEN) {
+                // 修饰词槽位：默认 final，`open` 在字节码层面没有对应标志位。
+            } else if (part.kind == NodeKind.FINAL) {
+                // 修饰词槽位：默认 final，字节码层面同样没有标志位。
+            } else if (part.kind == NodeKind.ABSTRACT) {
+                // 只有写了 `abstract` 才挂这个槽位 —— 类头加 ACC_ABSTRACT 就看它。
+                ci.isAbstract = true
             } else if (part.kind == NodeKind.ANNOTATION_USES) {
                 // 注解语义在阶段 21 由 Kotlin 侧实现，自举后端本刀忽略
             } else {
@@ -5734,6 +6005,8 @@ fun emitUserCtor(g : Gen, ci : CInfo, m : ?CMeth) -> void {
     var body : Node = new Node(NodeKind.ERROR)
     var dg : ?CMeth = null
     var dgNode : Node = new Node(NodeKind.ERROR)
+    var pc : Node = new Node(NodeKind.ERROR)
+    var pcTarget : ?CMeth = null
     if (m != null) {
         params = m!!.params
         pnames = m!!.paramNames
@@ -5741,7 +6014,7 @@ fun emitUserCtor(g : Gen, ci : CInfo, m : ?CMeth) -> void {
         // 合成的伴生类主构造器（m.synth）没有函数体节点：参数表就是元素表，
         // 字段赋值由下面的 emitFieldInits 直接从形参搬运（Kotlin 同）。
         if (!m!!.synth) {
-            body = m!!.node.children[1]
+            body = bodyOf(m!!.node)
             hasBody = true
         }
     }
@@ -5758,6 +6031,8 @@ fun emitUserCtor(g : Gen, ci : CInfo, m : ?CMeth) -> void {
         // 用**主构造器的槽号**重发一遍（槽号对不上 → 非法字节码）。
         dg = m!!.delegTarget
         dgNode = m!!.delegation
+        pc = m!!.parentCall
+        pcTarget = m!!.parentCallTarget
     } else {
         g.slotCount = 1
     }
@@ -5774,7 +6049,32 @@ fun emitUserCtor(g : Gen, ci : CInfo, m : ?CMeth) -> void {
         mv.visitMethodInsn(183, ci.internal, "<init>", target.desc(), false)
     } else {
         mv.visitVarInsn(25, 0)
-        mv.visitMethodInsn(183, "java/lang/Object", "<init>", "()V", false)
+        // 阶段 25：父类那一跳排在**字段初值之前**（DESIGN-25 §6，与 Kotlin
+        // `emitParentCtor` :1570-1573、解释器 K3 的 runSuperDelegation 同序）。
+        // 用哪个实参表：次构造器写了 super(实参) 就用它的；主构造器用类头子句；
+        // 隐式构造器（m == null）也用类头子句；次构造器**没写** super 的，K1 语义
+        // 保证编译器补一句无参 super() —— 给的是空实参，不是类头实参。
+        var paNode : Node = ci.parentArgs
+        if (pc.kind == NodeKind.SUPER_CALL) { paNode = pc.children[0] }
+        if (ci.parent == null) {
+            mv.visitMethodInsn(183, "java/lang/Object", "<init>", "()V", false)
+        } else {
+            // 父类一个构造器都没写时 target 是 null（Kotlin 同：直接发 `()V`）。
+            var pt : ?CMeth = null
+            if (pcTarget != null) { pt = pcTarget } else { pt = ci.parent!!.ctorOf(paNode.childCount) }
+            var pdesc = "()V"
+            if (pt != null) { pdesc = pt!!.desc() }
+            var pai = 0
+            while (pai < paNode.childCount) {
+                var pav = paNode.children[pai]
+                emitExpr(g, mv, pav, 0)
+                if (pt != null && pai < pt!!.params.length) {
+                    emitWiden(g, mv, tOf(g, pav), pt!!.params[pai])
+                }
+                pai = pai + 1
+            }
+            mv.visitMethodInsn(183, ci.parent!!.internal, "<init>", pdesc, false)
+        }
         emitFieldInits(g, mv, ci, m)
     }
     if (hasBody) {
@@ -5789,6 +6089,17 @@ fun emitUserCtor(g : Gen, ci : CInfo, m : ?CMeth) -> void {
 fun emitUserMethod(g : Gen, ci : CInfo, m : CMeth) -> void {
     var access = accessOf(m.node)
     if (m.isStatic) { access = access + accStatic() }
+    if (!hasBodyNode(m.node)) {
+        // 阶段 25：抽象方法只发签名 + ACC_ABSTRACT，**没有 Code**（Kotlin :1699-1703）。
+        // 少了这一条，抽象类里 `describe()` 对 `area()` 的 invokevirtual 会
+        // 在运行时 NoSuchMethodError（抽象方法必须真的出现在类文件里）。
+        access = access + accAbstract()
+        var mv0 = g.cw.visitMethod(access, m.name, m.mdesc(), null, null)
+        g.curLabel = ci.name + "." + m.name
+        emitAnnSitesM(g, annUsesOf(m.node), mv0)
+        mv0.visitEnd()
+        rtn
+    }
     var mv = g.cw.visitMethod(access, m.name, m.mdesc(), null, null)
     g.curLabel = ci.name + "." + m.name
     // 方法上的注解使用点必须发在 visitCode() **之前**（Kotlin :1489）——
@@ -5798,7 +6109,7 @@ fun emitUserMethod(g : Gen, ci : CInfo, m : CMeth) -> void {
     mv.visitCode()
     var first = 0
     if (!m.isStatic) { first = 1 }
-    var p = prepBody(g, m.node.children[1], first, m.params, m.paramNames, m.ret)
+    var p = prepBody(g, bodyOf(m.node), first, m.params, m.paramNames, m.ret)
     if (p == null) { rtn }
     flushBody(g, mv, p!!, 0, m.ret, m.name)
 }
@@ -5838,21 +6149,48 @@ fun emitUserToString(g : Gen, ci : CInfo) -> void {
     mv.visitInsn(89)
     mv.visitMethodInsn(183, "java/lang/StringBuilder", "<init>", "()V", false)
     sbAppendText(mv, ci.name + "(")
-    var i = 0
-    while (i < ci.fieldCount) {
-        var f = ci.fields[i]
-        if (i > 0) { sbAppendText(mv, ", ") }
-        sbAppendText(mv, f.name + "=")
-        var isEnum = g.findEnum(f.type.name) != null && f.type.base == "external" && !f.type.isArray()
-        var ad = objAppendDesc(f.type, isEnum)
-        if (ad == null) {
-            sbAppendText(mv, "...")
-        } else {
-            mv.visitVarInsn(25, 0)
-            mv.visitFieldInsn(180, ci.internal, f.name, f.type.desc())
-            mv.visitMethodInsn(182, "java/lang/StringBuilder", "append", ad!!, false)
+    // 阶段 25：字段沿**整条父链**、**父类字段在前**（Kotlin :1497 fieldChainOf）。
+    // 分隔符只看「是不是全局第一个字段」，不看层内下标。
+    var chain : CInfo[] = new CInfo[4]
+    var cn2 = 0
+    var cur2 : ?CInfo = null
+    cur2 = ci
+    while (cur2 != null) {
+        if (cn2 >= chain.length) {
+            var big : CInfo[] = new CInfo[chain.length * 2]
+            var bi2 = 0
+            while (bi2 < cn2) {
+                big[bi2] = chain[bi2]
+                bi2 = bi2 + 1
+            }
+            chain = big
         }
-        i = i + 1
+        chain[cn2] = cur2!!
+        cn2 = cn2 + 1
+        cur2 = cur2!!.parent
+    }
+    var first = true
+    var ci2 = cn2 - 1
+    while (ci2 >= 0) {
+        var own = chain[ci2]
+        var i = 0
+        while (i < own.fieldCount) {
+            var f = own.fields[i]
+            if (!first) { sbAppendText(mv, ", ") }
+            first = false
+            sbAppendText(mv, f.name + "=")
+            var isEnum = g.findEnum(f.type.name) != null && f.type.base == "external" && !f.type.isArray()
+            var ad = objAppendDesc(f.type, isEnum)
+            if (ad == null) {
+                sbAppendText(mv, "...")
+            } else {
+                mv.visitVarInsn(25, 0)
+                mv.visitFieldInsn(180, own.internal, f.name, f.type.desc())
+                mv.visitMethodInsn(182, "java/lang/StringBuilder", "append", ad!!, false)
+            }
+            i = i + 1
+        }
+        ci2 = ci2 - 1
     }
     sbAppendText(mv, ")")
     mv.visitMethodInsn(182, "java/lang/StringBuilder", "toString", "()Ljava/lang/String;", false)
@@ -5894,6 +6232,21 @@ fun emitOrElseRange(g : Gen, from : int, to : int) -> void {
     }
 }
 
+// 阶段 25：类头的 superName —— 有类父就写它的内部名，否则 java/lang/Object。
+// （JDK 父类在 collectSuperClass 就被拒了，这里不可能拿到 JDK 内部名。）
+fun superNameOf(ci : CInfo) -> string {
+    if (ci.parent != null) { rtn ci.parent!!.internal }
+    rtn "java/lang/Object"
+}
+
+// 阶段 25：类头访问标志 —— `abstract class` 加 ACC_ABSTRACT（Kotlin :770），
+// 其余一律 ACC_PUBLIC | ACC_SUPER。
+fun classAccessOf(ci : CInfo) -> int {
+    var access = accPublic() + accSuper()
+    if (ci.isAbstract) { access = access + accAbstract() }
+    rtn access
+}
+
 // 类头 `cw.visit` 的父接口数组（阶段 20）。没有父类型子句时是长度 0 的数组 ——
 // ASM 写出来的 `interfaces_count` 与传 `null` 完全一样，所以无接口的源产物一个字节不变。
 fun superArr(ci : CInfo) -> string[] {
@@ -5909,7 +6262,7 @@ fun superArr(ci : CInfo) -> string[] {
 fun emitUserClass(g : Gen, ci : CInfo) -> void {
     g.newWriter(ci.internal)
     g.cur = ci
-    g.cw.visit(v17(), accPublic() + accSuper(), ci.internal, null, "java/lang/Object", superArr(ci))
+    g.cw.visit(v17(), classAccessOf(ci), ci.internal, null, superNameOf(ci), superArr(ci))
     g.cw.visitSource(g.sourceName, null)
     // 类上的注解使用点：必须在 getFields/字段之前发（Kotlin :653）。
     emitAnnSites(g, annUsesOf(ci.node))
@@ -5947,6 +6300,13 @@ fun emitUserClass(g : Gen, ci : CInfo) -> void {
             g.slotCount = g.slotCount + pm.params[pi].slots()
             pi = pi + 1
         }
+        // 类头父类子句的实参不在任何函数体里，也要先走一遍：
+        // emitUserCtor 的序言直接 emitExpr 它们，靠这一遍登记解析结果。
+        var pa0 = 0
+        while (pa0 < ci.parentArgs.childCount) {
+            w0.walkExpr(ci.parentArgs.children[pa0], root0)
+            pa0 = pa0 + 1
+        }
         var fi2 = 0
         while (fi2 < ci.fieldCount) {
             w0.walkExpr(ci.fields[fi2].init, root0)
@@ -5956,6 +6316,11 @@ fun emitUserClass(g : Gen, ci : CInfo) -> void {
         var w1 = new Walker(g)
         var root1 = new Scope(null)
         g.slotCount = 1
+        var pa1 = 0
+        while (pa1 < ci.parentArgs.childCount) {
+            w1.walkExpr(ci.parentArgs.children[pa1], root1)
+            pa1 = pa1 + 1
+        }
         var fi3 = 0
         while (fi3 < ci.fieldCount) {
             w1.walkExpr(ci.fields[fi3].init, root1)
@@ -6102,6 +6467,36 @@ fun pkgPathOf(name : string) -> string {
     rtn out
 }
 
+// 阶段 25：类头子句里的**类父**（`SUPER_CLASS`）。接口父仍走 `collectSuperNames`。
+// 本刀只支持 rsf 侧的用户类当父类：JDK 父类**大声报错**，不静默退化成 Object
+// （静默退化会编出 superName 写错、构造器序言也错的字节码，比报错难查得多）。
+fun collectSuperClass(g : Gen, part : Node, ci : CInfo) -> void {
+    var snm = prop(part, "name")
+    var pc = g.findClass(snm)
+    if (pc == null) {
+        if (g.findIface(snm) != null) {
+            g.bad("父类 " + snm + " 是接口（接口要写在冒号后面的逗号列表里）")
+            rtn
+        }
+        g.bad("K5b 暂不支持 JDK 父类：" + snm)
+        rtn
+    }
+    ci.parent = pc
+    ci.parentArgs = part.children[0]
+    ci.parentDisplay = prop(part, "display")
+}
+
+// 有没有任何一个用户类带类父。没有的话后端一次都不要去碰输出目录
+// （骨架 .class 只在帧合并需要 LCA 时才有用，见 emitSkeletons）。
+fun hasParentClass(g : Gen) -> bool {
+    var i = 0
+    while (i < g.ciCount) {
+        if (g.cis[i].parent != null) { rtn true }
+        i = i + 1
+    }
+    rtn false
+}
+
 // 父类型子句（阶段 20）：把一个类 / 接口的 `SUPERS` 子节点解析成内部名存进 `ci.supers`。
 // rsf 没有类继承，父类型只可能是接口：先找用户接口，再退到 import 进来的 JDK 接口。
 fun collectSuperNames(g : Gen, part : Node, ci : CInfo) -> void {
@@ -6142,7 +6537,7 @@ fun collectMethods(g : Gen, part : Node, ci : CInfo) -> void {
             if (rt == null) { rtn }
             ret = rt!!
         }
-        var ps = m.children[0]
+        var ps = paramsOf(m)
         var pts : BType[] = new BType[ps.childCount]
         var pns : string[] = new string[ps.childCount]
         var pi = 0
@@ -7274,6 +7669,9 @@ public fun compileProgram(g : Gen, ast : Node, sourceName : string) -> void {
     // 于是跟着上面的类循环一起发射。
     collectAnnotations(g, anns, ifaces, classes, funcs)
     if (g.failed) { rtn }
+    // 阶段 25：帧合并点的 LCA 骨架 —— 必须在**任何** `visitMaxs` 之前落盘
+    // （COMPUTE_FRAMES 是就地算帧的，不是等 `toByteArray()`），见 writeSkeletons。
+    writeSkeletons(g)
 
     i = 0
     while (i < funcs.childCount) {
@@ -7330,6 +7728,68 @@ public fun compileProgram(g : Gen, ast : Node, sourceName : string) -> void {
     while (i < g.aiCount) {
         emitAnnotationClass(g, g.ains[i])
         if (g.failed) { rtn }
+        i = i + 1
+    }
+}
+
+// 阶段 25：帧合并点的 LCA 骨架落盘。
+//
+// 有了类继承之后，`COMPUTE_FRAMES` 会在两条控制流汇合、同一槽位出现两个不同
+// 引用类型时问 ASM 的 `ClassWriter.getCommonSuperClass`；答案写进 StackMapTable，
+// 写成 Object 会让后续「按父类用」的指令被校验器拒绝。ASM 9.9.1 只有**子类覆写**
+// `getCommonSuperClass` 这一条钩子，而 rsf 写不出 `ClassWriter` 的子类（继承 JDK
+// 类被本刀禁止，K1 也不许 override JDK 方法），于是只能用它的**默认实现** ——
+// 默认实现是 `Class.forName(内部名.replace('/','.'), false, getClassLoader())`，
+// 对**本程序正在生成的类**必然抛 `TypeNotPresentException`（实测栈：
+// `SymbolTable.addMergedType → Frame.merge → MethodWriter.visitMaxs`）。
+//
+// 解法：让这些类对那个 `Class.forName` **可见** —— 实测 JVM 对已在 `-cp` 上的
+// 目录不做预扫、失败查找也不负缓存（启动后再写进该目录的 .class 立刻能查到），
+// 所以只要在**开始发射之前**把每个用户类 / 接口的**类头骨架**写进产物目录
+// （`-Drsf.backend.out`；判据①的 self 列会把它挂上 `-cp`），ASM 默认实现就能算出
+// 真 LCA。骨架只要 name / super / interfaces 正确就够（`initialize=false`，不看方法）。
+// 对纯类层次，ASM 默认实现的答案与 Kotlin 的 `commonSuperClassOf` 相同。
+//
+// 触发条件收紧到「程序里真有类继承」：没有继承的程序（148 类验收、verify21 的
+// 探针）根本不走这段，字节与旧版逐字节一致。
+fun writeSkeleton(g : Gen, out : string, nm : string, access : int, sup : string, ifaces : string[]) -> void {
+    // writeBytes 是 `!void`，必须就地配 try/catch；写不出去只当骨架没备成。
+    try {
+        var sw = new ClassWriter(0)
+        sw.visit(v17(), access, nm, null, sup, ifaces)
+        sw.visitEnd()
+        writeBytes(out + "/" + nm + ".class", sw.toByteArray())
+    } catch (we : string) {
+    }
+}
+
+fun writeSkeletons(g : Gen) -> void {
+    if (!hasParentClass(g)) { rtn }
+    // 调用方可能根本没传 -Drsf.backend.out（`System.getProperty` 返回 Java null，
+    // 而 rsf 的类型系统里它是非空 string），目录也可能不存在 —— 整段包在 try 里
+    // 静默放过：骨架只是给 ASM 的 `Class.forName` 备用。rsf 的 `catch (e : string)`
+    // 在字节码里是 catch java/lang/RuntimeException，NPE 也拦得住。
+    var out = System.getProperty("rsf.backend.out")
+    var i = 0
+    while (i < g.ciCount) {
+        try {
+            if (out.length() > 0) {
+                var ci = g.cis[i]
+                writeSkeleton(g, out, ci.internal, accPublic() + accSuper(), superNameOf(ci), superArr(ci))
+            }
+        } catch (we : string) {
+        }
+        i = i + 1
+    }
+    i = 0
+    while (i < g.iiCount) {
+        try {
+            if (out.length() > 0) {
+                var ic = g.iis[i]
+                writeSkeleton(g, out, ic.internal, accPublic() + accInterface() + accAbstract(), "java/lang/Object", superArr(ic))
+            }
+        } catch (we : string) {
+        }
         i = i + 1
     }
 }
