@@ -7233,6 +7233,84 @@ class RsfTest {
                     override static fun make() -> int { rtn 1 }
                 }
             """.trimIndent() + "\n",
+
+            // 阶段 21：注解（解析器侧）。语法能收、AST 有据、**语义仍忽略**。
+            // 空体 / 空括号两种写法在 AST 里分不出（都是空元素表）；注解声明可带权限修饰词；
+            // 元素表允许尾逗号，元素类型走 `名字 : 类型` 的后缀风格。
+            "注解声明（空体与元素表）" to """
+                annotation Marker { }
+
+                annotation Marker2() { }
+
+                public annotation Loud {
+                }
+
+                private annotation Quiet() { }
+
+                annotation Full(value : string = "x", count : int = 0, flag : bool = true,
+                                ratio : double = -1.5, c : char = 'a', l : long = 3,
+                                f : float = 1.5, n : ?string = null,) { }
+
+                annotation NoDefault(a : int, b : ?string) { }
+            """.trimIndent() + "\n",
+
+            // 元注解（注解声明自己也能被标注，多个按书写顺序保留；修饰词可以与注解混写）、
+            // 限定名（`.` 与 `::` 都拼成点分形式），以及三种伴生实体：具名带父接口 / 匿名 /
+            // 自己带注解（**收下但语义层忽略**，AST 里根本没有这个字段）。
+            "元注解与伴生实体" to """
+                @Meta
+                annotation M { }
+
+                @Meta @Other("x", count = 3)
+                annotation N { }
+
+                @a.b @Outer::Inner(1)
+                annotation Q { }
+
+                @Meta public annotation Qual { }
+
+                annotation WithCompanion {
+                    companion entity Handlers : Runnable {
+                        var x : int = 1
+                        fun run() -> void { rtn }
+                        constructor() { }
+                    }
+                }
+
+                annotation AnonCompanion {
+                    companion entity { var y : int = 2 }
+                }
+
+                annotation AnnotatedCompanion {
+                    @Marker companion entity { }
+                }
+            """.trimIndent() + "\n",
+
+            // 注解使用点：类 / 接口 / 函数 / 字段都能标；位置式与具名式实参混写；
+            // 同一目标上的多个注解按书写顺序保留。抽象方法（不打 BLOCK）也能标——
+            // 注解列表一律追加在所有孩子之后，位置索引不受影响。
+            "注解使用点" to """
+                @Marker("hi", count = 3)
+                class C {
+                    @Marker var f : int = 0
+                    @Marker() @Other fun g() -> void { rtn }
+                }
+
+                @Marker
+                interface I {
+                    @Marker fun m() -> void
+                    @Other() fun n() -> void { rtn }
+                }
+
+                @Marker @Other("x")
+                fun h() -> void { rtn }
+
+                @Marker
+                public fun k() -> void { rtn }
+
+                @Marker()
+                fun j() -> void { rtn }
+            """.trimIndent() + "\n",
         )
 
         var corpusLines = 0
@@ -7299,6 +7377,29 @@ class RsfTest {
             "interface I { fun f() -> void { rtn } extra }\n",
             "override fun f() -> void { rtn }\n",
             "class C { override constructor() { } }\n",
+
+            // 阶段 21 的语法边界。注解**不是类**：体里只能有（至多一个）companion entity，
+            // 元素重名、Java 风格的「类型 名字」元素写法、非字面量默认值、`@` 写在
+            // 参数 / 语句 / 枚举声明上，都要在**语法**层被拒——Kotlin 版靠
+            // parseAnnotationDecl / parseParam / parseStmtInner 里的显式禁令，rsf 版靠同一批判据。
+            "annotation M { fun f() -> void { rtn } }\n",
+            "annotation M { var x : int = 1 }\n",
+            "annotation M { constructor() { } }\n",
+            "annotation M { companion entity A { } companion entity B { } }\n",
+            "annotation M { @Meta companion entity A { } companion entity B { } }\n",
+            "annotation M(value : string, value : int) { }\n",
+            "annotation M(string value) { }\n",
+            "annotation M(v : string = RED) { }\n",
+            "annotation M(v : int = 1 + 2) { }\n",
+            "annotation M { companion entity int { } }\n",
+            "annotation M { companion { } }\n",
+            "annotation M {\n",
+            "fun @Marker f() -> void { rtn }\n",
+            "fun f(@Marker x : int) -> void { rtn }\n",
+            "fun f() -> void { @Marker var x : int = 1 }\n",
+            "@Marker enum E { A }\n",
+            "public @Meta annotation M { }\n",
+            "companion entity { }\n",
         )
 
         for (src in bad) {

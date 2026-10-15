@@ -219,6 +219,10 @@ class SrcLoader(rootDir : string) {
     // functions → classes → enums → **interfaces**，这里保持一致。
     var ifcs : Node[] = new Node[8]
     var ifcCount : int = 0
+    // 阶段 21：注解声明。Kotlin 侧 SourceLoader 的合并顺序是
+    // functions → classes → enums → **interfaces → annotations**，这里保持一致。
+    var anns : Node[] = new Node[8]
+    var annCount : int = 0
 
     // IMPORTS 只收 CLASS_IMPORT，按首次出现顺序；同名简单名后来者覆盖前者的内部名
     var imps : Node[] = new Node[4]
@@ -286,6 +290,19 @@ class SrcLoader(rootDir : string) {
             if (ifcCount >= ifcs.length) { ifcs = srcGrowNodes(ifcs, ifcCount) }
             ifcs[ifcCount] = l.children[i]
             ifcCount = ifcCount + 1
+            i = i + 1
+        }
+    }
+
+    // 阶段 21：照 appendIfcs 的样子收注解声明（`ANNOTATIONS` 桶）
+    fun appendAnns(list : ?Node) -> void {
+        if (list == null) { rtn }
+        var l = list!!
+        var i = 0
+        while (i < l.childCount) {
+            if (annCount >= anns.length) { anns = srcGrowNodes(anns, annCount) }
+            anns[annCount] = l.children[i]
+            annCount = annCount + 1
             i = i + 1
         }
     }
@@ -497,6 +514,8 @@ class SrcLoader(rootDir : string) {
         appendClasses(srcChildOf(ast, NodeKind.CLASSES))
         appendEnums(srcChildOf(ast, NodeKind.ENUMS))
         appendIfcs(srcChildOf(ast, NodeKind.INTERFACES))
+        // 阶段 21：注解声明与 fun / class / enum / interface 一样先收本文件的
+        appendAnns(srcChildOf(ast, NodeKind.ANNOTATIONS))
 
         // 再按 import 出现顺序深度优先就地递归
         var dir = srcDirOf(path)
@@ -525,7 +544,7 @@ class SrcLoader(rootDir : string) {
         rtn 1
     }
 
-    // 拼出合并后的 PROGRAM：孩子形状 `PKG? / IMPORTS / FUNCS / CLASSES / ENUMS`，
+    // 拼出合并后的 PROGRAM：孩子形状 `PKG? / IMPORTS / FUNCS / CLASSES / ENUMS / INTERFACES / ANNOTATIONS`，
     // 各列表节点照旧带 `count=N` —— 与 Parser.parseProgram 建出来的树同形。
     public fun build() -> Node {
         var program = new Node(NodeKind.PROGRAM)
@@ -570,6 +589,15 @@ class SrcLoader(rootDir : string) {
             i = i + 1
         }
         program.add(ifc.countTag())
+
+        // 阶段 21：注解声明排在 INTERFACES 之后（与 Parser.parseProgram 的 PROGRAM 孩子顺序一致）
+        var an = new Node(NodeKind.ANNOTATIONS)
+        i = 0
+        while (i < annCount) {
+            an.add(anns[i])
+            i = i + 1
+        }
+        program.add(an.countTag())
 
         rtn program
     }

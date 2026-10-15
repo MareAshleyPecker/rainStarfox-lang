@@ -1,5 +1,7 @@
 package org.example
 
+import org.example.complie.ast.AnnotationDecl
+import org.example.complie.ast.AnnotationUse
 import org.example.complie.ast.AssignStmt
 import org.example.complie.ast.BinaryExpr
 import org.example.complie.ast.Block
@@ -9,6 +11,7 @@ import org.example.complie.ast.CallExpr
 import org.example.complie.ast.CharLit
 import org.example.complie.ast.ClassDecl
 import org.example.complie.ast.ClassImport
+import org.example.complie.ast.CompanionEntityDecl
 import org.example.complie.ast.ContinueStmt
 import org.example.complie.ast.DoubleLit
 import org.example.complie.ast.ElvisExpr
@@ -33,9 +36,11 @@ import org.example.complie.ast.LongLit
 import org.example.complie.ast.MemberAssignStmt
 import org.example.complie.ast.MemberExpr
 import org.example.complie.ast.ModuleImport
+import org.example.complie.ast.NamedAnnotationArg
 import org.example.complie.ast.NewArrayExpr
 import org.example.complie.ast.NewExpr
 import org.example.complie.ast.NullLit
+import org.example.complie.ast.PositionalAnnotationArg
 import org.example.complie.ast.Program
 import org.example.complie.ast.ReturnStmt
 import org.example.complie.ast.SourceImport
@@ -129,6 +134,11 @@ object AstDump {
         line(out, 1, "INTERFACES", "count" to program.interfaces.size.toString())
         for (i in program.interfaces) interfaceDecl(out, 2, i)
 
+        // 阶段 21：注解声明单独一桶，排在 INTERFACES **之后**（PROGRAM 的最后一个孩子；
+        // rsf 侧 Parser.rsf 的 PROGRAM 孩子顺序同此，同样追加在最后）
+        line(out, 1, "ANNOTATIONS", "count" to program.annotations.size.toString())
+        for (a in program.annotations) annotationDecl(out, 2, a)
+
         return out.toString()
     }
 
@@ -154,6 +164,9 @@ object AstDump {
         }
         // 抽象方法（接口里只声明签名的那种）没有体，阶段 20 起 body 是可空的
         f.body?.let { block(out, depth + 1, it) }
+
+        // 阶段 21：注解使用点是**最后一个**孩子（位置索引铁律：Interp/Backend 用位置读孩子）
+        annotationUses(out, depth + 1, f.annotations)
     }
 
     private fun classDecl(out: StringBuilder, depth: Int, c: ClassDecl) {
@@ -172,6 +185,8 @@ object AstDump {
         // 顺序本身就是 AST 的一部分，重排会让两边的「主构造在第几个」对不上。
         line(out, depth + 1, "METHODS", "count" to c.methods.size.toString())
         for (m in c.methods) func(out, depth + 2, m)
+
+        annotationUses(out, depth + 1, c.annotations)
     }
 
     /**
@@ -204,6 +219,8 @@ object AstDump {
         // 接口体里只有方法（字段在 Parser 就被拦下），抽象方法没有 BLOCK 子节点（见 [func]）
         line(out, depth + 1, "METHODS", "count" to i.methods.size.toString())
         for (m in i.methods) func(out, depth + 2, m)
+
+        annotationUses(out, depth + 1, i.annotations)
     }
 
     private fun fieldDecl(out: StringBuilder, depth: Int, f: FieldDecl) {
@@ -214,12 +231,83 @@ object AstDump {
             "type" to typeText(f.type),
         )
         expr(out, depth + 1, f.initializer)
+
+        annotationUses(out, depth + 1, f.annotations)
     }
 
     private fun enumDecl(out: StringBuilder, depth: Int, e: EnumDecl) {
         line(out, depth, "ENUM", "control" to e.control.name, "name" to esc(e.name))
         line(out, depth + 1, "VALUES", "count" to e.values.size.toString())
         for (v in e.values) line(out, depth + 2, "ENUM_VALUE", "name" to esc(v.name))
+    }
+
+    // ------------------------------------------------------------------ 注解（阶段 21）
+
+    /**
+     * 注解声明：`[public] annotation 名字(元素表) { companion entity ... }`。
+     *
+     * 孩子顺序与 rsf 侧 `Parser.rsf` 的 `parseAnnotationDecl` 一一对应：
+     * `ANNOTATION_ELEMENTS` → [`COMPANION`] → `ANNOTATION_USES`（元注解，**永远打**）。
+     */
+    private fun annotationDecl(out: StringBuilder, depth: Int, a: AnnotationDecl) {
+        line(out, depth, "ANNOTATION", "control" to a.control.name, "name" to esc(a.name))
+
+        line(out, depth + 1, "ANNOTATION_ELEMENTS", "count" to a.elements.size.toString())
+        for (e in a.elements) {
+            line(
+                out, depth + 2, "ANNOTATION_ELEMENT",
+                "name" to esc(e.name),
+                "type" to typeText(e.type),
+                "hasDefault" to bool(e.default != null),
+            )
+            // 有默认值才紧跟一棵表达式子树（照 FIELD 的 initializer 那样打）
+            e.default?.let { expr(out, depth + 3, it) }
+        }
+
+        // 没写伴生实体时整棵不打（`annotation M { }`）
+        a.companion?.let { companion(out, depth + 1, it) }
+
+        annotationUses(out, depth + 1, a.annotations)
+    }
+
+    /**
+     * 伴生实体：与 [classDecl] 同形（`SUPERS` / `FIELDS` / `METHODS`），但**没有** `TYPE_PARAMS`。
+     *
+     * 名字可省：匿名打占位 `name=-`（`-` 与 `VAR_DECL type=-` 是同款占位写法）。
+     * 伴生实体自己写的注解在语法层就被丢弃（`Parser.kt:522`），AST 里没有对应字段，
+     * 所以这里没有 `ANNOTATION_USES` 这一行。
+     */
+    private fun companion(out: StringBuilder, depth: Int, c: CompanionEntityDecl) {
+        line(out, depth, "COMPANION", "name" to esc(c.name ?: "-"))
+
+        supers(out, depth + 1, c.supertypes)
+
+        line(out, depth + 1, "FIELDS", "count" to c.fields.size.toString())
+        for (field in c.fields) fieldDecl(out, depth + 2, field)
+
+        line(out, depth + 1, "METHODS", "count" to c.methods.size.toString())
+        for (m in c.methods) func(out, depth + 2, m)
+    }
+
+    /**
+     * 挂在可标注声明（类/接口/注解声明/方法/字段）上的注解使用点列表，**永远是最后一个孩子**。
+     *
+     * 空表也打一行 `count=0`；`@M` 与 `@M()` 在这里打出来一样（`AnnotationUse.arguments`
+     * 分不出这两者，照实打空表，不发明区分）。实参两种用**两个节点名**区分。
+     */
+    private fun annotationUses(out: StringBuilder, depth: Int, list: List<AnnotationUse>) {
+        line(out, depth, "ANNOTATION_USES", "count" to list.size.toString())
+        for (u in list) {
+            line(out, depth + 1, "ANNOTATION_USE", "name" to esc(u.name))
+            line(out, depth + 2, "ANNOTATION_ARGS", "count" to u.arguments.size.toString())
+            for (arg in u.arguments) {
+                when (arg) {
+                    is PositionalAnnotationArg -> line(out, depth + 3, "POSITIONAL_ARG")
+                    is NamedAnnotationArg -> line(out, depth + 3, "NAMED_ARG", "name" to esc(arg.name))
+                }
+                expr(out, depth + 4, arg.value)
+            }
+        }
     }
 
     // ------------------------------------------------------------------ 语句

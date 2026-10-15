@@ -100,7 +100,12 @@ public enum NodeKind {
     INT_LIT, LONG_LIT, FLOAT_LIT, DOUBLE_LIT, STRING_LIT, CHAR_LIT, BOOL_LIT, NULL_LIT,
     VAR, CALL, NEW, NEW_ARRAY, MEMBER, INDEX, UNARY, BINARY, IF_EXPR, ELVIS, FORCE, THIS,
     // 只在对拍测试与 CLI 里出现：解析失败的落点（合法输入上永远不会建出来）
-    ERROR
+    ERROR,
+    // 阶段 21：注解（自举同步第 3 刀）。
+    // **一律追加在枚举末尾**：已有成员的名字与次序都不动，免得别处按序号读 NodeKind 时语义漂移。
+    ANNOTATIONS, ANNOTATION, ANNOTATION_ELEMENTS, ANNOTATION_ELEMENT,
+    ANNOTATION_USES, ANNOTATION_USE, ANNOTATION_ARGS, POSITIONAL_ARG, NAMED_ARG,
+    COMPANION
 }
 
 // 枚举值 -> dump 里的名字。写成显式 switch（而不是靠 `"" + k` 拿 toString）有两个好处：
@@ -175,6 +180,17 @@ public fun kindName(k : NodeKind) -> string {
         NodeKind.FORCE : rtn "FORCE"
         NodeKind.THIS : rtn "THIS"
         NodeKind.ERROR : rtn "ERROR"
+        // 阶段 21：注解（自举同步第 3 刀）——每加一个 NodeKind 成员都必须在这里补一行
+        NodeKind.ANNOTATIONS : rtn "ANNOTATIONS"
+        NodeKind.ANNOTATION : rtn "ANNOTATION"
+        NodeKind.ANNOTATION_ELEMENTS : rtn "ANNOTATION_ELEMENTS"
+        NodeKind.ANNOTATION_ELEMENT : rtn "ANNOTATION_ELEMENT"
+        NodeKind.ANNOTATION_USES : rtn "ANNOTATION_USES"
+        NodeKind.ANNOTATION_USE : rtn "ANNOTATION_USE"
+        NodeKind.ANNOTATION_ARGS : rtn "ANNOTATION_ARGS"
+        NodeKind.POSITIONAL_ARG : rtn "POSITIONAL_ARG"
+        NodeKind.NAMED_ARG : rtn "NAMED_ARG"
+        NodeKind.COMPANION : rtn "COMPANION"
     }
     // 上面那个 switch 已经穷尽了 NodeKind 的每一个值，这里只是给「函数一定有返回值」
     // 一个静态的落点（rsf 的返回值检查是看最后一条语句，不看 switch 的穷尽性）。
@@ -602,8 +618,14 @@ public class Parser(tokens : Token[]) {
         var enums = new Node(NodeKind.ENUMS)
         // 阶段 20：接口会归到单独的 INTERFACES 桶里，dump 时排在 ENUMS 后面（与 AstDump.kt 一致）
         var interfaces = new Node(NodeKind.INTERFACES)
+        // 阶段 21：注解声明归到单独的 ANNOTATIONS 桶里，dump 时排在 INTERFACES 后面（与 AstDump.kt 一致）
+        var annotations = new Node(NodeKind.ANNOTATIONS)
 
         while (!check("EOF") && !failed) {
+            // 声明前的注解（阶段 21）：`@Marker public class C { }`。注解与 `public`/`static`/
+            // `override` **顺序任意、可连写多个**，所以先在这里收干净再按「接下来是什么声明」分派；
+            // 每种声明各自带走自己那份表。收不到就是空表（`ANNOTATION_USES count=0`）。
+            var declAnnotations = parseAnnotations()
             if (check("KW_IMPORT") || check("KW_MODULE")) {
                 imports.add(parseImport())
             } else {
@@ -611,15 +633,24 @@ public class Parser(tokens : Token[]) {
                     failAt(peek(), "'pkg' 只能写在文件最前面（在所有 import 之前）")
                 } else {
                     if (check("KW_INTERFACE") || isInterfaceDeclAhead()) {
-                        interfaces.add(parseInterfaceDecl())
+                        interfaces.add(parseInterfaceDecl(declAnnotations))
                     } else {
                         if (check("KW_ENUM") || isEnumDeclAhead()) {
+                            // 枚举**不是** v1 的可标注位置（可标注位置只有类 / 接口 / 注解声明 /
+                            // 方法 / 字段）：明确拦下，别让 `@Marker` 被悄悄丢掉——用户会以为标上了。
+                            if (declAnnotations.childCount > 0) {
+                                failAt(peek(), "注解不能标在枚举声明上：v1 的可标注位置是类 / 接口 / 注解声明 / 方法 / 字段（枚举留到后续阶段）")
+                            }
                             enums.add(parseEnumDecl())
                         } else {
                             if (check("KW_CLASS") || isClassDeclAhead()) {
-                                classes.add(parseClassDecl())
+                                classes.add(parseClassDecl(declAnnotations))
                             } else {
-                                funcs.add(parseFuncDecl())
+                                if (check("KW_ANNOTATION") || isAnnotationDeclAhead()) {
+                                    annotations.add(parseAnnotationDecl(declAnnotations))
+                                } else {
+                                    funcs.add(parseFuncDecl(declAnnotations))
+                                }
                             }
                         }
                     }
@@ -627,7 +658,8 @@ public class Parser(tokens : Token[]) {
             }
         }
 
-        // 孩子顺序固定为 PKG / IMPORTS / FUNCS / CLASSES / ENUMS / INTERFACES（与 AstDump.kt 一致）
+        // 孩子顺序固定为 PKG / IMPORTS / FUNCS / CLASSES / ENUMS / INTERFACES / ANNOTATIONS
+        //（与 AstDump.kt 一致）。注解桶**追加在最后**：位置索引铁律见文件头的说明。
         if (hasPkg) {
             program.add(new Node(NodeKind.PKG).put("name", escapeValue(pkgName)))
         }
@@ -636,6 +668,7 @@ public class Parser(tokens : Token[]) {
         program.add(classes.countTag())
         program.add(enums.countTag())
         program.add(interfaces.countTag())
+        program.add(annotations.countTag())
         rtn program
     }
 
@@ -692,6 +725,15 @@ public class Parser(tokens : Token[]) {
         var offset = 0
         if (isControlKeyword(peek().kind)) { offset = 1 }
         rtn peekAt(offset).kind == "KW_INTERFACE"
+    }
+
+    // 阶段 21：`annotation` 跟 `interface` 一样是硬关键字，带了 public 也要认。
+    // 注意调用点（parseProgram）**已经把声明前的注解收掉了**，所以这里只需要跳过一个权限修饰词，
+    // 与 isClassDeclAhead / isEnumDeclAhead / isInterfaceDeclAhead 完全同款。
+    fun isAnnotationDeclAhead() -> bool {
+        var offset = 0
+        if (isControlKeyword(peek().kind)) { offset = 1 }
+        rtn peekAt(offset).kind == "KW_ANNOTATION"
     }
 
     // 三种 import：点分路径（JVM 类）、字符串路径（rsf 源文件）、module 目录
@@ -755,7 +797,9 @@ public class Parser(tokens : Token[]) {
 
     // ============================================================ 类
 
-    fun parseClassDecl() -> Node {
+    // annotations：声明前收到的注解序列（`@Marker public class C { }`）；空表也要挂（count=0），
+    // 而且**挂在最后**（位置索引铁律：Interp.rsf:792/805/888/919 与 Backend.rsf:5692 用位置读孩子）。
+    fun parseClassDecl(annotations : Node) -> Node {
         var control = "DEFAULT"
         if (isControlKeyword(peek().kind)) { control = controlName(advance().kind) }
         var classTok = expect("KW_CLASS", "class 声明缺少 'class'")
@@ -811,6 +855,8 @@ public class Parser(tokens : Token[]) {
                 .put("override", "false")
             primary.add(ctorParams)
             primary.add(new Node(NodeKind.BLOCK).countTag())
+            // 阶段 21：注解表是每个 FUNC 的最后一个孩子；合成出来的主构造没有注解，打空表
+            primary.add(new Node(NodeKind.ANNOTATION_USES).countTag())
             methods.add(primary)
         }
 
@@ -830,8 +876,11 @@ public class Parser(tokens : Token[]) {
             // 成员（字段 / 方法 / 次构造）也要行号：字段初始化块与函数体里的指令都要发
             // `LineNumberTable`，字段那条取的是**声明行**
             var memberLine = peek().line
+            // 阶段 21：注解可以和修饰词混写（`@M public fun f()` / `public @M fun f()`），
+            // 所以先收注解再分派；字段/方法各自带走自己的那份表（与 Kotlin 版 parseClassDecl 同序）。
+            var memberAnnotations = parseAnnotations()
             if (isVarKeyword(peek().kind)) {
-                var fld = parseFieldDecl()
+                var fld = parseFieldDecl(memberAnnotations)
                 if (fld.line < 1) { fld.line = memberLine }
                 fields.add(fld)
             } else {
@@ -839,9 +888,13 @@ public class Parser(tokens : Token[]) {
                     ((isControlKeyword(peek().kind) || isStaticKeyword(peek().kind)) && checkAt(1, "KW_CONSTRUCTOR"))
                 var mem = new Node(NodeKind.ERROR)
                 if (ctorAhead) {
-                    mem = parseConstructor(nameTok.text)
+                    // 构造器上不能写注解（v1 的可标注位置里没有构造器）
+                    if (memberAnnotations.childCount > 0) {
+                        failAt(peek(), "构造器上不能写注解（'@'）：v1 的注解只标在类/接口/注解声明/方法/字段上")
+                    }
+                    mem = parseConstructor(nameTok.text, memberAnnotations)
                 } else {
-                    mem = parseFuncDecl()
+                    mem = parseFuncDecl(memberAnnotations)
                 }
                 if (mem.line < 1) { mem.line = memberLine }
                 methods.add(mem)
@@ -855,11 +908,13 @@ public class Parser(tokens : Token[]) {
         n.add(typeParams.countTag())
         n.add(fields.countTag())
         n.add(methods.countTag())
+        n.add(annotations.countTag())
         rtn n
     }
 
     // 次构造：`constructor(参数) { ... }`。没有返回类型、不能写权限修饰词、不能 static。
-    fun parseConstructor(className : string) -> Node {
+    // annotations：构造器声明前的注解表（类体里带注解的构造器在语法层就被拒，这里只是照签名带过来）。
+    fun parseConstructor(className : string, annotations : Node) -> Node {
         if (isControlKeyword(peek().kind)) {
             failAt(peek(), "constructor 不能写权限修饰词：构造器只能通过 new 调用")
         }
@@ -889,6 +944,7 @@ public class Parser(tokens : Token[]) {
             .put("override", "false")
         n.add(params)
         n.add(body)
+        n.add(annotations.countTag())
         rtn n
     }
 
@@ -937,7 +993,8 @@ public class Parser(tokens : Token[]) {
     // 接口声明（阶段 20）：`[public] interface 名字[&<T>][: 父接口, ...] { 方法* }`
     // 接口体里**只能写方法**：不能有字段、不能有构造器、不能 static、不能写非 public 的权限修饰词。
     // 方法可以没有体（抽象方法，dump 里不打 BLOCK），也可以有体（默认方法）；接口方法允许 override。
-    fun parseInterfaceDecl() -> Node {
+    // annotations：声明前收到的注解序列（`@Marker interface I { }`），空表也挂（count=0），挂在最后
+    fun parseInterfaceDecl(annotations : Node) -> Node {
         var control = "DEFAULT"
         if (isControlKeyword(peek().kind)) { control = controlName(advance().kind) }
         expect("KW_INTERFACE", "interface 声明缺少 'interface'")
@@ -987,6 +1044,9 @@ public class Parser(tokens : Token[]) {
         overrideOk = true
         while (!check("RBRACE") && !check("EOF") && !failed) {
             var memberLine = peek().line
+            // 阶段 21：接口方法也能带注解（`@Marker fun m() -> void`），先收再分派；
+            // 收完再看剩下的是什么（字段/构造器那两条报错路径与以前一模一样）。
+            var methodAnnotations = parseAnnotations()
             if (isVarKeyword(peek().kind)) {
                 failAt(peek(), "接口里只能写方法：'" + peek().text + "' 是字段/变量声明，接口没有字段")
             } else {
@@ -1012,7 +1072,7 @@ public class Parser(tokens : Token[]) {
                         if (peekAt(offset).kind != "KW_FUN") {
                             failAt(peek(), "接口里只能写方法（格式是 'fun 名字(参数) 返回子句'，可以有方法体），实际读到 '" + peek().text + "'")
                         } else {
-                            var mem = parseFuncDecl()
+                            var mem = parseFuncDecl(methodAnnotations)
                             if (mem.line < 1) { mem.line = memberLine }
                             methods.add(mem)
                             while (matchOne("SEMI")) { }   // 可选的分号，吃掉
@@ -1029,11 +1089,289 @@ public class Parser(tokens : Token[]) {
         n.add(supers)
         n.add(typeParams.countTag())
         n.add(methods.countTag())
+        n.add(annotations.countTag())
+        rtn n
+    }
+
+    // ============================================================ 注解（阶段 21，自举同步第 3 刀）
+    //
+    // 语法与 Kotlin 版（`Parser.kt` 的 parseAnnotations/parseAnnotationUse/parseAnnotationArgs/
+    // parseAnnotationDecl/parseAnnotationElementList/parseAnnotationElement/parseAnnotationBody/
+    // parseCompanionEntity）一一对应，dump 形态由 AstDump.kt 冻结。
+    // **注解子节点一律追加在最后**：Interp.rsf:792/805/888/919 与 Backend.rsf:5692 用位置读孩子。
+
+    // 声明前的注解序列：`@Marker @Other("x") public class C { }`。
+    // 收不到就返回**空表本身**（dump 成 `ANNOTATION_USES count=0`），由调用方挂到节点最后。
+    fun parseAnnotations() -> Node {
+        var list = new Node(NodeKind.ANNOTATION_USES)
+        collectLeadingAnnotations(list)
+        rtn list
+    }
+
+    // 往已经建好的表里再收一轮 `@...`。抽出来是因为「函数修饰词之间」也要能写注解，
+    // 需要重复调用（与 Kotlin 版 collectLeadingAnnotations 同口径）。
+    fun collectLeadingAnnotations(into : Node) -> void {
+        while (check("AT") && !failed) {
+            into.add(parseAnnotationUse())
+        }
+    }
+
+    // 一个使用点：`@Marker` / `@a.b` / `@Outer::Inner("hi", count = 3)`。
+    // 名字里的 `.` 与 `::` 都拼成点分形式（跟 Kotlin 版一样：`name + "." + 段`）。
+    fun parseAnnotationUse() -> Node {
+        var atTok = expect("AT", "注解要写在 '@' 后面")
+        var nameTok = expect("IDENT", "'@' 后面缺少注解名（写法是 @Marker 或 @Marker(...)）")
+        var name = nameTok.text
+        while (check("DOT") || check("DOUBLE_COLON")) {
+            advance()
+            var partTok = expect("IDENT", "注解名 '" + name + "' 后面缺少名字：'.' / '::' 后面要跟一个名字（例如 @a.b 或 @Outer::Inner）")
+            name = name + "." + partTok.text
+        }
+        var args = new Node(NodeKind.ANNOTATION_ARGS).countTag()
+        if (check("LPAREN")) {
+            args = parseAnnotationArgs()
+        }
+        var n = new Node(NodeKind.ANNOTATION_USE).put("name", escapeValue(name))
+        n.add(args)
+        n.line = atTok.line
+        rtn n
+    }
+
+    // 使用点的实参表：位置式与具名式**可以混写**（`@M("hi", count = 3)`），允许尾逗号。
+    // 两种实参用**两个节点名**区分（与 AstDump.kt 的 POSITIONAL_ARG / NAMED_ARG 一一对应）：
+    // 具名式的判据是「IDENT 后面紧跟 ASSIGN」（记号表里没有复合赋值，这个前瞻不会误伤）。
+    // 空表照实打 `count=0`：`@M` 与 `@M()` 在 AST 里分不出，别发明区分。
+    fun parseAnnotationArgs() -> Node {
+        expect("LPAREN", "注解实参表缺少 '('")
+        var args = new Node(NodeKind.ANNOTATION_ARGS)
+        var sawNamed = false
+        if (!check("RPAREN")) {
+            var going = true
+            while (going && !failed) {
+                if (check("IDENT") && checkAt(1, "ASSIGN")) {
+                    var nameTok = advance()
+                    advance()   // =
+                    var named = new Node(NodeKind.NAMED_ARG).put("name", escapeValue(nameTok.text))
+                    named.add(parseExpr())
+                    args.add(named)
+                    sawNamed = true
+                } else {
+                    // 一旦出现过具名实参，后面的位置式就没法确定对应哪个元素了——当场判失败
+                    if (sawNamed) {
+                        failAt(peek(), "注解实参里具名式要写在最后：'名字 = 值' 后面不能再写位置式实参，位置式没法确定对应哪个元素")
+                    }
+                    var pos = new Node(NodeKind.POSITIONAL_ARG)
+                    pos.add(parseExpr())
+                    args.add(pos)
+                }
+                if (!matchOne("COMMA")) {
+                    going = false
+                } else {
+                    if (check("RPAREN")) { going = false }   // 尾逗号
+                }
+            }
+        }
+        expect("RPAREN", "注解实参表没有闭合，缺少 ')'")
+        rtn args.countTag()
+    }
+
+    // 注解声明：`[public] annotation 名字(元素表) { companion entity ... }`。
+    // 元素表**只有写了 '(' 才收**（`annotation M { }` 与 `annotation M() { }` 都是空表，分不出）；
+    // 注解体里至多一个 companion entity，别的成员（fun / var / constructor）是语法错误——
+    // 在 parser 层就报，不留给语义层。annotations：声明前的注解序列（元注解 `@Meta annotation M`）。
+    fun parseAnnotationDecl(annotations : Node) -> Node {
+        var control = "DEFAULT"
+        if (isControlKeyword(peek().kind)) { control = controlName(advance().kind) }
+        expect("KW_ANNOTATION", "注解声明缺少 'annotation'")
+        var nameTok = expect("IDENT", "'annotation' 后面缺少注解名")
+
+        var elements = new Node(NodeKind.ANNOTATION_ELEMENTS)
+        if (check("LPAREN")) {
+            elements = parseAnnotationElementList(nameTok.text)
+        }
+
+        var n = new Node(NodeKind.ANNOTATION).put("control", control).put("name", escapeValue(nameTok.text))
+        n.add(elements.countTag())
+        // 孩子顺序：ANNOTATION_ELEMENTS → [COMPANION] → ANNOTATION_USES（与 AstDump.kt 一致）
+
+        if (check("LBRACE")) {
+            advance()
+            parseAnnotationBody(nameTok.text, n)
+            // 体里**至多一个** companion entity：第二个当场报错
+            if (check("KW_COMPANION") && !failed) {
+                failAt(peek(), "注解 '" + nameTok.text + "' 的体里只能有一个 companion entity")
+            }
+            expect("RBRACE", "注解 '" + nameTok.text + "' 没有闭合，缺少 '}'")
+        }
+
+        n.add(annotations.countTag())
+        rtn n
+    }
+
+    // 注解体：至多一个 `companion entity [名字] [: 父接口] { 类体 }`；别的成员一律报错。
+    // 伴生实体自己也能带注解，但**语义层忽略**（与 Kotlin 版 parseAnnotationBody 一样：
+    // 收下就丢掉，AST 里 CompanionEntityDecl 根本没有注解字段），所以这里不把结果往上挂。
+    // 解析出来的 COMPANION 直接挂到 owner（ANNOTATION 节点）上，位置紧跟在 ANNOTATION_ELEMENTS 之后。
+    fun parseAnnotationBody(annotationName : string, owner : Node) -> void {
+        parseAnnotations()
+        if (check("KW_COMPANION")) {
+            owner.add(parseCompanionEntity(annotationName))
+        } else {
+            if (!check("RBRACE")) {
+                failAt(peek(), "注解 '" + annotationName + "' 的体里只能写一个 companion entity（例如 companion entity Impl : Runnable { ... }）——注解不是类：字段 / 方法 / 构造器都要写进伴生实体里")
+            }
+        }
+    }
+
+    // 元素表：`(value : string = "x", count : int = 0,)`——**允许尾逗号**，重名在解析期报错。
+    // 重名只能拿数组线性查（rsf 还没有 HashSet，与类型参数那段同一个写法）。
+    fun parseAnnotationElementList(annotationName : string) -> Node {
+        expect("LPAREN", "注解 '" + annotationName + "' 的元素表缺少 '('")
+        var elements = new Node(NodeKind.ANNOTATION_ELEMENTS)
+        var seenNames = new string[8]
+        var seenCount = 0
+        if (!check("RPAREN")) {
+            var going = true
+            while (going && !failed) {
+                var nameTok = expect("IDENT", "注解元素的写法是「名字 : 类型」[= 默认值]（后缀风格，不是 Java 的「类型 名字」）")
+                for (var i = 0; i < seenCount; i = i + 1) {
+                    if (seenNames[i] == nameTok.text) {
+                        failAt(nameTok, "注解 '" + annotationName + "' 的元素 '" + nameTok.text + "' 重名了")
+                    }
+                }
+                if (seenCount >= seenNames.length) {
+                    var bigger : string[] = new string[seenNames.length * 2]
+                    for (var i = 0; i < seenCount; i = i + 1) { bigger[i] = seenNames[i] }
+                    seenNames = bigger
+                }
+                seenNames[seenCount] = nameTok.text
+                seenCount = seenCount + 1
+                elements.add(parseAnnotationElement(nameTok))
+                if (!matchOne("COMMA")) {
+                    going = false
+                } else {
+                    if (check("RPAREN")) { going = false }   // 尾逗号
+                }
+            }
+        }
+        expect("RPAREN", "注解 '" + annotationName + "' 的元素表没有闭合，缺少 ')'")
+        rtn elements
+    }
+
+    // 一个元素：名字已经被调用方吃掉，这里接 `: 类型` 与可省的 `= 默认值`。
+    // 有默认值才挂一棵表达式子树（照 FIELD 的 initializer 那样打，与 AstDump.kt 一致）。
+    fun parseAnnotationElement(nameTok : Token) -> Node {
+        expect("COLON", "注解元素 '" + nameTok.text + "' 要写成「名字 : 类型」，类型不能省")
+        var ty = parseSuffixType("注解元素 '" + nameTok.text + "' 的类型要写成「名字 : 类型」")
+        var hasDefault = false
+        var defaultExpr = new Node(NodeKind.ERROR)
+        if (matchOne("ASSIGN")) {
+            defaultExpr = parseAnnotationDefault(nameTok.text)
+            hasDefault = true
+        }
+        var n = new Node(NodeKind.ANNOTATION_ELEMENT)
+            .put("name", escapeValue(nameTok.text))
+            .put("type", ty.text())
+            .put("hasDefault", boolText(hasDefault))
+        if (hasDefault) { n.add(defaultExpr) }
+        rtn n
+    }
+
+    // 默认值：v1 只收**字面量**，或者数值前**一个** `-`
+    //（与 Kotlin 版 validateAnnotationDefault / isDefaultConstantLiteral 同口径）。
+    // 枚举常量 / 注解 / 数组默认值 v1 不支持 ⇒ 这里直接判失败。
+    // 注意 rsf 的 isLiteralKind 少了 BOOL_LIT/NULL_LIT，所以这里逐个列全，不用它。
+    fun parseAnnotationDefault(owner : string) -> Node {
+        var e = parseExpr()
+        var ok = false
+        if (e.kind == NodeKind.INT_LIT || e.kind == NodeKind.LONG_LIT || e.kind == NodeKind.FLOAT_LIT ||
+            e.kind == NodeKind.DOUBLE_LIT || e.kind == NodeKind.STRING_LIT || e.kind == NodeKind.CHAR_LIT ||
+            e.kind == NodeKind.BOOL_LIT || e.kind == NodeKind.NULL_LIT) {
+            ok = true
+        } else {
+            // UNARY 节点的属性串就是 `op=MINUS`（parseUnary 里 put("op", opTok.kind)）；只认数值前的一个 '-'
+            if (e.kind == NodeKind.UNARY && e.childCount == 1 && e.text == "op=MINUS") {
+                var inner = e.children[0]
+                if (inner.kind == NodeKind.INT_LIT || inner.kind == NodeKind.LONG_LIT ||
+                    inner.kind == NodeKind.FLOAT_LIT || inner.kind == NodeKind.DOUBLE_LIT) {
+                    ok = true
+                }
+            }
+        }
+        if (!ok) {
+            failAt(peek(), "注解元素 '" + owner + "' 的默认值只能是字面量（整数 / 小数 / 字符串 / 字符 / true / false / null，或者数值前一个 '-'）：枚举常量 / 注解 / 数组默认值 v1 不支持")
+        }
+        rtn e
+    }
+
+    // 伴生实体：`companion entity [名字] [: 父接口, ...] { 普通类体 }`。
+    // 名字可省（匿名，dump 里打占位 `name=-`）；父接口子句复用第 1 刀的 parseSupertypeList()；
+    // 体就是普通类体（字段 / 方法 / 构造器），复用同一批解析函数。
+    fun parseCompanionEntity(annotationName : string) -> Node {
+        var companionTok = expect("KW_COMPANION", "伴生实体缺少 'companion'")
+        expect("KW_ENTITY", "companion 后面缺少 'entity'（伴生实体要写成 companion entity [名字] [: 父接口] { ... }）")
+
+        var hasName = false
+        var name = "-"
+        if (check("IDENT")) {
+            name = advance().text
+            hasName = true
+        }
+        // 名字后面跟类型关键字 = 把父接口写成了变量类型的形状，单独报一句（与 Kotlin 版同款边界）
+        if (hasName && isTypeKeyword(peek().kind)) {
+            failAt(peek(), "伴生实体 '" + name + "' 缺少 '{'：名字后面的类型要写成父接口列表（companion entity " + name + " : 父接口 { ... }）")
+        }
+
+        var supers = parseSupertypeList()
+        expect("LBRACE", "伴生实体缺少 '{'（伴生实体要有类体，写法是 companion entity 名字 : 父接口 { ... }）")
+
+        // 构造器的名字沿用 Kotlin 版：具名用名字，匿名用注解名
+        var ctorName = annotationName
+        if (hasName) { ctorName = name }
+
+        var fields = new Node(NodeKind.FIELDS)
+        var methods = new Node(NodeKind.METHODS)
+        // 伴生实体的体就是类体：override 在这里合法（与 Kotlin 版 allowOverride = true 对应）
+        var oldOverrideOk = overrideOk
+        overrideOk = true
+        while (!check("RBRACE") && !check("EOF") && !failed) {
+            var memberLine = peek().line
+            var memberAnnotations = parseAnnotations()
+            if (isVarKeyword(peek().kind)) {
+                var fld = parseFieldDecl(memberAnnotations)
+                if (fld.line < 1) { fld.line = memberLine }
+                fields.add(fld)
+            } else {
+                if (peek().kind == "KW_CONSTRUCTOR") {
+                    if (memberAnnotations.childCount > 0) {
+                        failAt(peek(), "伴生实体的构造器上不能写注解（'@'）：注解只标在类 / 接口 / 注解声明 / 方法 / 字段上")
+                    }
+                    var ctor = parseConstructor(ctorName, memberAnnotations)
+                    if (ctor.line < 1) { ctor.line = memberLine }
+                    methods.add(ctor)
+                } else {
+                    var mem = parseFuncDecl(memberAnnotations)
+                    if (mem.line < 1) { mem.line = memberLine }
+                    methods.add(mem)
+                    while (matchOne("SEMI")) { }   // 可选的分号，吃掉
+                }
+            }
+        }
+        overrideOk = oldOverrideOk
+        expect("RBRACE", "伴生实体没有闭合，缺少 '}'")
+
+        // 孩子顺序：SUPERS → FIELDS → METHODS（**没有 TYPE_PARAMS**，与 AstDump.kt 一致）
+        var n = new Node(NodeKind.COMPANION).put("name", escapeValue(name))
+        n.add(supers)
+        n.add(fields.countTag())
+        n.add(methods.countTag())
+        n.line = companionTok.line
         rtn n
     }
 
     // 字段：`var 名字 : 类型 = 初值`（类型与初值都必须写）
-    fun parseFieldDecl() -> Node {
+    // annotations：声明前收到的注解序列（`@Marker var f : int = 0`），空表也挂（count=0），挂在最后
+    fun parseFieldDecl(annotations : Node) -> Node {
         var kwTok = advance()
         var mutable = kwTok.kind == "KW_VAR"
         var nameTok = expect("IDENT", "字段缺少名字：写法是 '" + kwTok.text + " 名字 : 类型 = 初值'")
@@ -1050,31 +1388,42 @@ public class Parser(tokens : Token[]) {
             .put("mutable", boolText(mutable))
             .put("type", ty.text())
         n.add(init)
+        n.add(annotations.countTag())
         rtn n
     }
 
     // ============================================================ 函数
 
-    fun parseFuncDecl() -> Node {
+    // annotations：调用方已经收好的那份注解表（顶层声明前 / 类体 / 接口体 / 伴生实体成员）。
+    // 函数自己的修饰词之间**还能**再写注解（`@M public fun f()` / `public @M fun f()`），
+    // 所以进来之后、每吃下一个修饰词之后都再收一轮（与 Kotlin 版 collectLeadingAnnotations 同口径）。
+    // 注解列表挂在**最后**（PARAMS → [BLOCK] → ANNOTATION_USES）。
+    fun parseFuncDecl(annotations : Node) -> Node {
+        var anns = annotations
         var control = "DEFAULT"
         var isOverride = false
         var isStatic = false
+
+        collectLeadingAnnotations(anns)
 
         // 修饰词可以排好几个、顺序随意（`static override fun` / `override static fun`）：
         // 与 Kotlin 版 parseFuncDecl 同一个循环——权限修饰词与 static 各至多一次、
         // override 只置位，而且**只有类体/接口体**里才收（overrideOk，见字段上的注释）。
         var going = true
-        while (going) {
+        while (going && !failed) {
             if (isControlKeyword(peek().kind)) {
                 control = controlName(advance().kind)
+                collectLeadingAnnotations(anns)
             } else {
                 if (isStaticKeyword(peek().kind)) {
                     advance()
                     isStatic = true
+                    collectLeadingAnnotations(anns)
                 } else {
                     if (overrideOk && isOverrideKeyword(peek().kind)) {
                         advance()
                         isOverride = true
+                        collectLeadingAnnotations(anns)
                     } else {
                         going = false
                     }
@@ -1152,6 +1501,7 @@ public class Parser(tokens : Token[]) {
             .put("override", boolText(isOverride))
         n.add(params)
         if (hasBody) { n.add(body) }
+        n.add(anns.countTag())
         rtn n
     }
 
@@ -1169,6 +1519,8 @@ public class Parser(tokens : Token[]) {
             .put("override", boolText(isOverride))
         n.add(new Node(NodeKind.PARAMS).countTag())
         n.add(new Node(NodeKind.BLOCK).countTag())
+        // 阶段 21：每个 FUNC 都要有末尾的注解表（这条是报错路径上的兜底节点）
+        n.add(new Node(NodeKind.ANNOTATION_USES).countTag())
         rtn n
     }
 

@@ -962,7 +962,9 @@ fun main() -> void {
 第 2 刀 `Backend.rsf` / `Interp.rsf` / `Sources.rsf` 收语义：接口类头、默认方法、`INVOKEINTERFACE`、
 多文件顶层接口），探针台 `build/verify21/bootbackend/run-probes.sh both` 四列全绿。
 自举源（`rsfSrc/bootstrap/**`）**自身**还没改写成接口风格——只是「能写」了。
-注解（阶段 21）**仍未同步**，见 `BOOTSTRAP.md`。
+注解（阶段 21）**语法已同步、语义未同步**（2026-10-15，第 3 刀 `Parser.rsf` 收 `annotation` 声明 /
+元素表 / 伴生实体 / `@` 使用点，AST 与 Kotlin 版逐字节一致）；自举后端与自举解释器暂时**忽略**注解节点
+（不生成 `RuntimeVisibleAnnotations`、不执行伴生实体），注解的语义仍只在 Kotlin 版里，见 `BOOTSTRAP.md`。
 
 ### 注解 `annotation`（阶段 21）
 
@@ -1385,7 +1387,7 @@ gradlew.bat verifyPlugin          :: 官方校验器静态检查
 - **`&&` / `||`**：两边必须是 `bool`（`?bool` 要先解包 / 兜底）；没有按位运算（单独的 `|` 报错）
 - **注解（阶段 21）**：元素默认值只支持常量字面量（枚举常量 / 注解 / 数组都不行）；`@` 只能标
   类 / 接口 / 注解声明 / 方法 / 字段（参数、局部变量、枚举声明都不行）；不做元注解 / `@Repeatable` /
-  内建 `@Deprecated`；伴生实体只继承接口，注解也不能当父类型；`rsfSrc/**` 还没同步注解
+  内建 `@Deprecated`；伴生实体只继承接口，注解也不能当父类型；`rsfSrc/**` 的注解**只到语法层**（自举链能解析、与 Kotlin 版 AST 逐字节一致，但忽略其语义）
 - **类型转换与类型判断**：`(byte) x` 那类窄化仍只能走内置函数；计划里的 `as` / `?as` / `is` / `!is`
   （`DESIGN-24.md`）还没实现
 
@@ -1684,7 +1686,8 @@ A 编自己得（B），B 再编自己得（C），**B 与 C 的输出 126 个 `
 [`BOOTSTRAP.md`](BOOTSTRAP.md)）：① **阶段 20 的 `interface` / `override` 已同步**（词法 45 → 51 项 +
 `@` 记号 → 第 1 刀 `Parser.rsf` 语法 → 第 2 刀 `Backend.rsf` / `Interp.rsf` / `Sources.rsf` 语义；
 三件套 `bash build/verify21/knife-verify.sh` 全绿：J1 126 类 / diff 0、八示例一致）；
-**阶段 21 的注解仍未同步**（对自举链是加法，`@` 在现有自举源里零用法）；② 后端 / 解释器的
+**阶段 21 的注解已同步语法层**（2026-10-15 第 3 刀 `Parser.rsf` 收声明 / 元素 / 伴生实体 / `@` 使用点，
+AST 与 Kotlin 版逐字节一致；自举后端与自举解释器暂按「忽略注解」处理）；② 后端 / 解释器的
 「暂不支持清单」（JDK 静态成员表只覆盖 `System` / `Math.max|min|abs` / 包装类三件套，没有
 `HashMap` / `Math.sqrt` 这类成员；自举源自身也没有接口风格）；③ 语言层没有类继承；
 ④ 工具面（自举侧只有 4 个单文件 CLI，没有统一 CLI / LSP）。

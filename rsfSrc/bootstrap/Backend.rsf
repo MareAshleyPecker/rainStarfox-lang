@@ -136,6 +136,15 @@ public fun propInt(n : Node, key : string) -> int {
     rtn parseInt(raw) ?: 0
 }
 
+// 阶段 21：FUNC 的孩子形状是 `PARAMS → [BLOCK] → ANNOTATION_USES`（注解表恒在最后），
+// 所以「有没有函数体」**不能再看 childCount**：抽象方法的 childCount 从 1 变成了 2
+// （PARAMS + 空注解表），只看数量会把抽象方法错当成默认方法、给它发一段抛异常的体。
+// 判据改成「第二个孩子是不是 BLOCK」——有体就是默认方法，没体就是抽象方法。
+fun hasBodyNode(fn : Node) -> bool {
+    if (fn.childCount < 2) { rtn false }
+    rtn fn.children[1].kind == NodeKind.BLOCK
+}
+
 fun hexValue(c : char) -> int {
     if (c >= '0' && c <= '9') { rtn charToInt(c) - 48 }
     if (c >= 'a' && c <= 'f') { rtn charToInt(c) - 87 }
@@ -1989,7 +1998,8 @@ public class CInfo(name : string, internal : string) {
         while (i < methCount) {
             var m = meths[i]
             if (!m.ctor && m.name == nm2 && m.params.length == argc) {
-                if (!bodyOnly || m.node.childCount > 1) { rtn m }
+                // 阶段 21：判据是 hasBodyNode（不能再看 childCount —— 抽象方法也有两个孩子的）
+                if (!bodyOnly || hasBodyNode(m.node)) { rtn m }
             }
             i = i + 1
         }
@@ -5209,6 +5219,8 @@ fun collectClasses(g : Gen, classes : Node, enums : Node) -> void {
                 // 逐个解析成内部名存进 ci.supers —— 类头与 INVOKEINTERFACE 的判定都用它。
                 collectSuperNames(g, part, ci)
                 if (g.failed) { rtn }
+            } else if (part.kind == NodeKind.ANNOTATION_USES) {
+                // 注解语义在阶段 21 由 Kotlin 侧实现，自举后端本刀忽略
             } else {
                 g.bad("类成员 " + kindName(part.kind))
                 rtn
@@ -5749,6 +5761,8 @@ fun collectInterfaces(g : Gen, ifs : Node) -> void {
             } else if (part.kind == NodeKind.METHODS) {
                 collectMethods(g, part, ic)
                 if (g.failed) { rtn }
+            } else if (part.kind == NodeKind.ANNOTATION_USES) {
+                // 注解语义在阶段 21 由 Kotlin 侧实现，自举后端本刀忽略
             } else {
                 g.bad("接口成员 " + kindName(part.kind))
                 rtn
@@ -5778,7 +5792,7 @@ fun emitUserInterface(g : Gen, ci : CInfo) -> void {
     var i = 0
     while (i < ci.methCount) {
         var m = ci.meths[i]
-        if (m.node.childCount < 2) {
+        if (!hasBodyNode(m.node)) {
             var mv = g.cw.visitMethod(accPublic() + accAbstract(), m.name, m.mdesc(), null, null)
             mv.visitEnd()
         } else {
