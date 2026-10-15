@@ -520,6 +520,12 @@ public class Cls(nm : string) {
     var isIface : bool = false
     var supers : string[] = new string[0]
     var scount : int = 0
+    // 阶段 21：注解。注解声明的**伴生类**也复用 Cls，并且直接进 `classes` ——
+    // `new Marker(...)` 走的就是 `findCls("Marker")` 这条既有路径，不必给 `new` 加特例。
+    // `isAnn` 把「缺省实参填元素默认值」这条规则限定在这一类上（普通类零开销）。
+    var isAnn : bool = false
+    // 前 elemCount 个字段是注解元素（声明序）；它们之后才是伴生体自己声明的字段。
+    var elemCount : int = 0
 
     public fun addSuper(nm2 : string) -> void {
         var i = 0
@@ -782,6 +788,7 @@ public class Interp(prog : Node) {
             else if (c.kind == NodeKind.CLASSES) { loadClasses(c) }
             else if (c.kind == NodeKind.ENUMS) { loadEnums(c) }
             else if (c.kind == NodeKind.INTERFACES) { loadIfaces(c) }
+            else if (c.kind == NodeKind.ANNOTATIONS) { loadAnns(c) }
             i = i + 1
         }
         rtn
@@ -860,6 +867,98 @@ public class Interp(prog : Node) {
             icount = icount + 1
             i = i + 1
         }
+        rtn
+    }
+
+    // 阶段 21：注解声明。`ANNOTATION` 的孩子顺序 = ANNOTATION_ELEMENTS → [COMPANION]
+    // → ANNOTATION_USES（注解**自己的**使用处，解释器不看）。
+    // 注解不是普通类：`new Marker(...)` 构造的是**伴生类的对象**（Kotlin 侧类名
+    // `Marker$Impl` / 匿名时 `Marker$companion`）。这里把伴生类**按注解名**登记进
+    // classes —— 运行期类名、`findCls`、`evNew`、`objMember` 就全部复用既有路径；
+    // 元素 = 前 elemCount 个字段（元素的默认值就是该字段的初值表达式）。
+    fun loadAnns(cs : Node) -> void {
+        var i = 0
+        while (i < cs.childCount) {
+            var an = cs.children[i]
+            var c = new Cls(attr(an, "name"))
+            c.isAnn = true
+            var j = 0
+            while (j < an.childCount) {
+                var part = an.children[j]
+                if (part.kind == NodeKind.ANNOTATION_ELEMENTS) { loadElemFields(c, part) }
+                else if (part.kind == NodeKind.COMPANION) { loadCompanion(c, part) }
+                j = j + 1
+            }
+            classes = growCls(classes, ccount, c)
+            ccount = ccount + 1
+            i = i + 1
+        }
+        rtn
+    }
+
+    // 元素表 → 字段表。**没有默认值**的元素没有孩子，`kid` 越界给 ERROR 节点；
+    // 构造时按类型零值填（对齐 Kotlin `fillElementDefaults` 的 `getOrElse(index){INT}`）。
+    fun loadElemFields(c : Cls, els : Node) -> void {
+        var n = els.childCount
+        var nms : string[] = new string[n]
+        var tys : string[] = new string[n]
+        var inits : Node[] = new Node[n]
+        var k = 0
+        while (k < n) {
+            var el = els.children[k]
+            nms[k] = attr(el, "name")
+            tys[k] = attr(el, "type")
+            inits[k] = kid(el, 0)
+            k = k + 1
+        }
+        c.fnames = nms
+        c.ftypes = tys
+        c.finits = inits
+        c.fcount = n
+        c.elemCount = n
+        rtn
+    }
+
+    // 伴生体：孩子顺序 SUPERS → FIELDS → METHODS。字段**追加在元素之后**（元素先装），
+    // 方法名与构造器装载完全复用 loadMethods / loadSupers。
+    fun loadCompanion(c : Cls, cm : Node) -> void {
+        var j = 0
+        while (j < cm.childCount) {
+            var part = cm.children[j]
+            if (part.kind == NodeKind.SUPERS) { loadSupers(c, part) }
+            else if (part.kind == NodeKind.FIELDS) { appendFields(c, part) }
+            else if (part.kind == NodeKind.METHODS) { loadMethods(c, part) }
+            j = j + 1
+        }
+        rtn
+    }
+
+    fun appendFields(c : Cls, fields : Node) -> void {
+        var n = fields.childCount
+        if (n == 0) { rtn }
+        var total = c.fcount + n
+        var nms : string[] = new string[total]
+        var tys : string[] = new string[total]
+        var inits : Node[] = new Node[total]
+        var k = 0
+        while (k < c.fcount) {
+            nms[k] = c.fnames[k]
+            tys[k] = c.ftypes[k]
+            inits[k] = c.finits[k]
+            k = k + 1
+        }
+        var m = 0
+        while (m < n) {
+            var fd = fields.children[m]
+            nms[c.fcount + m] = attr(fd, "name")
+            tys[c.fcount + m] = attr(fd, "type")
+            inits[c.fcount + m] = kid(fd, 0)
+            m = m + 1
+        }
+        c.fnames = nms
+        c.ftypes = tys
+        c.finits = inits
+        c.fcount = total
         rtn
     }
 
@@ -1629,6 +1728,29 @@ public class Interp(prog : Node) {
             o.fs[i] = defaultOf(c.ftypes[i])
             i = i + 1
         }
+        if (c.isAnn) {
+            // 阶段 21：注解伴生类。实参是**前缀**（`new Tag()` 给 0 个实参、3 个元素），
+            // 没给的元素求**它自己的默认值表达式**；没有默认值的按类型零值。
+            // 伴生体另外声明的字段仍走普通字段初值。Kotlin 侧这一段是
+            // runConstructor → fillElementDefaults + runFieldInitializers（:1016-1106）。
+            var ae0 = new Env(globals)
+            ae0.me = o
+            ae0.cl = c
+            var ak = 0
+            while (ak < c.fcount) {
+                if (ak < c.elemCount && ak < args.length) {
+                    o.fs[ak] = coerceTo(c.ftypes[ak], args[ak])
+                } else if (c.finits[ak].kind == NodeKind.ERROR) {
+                    o.fs[ak] = defaultOf(c.ftypes[ak])
+                } else {
+                    o.fs[ak] = coerceTo(c.ftypes[ak], ev(c.finits[ak], ae0)!!)
+                }
+                ak = ak + 1
+            }
+            // 伴生类**自己声明**的构造器（Checker 要求形参 = 元素表，两边对齐见 runAnnCtor）
+            if (c.ccount > 0) { runAnnCtor(c, c.ctors[0], o, args)!! }
+            rtn vObj(o)
+        }
         var ctor = pickCtor(c, args)
         if (ctor == null) {
             // 隐式无参构造器：一个构造器都没写时只有字段初值
@@ -1708,6 +1830,34 @@ public class Interp(prog : Node) {
             i = i + 1
         }
         if (!hasThisCall(f.body)) { runFieldInits(c, o, env)!! }
+        var sig = ""
+        try {
+            blk(f.body, env)!!
+        } catch (e : string) {
+            if (signalKind(e) != "R") { sig = e }
+        }
+        if (sig.length() > 0) { fail sig }
+        rtn 0
+    }
+
+    // 阶段 21：注解伴生类**自己声明**的构造器。Checker 要求它的形参名与顺序与元素表一致；
+    // 声明多个时不禁止，但 `new` 选的是**第一个**（实测 Kotlin 与这里同取 `ctors[0]`），
+    // 所以不走 `pickCtor` 的按个数挑 —— `new A()` 给 0 个实参也照样跑这个构造器体。
+    // 元素字段在 `constructUser` 里已经填好（实参优先、否则元素默认值），形参槽直接取字段值；
+    // **不能再跑 `runFieldInits`** —— 那会把实参填好的元素字段冲回默认值。
+    // 对齐 Kotlin `runConstructor`：fillElementDefaults 填形参槽 → runFieldInitializers → 构造器体。
+    public fun runAnnCtor(c : Cls, f : Fn, o : Obj, args : Val[]) -> !int {
+        var env = new Env(globals)
+        env.me = o
+        env.cl = c
+        var i = 0
+        while (i < f.pcount) {
+            var a = vNull()
+            if (i < c.elemCount) { a = o.fs[i] }
+            else if (i < args.length) { a = args[i] }
+            env.define(f.pnames[i], coerceTo(f.ptypes[i], a))
+            i = i + 1
+        }
         var sig = ""
         try {
             blk(f.body, env)!!
@@ -2037,6 +2187,14 @@ public class Interp(prog : Node) {
         if (c == null) { fail "17c 解释器：类 '" + o.cls + "' 不在本程序里" }
         var m = c!!.methodNamed(nm)
         if (m != null) { rtn callFn(m!!, o, c!!, args)!! }
+        // 阶段 21：注解对象的**元素访问器** `m.value()`。运行期是伴生类的对象，静态类型
+        // 却是注解接口，所以这份访问器是**非虚**的：查到元素字段直接返回字段值。
+        // 与 Kotlin `annotationElementCall`（Interpreter.kt:1132-1136）同口径 ——
+        // 排在接口默认方法之前（注解接口不进 `interfaces` 表，走不到虚分派那条路）。
+        if (c!!.isAnn) {
+            var fi = c!!.fieldIndex(nm)
+            if (fi >= 0 && fi < c!!.elemCount && args.length == 0) { rtn o.fs[fi] }
+        }
         // 阶段 20：运行期真实类自己没有这个成员 —— 沿接口链找带体的默认方法。
         // `this` 与**帧的类**都用运行期真实类（对齐 Kotlin `callMethod(self.className, decl, self, args)`），
         // 这样默认方法体里的隐式调用经 `env.curClass()` 拿到的是实现类，动态分派才对。

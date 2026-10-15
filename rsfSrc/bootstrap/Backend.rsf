@@ -724,6 +724,13 @@ public class Gen(owner : string) {
     // `collectAnnotations` 里一次填完，发射阶段只查不改。
     var ains : AnnInfo[] = new AnnInfo[4]
     var aiCount : int = 0
+    // 第 5 刀：伴生类的**内部名**预表（`Tag$Impl`）。类的**字段类型**在
+    // `collectClasses` 里就要求解，而注解的伴生类要等 `collectAnnotations`
+    // 才真正登记（它要查类表/接口表）—— 于是 `var item : Tag::Impl` 会查不到伴生类。
+    // 这里在收集类之前先扫一遍 AST 把名字记下来，`typeOfText` 找不到 CInfo 时
+    // 也能算出正确的描述符（成员查找发生在发射期，那时 CInfo 已经在表里了）。
+    var annComps : string[] = new string[4]
+    var annCompCount : int = 0
     var accs : AccInfo[] = new AccInfo[8]
     var accCount : int = 0
     // `cis` 里前多少条是**用户类**。注解伴生类也进 `cis`（它们要走普通类的发射路径），
@@ -812,6 +819,26 @@ public class Gen(owner : string) {
     }
 
     // ---- 阶段 21：注解表 ----
+    // 第 5 刀：伴生类内部名的预表（见 `annComps` 的注释）。
+    public fun addAnnComp(nm : string) -> void {
+        if (annCompCount >= annComps.length) {
+            var b : string[] = new string[annComps.length * 2]
+            for (var i = 0; i < annCompCount; i = i + 1) { b[i] = annComps[i] }
+            annComps = b
+        }
+        annComps[annCompCount] = nm
+        annCompCount = annCompCount + 1
+    }
+
+    public fun hasAnnComp(nm : string) -> bool {
+        var i = 0
+        while (i < annCompCount) {
+            if (annComps[i] == nm) { rtn true }
+            i = i + 1
+        }
+        rtn false
+    }
+
     public fun addAnn(a : AnnInfo) -> void {
         if (aiCount >= ains.length) {
             var b : AnnInfo[] = new AnnInfo[ains.length * 2]
@@ -1317,6 +1344,19 @@ fun typeOfText(g : Gen, text : string) -> ?BType {
         g.bad("可空数组类型 " + text)
         rtn null
     }
+    // 第 5 刀：嵌套类型名 `注解名::伴生名`（`Marker::Impl`）。伴生类的 JVM 名就是
+    // `注解名$伴生名`，所以先把 `::` 拆下来：base 部分照常走泛型/内置/用户类那几条路，
+    // 最后用 `base$nested` 去类表里找伴生类。Kotlin 侧 v1 只允许一层。
+    var nested = ""
+    var dcAt = rest.indexOf("::")
+    if (dcAt >= 0) {
+        nested = rest.substring(dcAt + 2, rest.length())
+        rest = rest.substring(0, dcAt)
+        if (nested.length() == 0 || nested.indexOf("::") >= 0) {
+            g.bad("嵌套类型 " + text)
+            rtn null
+        }
+    }
     // 泛型实参（`Box&<int>` / `Box&<Box&<int>>` / `ArrayList&<string>`）。
     // JVM 没有泛型：实参只在编译期用来做调用点的 CHECKCAST / 装箱拆箱，
     // 类型的描述符一律按**擦除后**的形式算（`Box&<int>` 就是 `Box`）。
@@ -1349,6 +1389,36 @@ fun typeOfText(g : Gen, text : string) -> ?BType {
             rtn null
         }
         rtn new BType(base, "", nullable, depth)
+    }
+    // 第 5 刀：嵌套类型名 → 注解伴生类（`Marker::Impl` → 类表里的 `Marker$Impl`）。
+    // 放在用户类那一段**前面**：base 也可能是用户类（`Wire&<int>::Base`），
+    // 但真正要的是伴生类，所以有 `::` 时只认伴生类，找不到就报错。
+    if (nested.length() > 0) {
+        var comp = g.findClass(rest + "$" + nested)
+        if (comp == null) {
+            // 伴生类还没登记（字段类型在 `collectClasses` 里就要解算，注解表要更晚），
+            // 预表里认得出名字就直接用内部名——成员查找在发射期做，那时 CInfo 已在表里。
+            if (g.hasAnnComp(g.pkgPrefix + rest + "$" + nested)) {
+                rtn new BType("external", g.pkgPrefix + rest + "$" + nested, nullable, depth)
+            }
+            g.bad("类型 " + text)
+            rtn null
+        }
+        if (ta.length > 0) {
+            g.bad("类型实参个数不符 " + text)
+            rtn null
+        }
+        rtn new BType("external", comp!!.internal, nullable, depth)
+    }
+    // 第 5 刀：注解接口本身当类型用（`var a : Marker = ...`）。注解接口的内部名
+    // 就是注解简名（不带包，见 `AnnInfo.name` 的注释）。
+    var anAsType = g.findAnn(rest)
+    if (anAsType != null) {
+        if (ta.length > 0) {
+            g.bad("非泛型类型 " + text)
+            rtn null
+        }
+        rtn new BType("external", anAsType!!.name, nullable, depth)
     }
     // 类型参数（`T`）：擦除后就是 Object，实参在调用点由接收者补上
     if (g.cur != null && g.cur!!.typeParamIndex(rest) >= 0) {
@@ -3417,6 +3487,26 @@ public class Walker(g : Gen) {
                     // IncompatibleClassChangeError: Found interface ..., but class was expected）。
                     // 查找口径对齐 Kotlin `interfaceMethodsByName`：先 own 再沿父接口链，抽象方法也算。
                     var ifc0 = g.findIface(rt.name)
+                    // 阶段 21：接收者的静态类型是**注解接口**（`var m : Marker = new Marker(...)`）时，
+                    // 元素访问器在注解接口上是一条 abstract 方法，Kotlin 侧发
+                    // `invokeinterface Marker.value()Ljava/lang/String;` —— 注解接口不进
+                    // interfaces 表（它没有父接口链），所以在这里单独认。
+                    var annc = g.findAnn(rt.name)
+                    if (annc != null) {
+                        var aei = annc!!.elIndex(nm)
+                        if (aei >= 0 && argc == 0) {
+                            var ael = annc!!.els[aei]
+                            var am = new Mem2(annc!!.internal, nm, "()" + ael.type.desc(), ael.type, memP0(), false)
+                            am.opcode = 185
+                            am.itf = true
+                            am.recv = rt
+                            am.origRet = ael.type
+                            g.putMem(e, am)
+                            t = ael.type
+                            g.putType(e, t)
+                            rtn t
+                        }
+                    }
                     if (uc == null && ifc0 != null) {
                         g.ifaceLookup(rt.name, nm, argc, true, false)
                         if (g.ifaceHitCount == 0) {
@@ -3538,6 +3628,22 @@ public class Walker(g : Gen) {
             } else {
                 // 用户类字段（数组不是类）
                 if (rt.base == "external" && !rt.isArray()) {
+                    // 阶段 21：注解接口当静态类型时，`m.value` 这种**字段式**读元素不是接口方法，
+                    // 而是伴生类上的那个字段（Kotlin 侧发 `getfield Marker$Impl.value`）。
+                    var annc2 = g.findAnn(rt.name)
+                    if (annc2 != null) {
+                        var ei2 = annc2!!.elIndex(nm)
+                        if (ei2 >= 0) {
+                            var el2 = annc2!!.els[ei2]
+                            var fr0 = new FieldRef(annc2!!.compInternal, nm, el2.type.desc(), el2.type, false)
+                            fr0.recvNode = recv
+                            fr0.declType = el2.type
+                            g.putFld(e, fr0)
+                            t = el2.type
+                            g.putType(e, t)
+                            rtn t
+                        }
+                    }
                     var uc2 = g.findClass(rt.name)
                     if (uc2 != null) {
                         var f2 = uc2!!.fieldOf(nm)
@@ -6409,6 +6515,26 @@ fun collectAnnDecls(g : Gen, anns : Node) -> void {
     }
 }
 
+// 与 `collectAnnDecls` 的命名规则保持一致：第 5 刀（嵌套类型名）用它算伴生类的内部名。
+fun scanAnnCompNames(g : Gen, anns : Node) -> void {
+    var i = 0
+    while (i < anns.childCount) {
+        var an = anns.children[i]
+        var anm = prop(an, "name")
+        var k = 0
+        while (k < an.childCount) {
+            var part = an.children[k]
+            if (part.kind == NodeKind.COMPANION) {
+                var cn = prop(part, "name")
+                if (cn.length() == 0 || cn == "-") { cn = "companion" }
+                g.addAnnComp(g.pkgPrefix + anm + "$" + cn)
+            }
+            k = k + 1
+        }
+        i = i + 1
+    }
+}
+
 // 伴生类 = 普通类 + 元素字段 + 合成主构造器。
 // 字段表：元素字段（前 `annElemCount` 个）→ 伴生体自己的字段。
 // 方法表：伴生体自己的构造器/方法；没写构造器就按元素表合成一个（Kotlin
@@ -7034,6 +7160,9 @@ public fun compileProgram(g : Gen, ast : Node, sourceName : string) -> void {
     // 接口必须先登记：类的父类型子句、字段与方法签名都可能引用它们
     collectInterfaces(g, ifaces)
     if (g.failed) { rtn }
+    // 第 5 刀：伴生类**内部名**预表（`class Holder { var item : Tag::Impl }` 里的
+    // 字段类型在 collectClasses 就要解算，而伴生类本身要等 collectAnnotations）。
+    scanAnnCompNames(g, anns)
     collectClasses(g, classes, enums)
     if (g.failed) { rtn }
     // 阶段 21：注解声明 / 伴生类 / 访问器表。必须在类与接口登记**之后**收集 ——

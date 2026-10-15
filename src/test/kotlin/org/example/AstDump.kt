@@ -514,10 +514,13 @@ object AstDump {
     // ------------------------------------------------------------------ 类型与工具
 
     /**
-     * 类型的规范写法：`int`、`?string`、`Box&<int>`、`Box&<Box&<int>>`、`int[][]`。
+     * 类型的规范写法：`int`、`?string`、`Box&<int>`、`Box&<Box&<int>>`、`int[][]`、`Marker::Impl`。
      *
      * 与 `TypeRef.display()` **故意不同**：那个是打给人看的（`Box&<int>`，逗号后面带空格），
      * 这里的值里**不能有空格**，所以逗号后面不空格。两端都按这条规则拼，所以是一致的。
+     *
+     * 嵌套类型（`注解名::伴生名`，例如 `Marker::Impl`）打**完整**写法：类型实参只可能写在第一段
+     * （`Outer&<int>::Inner` 里的 `&<int>` 属于 `Outer`），所以 `::` 部分不打类型实参。
      */
     private fun typeText(t: TypeRef): String {
         val head = if (t.typeArgs.isEmpty()) {
@@ -525,7 +528,8 @@ object AstDump {
         } else {
             t.name + "&<" + t.typeArgs.joinToString(",") { typeText(it) } + ">"
         }
-        return head + "[]".repeat(t.arrayDepth)
+        val nested = t.nested?.let { "::$it" } ?: ""
+        return head + nested + "[]".repeat(t.arrayDepth)
     }
 
     private fun bool(b: Boolean): String = if (b) "true" else "false"

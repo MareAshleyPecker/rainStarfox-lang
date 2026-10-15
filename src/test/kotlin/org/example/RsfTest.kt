@@ -7311,6 +7311,29 @@ class RsfTest {
                 @Marker()
                 fun j() -> void { rtn }
             """.trimIndent() + "\n",
+            "嵌套类型名（注解名::伴生名）" to """
+                annotation Marker {
+                    companion entity Impl : Runnable {
+                        fun run() -> void {
+                            rtn
+                        }
+                    }
+                }
+
+                class Uses {
+                    @Marker var holder : Marker::Impl = new Marker()
+                    var list : Marker::Impl[] = new Marker::Impl[2]
+                    fun make(m : Marker::Impl) -> void {
+                        m.run()
+                        rtn
+                    }
+                }
+
+                fun take(v : Marker::Impl) -> void {
+                    v.run()
+                    rtn
+                }
+            """.trimIndent() + "\n",
         )
 
         var corpusLines = 0
@@ -7400,6 +7423,10 @@ class RsfTest {
             "@Marker enum E { A }\n",
             "public @Meta annotation M { }\n",
             "companion entity { }\n",
+            // 嵌套类型名（`注解名::伴生名`）：内置类型后面不能跟 `::`、只允许一层、`::` 后面要有名字。
+            "fun f() -> void { var x : int::Impl = new Marker() rtn }\n",
+            "fun f() -> void { var x : A::B::C = new Marker() rtn }\n",
+            "fun f() -> void { var x : Marker:: = new Marker() rtn }\n",
         )
 
         for (src in bad) {

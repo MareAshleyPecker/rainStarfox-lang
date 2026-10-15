@@ -962,9 +962,14 @@ fun main() -> void {
 第 2 刀 `Backend.rsf` / `Interp.rsf` / `Sources.rsf` 收语义：接口类头、默认方法、`INVOKEINTERFACE`、
 多文件顶层接口），探针台 `build/verify21/bootbackend/run-probes.sh both` 四列全绿。
 自举源（`rsfSrc/bootstrap/**`）**自身**还没改写成接口风格——只是「能写」了。
-注解（阶段 21）**语法已同步、语义未同步**（2026-10-15，第 3 刀 `Parser.rsf` 收 `annotation` 声明 /
-元素表 / 伴生实体 / `@` 使用点，AST 与 Kotlin 版逐字节一致）；自举后端与自举解释器暂时**忽略**注解节点
-（不生成 `RuntimeVisibleAnnotations`、不执行伴生实体），注解的语义仍只在 Kotlin 版里，见 `BOOTSTRAP.md`。
+注解（阶段 21）**已整条同步到自举链**（2026-10-15）：第 3 刀 `Parser.rsf` 收 `annotation` 声明 /
+元素表 / 伴生实体 / `@` 使用点（AST 与 Kotlin 版逐字节一致），第 4a 刀 `Backend.rsf` 收代码生成
+（注解接口 `ACC_ANNOTATION` + `@Retention(RUNTIME)`、元素方法 + `AnnotationDefault`、伴生类、
+`RuntimeVisibleAnnotations` 使用点、方案 B 懒构造访问器），第 4b 刀 `Interp.rsf` 收解释器语义
+（元素字段/默认值回填、伴生实体执行、元素访问器非虚分派），第 5 刀收嵌套类型名 `Marker::Impl`
+（类型位置 + 字段/形参位置 + `new Marker::Impl(...)`）。`Marker` 这类注解接口当静态类型时，
+元素**读**发 `getfield Marker$Impl.value`、元素**调用**发 `invokeinterface Marker.value()`。
+探针台 12 个正例（`p1`–`p7` / `a1`–`a6`）四列 stdout 一致且类字节差异 0，见 `BOOTSTRAP.md`。
 
 ### 注解 `annotation`（阶段 21）
 
@@ -1685,11 +1690,12 @@ A 编自己得（B），B 再编自己得（C），**B 与 C 的输出 126 个 `
 **2026-10-15 现状**：17e 闭环（B ≡ C）之后，离「rsf 版顶替 Kotlin 版」还差三类（详见
 [`BOOTSTRAP.md`](BOOTSTRAP.md)）：① **阶段 20 的 `interface` / `override` 已同步**（词法 45 → 51 项 +
 `@` 记号 → 第 1 刀 `Parser.rsf` 语法 → 第 2 刀 `Backend.rsf` / `Interp.rsf` / `Sources.rsf` 语义；
-三件套 `bash build/verify21/knife-verify.sh` 全绿：J1 126 类 / diff 0、八示例一致）；
-**阶段 21 的注解已同步语法层**（2026-10-15 第 3 刀 `Parser.rsf` 收声明 / 元素 / 伴生实体 / `@` 使用点，
-AST 与 Kotlin 版逐字节一致；自举后端与自举解释器暂按「忽略注解」处理）；② 后端 / 解释器的
+三件套 `bash build/verify21/knife-verify.sh` 全绿：J1 134 类 / diff 0、八示例一致）；
+**阶段 21 的注解已整条同步**（第 3 刀 `Parser.rsf` 收声明 / 元素 / 伴生实体 / `@` 使用点，
+第 4a 刀 `Backend.rsf` 收代码生成，第 4b 刀 `Interp.rsf` 收解释器语义，第 5 刀收 `Marker::Impl`
+嵌套类型名；探针台 12 正例四列全绿、类字节差异 0）；② 后端 / 解释器的
 「暂不支持清单」（JDK 静态成员表只覆盖 `System` / `Math.max|min|abs` / 包装类三件套，没有
-`HashMap` / `Math.sqrt` 这类成员；自举源自身也没有接口风格）；③ 语言层没有类继承；
+`HashMap` / `Math.sqrt` 这类成员；自举源自身也没有接口风格 / 注解风格）；③ 语言层没有类继承；
 ④ 工具面（自举侧只有 4 个单文件 CLI，没有统一 CLI / LSP）。
 
 **每个阶段改哪些文件、验收标准、风险、以及要先拍板的 5 个语法点，都在 [`BOOTSTRAP.md`](BOOTSTRAP.md)。**

@@ -1280,13 +1280,18 @@ class Dog2(name : string) : Greeter {
 
 **遗留与暂不支持（都显式报错或已定格，不静默算错）**：
 
-- **自举版已同步（2026-10-15，两刀）**：`rsfSrc/bootstrap/` 的 `Lexer.rsf`（关键字 45 → 51 + `@` 记号）、
-  `Parser.rsf`（`interface` / `override` / 父类型子句，AST 与 Kotlin 版逐字节一致）、`Backend.rsf` +
-  `Interp.rsf` + `Sources.rsf`（按接口发 `ACC_INTERFACE` / `INVOKEINTERFACE`、默认方法分派、
-  接口链查找、多文件顶层 `INTERFACES` 保序）。**注意**：自举源自身的代码风格还没改写成接口
-  （17e 的 126 类不动点与八示例锚点因此保持不变）；`RsfTest` 那条「rsf 版词法器尚未收 interface
-  （自举同步前的已知差异）」用例已在第 1 刀里反转成「已收」。`Backend.rsf` 的 JDK 成员表仍没有
-  `iterator()` 这类成员（落在既有的「暂不支持清单」里）。
+- **自举版已同步（2026-10-15）**：`rsfSrc/bootstrap/` 的 `Lexer.rsf`（关键字 45 → 51 + `@` 记号）、
+  `Parser.rsf`（`interface` / `override` / 父类型子句 / `annotation` 声明与 `@` 使用点，AST 与 Kotlin 版逐字节一致）、
+  `Backend.rsf` + `Interp.rsf` + `Sources.rsf`（按接口发 `ACC_INTERFACE` / `INVOKEINTERFACE`、默认方法分派、
+  接口链查找、多文件顶层 `INTERFACES` 保序）；**阶段 21 的注解也整条同步**：第 4a 刀 `Backend.rsf`
+  （注解接口 `ACC_ANNOTATION` + `@Retention(RUNTIME)`、元素方法 + `AnnotationDefault`、伴生类与
+  `RuntimeVisibleAnnotations` 使用点、方案 B 懒构造访问器——**宿主是接口/注解声明时不发
+  `ACC_SYNCHRONIZED`**，Kotlin 侧同样的 bug 已修）、第 4b 刀 `Interp.rsf`（元素字段与默认值回填、
+  伴生实体执行、元素访问器非虚分派）、第 5 刀嵌套类型名 `Marker::Impl`（类型/字段/形参位置 +
+  `new Marker::Impl(...)`）。判据：`build/verify21/bootbackend/run-probes.sh both` 的 12 个正例
+  （`p1`–`p7` / `a1`–`a6`）四列 stdout 一致且**类字节差异 0**，`build/verify21/knife-verify.sh` 三件套全绿
+  （**J1 134 类** / diff 0、八示例一致）。**注意**：自举源自身的代码风格还没改写成接口 / 注解风格。
+  `Backend.rsf` 的 JDK 成员表仍没有 `iterator()` 这类成员（落在既有的「暂不支持清单」里）。
 - **类继承不做**（D2）：`class A : SomeClass` 会在 Checker 里显式报「rsf 现在还不支持类继承（本阶段只做接口）」。
 - **跨边界时不支持 `Object` 成员**：`p.toString()` 仍报「类 'P' 里没有方法 'toString'」（属 D2/类继承遗留）。
 - **`pkg a.b` 下的接口落在默认包**（`classInternalName` 只给 `classes`/`enums` 加包前缀）：实测两端都跑通、

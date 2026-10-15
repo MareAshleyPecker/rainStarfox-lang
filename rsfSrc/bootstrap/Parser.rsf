@@ -254,16 +254,20 @@ public class Node(kind : NodeKind, text : string) {
 //   * **不是 Node**：`parseTypeRef()` 直接返回这个三字段的小对象，字符串形式按需拼。
 //
 // `name` 里可能带前导 `?`（可空写在名字里，和 Kotlin 版的 `TypeRef.name` 一样）；
-// `args` 存的是**实参表内部**的文本（`int` / `int,string`），空串表示没有 `&<...>`。
+// `args` 存的是**实参表内部**的文本（`int` / `int,string`），空串表示没有 `&<...>`；
+// `nested` 存嵌套类型的第二段（`Marker::Impl` 里的 `Impl`），空串表示没有 `::`
+// （和 Kotlin 版 `TypeRef.nested : String?` 一样，v1 只允许一层）。
 
-public class TypeInfo(name : string, args : string, depth : int) {
+public class TypeInfo(name : string, args : string, depth : int, nested : string) {
     var name : string = name
     var args : string = args
     var depth : int = depth
+    var nested : string = nested
 
     public fun text() -> string {
         var out = name
         if (args.length() > 0) { out = out + "&<" + args + ">" }
+        if (nested.length() > 0) { out = out + "::" + nested }
         rtn out + repeatText("[]", depth)
     }
 
@@ -1572,37 +1576,60 @@ public class Parser(tokens : Token[]) {
         var t = peek()
         if (!isTypeKeyword(t.kind) && t.kind != "IDENT" && t.kind != "QUESTION") {
             failAt(t, hint)
-            rtn new TypeInfo("?", "", 0)
+            rtn new TypeInfo("?", "", 0, "")
         }
         rtn parseTypeRef()
     }
 
-    // 类型引用：可空 `?` 前缀、泛型实参 `&<...>`、数组后缀 `[]`（可叠多层）
+    // 类型引用：可空 `?` 前缀、泛型实参 `&<...>`、嵌套类型 `注解名::伴生名`、数组后缀 `[]`（可叠多层）
     fun parseTypeRef() -> TypeInfo {
         var nullable = matchOne("QUESTION")
         var t = peek()
         var name = ""
+        var builtin = false
         if (isTypeKeyword(t.kind)) {
             advance()
             name = canonicalTypeName(t.kind)
+            builtin = true
         } else {
             if (t.kind == "IDENT") {
                 advance()
                 name = t.text
             } else {
                 failAt(t, "这里需要一个类型（void / int / long / float / double / string / bool / byte / char，或者一个类名）")
-                rtn new TypeInfo("?", "", 0)
+                rtn new TypeInfo("?", "", 0, "")
             }
         }
         if (nullable) { name = "?" + name }
 
         var args = ""
         if (check("AMP")) {
-            if (isTypeKeyword(t.kind)) {
+            if (builtin) {
                 failAt(peek(), "'" + name + "' 是内置类型，没有类型参数——'&<实参类型>' 只能跟在一个类名后面")
-                rtn new TypeInfo(name, "", 0)
+                rtn new TypeInfo(name, "", 0, "")
             }
             args = parseTypeArgs()
+        }
+
+        // 嵌套类型名 `注解名::伴生名`（例如 `Marker::Impl`）。Kotlin 版 v1 只支持一层，
+        // 内置类型后面不能写 `::`，`::` 后面必须跟一个名字。
+        var nested = ""
+        if (check("DOUBLE_COLON")) {
+            if (builtin) {
+                failAt(peek(), "'" + name + "' 是内置类型，没有嵌套类型：'::' 只能写成「注解名 :: 伴生名」（例如 Marker::Impl）")
+                rtn new TypeInfo(name, args, 0, "")
+            }
+            advance()
+            if (!check("IDENT")) {
+                failAt(peek(), "'::' 后面缺少嵌套类型名：写法是「注解名 :: 伴生名」（例如 Marker::Impl）")
+                rtn new TypeInfo(name, args, 0, "")
+            }
+            nested = peek().text
+            advance()
+            if (check("DOUBLE_COLON")) {
+                failAt(peek(), "嵌套类型 v1 只支持一层：'A::B::...' 里的第二个 '::' 不支持（写法是「注解名 :: 伴生名」，例如 Marker::Impl）")
+                rtn new TypeInfo(name, args, 0, nested)
+            }
         }
 
         // `[]` 只吃**紧挨着的**一对空括号（`new int[5]` 里的 `[5]` 是维度、不是类型后缀）
@@ -1615,7 +1642,7 @@ public class Parser(tokens : Token[]) {
         if (depth > 0 && startsWithChar(name, '?')) {
             failAt(t, "数组类型不能写 '?'：数组本身就是引用，去掉 '?' 写成 '" + name.substring(1, name.length()) + "[]'")
         }
-        rtn new TypeInfo(name, args, depth)
+        rtn new TypeInfo(name, args, depth, nested)
     }
 
     // 类型实参表 `&<int>` / `&<string, int>` / `&<Box&<int>>`；返回的是**内部**文本
