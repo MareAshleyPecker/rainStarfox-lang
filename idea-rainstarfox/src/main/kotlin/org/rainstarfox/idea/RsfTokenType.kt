@@ -78,7 +78,13 @@ object RsfKeywords {
 
     // 阶段 20：`override` 是可选的校验修饰词（和 ControlType/static 同族，只写在 fun 前，
     // 两种顺序都收：`override public fun` / `public override fun`）
-    val MODIFIERS = setOf("public", "protected", "private", "static", "override")
+    //
+    // 阶段 25：类继承带来的 `open` / `final` / `abstract` 是同一族的声明级修饰词
+    // （类与方法都能写），照样和 ControlType/static 一样只有高亮与补全的份。
+    val MODIFIERS = setOf(
+        "public", "protected", "private", "static", "override",
+        "open", "final", "abstract",
+    )
 
     val CONTROL = setOf(
         "fun", "rtn", "return", "if", "else", "while", "for", "in",
@@ -89,6 +95,11 @@ object RsfKeywords {
         "var", "imutvar", "let", "true", "false", "null",
         // 阶段 12：类
         "class", "new", "this",
+        // 阶段 25：`super`。它**不是**修饰词——它写在表达式位置上（`super.成员` 或
+        // 带接口名消歧的那一种），所以和 `this` 摆在一起。
+        // ⚠ 这条注释**不能出现半角括号**：EditorKeywordParityTest 是用一条「setOf 加
+        // 括号」的正则扫这段文字的，半角右括号会当场把后面的词表截断。
+        "super",
         // 阶段 14：错误处理（漏了一阵，和 EditorSupport.KEYWORDS 必须一致）
         "fail", "try", "catch",
         // 阶段 18：次构造

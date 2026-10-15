@@ -7,7 +7,7 @@ import org.example.complie.diag.SourceFile
  * 可变变量/字段的老关键字（2026-10-11 起唯一写法是 `var`）。
  *
  * 它**不**在 [KEYWORDS] 里——关键字表要与 rsf 版自举词法器（`rsfSrc/bootstrap/Lexer.rsf`
- * 的 `keywordKind`）**逐条对齐**，条数不能变（阶段 25 起是 59 项：阶段 24 之前 51 项，
+ * 的 `keywordKind`）**逐条对齐**，条数不能变（阶段 25 起是 55 项：阶段 24 之前 51 项，
  * 加上 `open` / `final` / `abstract` / `super`）。所以拦它靠的是
  * [Lexer.readIdentOrKeyword] 里一条独立的判断，rsf 版那边也写了同一条。
  */
@@ -35,7 +35,7 @@ private val KEYWORDS: Map<String, TokenKind> = buildMap {
     // 阶段 25：类继承。open / final / abstract 是声明级修饰词（类与方法默认 final），
     // super 是父类接收者（`super.f()` / `super(接口).f()` / `super(实参)`）。
     // 这四项此刻**只有 Kotlin 版认**——rsf 版自举（rsfSrc/bootstrap）的关键字表要等
-    // K5 那一刀才跟上，在那之前这两侧的关键字数（55 → 59）是不对齐的，这是已知且
+    // K5 那一刀才跟上，在那之前这两侧的关键字数（51 → 55）是不对齐的，这是已知且
     // 计划内的差异；RsfTest 里逐条对拍用的语料里没有这四个词，所以对拍不会红。
     put("open", TokenKind.KW_OPEN)
     put("final", TokenKind.KW_FINAL)
