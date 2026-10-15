@@ -2,6 +2,7 @@ package org.example
 
 import org.example.complie.Rsf
 import org.example.complie.ast.BinaryExpr
+import org.example.complie.ast.ControlType
 import org.example.complie.ast.MemberExpr
 import org.example.complie.ast.ReturnStmt
 import org.example.complie.ast.SuperExpr
@@ -1767,6 +1768,90 @@ class InheritanceTest {
                 "}\n",
         )
         assertTrue(clone.detail.contains("没有方法 'clone'"), clone.detail)
+    }
+
+    // --------------------------------- 阶段 25 K5a-fix：类头修饰词顺序（对齐 Kotlin）
+
+    /**
+     * K5a-fix：类头的权限修饰词（`public` / `protected` / `private`）与继承修饰词
+     * （`open` / `final` / `abstract`）**任意穿插**——两种顺序都 ACCEPT，且控制级别与三个继承
+     * 标志一个都不能丢（顺序不是语义）。修之前 `public open class A {}` 撞的是
+     * `class 声明缺少 'class'（实际读到 'open'）`，只有 `open public class` 能过。
+     */
+    @Test
+    fun `K5a-fix 类头修饰词两种顺序都收`() {
+        val pairs = listOf(
+            "public open class A { }" to "open public class A { }",
+            "public final class B { }" to "final public class B { }",
+            "public abstract class C { }" to "abstract public class C { }",
+            "private open class D { }" to "open private class D { }",
+            "protected abstract class E { }" to "abstract protected class E { }",
+        )
+        for ((first, second) in pairs) {
+            val a = Rsf.parse(rsfSource(first)).classes.single()
+            val b = Rsf.parse(rsfSource(second)).classes.single()
+            assertEquals(a.control, b.control, "两种顺序的控制级别必须一样：$first / $second")
+            assertEquals(a.isOpen, b.isOpen, "isOpen 必须一样：$first / $second")
+            assertEquals(a.isFinal, b.isFinal, "isFinal 必须一样：$first / $second")
+            assertEquals(a.isAbstract, b.isAbstract, "isAbstract 必须一样：$first / $second")
+        }
+
+        // 不是「两边都退化成 DEFAULT」：README.md:978 / DESIGN-25.md:10 的写法要真的收成
+        // PUBLIC + open，而且整条链路（解析 + 语义）都不报错。
+        val doc = rsfSource(
+            "public open class A(x : int) {\n" +
+                "    public open fun tag() -> string { rtn \"a\" }\n" +
+                "}\n",
+        )
+        val program = Rsf.parse(doc)
+        Rsf.analyze(program, doc) // 语义阶段也必须收下（不抛就是不报错）
+        val a = program.classes.single()
+        assertEquals(ControlType.PUBLIC, a.control)
+        assertTrue(a.isOpen, "public open class 要收成 open")
+        assertTrue(!a.isFinal && !a.isAbstract, "没有写 final / abstract 就都不该置位")
+    }
+
+    /**
+     * K5a-fix 的硬判据：顺序不参与 AST——`public open class A { ... }` 与
+     * `open public class A { ... }` 两份源码的 dump 必须**逐字节相同**。
+     */
+    @Test
+    fun `K5a-fix 两种顺序的 AST dump 逐字节相同`() {
+        val member = "    public open fun tag() -> string { rtn \"a\" }\n"
+        val a = AstDump.dump(Rsf.parse(rsfSource("public open class A {\n" + member + "}\n")))
+        val b = AstDump.dump(Rsf.parse(rsfSource("open public class A {\n" + member + "}\n")))
+        assertEquals(a, b)
+        // 顺带确认 dump 里确实记着 PUBLIC + OPEN（不是两个空壳相等）
+        assertTrue(a.contains("control=PUBLIC"), a)
+        assertTrue(a.contains("OPEN"), a)
+    }
+
+    /**
+     * K5a-fix 只放松顺序，不放松互斥：`open` + `final`（含被权限词**隔开**的
+     * `open public final class`）、`abstract` 与另两个混写、同一个词写两遍，仍按原文案当场拒。
+     */
+    @Test
+    fun `K5a-fix 类头互斥规则没被放松`() {
+        val openFinal = fails("open final class A { }")
+        assertTrue(openFinal.detail.contains("'open' 与 'final' 不能同时写"), openFinal.detail)
+
+        // 顺序放开后 `open public final class` 不再在 'class' 上撞错，但也**不许**被收下：
+        // 两段继承修饰词必须合起来判互斥（mergeInherit 那条通路）。
+        val splitOpenFinal = fails("open public final class B { }")
+        assertTrue(splitOpenFinal.detail.contains("'open' 与 'final' 不能同时写"), splitOpenFinal.detail)
+
+        val abstractOpen = fails("abstract public open class C { }")
+        assertTrue(
+            abstractOpen.detail.contains("'abstract' 不能和 'open' / 'final' 写在一起"),
+            abstractOpen.detail,
+        )
+
+        val twice = fails("open open class D { }")
+        assertTrue(twice.detail.contains("'open' 写了两遍"), twice.detail)
+
+        // 权限修饰词仍然只收一个：第二个落到 expect(KW_CLASS) 上，文案与修正前一致。
+        val twoControls = fails("public private class E { }")
+        assertTrue(twoControls.detail.contains("class 声明缺少 'class'"), twoControls.detail)
     }
 }
 

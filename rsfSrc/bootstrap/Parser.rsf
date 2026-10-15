@@ -869,11 +869,26 @@ public class Parser(tokens : Token[]) {
     // annotations：声明前收到的注解序列（`@Marker public class C { }`）；空表也要挂（count=0），
     // 而且**挂在最后**（位置索引铁律：Interp.rsf:792/805/888/919 与 Backend.rsf:5692 用位置读孩子）。
     fun parseClassDecl(annotations : Node) -> Node {
-        // 阶段 25：继承修饰词排在**最前面**（`open class` / `abstract class`），
-        // 位置与 Kotlin 版 parseClassDecl 一致：mods → control → `class`。
-        var mods = parseInheritModifiers("类")
+        // 阶段 25 K5a-fix：类头的权限修饰词与继承修饰词**任意穿插**（`public open class` 与
+        // `open public class` 等价），与 Kotlin 版 Parser.kt:669 的循环一一对应。
+        // 权限修饰词仍然只收一个；被权限词隔开的几段继承修饰词由 mergeInheritMods 合起来
+        // 判重与互斥（`open public final class`）——与 parseFuncDecl 收到两段时同一条通路。
         var control = "DEFAULT"
-        if (isControlKeyword(peek().kind)) { control = controlName(advance().kind) }
+        var sawControl = false
+        var mods = new InheritMods(false, false, false)
+        var going = true
+        while (going && !failed) {
+            if (!sawControl && isControlKeyword(peek().kind)) {
+                control = controlName(advance().kind)
+                sawControl = true
+            } else {
+                if (isInheritKeyword(peek().kind)) {
+                    mods = mergeInheritMods(mods, "类")
+                } else {
+                    going = false
+                }
+            }
+        }
         var classTok = expect("KW_CLASS", "class 声明缺少 'class'")
         var nameTok = expect("IDENT", "'class' 后面缺少类名")
 

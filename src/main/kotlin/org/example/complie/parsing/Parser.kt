@@ -667,11 +667,27 @@ class Parser(
      * 全都不用为它分家。主构造的「体」就是字段初值（不需要 init 块）。
      */
     private fun parseClassDecl(annotations: List<AnnotationUse> = emptyList()): ClassDecl {
-        val mods = parseInheritModifiers(kindWord = "类")
+        // 阶段 25 K5a-fix：类头的「权限修饰词」与「继承修饰词」**任意穿插**——`public open class`
+        // 与 `open public class` 等价（与 [parseFuncDecl] 的同一条口径，Kotlin 也这么收）。
+        // 权限修饰词仍然只收一个：第二个（`public private class`）落到下面的 expect(KW_CLASS) 上，
+        // 报错文案与修正前逐字一致，不在这里放松。
         var control = ControlType.DEFAULT
-        if (peek().kind.isControlKeyword) {
-            control = ControlType.of(advance().kind)
+        var sawControl = false
+        var inherit: InheritModifiers? = null
+        var going = true
+        while (going) {
+            if (!sawControl && peek().kind.isControlKeyword) {
+                control = ControlType.of(advance().kind)
+                sawControl = true
+            } else if (peek().kind.isInheritKeyword) {
+                // 被权限修饰词隔开的几段继承修饰词要**合起来**判重与互斥（`open public final class`），
+                // 和 [parseFuncDecl] 前后收到两段时走的是同一个 [mergeInherit]。
+                inherit = mergeInherit(inherit, kindWord = "类")
+            } else {
+                going = false
+            }
         }
+        val mods = inherit ?: InheritModifiers(isOpen = false, isFinal = false, isAbstract = false)
         val classTok = expect(TokenKind.KW_CLASS, "class 声明缺少 'class'")
         val nameTok = expect(TokenKind.IDENT, "'class' 后面缺少类名")
 
