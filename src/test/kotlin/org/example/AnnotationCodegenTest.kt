@@ -28,8 +28,8 @@ import kotlin.test.assertTrue
  * 解释器侧的注解支持是 M4 的事，所以这里**不比对两端 stdout**，而是两头都查：
  * - **类文件层**：用 ASM `ClassReader` 读产物，断言注解接口的头（`0x2601`）、
  *   元素方法的 `AnnotationDefault`、`@Retention(RUNTIME)` 元注解、使用点的
- *   `RuntimeVisibleAnnotations`、枚举元素写出来是 `e` 标签、访问器的 `ACC_SYNCHRONIZED`、
- *   元素访问器调用发的是 `INVOKEINTERFACE`；
+ *   `RuntimeVisibleAnnotations`、枚举元素写出来是 `e` 标签、访问器的 `ACC_SYNCHRONIZED`
+ *   （宿主是接口/注解声明时**必须没有**这一位）、元素访问器调用发的是 `INVOKEINTERFACE`；
  * - **运行期层**：`Rsf.build` 出来的 .class 交给自定义 [ClassLoader] 按需加载，
  *   用纯 JDK 反射断言 `getAnnotation` 读得到、元素默认值生效、伴生类的元素字段、
  *   `annotationType()`、方案 B 访问器的值与懒构造缓存、传错 member 返回 null。
@@ -141,7 +141,7 @@ class AnnotationCodegenTest {
         )
         // 运行期确实生效：这个断言在漏 @Retention 时会变成 null
         val cls = c.load("Marker")
-        val ann = assertNotNull(cls.getAnnotation(Retention::class.java)) as Retention
+        val ann: Retention = assertNotNull(cls.getAnnotation(Retention::class.java))
         assertEquals(RetentionPolicy.RUNTIME, ann.value)
         assertTrue(cls.isAnnotation, "运行期看它也得是注解类型")
         assertTrue(Modifier.isAbstract(cls.modifiers), "注解接口在反射里是 abstract 的")
@@ -540,6 +540,61 @@ class AnnotationCodegenTest {
         assertTrue(accessor.invoke(null, "tag") === forField, "同一个使用点要复用缓存")
         assertNull(accessor.invoke(null, "nope"), "成员名对不上要返回 null（不抛异常）")
         assertNull(accessor.invoke(null, ""), "空成员名也返回 null")
+    }
+
+    /**
+     * (4) 宿主是**接口 / 注解声明**时，访问器不能带 `ACC_SYNCHRONIZED`。
+     *
+     * JVMS 4.6 不允许接口方法带同步位：带了整个类文件在加载期就
+     * `ClassFormatError: Method Marker in class Named has illegal modifiers: 0x29`，
+     * 而且**只有真去加载那个类才会炸**（`javap` 能读、跑别的类也没事），所以这里两头都查：
+     * 类文件标志 + 把接口/注解声明真的加载起来并把访问器调一次。
+     */
+    @Test
+    fun `接口与注解声明上的访问器不带同步位`() {
+        val c = compile(
+            """
+            annotation Marker(value : string = "x") {
+                companion entity Impl {
+                    var hits : int = 0
+                }
+            }
+
+            @Marker("iface")
+            interface Named {
+                fun name() -> string
+            }
+
+            @Marker("meta")
+            annotation Doc(note : string = "n")
+
+            class N : Named {
+                fun name() -> string { rtn "n" }
+            }
+
+            fun main() -> void { println(new N().name()) }
+            """,
+            "RsfAnnIfaceHost",
+        )
+
+        for (host in listOf("Named", "Doc")) {
+            val shape = c.read(host).method("Marker")
+            assertEquals(
+                Opcodes.ACC_PUBLIC or Opcodes.ACC_STATIC,
+                shape.access,
+                "$host 是接口/注解声明，访问器不能带同步位（否则 ClassFormatError: 0x29）",
+            )
+        }
+
+        val impl = c.load("Marker\$Impl")
+        val onInterface = assertNotNull(c.load("Named").getDeclaredMethod("Marker").invoke(null))
+        assertEquals("iface", impl.getMethod("value").invoke(onInterface))
+        val onAnnotation = assertNotNull(c.load("Doc").getDeclaredMethod("Marker").invoke(null))
+        assertEquals("meta", impl.getMethod("value").invoke(onAnnotation))
+        assertEquals("meta", member(c.load("Doc").getAnnotation(c.classOf("Marker")), "value"))
+
+        // 实现类也必须能加载（父接口加载不了的话这里就 ClassFormatError）
+        assertEquals(listOf("n"), runMain(c.load("RsfAnnIfaceHost")))
     }
 
     /** (4) 使用点少给实参时，访问器按元素声明顺序补默认值。 */

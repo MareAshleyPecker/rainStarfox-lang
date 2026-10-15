@@ -684,7 +684,7 @@ class BytecodeCompiler(
             emitAnnotationCaches(cw, decl.name)
             model.companionAnnotationOf(decl.name)?.let { emitAnnotationType(cw, it.name) }
         }
-        emitAnnotationAccessors(cw, decl.name)
+        emitAnnotationAccessors(cw, decl.name, sync = true)
         cw.visitEnd()
         return cw
     }
@@ -911,8 +911,10 @@ class BytecodeCompiler(
         // 末尾会清空缓冲，所以每个类各发自己那一份，不会串到下一个类上）。
         // V17 的接口允许 private static 方法（Java 9 起），所以合成方法的可见性不用改。
         emitOrElseMethods(cw)
-        // 方案 B 的访问器（挂在这个接口上的那些）
-        emitAnnotationAccessors(cw, decl.name)
+        // 方案 B 的访问器（挂在这个接口上的那些）。接口里的方法**不能**带
+        // ACC_SYNCHRONIZED（JVMS 4.6：接口方法只允许 public/private/abstract/static/
+        // strict/final/synthetic/bridge/varargs），带了类文件直接 ClassFormatError。
+        emitAnnotationAccessors(cw, decl.name, sync = false)
         cw.visitEnd()
         return cw
     }
@@ -974,7 +976,8 @@ class BytecodeCompiler(
 
         // 注解声明自己身上的注解（`@Marker` 标在 `annotation Other` 上）
         emitUseSites({ descriptor, visible -> cw.visitAnnotation(descriptor, visible) }, spec.decl)
-        emitAnnotationAccessors(cw, spec.name)
+        // 注解接口里的方法同样不能带 ACC_SYNCHRONIZED（见 interfaceClass 的同款注释）。
+        emitAnnotationAccessors(cw, spec.name, sync = false)
         cw.visitEnd()
         return cw
     }
@@ -1178,13 +1181,16 @@ class BytecodeCompiler(
      * - 类型级 → `public static Marker$Impl Marker()`，注解名就是方法名（rsf 的无缝重载）；
      * - 成员级 → `public static Marker$Impl Marker(string member)`，`member` 对不上返回 **null**。
      *
-     * 懒构造：先读缓存字段，非空直接返回，否则 `new` 一个存回去。方法带
-     * `ACC_SYNCHRONIZED`（§3 定的），所以不需要 `<clinit>` 也不需要 DCL。
+     * 懒构造：先读缓存字段，非空直接返回，否则 `new` 一个存回去。宿主是**类**时方法带
+     * `ACC_SYNCHRONIZED`（§3 定的），所以不需要 `<clinit>` 也不需要 DCL；宿主是**接口或注解
+     * 声明**时同步位必须去掉（`sync = false`）——JVMS 4.6 不允许接口方法带 `ACC_SYNCHRONIZED`，
+     * 带了整个类文件在加载期就 `ClassFormatError`。少了同步最多让两个线程各构造一个实例，
+     * 缓存字段的写入本身是原子的（先构造完再 PUTSTATIC），不会读到半成品。
      *
      * 访问标志**不走** [accessOf]（那是给 rsf 源码里的 `FuncDecl` 用的，
-     * 这里没有 FuncDecl 可查），直接发 ACC_PUBLIC|ACC_STATIC|ACC_SYNCHRONIZED。
+     * 这里没有 FuncDecl 可查），直接发 ACC_PUBLIC|ACC_STATIC[|ACC_SYNCHRONIZED]。
      */
-    private fun emitAnnotationAccessors(cw: ClassWriter, hostName: String?) {
+    private fun emitAnnotationAccessors(cw: ClassWriter, hostName: String?, sync: Boolean) {
         if (hostName == null) return
         val sites = model.accessorsOn(hostName)
         if (sites.isEmpty()) return
@@ -1198,17 +1204,17 @@ class BytecodeCompiler(
             val first = group.first()
             val desc = companionDescriptor(first.companionName)
             if (first.memberName == null) {
-                emitTypeLevelAccessor(cw, first, desc)
+                emitTypeLevelAccessor(cw, first, desc, sync)
             } else {
-                emitMemberLevelAccessor(cw, group, desc)
+                emitMemberLevelAccessor(cw, group, desc, sync)
             }
         }
     }
 
-    private fun emitTypeLevelAccessor(cw: ClassWriter, accessor: AnnotationAccessor, desc: String) {
+    private fun emitTypeLevelAccessor(cw: ClassWriter, accessor: AnnotationAccessor, desc: String, sync: Boolean) {
         val companion = classInternalName(accessor.companionName)
         val mv = cw.visitMethod(
-            ACC_PUBLIC or ACC_STATIC or ACC_SYNCHRONIZED, accessor.annotation.name, "()$desc", null, null,
+            ACC_PUBLIC or ACC_STATIC or if (sync) ACC_SYNCHRONIZED else 0, accessor.annotation.name, "()$desc", null, null,
         )
         mv.visitCode()
         mv.visitFieldInsn(GETSTATIC, companion, cacheFieldName(accessor), desc)
@@ -1227,11 +1233,11 @@ class BytecodeCompiler(
         mv.visitEnd()
     }
 
-    private fun emitMemberLevelAccessor(cw: ClassWriter, group: List<AnnotationAccessor>, desc: String) {
+    private fun emitMemberLevelAccessor(cw: ClassWriter, group: List<AnnotationAccessor>, desc: String, sync: Boolean) {
         val first = group.first()
         val companion = classInternalName(first.companionName)
         val mv = cw.visitMethod(
-            ACC_PUBLIC or ACC_STATIC or ACC_SYNCHRONIZED, first.annotation.name,
+            ACC_PUBLIC or ACC_STATIC or if (sync) ACC_SYNCHRONIZED else 0, first.annotation.name,
             "(Ljava/lang/String;)$desc", null, null,
         )
         mv.visitCode()
