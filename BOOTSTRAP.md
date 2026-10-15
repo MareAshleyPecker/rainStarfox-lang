@@ -851,6 +851,7 @@ ASM 在**编译器的运行期 classpath** 上（`build.gradle` 的
 | 控制流 | `循环外的 break`、`循环外的 continue`、`switch`（形状不对）、`switch 的表达式不是枚举（T）`、`switch 分支的枚举常量 E.V`、`switch 分支枚举类型不一致（A / B）`、`goto / 分支的标签没有定义（内部错误）` |
 | 枚举 | `对枚举 R 调方法`、`枚举 R 没有常量 x` |
 | `this` | `… 需要 this，但当前是 static 方法`、`…（不在类里）` |
+| 阶段 20 的新语法（D10 缺口） | `interface` / `override`：`rsfSrc/bootstrap/{Lexer,Parser,Backend}.rsf` **尚未同步**，rsf 版编译器编到这类源码在**解析层**就退出——实测 `[rsf-17d] 解析失败：顶层只能写函数声明，格式是 '[public\|protected\|private] [static] fun [类型] 名字() 返回子句 函数体'`（`public interface Greeter { … }` 与类里写 `override fun` 两种写法实测**同一条**，探针 `build/verify20/scratch/rsfIf/{I,O}.rsf`）。补表时**必须按接口发 `INVOKEINTERFACE`**，否则 B 与 Kotlin 产物分叉 |
 
 **测试与回归**：本阶段**只动 rsf 源码**（`rsfSrc/bootstrap/Backend.rsf`、`Parser.rsf`）与文档，
 Kotlin 主源码一行没改 → 测试仍是 **248 全绿**（RsfTest 221 + InteropTest 13 + OverloadTest 14，
@@ -1159,7 +1160,7 @@ IDEA 插件的 `RsfKeywords` + `RsfLexer` 运算符表、VS Code 的 tmLanguage�
 | — · 拼接对象两端一致（既有缺陷） | ✅ **修复**：`emitToString` 对对象类型一律发 `String.valueOf(Ljava/lang/Object;)`（原先发的是不存在的 `valueOf(LXxx;)`，运行期 `NoSuchMethodError`）；给每个用户类生成确定性 `toString()`，格式规则与解释器共用 `sema/Builtins.kt` 的 `ObjectFormat` |
 | 19c · `&&`/`||` + `enum` + `switch`（为 17b 补的三样） | ✅ **完成（2026-10-08）**：`&&` / `||` 真短路（解释器先算左、假就不算右；字节码 `IFEQ`/`IFNE` + `GOTO` 把右边夹在跳转之后），优先级插在 `?:` 与 `==` 之间；`enum`（顶层声明、允许尾逗号、至少一值、值名/重名检查）**编译成普通类**（`public static final` 单例 + 私有 `$name` 字段 + `<clinit>` 构造 + `toString()` 返回值名），两端打印名字逐字节一致；`switch`（只对枚举、`case 枚举名.值名`、默认分支写 `else`、无 fallthrough、**无 else 时必须穷尽**并列出缺的值）用新指令 `ISwitch` 表达，字节码 `DUP`+`GETSTATIC`+`IF_ACMPEQ` 过一层 `POP` 跳板进分支体。测试 190 → 211（+21），七个示例输出 SHA256 不变，新增 `rsfSrc/lang/enums.rsf` 示例 |
 | 19d · 函数/方法重载 | ✅ **完成（2026-10-11）**：顶层函数与用户类方法（实例 + `static`）**共用一套重载解析**——先按实参个数筛，再按类型打分（精确 0 分、加宽按档位距离），最低分者胜；**最低分并列报错并列出全部候选签名**，不静默取声明在前。擦除冲突（`f(Box&<int>)` 与 `f(Box&<string>)`）编译期拒绝、`main` 唯一入口、`!T` 重载、泛型类方法重载、递归/互相调用都覆盖；选中结果只由 Checker 决定一次（`callTargets` / `implicitCalls` / `userMembers`），两端读同一份。测试 234 → **248**（`OverloadTest.kt` 14 条），八示例 stdout 的 SHA256 逐个不变 |
-| 20 · `interface` | ⏳ **排在自举之后**（见下） |
+| 20 · `interface` | ✅ **完成（2026-10-15）**：`interface`（抽象方法 + 默认方法）、接口继承接口、类实现多个接口、`override` 修饰符（可选，写了必须真覆盖）、JVM 接口互操作（`Runnable` / `Comparator&<string>` / `Iterator`）、源码实现类交给 JDK 代码回调（桥方法 + 解释器 `Proxy`）。设计 `DESIGN-20.md`（D1–D10 全按批准值），M0–M5 全绿，实际做法与遗留见下「阶段 20 实际做法与结果」 |
 | 21 · `@interface`（注解） | ⏳ **排在 20 之后**（见下） |
 | 22 · `mathematic`（数学类修饰词） | ⏳ **排在自举之后**（用户 2026-10-13 提出；类里放什么"做到的时候再想"，见下） |
 
@@ -1200,30 +1201,92 @@ public @interface Marker { }               // 阶段 21
 @Marker class Foo { }
 ```
 
-继承与实现**共用 `:`**（与已定的 `class Dog : Animal` 一致）。细节（默认方法、多接口冲突、注解带参数）到阶段 20 前再定。
+继承与实现**共用 `:`**（与已定的 `class Dog : Animal` 一致）。**阶段 20 的细节已在 `DESIGN-20.md` 定完并全部落地**
+（默认方法、多接口同签名冲突、接口继承接口、接口里不许有字段、类继承本批不做，见下面「阶段 20 实际做法与结果」）；
+**阶段 21 的注解细节（元素类型、是否带参数、`@Retention`/`@Target` 的处理）仍未定**，开工前照规矩先出设计。
 
-### 阶段 20 进度：M0 已落地（2026-10-14）
+### 阶段 20 实际做法与结果（2026-10-15 完成）
 
-实现设计见 `DESIGN-20.md`（用户已批准按推荐值 D1–D10 全做）。**M0（开工前的 P0 修复）已完成**：
+实现设计见 `DESIGN-20.md`（用户已批准按推荐值 D1–D10 全做；§9 是 M0–M5 顺序，§10 M4 缺口表，
+§11 `override` 语义，§12–§14 是三轮独立复验记录）。**M0–M5 全部完成**，测试 **314 → 318**。
 
-- **缺陷**：接口类型的接收者调用，字节码后端恒发 `INVOKEVIRTUAL`（JVM 成员调用点）⇒ 运行期
-  `IncompatibleClassChangeError: Found interface java.util.Iterator, but class was expected`，
-  而解释器照常输出——**两端背离**。探针：`build/verify17e/probeIF/Iter.rsf`（`ArrayList.iterator().hasNext()`）。
-- **修法**：`ResolvedMethod` 加 `interfaceOwner`（解析时由 `JvmClass.isInterface` 定一次，判定只做一次），
-  调用点按它选 `INVOKEINTERFACE`（新增常量），`visitMethodInsn` 第 5 个实参 `isInterface` 同步为 true。
-- **回归**：新增 `InteropTest` 用例「接口类型的接收者调用两端一致」（**249** 测试全绿）；
-  `accept-after.sh` 全绿（J1 9/9 = 126 类、J2 残差 0、J3 0 差异、J5 锚点 8/8、探针 6/6、负例 3/3）；
-  `acc17d.ps1` 八示例 8/8 且逐条「字节级也全同」。
-- **遗留**：`rsfSrc/bootstrap/Backend.rsf` 的 JDK 成员表还没有 `iterator()` 这类成员（落在既有的
-  「暂不支持清单」里）；等它补表时**同样要按接口发 `INVOKEINTERFACE`**，否则 B 与 Kotlin 产物又会分叉。
+**采用的语法**（除 `override` 外都是原提案，`override` 是用户 2026-10-14 拍板的增量）：
+
+```
+public interface Greeter {
+    fun greet(name : string) -> string          // 抽象方法，不写体
+    fun shout(name : string) -> string { rtn greet(name) + "!" }   // 默认方法，有体
+}
+public interface Loud : Greeter { ... }          // 接口继承接口（D4）
+class Dog(name : string) : Greeter { ... }       // 实现；多个用逗号：class Robot : Greeter, Runnable
+class Dog2(name : string) : Greeter {
+    public override fun greet(name : string) -> string { ... }    // override 可选，写了必须真覆盖
+}
+```
+
+**M0（开工前的 P0 修复）**：接口类型的接收者调用，字节码后端原来恒发 `INVOKEVIRTUAL` ⇒ 运行期
+`IncompatibleClassChangeError: Found interface java.util.Iterator, but class was expected`，而解释器照常输出——**两端背离**。
+探针 `build/verify17e/probeIF/Iter.rsf`。修法：`ResolvedMethod` 加 `interfaceOwner`（解析时由 `JvmClass.isInterface` 定一次），
+调用点按它选 `INVOKEINTERFACE`，`visitMethodInsn` 第 5 个实参 `isInterface` 同步为 true。
+
+**M1+M2（语法 + 语义）**：`KW_INTERFACE`、`InterfaceDecl`、`ClassDecl.supertypes`、`FuncDecl.body` 可空（抽象方法）、
+编辑器三处（编译器补全 / IDEA / VS Code）；Checker 侧接口表、实现配对（rsf 接口按签名严格配，JVM 接口按名字+参数个数配，
+因为擦除后的签名 rsf 侧写不出来）、源码子类型判定、`new I()` 拒绝、多接口同签名默认方法冲突（D5：类里必须显式覆盖）、
+接口继承成环报错、接口里不许写字段（D3）。父代理补 `promoteCommon`：`?:` 与三目在「错误返回的接口类型 vs 实现类」上
+收敛到**接口**而不是 `Object`（`RsfType.promote` 两类型不同就只给 `java/lang/Object`）。
+
+**M3（两端代码生成）**：接口 `.class` 是 `ACC_PUBLIC|ACC_INTERFACE|ACC_ABSTRACT`、超类 `java/lang/Object` 且**不带 `ACC_SUPER`**、
+不发字段不发 `<init>`、抽象方法 `ACC_ABSTRACT` 且无 `Code`、默认方法走普通方法发射；类头的 interfaces 数组来自
+`model.superInterfacesOf`；接口方法/默认方法/接口里的隐式调用一律 `INVOKEINTERFACE`（**漏一处就 `IncompatibleClassChangeError`**）；
+接口里的 `__rsf_orelse$N` 必须发 InterfaceMethodref；解释器按运行期真实类虚分派（`callInterfaceMethod` /
+`findInterfaceImplementation` / `findInterfaceDefault`），并新增 `RsfFailure.dispatched` 让默认方法里的 `?:` 兜底认得出失败来源。
+
+**`override`（用户 2026-10-14 拍板：可选、类与接口都能写、写了必须真覆盖）**：独立复验抓出并修掉两个真缺陷——
+① 解释器 `callInterfaceMethod` 对默认方法做**静态分派**（静态类型是父接口、运行期对象是覆盖过该默认方法的子接口实现时，
+解释器打 `n`、字节码打 `p`），改成「先 `findInterfaceImplementation` 再回退」；② `Checker.checkClassCovers` 找实现时
+只比名字与形参，**private/protected/static 方法被当成接口实现**（`check`+`run` 都过，`java` 一调就 `AbstractMethodError`），
+拆成 `shapeOk`/`shapeMatches` 两个谓词并加专门报错分支，同一判据也进 `checkDefaultConflicts`。细节见 `DESIGN-20.md` §13。
+
+**M4（互操作验收）**：三条缺口一对一消掉，`build/verify20/run-probes.sh` 从 19/22 变 **22/22**——
+① `interop/MemberResolver.kt` 加 `sourceSubtype` 谓词、`argCost` 认「源码类 → JDK 接口」这一跳
+（`Collections.sort(xs, new ByValue())`、`new Thread(job)` 不再报「没有匹配的静态方法/构造器」）；
+② `codegen/BytecodeCompiler.kt` 的 `userClass` 调 `emitBridges` 发 `ACC_PUBLIC|ACC_BRIDGE|ACC_SYNTHETIC` 桥
+（擦除后接口是 `compare(Object,Object)I`、实现类是收窄签名，没有桥经接口回调就 `AbstractMethodError`），
+**只在描述符真不同时才发**、**只允许收窄**；③ `interp/Interpreter.kt` 给 `RsfObject` 套 `java.lang.reflect.Proxy`
+（`adaptJdkArg` / `javaProxyOf` / `javaInterfacesOf` / `javaHandler` / `unwrapProxy`），消掉解释器里
+`RsfObject is not an instance of Runnable` 与 `argument type mismatch`。细节见 `DESIGN-20.md` §14。
+
+**验收（父代理每轮自己重跑，不看自报）**：
+
+| 项 | 结果 |
+| --- | --- |
+| `gradlew cleanTest test jar` | **318 全绿**（`RsfTest` 222 / `InterfaceTest` 41 / `InterfaceRuntimeTest` 15 / `InteropTest` 14 / `OverloadTest` 14 / `OverrideTest` 12） |
+| `bash build/verify20/run-probes.sh` | **22 通过 / 0 失败**（9 条运行时两端逐字节 + 13 条 javap 形状） |
+| `bash build/verify20/verify-override/check-override.sh` | **13 通过 / 0 失败**（含擦除性：同名源只差 `override` 关键字，三个 `.class` 逐字节相同） |
+| `bash build/verify17e/accept-after.sh` | J1 9/9＝126 类、`diff -r 差异条目=0`、J2 残差段空、J5 八示例锚点 8/8、**失败项合计 0**（自举链无回归） |
+| `pwsh -File build/tmp17d/acc17d.ps1 -Bout build/verify17e/A` | 八示例**结构+运行 8/8**，逐条「字节级也全同」 |
+
+**遗留与暂不支持（都显式报错或已定格，不静默算错）**：
+
+- **自举版还没同步**：`rsfSrc/**` 的 `Lexer.rsf` / `Parser.rsf` / `Backend.rsf` **还没有 `interface` 与 `override`**
+  （D10：本阶段刻意不碰自举源，否则 17e 的 126 类不动点与八示例锚点全要重记）。`RsfTest` 里有一条
+  「rsf 版词法器尚未收 interface（自举同步前的已知差异）」用例把这条差异钉成可见。将来补表时**同样要按接口发 `INVOKEINTERFACE`**，
+  否则 B 与 Kotlin 产物又会分叉；`Backend.rsf` 的 JDK 成员表仍没有 `iterator()` 这类成员（落在既有的「暂不支持清单」里）。
+- **类继承不做**（D2）：`class A : SomeClass` 会在 Checker 里显式报「rsf 现在还不支持类继承（本阶段只做接口）」。
+- **跨边界时不支持 `Object` 成员**：`p.toString()` 仍报「类 'P' 里没有方法 'toString'」（属 D2/类继承遗留）。
+- **`pkg a.b` 下的接口落在默认包**（`classInternalName` 只给 `classes`/`enums` 加包前缀）：实测两端都跑通、
+  产物是 `out/Greeter.class` + `out/app/Dog.class`，一个程序只有一个 `pkg` 所以不会撞名，暂不改。
+- **桥只发「能收窄」的那些**（`fromPrim && !toPrim` 一类放弃）：宁可运行期 `AbstractMethodError`（能定位），
+  也不发语义不对的桥（会静默算错）。
+- **JVM 接口的实现配对刻意宽松**：只按名字 + 参数个数配，返回类型不严比（`isAbstract`/擦除签名在 rsf 侧写不出来）。
 
 ### 阶段 19d：函数/方法重载（2026-10-11 完成）
 
 **它当初被排在「与阶段 20 / 继承同批做」**，理由是继承与接口都要求同一张方法表从「单条」变成
 「候选集」。实际做的时候发现**机器早就齐了**（`ClassInfo.methods` 之外，方法的参数表、返回类型、
-降级结果本来就按 `FuncDecl` 索引），不需要等继承，于是单独做了这一阶段。**阶段 20 / 21
-（`interface` / `@interface`）仍未开工**，它们将来要做的是「候选集之间按签名配对（覆盖/实现）」，
-与重载的「在同一张表里按实参挑一个」是两件事。
+降级结果本来就按 `FuncDecl` 索引），不需要等继承，于是单独做了这一阶段。接口（阶段 20）已在
+**2026-10-15 完成**——它做的正是「候选集之间按签名配对（覆盖/实现）」；**阶段 21（`@interface`）
+仍未开工**，顺序上必须排在接口之后（JVM 里注解就是继承 `java.lang.annotation.Annotation` 的接口）。
 
 #### 口径（用户拍板，不可擅改）
 

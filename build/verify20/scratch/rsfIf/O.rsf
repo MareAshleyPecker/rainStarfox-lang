@@ -1,0 +1,11 @@
+class Dog {
+    public override fun greet(name : string) -> string {
+        rtn "woof " + name
+    }
+}
+
+fun main() -> void {
+    var d = new Dog()
+    println(d.greet("bob"))
+    rtn
+}

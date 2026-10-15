@@ -911,6 +911,52 @@ switch (kind) {
 带 `else` 的 `switch` 则走 `else`，不抛错。**不会**悄悄什么都不做——静默跳过会让
 `catch` 接不到、输出也看不出问题。
 
+### `interface` 与 `override`（阶段 20）
+
+```rsf
+public interface Greeter {
+    fun greet(name : string) -> string                                   // 抽象方法：不写体
+    fun shout(name : string) -> string { rtn greet(name) + "!" }         // 默认方法：写体
+}
+
+public interface Loud : Greeter { }        // 接口可以继承接口，多个用逗号
+
+class Dog(name : string) : Greeter {       // 类实现接口；继承与实现共用 `:`
+    public override fun greet(name : string) -> string {                 // override 可选
+        rtn "woof " + name
+    }
+}
+
+fun main() -> void {
+    var g : Greeter = new Dog("rex")
+    println(g.greet("bob"))                 // woof bob（虚分派）
+    println(g.shout("bob"))                 // woof bob!
+    rtn
+}
+```
+
+几条定死的规矩（设计见 `DESIGN-20.md`，D1–D10 是用户批准过的口径）：
+
+- **接口里只能写方法**（D3）：写字段/变量直接报「接口里只能写方法…」。接口也**不发字段、不发 `<init>`**，
+  类文件里是 `ACC_INTERFACE | ACC_ABSTRACT` 的接口，抽象方法没有 `Code`。
+- **接口可以继承接口**（D4）：`public interface Loud : Greeter { }`；继承成环会报错。
+- **类继承本批不做**（D2）：`class A : SomeClass` 会显式报「rsf 现在还不支持类继承（本阶段只做接口）」——
+  `:` 后面只认接口。
+- **实现配对**：rsf 接口按签名严格配（参数类型 + 返回类型都对得上），**JVM 接口按名字 + 参数个数配**
+  （擦除后的签名 rsf 侧写不出来）；漏实现会列出缺哪些方法，签名/返回类型对不上会说明差在哪。
+  **`private` / `protected` / `static` 方法不算实现**（`check` 会拦；不拦的话 JVM 一调就 `AbstractMethodError`）。
+- **多接口同签名默认方法冲突**（D5）：类里必须显式写一个同签名方法拍板，否则报「说不清该用哪一份」。
+- **`override` 是可选的**（Java `@Override` 的风格）：不写也合法；**写了就必须真覆盖**，否则报
+  「父类型里没有可覆盖的方法」。类里查父接口（含 JDK 接口与默认方法），接口里查父接口。
+  写在顶层函数/构造器/字段上直接报错。它**完全不进字节码**：同名源只差这一个关键字，产物逐字节相同。
+- **互操作**：可以直接 `class Job : Runnable` / `class ByValue : Comparator&<string>`，把 rsf 对象
+  交给 JDK 代码回调（`new Thread(job)`、`Collections.sort(xs, new ByValue())`）。编译器会给收窄的实现
+  补 `ACC_BRIDGE | ACC_SYNTHETIC` 桥方法，解释器会给对象套 `java.lang.reflect.Proxy`——两条路都走通，
+  不会出现「解释器能跑、`java` 一跑 `AbstractMethodError`」。
+
+**已知边界**：`rsfSrc/**`（用 rsf 写的自举版编译器）**还没同步 `interface` / `override`**，
+所以自举链上写的代码暂时用不了这两个特性（详见 `BOOTSTRAP.md` 的「阶段 20 实际做法与结果」）。
+
 ### 内置函数
 
 `print(x)` / `println(x)`，也支持 `println()` 只换行。
@@ -1343,11 +1389,13 @@ gradlew.bat verifyPlugin          :: 官方校验器静态检查
   是**语句**不是表达式（要取值用三目）；`case` 只接受枚举常量，不支持区间 / 比较 / 字面量；
   没有 fallthrough，也不接受 `break` 跳出 `switch`（分支里写的 `break` 作用于外层循环）
 - **`&&` / `||`**：两边必须是 `bool`（`?bool` 要先解包 / 兜底）；没有按位运算（单独的 `|` 报错）
-- **编辑器高亮还停在阶段 19b**：编译器的补全表（`EditorSupport.KEYWORDS`）已经带上
-  `enum` / `switch` / `case`，但 **IDEA 插件的 `RsfKeywords` / `RsfLexer` 与 VS Code 的
-  tmLanguage 还没同步**（三处关键字表本来是要一起改的）——在编辑器里这三个词暂时按普通标识符上色，
-  `&&` / `||` 也还没进高亮规则。补齐它们是独立的小改动（IDEA 插件那边还要同步它的
-  `COMPILER_KEYWORDS` 快照测试与运算符表）。
+- **编辑器高亮：`enum` / `switch` / `case` 还没进 IDEA 插件与 VS Code**：编译器的补全表
+  （`EditorSupport.KEYWORDS`）一直带着这三个词，但 **IDEA 插件的 `RsfKeywords` /
+  `RsfLexer` 与 VS Code 的 tmLanguage 还没同步**（三处关键字表本来是要一起改的）——
+  在编辑器里这三个词暂时按普通标识符上色，`&&` / `||` 也还没进高亮规则。补齐它们是独立的小改动
+  （IDEA 插件那边还要同步它的 `COMPILER_KEYWORDS` 快照测试与运算符表）。
+  **阶段 20 的 `interface` / `override` 已经三处同步**（`EditorSupport`、`RsfTokenType.RsfKeywords`、
+  `rainstarfox.tmLanguage.json` 都有），所以这条只欠 19c 那三个词
 
 ## 路线图
 
@@ -1385,7 +1433,7 @@ gradlew.bat verifyPlugin          :: 官方校验器静态检查
 | 17e | 三阶段自举：Kotlin 编 rsf 版得 A，A 编自己得 B，B 编自己得 C，要求 **B ≡ C** | ✅ 2026-10-13（B ≡ C：126 个 `.class` 逐字节相同；与 Kotlin 产物逐字节相同还差 3 个类） |
 | 19c | 为 17b 补的三样：`&&` / `||` 短路 + `enum` + `switch` 枚举分派 | ✅ |
 | 19d | **函数/方法重载**：顶层函数与类方法共用一套解析（个数 → 类型打分 → 同分报错）、擦除冲突编译期拒绝、`main` 唯一入口 | ✅ 2026-10-11 |
-| 20 | `interface`（含 `class X : A, B` 多接口实现） | 待做 |
+| 20 | `interface`（抽象/默认方法、接口继承接口、`class X : A, B` 多接口实现、`override`、JVM 接口互操作与桥方法） | ✅ 2026-10-15 |
 | 21 | `@interface` 注解声明 | 待做 |
 
 ### 19c：为 17b 补的三样（enum / switch / `&&` `||`）
