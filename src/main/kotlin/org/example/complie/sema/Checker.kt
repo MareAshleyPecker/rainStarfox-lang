@@ -3578,7 +3578,9 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
             .flatMap { it.methods }
             .filter { it.name == name }
         if (candidates.isEmpty()) return ""
-        return "。同名的有：" + candidates.take(6).joinToString("（") {
+        // 分隔符用「；」而不是「（」：`display()` 自己不带括号，原来那句会把候选串成
+        // 「…（Collections.sort(List, Comparator) -> void」——少一个右括号的残句。
+        return "。同名的有：" + candidates.take(6).joinToString("；") {
             it.display(className.substringAfterLast('/'))
         }
     }
