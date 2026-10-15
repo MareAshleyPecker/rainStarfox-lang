@@ -409,6 +409,10 @@ public class Env(p : ?Env) {
     var up : ?Env = p
     var me : ?Obj = null
     var cl : ?Cls = null
+    // 阶段 25 K5c：这个方法**声明**在哪个类 —— `super.f()` 的解析起点。
+    // `cl` 是「帧所在的类」（虚分派时取**运行期真实类**），`dc` 是「静态声明类」，
+    // 两者必须分开：`super.f()` 要跳开本类的 override，从**声明类**的父类起找。
+    var dc : ?Cls = null
     var names : string[] = new string[8]
     var vals : Val[] = new Val[8]
     var n : int = 0
@@ -488,6 +492,16 @@ public class Env(p : ?Env) {
         }
         rtn null
     }
+
+    // 当前方法**声明**在哪个类（沿链找）—— `super.f()` 的解析起点用它，不用 curClass()
+    public fun declClass() -> ?Cls {
+        var e : ?Env = this
+        while (e != null) {
+            if (e!!.dc != null) { rtn e!!.dc }
+            e = e!!.up
+        }
+        rtn null
+    }
 }
 
 // ================================================================ 函数 / 类 / 枚举的表
@@ -503,6 +517,8 @@ public class Fn(nm : string) {
     var isCtor : bool = false
     var isStatic : bool = false
     var isPrimary : bool = false
+    // 阶段 25 K5c：**声明**这个方法的类名（`super.f()` 从它的父类起找；全局函数留空）。
+    var ownerCls : string = ""
 }
 
 public class Cls(nm : string) {
@@ -526,6 +542,16 @@ public class Cls(nm : string) {
     var isAnn : bool = false
     // 前 elemCount 个字段是注解元素（声明序）；它们之后才是伴生体自己声明的字段。
     var elemCount : int = 0
+
+    // 阶段 25 K5c：类继承。`baseName` 是**类父**（`SUPER_CLASS` 的 `name`），接口父仍堆在
+    // 上面的 `supers` 里 —— 与 K5b 的 CInfo.parent / supers 完全同口径。`baseArgs` 是类头
+    // 父类子句的实参表（`SUPER_CLASS` 的唯一孩子，一个 `ARGS` 节点），`hasBase` 是「写了
+    // 类父」的标志（`findCls("")` 也是 null，但两者语义不同，分开存）。
+    var baseName : string = ""
+    var baseArgs : Node = new Node(NodeKind.ERROR)
+    var hasBase : bool = false
+    // 类头上的 `abstract`（只有写了才挂 ABSTRACT 节点，所以默认 false）
+    var isAbstract : bool = false
 
     public fun addSuper(nm2 : string) -> void {
         var i = 0
@@ -573,6 +599,19 @@ public class Cls(nm : string) {
         var i = 0
         while (i < mcount) {
             if (methods[i].name == nm2) { rtn methods[i] }
+            i = i + 1
+        }
+        rtn null
+    }
+
+    // 阶段 25 K5c：本类**自己声明**的方法，按「名字 + 实参个数」查（不含构造器）——
+    // 与 K5b 的 `methOf(nm, argc)` 同口径。接口的默认方法走 defaultNamed（还要看有没有体）。
+    // 沿类链的查找在 Interp.methInChain 里做。
+    public fun methNamed(nm2 : string, argc : int) -> ?Fn {
+        var i = 0
+        while (i < mcount) {
+            var m = methods[i]
+            if (m.name == nm2 && m.pcount == argc) { rtn m }
             i = i + 1
         }
         rtn null
@@ -796,7 +835,19 @@ public class Interp(prog : Node) {
 
     fun makeFn(node : Node) -> Fn {
         var f = new Fn(attr(node, "name"))
-        var ps = kid(node, 0)
+        // 阶段 25：FUNC 的孩子里 OPEN / FINAL **只在写了时才挂**，而且挂在 PARAMS **前面**
+        // （Parser.rsf:1814-1815），所以参数表与函数体都必须**按 kind 找**，不能按下标 ——
+        // 按下标的话 `open fun` 的参数表会被当成函数体（跑起来就是「方法体没跑、返回 null」）。
+        // 抽象方法没有 BLOCK 孩子，留 `NodeKind.ERROR` 当哨兵（判据：`body.kind == NodeKind.BLOCK`）。
+        var ps = new Node(NodeKind.ERROR)
+        var body = new Node(NodeKind.ERROR)
+        var ci = 0
+        while (ci < node.childCount) {
+            var ck = node.children[ci]
+            if (ck.kind == NodeKind.PARAMS) { ps = ck }
+            else if (ck.kind == NodeKind.BLOCK) { body = ck }
+            ci = ci + 1
+        }
         var n = ps.childCount
         var pn : string[] = new string[n]
         var pt : string[] = new string[n]
@@ -809,7 +860,7 @@ public class Interp(prog : Node) {
         f.pnames = pn
         f.ptypes = pt
         f.pcount = n
-        f.body = kid(node, 1)
+        f.body = body
         f.retType = attr(node, "retType")
         f.mayError = attrBool(node, "mayError")
         f.isCtor = attrBool(node, "ctor")
@@ -839,6 +890,10 @@ public class Interp(prog : Node) {
                 if (part.kind == NodeKind.FIELDS) { loadFields(c, part) }
                 else if (part.kind == NodeKind.METHODS) { loadMethods(c, part) }
                 else if (part.kind == NodeKind.SUPERS) { loadSupers(c, part) }
+                // 阶段 25 K5c：类父槽位与类头上的 `abstract`。**按 kind 找**，不能按下标 ——
+                // 这两部分只在写了时才挂在类节点上（Parser.rsf:1013-1030），位置会漂。
+                else if (part.kind == NodeKind.SUPER_CLASS) { loadBase(c, part) }
+                else if (part.kind == NodeKind.ABSTRACT) { c.isAbstract = true }
                 j = j + 1
             }
             classes = growCls(classes, ccount, c)
@@ -850,6 +905,16 @@ public class Interp(prog : Node) {
 
     // 阶段 20：用户接口。方法装载完全复用 `loadMethods`（抽象方法只是没有 BLOCK，
     // `makeFn` 会把 `body` 留成 ERROR 节点 —— 判据是 `body.kind == BLOCK`，不是「空」）。
+    // 阶段 25 K5c：类头父类子句 `: 父类(实参)`。`SUPER_CLASS.name` 是**简单名**（与
+    // `findCls` 同一套命名），唯一孩子是那个实参表（`ARGS`）；父类本身在装载后被
+    // `validate()` 检查 —— 不在本程序里就是 JDK 父类，**响亮报错**（这一刀不做 JDK 父类）。
+    fun loadBase(c : Cls, part : Node) -> void {
+        c.baseName = attr(part, "name")
+        c.hasBase = c.baseName.length() > 0
+        c.baseArgs = kid(part, 0)
+        rtn
+    }
+
     fun loadIfaces(cs : Node) -> void {
         var i = 0
         while (i < cs.childCount) {
@@ -998,6 +1063,9 @@ public class Interp(prog : Node) {
         var k = 0
         while (k < ms.childCount) {
             var f = makeFn(ms.children[k])
+            // 阶段 25 K5c：记下**声明**这个方法的类 —— 虚分派时帧的类取这一份方法的声明类，
+            // `super.f()` 也从它的父类起找（见 Interp.invokeInstance / evSuperMember）。
+            f.ownerCls = c.name
             if (f.isCtor) {
                 c.ctors = growFn(c.ctors, c.ccount, f)
                 c.ccount = c.ccount + 1
@@ -1071,6 +1139,149 @@ public class Interp(prog : Node) {
         while (i < icount) {
             if (ifcs[i].name == nm) { rtn ifcs[i] }
             i = i + 1
+        }
+        rtn null
+    }
+
+    // ------------------------------------------------------------ 类继承（阶段 25 K5c）
+    //
+    // 与 K5b 的 CInfo 同口径：类父在 `Cls.baseName` 一个槽里，接口父仍走 `Cls.supers`。
+    // 字段布局与 Kotlin 的 `fieldChainOf / fieldBaseOf` 一字对齐：**父类字段在前**，
+    // 对象数组 = 整条父链的字段拼接；每一层在自己那一段里的下标从 `baseOf` 起算。
+
+    // 类 c 的字段段在对象数组里的起始下标（= 它所有祖先的字段总数）
+    public fun baseOf(c : Cls) -> int {
+        if (!c.hasBase) { rtn 0 }
+        var b = findCls(c.baseName)
+        if (b == null) { rtn 0 }
+        rtn totalOf(b!!)
+    }
+
+    // 类 c 的对象数组总长（自己那一段 + 全部祖先）
+    public fun totalOf(c : Cls) -> int {
+        rtn baseOf(c) + c.fcount
+    }
+
+    // 类链（**父类在前、自己在最后**）—— 与 Kotlin `fieldChainOf` 的顺序一致
+    fun chainArray(root : string) -> Cls[] {
+        var rev : Cls[] = new Cls[0]
+        var n = 0
+        var c = findCls(root)
+        while (c != null) {
+            rev = growCls(rev, n, c!!)
+            n = n + 1
+            if (!c!!.hasBase) { c = null }
+            else { c = findCls(c!!.baseName) }
+        }
+        var out : Cls[] = new Cls[n]
+        var i = 0
+        while (i < n) {
+            out[i] = rev[n - 1 - i]
+            i = i + 1
+        }
+        rtn out
+    }
+
+    // 声明该字段的类：沿类父链找，**最近的类优先**（子类同名字段遮蔽父类的）
+    public fun fieldOwnerInChain(root : string, nm : string) -> ?Cls {
+        var c = findCls(root)
+        while (c != null) {
+            if (c!!.fieldIndex(nm) >= 0) { rtn c!! }
+            if (!c!!.hasBase) { rtn null }
+            c = findCls(c!!.baseName)
+        }
+        rtn null
+    }
+
+    // 字段在对象数组里的**绝对**下标（-1 = 整条链上都没有这个字段）
+    public fun fieldIndexInChain(root : string, nm : string) -> int {
+        var o = fieldOwnerInChain(root, nm)
+        if (o == null) { rtn -1 }
+        rtn baseOf(o!!) + o!!.fieldIndex(nm)
+    }
+
+    // 沿类父链（含 root 自己）找「名字 + 实参个数」都对的方法声明（不含构造器）——
+    // **最近的类优先**，也就是虚分派该跑的那一份（Kotlin classChainOf + findClassImplementation）。
+    // 个数对不上时退一步只按名字找（`anyMethInChain`），那是给「只知道名字」的地方用的。
+    public fun methInChain(root : string, nm : string, argc : int) -> ?Fn {
+        var c = findCls(root)
+        while (c != null) {
+            var m = c!!.methNamed(nm, argc)
+            if (m != null) { rtn m!! }
+            if (!c!!.hasBase) { rtn null }
+            c = findCls(c!!.baseName)
+        }
+        rtn null
+    }
+
+    // 同上，但返回**声明那个方法的类**（帧的类 / `super` 的解析起点都用它）
+    public fun methOwnerInChain(root : string, nm : string, argc : int) -> ?Cls {
+        var c = findCls(root)
+        while (c != null) {
+            if (c!!.methNamed(nm, argc) != null) { rtn c!! }
+            if (!c!!.hasBase) { rtn null }
+            c = findCls(c!!.baseName)
+        }
+        rtn null
+    }
+
+    // 沿类父链按**名字**找（不看实参个数）—— 给 `isErrorCapable` 这类只知道名字的地方用
+    fun anyMethInChain(root : string, nm : string) -> ?Fn {
+        var c = findCls(root)
+        while (c != null) {
+            var m = c!!.methodNamed(nm)
+            if (m != null) { rtn m!! }
+            if (!c!!.hasBase) { rtn null }
+            c = findCls(c!!.baseName)
+        }
+        rtn null
+    }
+
+    // 装载后的静态检查（**响亮报错，绝不静默降级**）：
+    //   ① 类父必须在本程序里 —— JDK 父类这一刀不做（K5b 的后端也是这么报的：
+    //      Backend.rsf:6470-6490 `K5b 暂不支持 JDK 父类：`）。静默当 Object / 静默跳过
+    //      都会让「两端对拍」在某一份语料上悄悄分叉，所以宁可当场报错。
+    //   ② 非抽象类不许把父链上的抽象方法留着不实现（Kotlin 侧是 Checker 报的；自举
+    //      解释器没有独立的检查期，就在装载完统一报）。
+    public fun validate() -> !int {
+        var i = 0
+        while (i < ccount) {
+            var c = classes[i]
+            if (c.hasBase && findCls(c.baseName) == null) {
+                if (findIface(c.baseName) != null) {
+                    fail "K5c：类 '" + c.name + "' 的父类型 '" + c.baseName + "' 是接口 —— ':' 后面第一个必须带实参表、且必须是一个类（写法 ': 父类名(实参)'，接口写在它后面用逗号隔开）"
+                }
+                fail "K5c 暂不支持 JDK 父类：" + c.baseName + "（类 '" + c.name + "' 的父类不在本程序里）"
+            }
+            if (!c.isAbstract && !c.isAnn) {
+                var miss = firstUnimplemented(c)
+                if (miss != null) {
+                    fail "K5c：类 '" + c.name + "' 还有抽象成员没有实现：" + miss!!.name + "()（" + intToString(miss!!.pcount) + " 个参数）—— 要么写出实现，要么把类头上写成 'abstract class'"
+                }
+            }
+            i = i + 1
+        }
+        rtn 0
+    }
+
+    // 类链上有没有「声明了但没落地」的抽象方法。`abstract fun f()` 在树上**没有 BLOCK 孩子**
+    // （Parser.rsf:1784-1815），所以判据是 `body.kind == NodeKind.BLOCK` —— 与 `defaultNamed`
+    // 同一个判据。沿链逐层看抽象声明，再看「最近的实现」有没有把它接住。
+    fun firstUnimplemented(c : Cls) -> ?Fn {
+        var cur = c
+        while (cur.hasBase) {
+            var b = findCls(cur.baseName)
+            if (b == null) { rtn null }
+            cur = b!!
+            var i = 0
+            while (i < cur.mcount) {
+                var m = cur.methods[i]
+                if (m.body.kind != NodeKind.BLOCK) {
+                    var impl = methInChain(c.name, m.name, m.pcount)
+                    if (impl == null || impl!!.body.kind != NodeKind.BLOCK) { rtn m }
+                }
+                i = i + 1
+            }
         }
         rtn null
     }
@@ -1325,22 +1536,51 @@ public class Interp(prog : Node) {
 
     // ObjectFormat.render：`类名(字段=值, 字段=值)`，字段按声明顺序，
     // 只有「基础类型 / string / 可空基础类型 / 枚举」的字段真的打值，数组与对象字段一律 `...`。
+    // 阶段 25 K5c：字段沿**整条父链**渲染、**父类字段在前**（与 Kotlin 的
+    // `ObjectFormat.render` + `fieldChainOf` 同口径；p11_tostr_chain 对的就是这一条）。
     fun renderObj(o : Obj) -> !string {
         var c = findCls(o.cls)
         if (c == null) { rtn o.cls + "()" }
         var out = o.cls + "("
+        var first = true
+        var chain = chainArray(o.cls)
         var i = 0
-        while (i < c!!.fcount) {
-            if (i > 0) { out = out + ", " }
-            out = out + c!!.fnames[i] + "="
-            if (isDisplayableField(c!!.ftypes[i])) {
-                out = out + renderFieldValue(o.fs[i], c!!.ftypes[i])!!
-            } else {
-                out = out + "..."
+        while (i < chain.length) {
+            var lv = chain[i]
+            var base = baseOf(lv)
+            var k = 0
+            while (k < lv.fcount) {
+                if (!first) { out = out + ", " }
+                first = false
+                out = out + lv.fnames[k] + "="
+                if (isDisplayableField(lv.ftypes[k])) {
+                    out = out + renderFieldValue(o.fs[base + k], lv.ftypes[k])!!
+                } else {
+                    out = out + "..."
+                }
+                k = k + 1
             }
             i = i + 1
         }
         rtn out + ")"
+    }
+
+    // 整条父链的字段先按类型零值铺一遍（父类在前）—— 没写构造器 / 没写初值的字段
+    // 也要有确定的值，与 Kotlin 构造前的 fillDefaults 同一个用意。
+    fun fillChainDefaults(root : string, o : Obj) -> void {
+        var chain = chainArray(root)
+        var i = 0
+        while (i < chain.length) {
+            var lv = chain[i]
+            var base = baseOf(lv)
+            var k = 0
+            while (k < lv.fcount) {
+                o.fs[base + k] = defaultOf(lv.ftypes[k])
+                k = k + 1
+            }
+            i = i + 1
+        }
+        rtn
     }
 
     fun isDisplayableField(typeText : string) -> bool {
@@ -1567,9 +1807,19 @@ public class Interp(prog : Node) {
             NodeKind.ELVIS : rtn evElvis(n, env)!!
             NodeKind.FORCE : rtn evForce(n, env)!!
             NodeKind.THIS : rtn evThis(n, env)!!
+            // 阶段 25 K5c：`super` 只作为 `super.f(...)` / `super(接口).f(...)` 的**接收者**
+            // 出现（Parser.rsf:2376-2419）；选择哪一份声明在 evMember 里做
+            NodeKind.SUPER : rtn evSuper(n, env)!!
             else : fail unsupported("表达式节点 " + kindName(n.kind))
         }
         rtn vNull()
+    }
+
+    // `super` 表达式本身语义上就是 this（哪一份实现在 evSuperMember 里挑）
+    public fun evSuper(n : Node, env : Env) -> !Val {
+        var o = env.thisObj()
+        if (o == null) { fail "K5c：super 只能用在类的方法或构造器里（这里没有 this）" }
+        rtn vObj(o!!)
     }
 
     // 字符字面量的值在树上是**字符串**（`'a'` 是 "a"，`'\n'` 是真的换行符）
@@ -1582,14 +1832,16 @@ public class Interp(prog : Node) {
         var nm = attr(n, "name")
         var v = env.lookup(nm)
         if (v != null) { rtn v!! }
-        // 方法体里的裸字段名（`rtn x`）：局部没找到才看字段（与 Checker 的解析顺序一致）
+        // 方法体里的裸字段名（`rtn x`）：局部没找到才看字段（与 Checker 的解析顺序一致）。
+        // 阶段 25 K5c：字段沿**类父链**找（继承来的字段在本类方法里可以直接用），
+        // 归属类决定它在对象数组里的那一段（父类字段在前）。
         var c = env.curClass()
         if (c != null) {
-            var idx = c!!.fieldIndex(nm)
-            if (idx >= 0) {
+            var fo = fieldOwnerInChain(c!!.name, nm)
+            if (fo != null) {
                 var o = env.thisObj()
                 if (o == null) { fail "17c 解释器：字段 '" + nm + "' 出现在没有 this 的地方" }
-                rtn o!!.fs[idx]
+                rtn o!!.fs[baseOf(fo!!) + fo!!.fieldIndex(nm)]
             }
         }
         // 类名 / 枚举名当静态接收者（`Point.origin()`、`TokenKind.IDENT`）
@@ -1721,13 +1973,17 @@ public class Interp(prog : Node) {
     }
 
     public fun constructUser(c : Cls, args : Val[]) -> !Val {
-        var o = new Obj(c.name)
-        o.fs = new Val[c.fcount]
-        var i = 0
-        while (i < c.fcount) {
-            o.fs[i] = defaultOf(c.ftypes[i])
-            i = i + 1
+        // 阶段 25 K5c：抽象类不能 new（Kotlin 侧由 Checker 拦，自举解释器在这里拦）。
+        // 允许它会构造出「抽象成员没有实现」的对象，后面的调用只能靠运行期报错兜着 ——
+        // 与其那样，不如在这里就响亮报错。
+        if (c.isAbstract) {
+            fail "K5c：抽象类 '" + c.name + "' 不能 new —— 抽象类只能当父类用（要么把抽象的成员都实现出来，要么把类头上的 'abstract' 去掉）"
         }
+        var o = new Obj(c.name)
+        // 阶段 25 K5c：对象数组 = **整条父链**的字段（父类字段在前），与 Kotlin
+        // `fieldCountOf` / `fieldChainOf` 同口径
+        o.fs = new Val[totalOf(c)]
+        fillChainDefaults(c.name, o)
         if (c.isAnn) {
             // 阶段 21：注解伴生类。实参是**前缀**（`new Tag()` 给 0 个实参、3 个元素），
             // 没给的元素求**它自己的默认值表达式**；没有默认值的按类型零值。
@@ -1753,10 +2009,15 @@ public class Interp(prog : Node) {
         }
         var ctor = pickCtor(c, args)
         if (ctor == null) {
-            // 隐式无参构造器：一个构造器都没写时只有字段初值
+            // 隐式无参构造器：父类那一跳（Kotlin `implicitSuperDelegationOf`）+ 自己的字段初值。
+            // 父类有构造器时，实参来自**类头父类子句**（`class Child : Base(1)`，Checker
+            // :1155/:1189 那条同理）；父类一个构造器都没写时 runSuperDelegation 会往下递归。
             var e0 = new Env(globals)
             e0.me = o
             e0.cl = c
+            var supArgs : ?Node = null
+            if (c.hasBase) { supArgs = c.baseArgs }
+            runSuperDelegation(c, o, e0, supArgs)!!
             runFieldInits(c, o, e0)!!
         } else {
             runCtor(c, ctor!!, o, args)!!
@@ -1810,11 +2071,51 @@ public class Interp(prog : Node) {
     }
 
     public fun runFieldInits(c : Cls, o : Obj, env : Env) -> !int {
+        // 阶段 25 K5c：只写**本类那一段**（父类的字段由父类那一跳或父类自己的构造写）
+        var base = baseOf(c)
         var i = 0
         while (i < c.fcount) {
-            o.fs[i] = coerceTo(c.ftypes[i], ev(c.finits[i], env)!!)
+            o.fs[base + i] = coerceTo(c.ftypes[i], ev(c.finits[i], env)!!)
             i = i + 1
         }
+        rtn 0
+    }
+
+    // 构造体**第一句**的 `super(实参)`（`SUPER_CALL` 的唯一孩子就是 ARGS，Parser.rsf:2352-2367）；
+    // 没写就给 null。语法层保证它只可能出现在第一句（Checker :1201-1239 是这么校验的）。
+    fun superCallArgs(bodyNode : Node) -> ?Node {
+        var i = 0
+        while (i < bodyNode.childCount) {
+            if (bodyNode.children[i].kind == NodeKind.SUPER_CALL) { rtn kid(bodyNode.children[i], 0) }
+            i = i + 1
+        }
+        rtn null
+    }
+
+    // 在 o 上跑「父类那一跳」：父类构造器（实参在**当前帧**里求值，Kotlin runSuperDelegation
+    // 同口径 —— 主构造那一跳的实参就是类头子句，可能引用本构造器的形参，p1/p9 靠这条）。
+    // 父类一个构造器都没写时递归到父类的父类 + 父类字段初值（Kotlin implicitSuperDelegationOf）。
+    // 只有**叶子类**会跑到这里：父类的构造体在它自己的 runCtor 里跑（K3 的 runConstructor 口径：
+    // 父类构造器 → 自己字段初值 → 构造体）。
+    public fun runSuperDelegation(c : Cls, o : Obj, env : Env, argsNode : ?Node) -> !int {
+        if (!c.hasBase) { rtn 0 }
+        var parent = findCls(c.baseName)
+        if (parent == null) {
+            // 装载后的 validate() 已经拦过一次；这里兜住「运行期才拼出来的类名」这种不可能的情况
+            fail "K5c 暂不支持 JDK 父类：" + c.baseName + "（类 '" + c.name + "' 的父类不在本程序里）"
+        }
+        var args : Val[] = new Val[0]
+        if (argsNode != null) { args = evalArgs(argsNode!!, env)!! }
+        var pc = pickCtor(parent!!, args)
+        if (pc != null) { rtn runCtor(parent!!, pc!!, o, args)!! }
+        // 父类没有构造器可挑：顺着父类的类头子句再往上跳一层，然后跑父类自己的字段初值
+        var e2 = new Env(env)
+        e2.me = o
+        e2.cl = parent!!
+        var up : ?Node = null
+        if (parent!!.hasBase) { up = parent!!.baseArgs }
+        runSuperDelegation(parent!!, o, e2, up)!!
+        runFieldInits(parent!!, o, e2)!!
         rtn 0
     }
 
@@ -1822,6 +2123,8 @@ public class Interp(prog : Node) {
         var env = new Env(globals)
         env.me = o
         env.cl = c
+        // 阶段 25 K5c：帧里记下这个构造器**声明**在哪个类（`super.f()` 的解析起点）
+        env.dc = findCls(f.ownerCls)
         var i = 0
         while (i < f.pcount) {
             var a = vNull()
@@ -1829,7 +2132,19 @@ public class Interp(prog : Node) {
             env.define(f.pnames[i], coerceTo(f.ptypes[i], a))
             i = i + 1
         }
-        if (!hasThisCall(f.body)) { runFieldInits(c, o, env)!! }
+        if (!hasThisCall(f.body)) {
+            // 阶段 25 K5c 构造顺序（K3 runConstructor 口径）：
+            //   父类构造器（显式 `super(…)`，否则类头子句） → 自己的字段初值 → 自己的构造体。
+            // 写了 `this(…)` 就整跳交给被委托的构造器去跑（Kotlin：delegationOf(ctor) != null
+            // 时既不跑父类那一跳也不跑字段初值）。
+            var supArgs = superCallArgs(f.body)
+            if (supArgs != null && !c.hasBase) {
+                fail "K5c：类 '" + c.name + "' 没有父类，不能写 super(...)"
+            }
+            if (supArgs == null && c.hasBase) { supArgs = c.baseArgs }
+            runSuperDelegation(c, o, env, supArgs)!!
+            runFieldInits(c, o, env)!!
+        }
         var sig = ""
         try {
             blk(f.body, env)!!
@@ -1874,6 +2189,9 @@ public class Interp(prog : Node) {
         var env = new Env(globals)
         env.me = self
         env.cl = c
+        // 阶段 25 K5c：帧里记下这个方法**声明**在哪个类（`super.f()` 的解析起点；
+        // 全局函数 ownerCls 为空 → findCls("") 给 null，和原来一样）
+        env.dc = findCls(f.ownerCls)
         var i = 0
         while (i < f.pcount) {
             var a = vNull()
@@ -1882,6 +2200,23 @@ public class Interp(prog : Node) {
             i = i + 1
         }
         rtn execFnBody(f, env)!!
+    }
+
+    // 阶段 25 K5c：实例方法调用 = **静态解析**（调用点上按静态接收者沿类链找到一份声明）
+    // + **虚分派**（真正跑的那一份按运行期真实类沿类链找最近的声明 —— K3 的
+    // invokeUserMethod / findClassImplementation 同口径，最近的类优先）。
+    // 帧的类 = 真正执行的那份方法的**声明类** —— 这样方法体里的裸字段名按声明类的归属解析
+    // （子类同名遮蔽父类时才落在正确的那一段），`super.f()` 也从这个类往上找一层。
+    // `static` 方法不参与分派（K5b 的 methOf/fieldOwnerInChain 也只沿类链找**非静态**的）。
+    public fun invokeInstance(m : Fn, self : ?Obj, declC : Cls, args : Val[]) -> !Val {
+        if (self == null) { rtn callFn(m, null, declC, args)!! }
+        if (m.isStatic) { rtn callFn(m, null, declC, args)!! }
+        var rc = self!!.cls
+        var tf = methInChain(rc, m.name, args.length)
+        if (tf == null) { tf = m }
+        var tc = methOwnerInChain(rc, tf!!.name, tf!!.pcount)
+        if (tc == null) { rtn callFn(tf!!, self, declC, args)!! }
+        rtn callFn(tf!!, self, tc!!, args)!!
     }
 
     public fun execFnBody(f : Fn, env : Env) -> !Val {
@@ -2019,8 +2354,11 @@ public class Interp(prog : Node) {
         // 类里按名字直接调本类方法（隐式 this / 隐式类名）
         var cur = env.curClass()
         if (cur != null) {
-            var m = cur!!.methodNamed(nm)
-            if (m != null) { rtn callFn(m!!, env.thisObj(), cur!!, args)!! }
+            // 阶段 25 K5c：沿**类父链**找（继承来的方法也能直接调），再按运行期真实类虚分派；
+            // 个数对不上时退回只按名字找（旧口径，`methodNamed` 不看实参个数）
+            var m = methInChain(cur!!.name, nm, args.length)
+            if (m == null) { m = cur!!.methodNamed(nm) }
+            if (m != null) { rtn invokeInstance(m!!, env.thisObj(), cur!!, args)!! }
             // 阶段 20：本类（或本接口）没有这个成员 —— 沿接口链找带体的默认方法。
             // root 优先取**运行期真实类**（有 this 时），这样默认方法体里的下一次隐式
             // 调用同样是动态分派（对齐 Kotlin `callInterfaceMethod` 的 self.className）。
@@ -2050,6 +2388,13 @@ public class Interp(prog : Node) {
         var nm = attr(n, "name")
         var isCall = attrBool(n, "call")
 
+        // 阶段 25 K5c：`super.f(实参)` / `super(接口名).f(实参)` —— 接收者语义上是 this，
+        // 但**不走虚分派**：裸 super 从本方法**声明类的父类**起沿类链找那一份声明（跳开本类的
+        // override），`super(接口名)` 只认那个接口的默认方法。两边都对齐 Kotlin K3 从
+        // `model.classModel.superCallOf(expr)` 拿 Checker 预先选定的那一份声明、运行期绝不重查
+        // （重查会命中本类的 override → 自我递归）。
+        if (recvNode.kind == NodeKind.SUPER) { rtn evSuperMember(n, env)!! }
+
         // 枚举常量 `TokenKind.IDENT`：接收者是个**枚举名**（不是变量）时才算
         if (!isCall && recvNode.kind == NodeKind.VAR) {
             var rn = attr(recvNode, "name")
@@ -2073,9 +2418,9 @@ public class Interp(prog : Node) {
         if (!isCall) {
             if (recv.k == Kind.OBJV) {
                 var o = recv.ov!!
-                var c = findCls(o.cls)
-                if (c == null) { fail "17c 解释器：类 '" + o.cls + "' 不在本程序里" }
-                var idx = c!!.fieldIndex(nm)
+                if (findCls(o.cls) == null) { fail "17c 解释器：类 '" + o.cls + "' 不在本程序里" }
+                // 阶段 25 K5c：字段沿**类父链**找（继承来的字段能直接读）
+                var idx = fieldIndexInChain(o.cls, nm)
                 if (idx < 0) { fail "类 '" + o.cls + "' 里没有字段 '" + nm + "'" }
                 rtn o.fs[idx]
             }
@@ -2084,6 +2429,42 @@ public class Interp(prog : Node) {
 
         var args = evalArgs(kid(n, 1), env)!!
         rtn invokeMember(recv, nm, args, env)!!
+    }
+
+    // `super.f(...)` / `super(接口名).f(...)`：**非虚**地跑指定的一份声明。
+    // 裸 super 的 target 是字面量 "-"（Parser.rsf:2365/2374），其余是接口名。
+    public fun evSuperMember(n : Node, env : Env) -> !Val {
+        var sup = kid(n, 0)
+        var nm = attr(n, "name")
+        var starget = attr(sup, "target")
+        var args = evalArgs(kid(n, 1), env)!!
+        var self = env.thisObj()
+        if (self == null) { fail "K5c：super 只能用在类的方法或构造器里（这里没有 this）" }
+        if (starget.length() > 0 && starget != "-") {
+            var iname = baseTypeName(starget)
+            var sif = findIface(iname)
+            if (sif == null) {
+                fail "K5c：super(" + starget + ")：" + starget + " 不是本程序里的接口（super 括号里只能写接口名）"
+            }
+            var sm = sif!!.defaultNamed(nm, args.length)
+            if (sm == null) { sm = sif!!.anyNamed(nm, args.length) }
+            if (sm == null) {
+                fail "K5c：接口 " + starget + " 里没有方法 " + nm + "()（" + intToString(args.length) + " 个参数）"
+            }
+            // 非虚：只跑这一个接口的这一份默认方法体（K3 callInterfaceMethod 的静态那一支）
+            rtn callFn(sm!!, self, sif!!, args)!!
+        }
+        // 裸 super：从**声明本方法的类**的父类起找（跳开本类的 override）
+        var dc = env.declClass()
+        if (dc == null) { fail "K5c：super." + nm + "() 出现在类的方法之外（找不到当前方法声明在哪个类）" }
+        if (!dc!!.hasBase) { fail "K5c：super." + nm + "()：类 '" + dc!!.name + "' 没有父类" }
+        var m = methInChain(dc!!.baseName, nm, args.length)
+        if (m == null) {
+            fail "K5c：父类没有方法 " + nm + "()（" + intToString(args.length) + " 个参数）"
+        }
+        var owner = methOwnerInChain(dc!!.baseName, nm, args.length)
+        if (owner == null) { rtn callFn(m!!, self, dc!!, args)!! }
+        rtn callFn(m!!, self, owner!!, args)!!
     }
 
     public fun invokeMember(recv : Val, nm : string, args : Val[], env : Env) -> !Val {
@@ -2185,8 +2566,11 @@ public class Interp(prog : Node) {
     public fun objMember(o : Obj, nm : string, args : Val[], env : Env) -> !Val {
         var c = findCls(o.cls)
         if (c == null) { fail "17c 解释器：类 '" + o.cls + "' 不在本程序里" }
-        var m = c!!.methodNamed(nm)
-        if (m != null) { rtn callFn(m!!, o, c!!, args)!! }
+        // 阶段 25 K5c：先沿**类父链**找（继承来的方法也要能调），再按运行期真实类虚分派。
+        // 个数对不上时退回只按名字找（旧口径）
+        var m = methInChain(o.cls, nm, args.length)
+        if (m == null) { m = c!!.methodNamed(nm) }
+        if (m != null) { rtn invokeInstance(m!!, o, c!!, args)!! }
         // 阶段 21：注解对象的**元素访问器** `m.value()`。运行期是伴生类的对象，静态类型
         // 却是注解接口，所以这份访问器是**非虚**的：查到元素字段直接返回字段值。
         // 与 Kotlin `annotationElementCall`（Interpreter.kt:1132-1136）同口径 ——
@@ -2203,7 +2587,34 @@ public class Interp(prog : Node) {
             fail "调用 '" + nm + "' 无法确定用哪个默认实现（接口链上有 " + render(vInt(ifaceHitCount))!! + " 个候选）"
         }
         if (ifaceHitCount == 1) { rtn callFn(ifaceHit!!, o, c!!, args)!! }
+        // 阶段 25 K5c（K4b 口径的 Object 方法族）：用户类**没有 JDK 父链**，所以
+        // `toString()` / `equals(x)` / `hashCode()` / `getClass()` 这几条 rsf 自己的语义
+        // 兜在这里（Kotlin `rsfObjectFamily`，Interpreter.kt:896-913）。
+        var fam = objectFamily(o, nm, args)!!
+        if (fam.k != Kind.NULLV) { rtn fam }
         fail "类 '" + o.cls + "' 里没有方法 '" + nm + "'"
+        rtn vNull()
+    }
+
+    // K4b 的 Object 方法族。**绝不放宽**：`hashCode()` 在 Kotlin 一侧给的是
+    // `System.identityHashCode`（每次运行都不同），自举解释器复现不了那个值 —— 与其
+    // 对拍时静默分叉，不如响亮报错；`getClass()` 在 K4b 就是明着抛的。
+    // 这一族也不许经 JDK 父链漏进用户类：用户类想覆盖就必须自己写同名方法
+    // （那时候 `methInChain` 先命中，走不到这里）。
+    // 返回 `!Val`：这一族**可能失败**（hashCode/getClass 响亮报错）。命中给值，
+    // 没命中给 `vNull()`（这一族没有一个方法会返回真 null，所以哨兵没有歧义）。
+    fun objectFamily(o : Obj, nm : string, args : Val[]) -> !Val {
+        if (args.length == 0 && nm == "toString") { rtn vStr(renderObj(o)!!) }
+        if (args.length == 1 && nm == "equals") {
+            if (args[0].k != Kind.OBJV) { rtn vBool(false) }
+            rtn vBool(args[0].ov!! == o)
+        }
+        if (args.length == 0 && nm == "hashCode") {
+            fail "K5c：'hashCode()' 在自举解释器里做不到与 Kotlin 一侧逐字节一致（那边给的是 System.identityHashCode，每次运行都不同）"
+        }
+        if (args.length == 0 && nm == "getClass") {
+            fail "K5c：'getClass()' —— rsf 的用户类在解释器里没有真实的 Class 对象（K4b 口径，两端拿不到同一个 Class）"
+        }
         rtn vNull()
     }
 
@@ -2236,7 +2647,8 @@ public class Interp(prog : Node) {
             if (f != null && f!!.mayError) { rtn true }
             var cur = env.curClass()
             if (cur != null) {
-                var m = cur!!.methodNamed(nm)
+                // 阶段 25 K5c：沿类父链按名字找（继承来的方法可能是 mayError 的）
+                var m = anyMethInChain(cur!!.name, nm)
                 if (m != null && m!!.mayError) { rtn true }
             }
             rtn false
@@ -2361,6 +2773,9 @@ public class Interp(prog : Node) {
             NodeKind.EXPR_STMT : rtn stExpr(n, env)!!
             NodeKind.LABEL : rtn 0
             NodeKind.THIS_CALL : rtn stThisCall(n, env)!!
+            // 阶段 25 K5c：`super(实参)` 走到这里是**空操作** —— 父类那一串构造器早由
+            // `runCtor` 在本构造体开跑**之前**铺完了（K3 把 ISuperDelegate 变成 pc++ 是同一条理由）
+            NodeKind.SUPER_CALL : rtn 0
             NodeKind.SWITCH : rtn stSwitch(n, env)!!
             NodeKind.GOTO : rtn stGoto(n)!!
             NodeKind.IF : rtn stIf(n, env)!!
@@ -2388,11 +2803,14 @@ public class Interp(prog : Node) {
         if (env.assign(nm, v)) { rtn 0 }
         var c = env.curClass()
         if (c != null) {
-            var idx = c!!.fieldIndex(nm)
-            if (idx >= 0) {
+            // 阶段 25 K5c：字段沿**类父链**找（继承来的字段能直接赋值），
+            // 归属类决定写对象数组里的哪一段（父类字段在前）
+            var fo = fieldOwnerInChain(c!!.name, nm)
+            if (fo != null) {
                 var o = env.thisObj()
                 if (o == null) { fail "17c 解释器：字段 '" + nm + "' 出现在没有 this 的地方" }
-                o!!.fs[idx] = coerceTo(c!!.ftypes[idx], v)
+                var li = fo!!.fieldIndex(nm)
+                o!!.fs[baseOf(fo!!) + li] = coerceTo(fo!!.ftypes[li], v)
                 rtn 0
             }
         }
@@ -2417,12 +2835,13 @@ public class Interp(prog : Node) {
         var m = kid(n, 0)
         var nm = attr(m, "name")
         var o = evalReceiverObj(kid(m, 0), env)!!
-        var c = findCls(o.cls)
-        if (c == null) { fail "17c 解释器：类 '" + o.cls + "' 不在本程序里" }
-        var idx = c!!.fieldIndex(nm)
-        if (idx < 0) { fail "类 '" + o.cls + "' 里没有字段 '" + nm + "'" }
+        if (findCls(o.cls) == null) { fail "17c 解释器：类 '" + o.cls + "' 不在本程序里" }
+        // 阶段 25 K5c：字段沿类父链找，`coerceTo` 用**声明它的那个类**的类型
+        var fo = fieldOwnerInChain(o.cls, nm)
+        if (fo == null) { fail "类 '" + o.cls + "' 里没有字段 '" + nm + "'" }
+        var li = fo!!.fieldIndex(nm)
         var v = ev(kid(n, 1), env)!!
-        o.fs[idx] = coerceTo(c!!.ftypes[idx], v)
+        o.fs[baseOf(fo!!) + li] = coerceTo(fo!!.ftypes[li], v)
         rtn 0
     }
 
@@ -2629,6 +3048,8 @@ public fun runSource(source : string) -> !int {
     }
     var it = new Interp(ast)
     it.load()
+    // 阶段 25 K5c：装载后的静态检查（JDK 父类 / 抽象成员漏实现）—— 响亮报错，不静默降级
+    it.validate()!!
     it.runMain()!!
     rtn 0
 }
@@ -2640,6 +3061,7 @@ public fun runProgram(ast : Node) -> !int {
     }
     var it = new Interp(ast)
     it.load()
+    it.validate()!!
     it.runMain()!!
     rtn 0
 }
