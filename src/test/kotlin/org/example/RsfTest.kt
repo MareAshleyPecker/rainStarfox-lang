@@ -33,15 +33,13 @@ class RsfTest {
     // ------------------------------------------------------------------ 签名
 
     @Test
-    fun `三种返回样式等价`() {
+    fun `两种返回样式等价`() {
         val arrow = Rsf.parse(source("public fun one() -> int {\n    rtn 1\n}\n"))
-        val double = Rsf.parse(source("public fun one() :: int {\n    rtn 1\n}\n"))
-        val single = Rsf.parse(source("public fun one() -> int {\n    rtn 1\n}\n"))
+        val colon = Rsf.parse(source("public fun one() : int {\n    rtn 1\n}\n"))
 
         val a = arrow.functions.single()
-        val b = double.functions.single()
-        val c = single.functions.single()
-        for (decl in listOf(a, b, c)) {
+        val b = colon.functions.single()
+        for (decl in listOf(a, b)) {
             assertEquals("one", decl.name)
             assertEquals("int", decl.ret.type.name)
             assertEquals(ControlType.PUBLIC, decl.control)
@@ -1918,7 +1916,7 @@ class RsfTest {
     @Test
     fun `可空返回与 elvis 两端一致`() {
         val program = """
-            fun find(id : int) :: ?string {
+            fun find(id : int) : ?string {
                 if (id == 1) { rtn "one" }
                 rtn null
             }
@@ -1945,7 +1943,7 @@ class RsfTest {
     @Test
     fun `null 比较与强制解包两端一致`() {
         val program = """
-            fun maybe(n : int) :: ?string {
+            fun maybe(n : int) : ?string {
                 if (n > 0) { rtn "yes" }
                 rtn null
             }
@@ -1976,7 +1974,7 @@ class RsfTest {
                 rtn null
             }
 
-            fun maybeLong(n : int) :: ?long {
+            fun maybeLong(n : int) : ?long {
                 if (n > 0) { rtn 9000000000L }
                 rtn null
             }
@@ -2034,7 +2032,7 @@ class RsfTest {
         val e = assertFailsWith<RsfError> {
             Rsf.analyze(
                 source(
-                    "fun f() :: ?string {\n    rtn null\n}\n" +
+                    "fun f() : ?string {\n    rtn null\n}\n" +
                         "fun main() -> void {\n    var t = \"x\"\n    t = f()\n    rtn\n}\n",
                 ),
             )
@@ -2084,7 +2082,7 @@ class RsfTest {
     @Test
     fun `对 null 用双叹号在两端都是 NullPointerException`() {
         val program = """
-            fun f() :: ?string {
+            fun f() : ?string {
                 rtn null
             }
 
@@ -2463,7 +2461,7 @@ class RsfTest {
         val e = assertFailsWith<RsfError> {
             Rsf.analyze(
                 source(
-                    "fun f() :: ?string {\n    rtn null\n}\n" +
+                    "fun f() : ?string {\n    rtn null\n}\n" +
                         "fun main() -> void {\n    var s = f()\n    println(s.length())\n    rtn\n}\n",
                 ),
             )
@@ -2505,7 +2503,7 @@ class RsfTest {
                 rtn n * fact(n - 1)
             }
 
-            public fun maybe(n : int) :: ?string {
+            public fun maybe(n : int) : ?string {
                 if (n > 0) { rtn "yes" }
                 rtn null
             }
@@ -2645,7 +2643,7 @@ class RsfTest {
                 rtn 1 + 2 * 3
             }
 
-            private fun half() :: float {
+            private fun half() : float {
                 rtn 1.5f
             }
 
@@ -2750,7 +2748,7 @@ class RsfTest {
                 rtn 41
             }
 
-            public fun exposed() :: int {
+            public fun exposed() : int {
                 rtn hidden() + 1
             }
 
@@ -5205,17 +5203,18 @@ class RsfTest {
     }
 
     @Test
-    fun `返回子句不再接受冒号写法`() {
+    fun `返回子句不再接受双冒号写法`() {
+        // 2026-10-15 拍板：`:: T` 删掉，`::` 腾给 `xxx::xx`（伴生类 Marker::Impl）
         val e = assertFailsWith<RsfError> {
-            Rsf.parse(source("fun f() : int { rtn 1 }\n"))
+            Rsf.parse(source("fun f() :: int { rtn 1 }\n"))
         }
-        // 报错要说清改用 -> 或 ::
+        // 报错要说清改用 -> 或 :
         assertTrue(e.detail.contains("->"), e.detail)
-        assertTrue(e.detail.contains("::"), e.detail)
+        assertTrue(e.detail.contains(":"), e.detail)
 
-        // `->` 和 `::` 都还在
+        // `->` 和 `:` 都还在
         Rsf.parse(source("fun f() -> int { rtn 1 }\n"))
-        Rsf.parse(source("fun f() :: int { rtn 1 }\n"))
+        Rsf.parse(source("fun f() : int { rtn 1 }\n"))
     }
 
     @Test
@@ -6954,7 +6953,7 @@ class RsfTest {
                 module "plugins"
 
                 public fun f(a : int, b : string) -> int { rtn a }
-                protected static fun g() :: !string { rtn "x" }
+                protected static fun g() : !string { rtn "x" }
                 private fun h(xs : int[], m : Box&<int>) -> void { rtn }
                 fun i() -> !Token { rtn }
                 fun j() -> null { rtn }

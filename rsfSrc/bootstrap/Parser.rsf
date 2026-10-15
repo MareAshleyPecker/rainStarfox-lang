@@ -892,18 +892,18 @@ public class Parser(tokens : Token[]) {
         var nameTok = expect("IDENT", "缺少函数名")
         var params = parseParamList("函数名 '" + nameTok.text + "' 后面缺少 '('")
 
-        // 返回子句：只认 `->` 和 `::`（`:` 那条别名已删）
+        // 返回子句：`->` 与 `:` 等价（`::` 那条别名 2026-10-15 删掉，`::` 腾给 xxx::xx）
         var retStyle = "OMITTED"
         var mayError = false
         var retType = "void"
         if (matchOne("ARROW")) {
             retStyle = "ARROW"
         } else {
-            if (matchOne("DOUBLE_COLON")) {
-                retStyle = "DOUBLE_COLON"
+            if (matchOne("COLON")) {
+                retStyle = "COLON"
             } else {
-                if (check("COLON")) {
-                    failAt(peek(), "返回类型子句不再接受 ':'：请用 '->' 或者 '::'")
+                if (check("DOUBLE_COLON")) {
+                    failAt(peek(), "返回类型子句不再接受 '::'：请用 '->' 或者 ':'")
                 }
             }
         }

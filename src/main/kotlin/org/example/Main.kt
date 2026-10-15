@@ -351,9 +351,9 @@ class Cli {
             """
             |函数
             |  fun main() -> void { ... }             入口（ControlType 可省；省了就是 public；main 不能带参数）
-            |  public fun add(a : int, b : int) :: int { rtn a + b }
+            |  public fun add(a : int, b : int) : int { rtn a + b }
             |  public fun parse(s : string) -> !int { ... }   可能失败：出错走异常，调用方要 try / ?: / !!
-            |      访问控制写在最左，省略就是 public；-> :: 两种返回写法等价（':' 不再接受）
+            |      访问控制写在最左，省略就是 public；-> : 两种返回写法等价（'::' 不再接受）
             |      参数两种风格都能写、可以混：int a / a : int；参数按 C 惯例默认可变
             |
             |语句

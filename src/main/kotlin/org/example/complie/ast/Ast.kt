@@ -84,20 +84,21 @@ enum class ControlType(val keyword: String) {
 }
 
 /**
- * 返回类型子句的两种等价写法，外加省略。
+ * 返回类型子句的两种等价写法（`-> T` / `: T`），外加省略。
  *
- * `: T` 那条别名**已删除**（2026-10-08）：`:` 现在专门留给「名字 : 类型」和
- * 「if c : 语句」，三种返回写法挤在一起太容易看混。写了 `: T` 由
- * `Parser.parseFuncDecl` 直接报错，并提示改用 `->` 或 `::`。
+ * 2026-10-15 拍板：`:: T` 那条别名**已删除**——`::` 腾出来给 `xxx::xx` 这种嵌套写法
+ * （伴生类写作 `Marker::Impl`）。`:` 加回来当返回标记（2026-10-08 曾经删过它，
+ * 因为当时三种写法并存容易看混；现在只剩 `->` 与 `:` 两种，且有别的符号可用）。
+ * 写了 `:: T` 由 `Parser.parseFuncDecl` 直接报错，并提示改用 `->` 或 `:`。
  */
 enum class ReturnStyle(val symbol: String) {
     ARROW("->"),
-    DOUBLE_COLON("::"),
+    COLON(":"),
     OMITTED("(缺省)"),
 }
 
 /**
- * 返回类型子句：`-> T` / `:: T`，可带 `!`（可能出错）前缀。
+ * 返回类型子句：`-> T` / `: T`，可带 `!`（可能出错）前缀。
  *
  * 可空性写在类型名里（`?int`），不再单列一个字段。
  *
@@ -113,7 +114,7 @@ data class ReturnSpec(
 ) : Node {
     val nullable: Boolean get() = type.name.startsWith("?")
 
-    /** 写给人看的完整写法，例如 `:: ?int`。 */
+    /** 写给人看的完整写法，例如 `: ?int`。 */
     fun display(): String {
         val mark = if (mayError) "!" else ""
         return "${style.symbol} $mark${type.display()}"

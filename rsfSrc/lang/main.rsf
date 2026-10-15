@@ -23,7 +23,7 @@ fun add(a : int, b : int) -> int {
     rtn a + b
 }
 
-private fun secret() :: int {
+private fun secret() : int {
     rtn 42
 }
 
@@ -73,7 +73,7 @@ fun stars(n : int) -> string {
 
 // ---- ?T 可空 ----
 // 返回类型写 ?string 就表示「可能返回 null」，调用方必须处理
-fun findName(id : int) :: ?string {
+fun findName(id : int) : ?string {
     if (id == 1) { rtn "rainStarfox" }
     rtn null
 }

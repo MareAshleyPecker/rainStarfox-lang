@@ -18,7 +18,7 @@ public fun fact(n : int) -> int {
 }
 
 // 可空返回类型在 Java 侧就是一个可能为 null 的引用
-public fun maybe(n : int) :: ?string {
+public fun maybe(n : int) : ?string {
     if (n > 0) { rtn "positive" }
     rtn null
 }

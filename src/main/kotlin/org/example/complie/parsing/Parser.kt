@@ -68,14 +68,14 @@ import org.example.complie.lexing.TokenKind
  * 函数声明：
  * ```
  * <ControlType> <static> fun <MainType> 名字(<参数表>) -> <ReturnType> { ... }
- * <ControlType> <static> fun <MainType> 名字(<参数表>) :: <ReturnType> { ... }
+ * <ControlType> <static> fun <MainType> 名字(<参数表>) : <ReturnType> { ... }
  * ```
  * - `<ControlType>`：`public` / `protected` / `private`，写在最左，**省略就是 `public`**
  * - `<static>`：紧跟其后，控制「怎么调用」（类名.方法 / 对象.方法），可省略
  * - `<MainType>`：`fun` 之后、函数名之前的类型槽，缺省 `void`
- * - **返回类型子句只认 `->` 和 `::`**（`:` 那条别名已删掉：它和 `if c : 语句`、
- *   变量类型标注 `var x : int` 太容易看混）；可省略，缺省 `void`；
- *   可带 `?`（可空）或 `!`（可能出错）前缀
+ * - **返回类型子句只认 `->` 和 `:`**（2026-10-15 拍板：`::` 那条别名删掉，`::` 腾给
+ *   `xxx::xx` 这种嵌套写法；`:` 与 `if c : 语句`、`var x : int` 各自在别的上下文，不冲突）；
+ *   可省略，缺省 `void`；可带 `?`（可空）或 `!`（可能出错）前缀
  * - **参数表两种风格都收，可以混写**：Java 风格 `int a` / Kotlin 风格 `a : int`
  * - **变量与字段只收 Kotlin 后缀风格**：`var x : int = 0`（类型可省，靠推断）
  *
@@ -860,16 +860,15 @@ class Parser(
 
         val params = parseParamList("函数名 '${nameTok.lexeme}' 后面缺少 '('")
 
-        // 返回类型子句：只认 `->` 和 `::`（`:` 那条别名已删，见下面的报错）
+        // 返回类型子句：`->` 与 `:` 等价（`::` 那条别名已删，见下面的报错）
         val ret: ReturnSpec = when {
             match(TokenKind.ARROW) -> parseReturnSpec(ReturnStyle.ARROW)
-            match(TokenKind.DOUBLE_COLON) -> parseReturnSpec(ReturnStyle.DOUBLE_COLON)
-            check(TokenKind.COLON) -> throw error(
+            match(TokenKind.COLON) -> parseReturnSpec(ReturnStyle.COLON)
+            check(TokenKind.DOUBLE_COLON) -> throw error(
                 peek(),
-                "返回类型子句不再接受 ':'：请用 '->' 或者 '::'，" +
+                "返回类型子句不再接受 '::'：请用 '->' 或者 ':'，" +
                     "例如 fun ${nameTok.lexeme}() -> int { ... }。" +
-                    "（':' 现在专门留给「名字 : 类型」和「if c : 语句」，" +
-                    "三种写法挤在一起太容易看混）",
+                    "（'::' 现在留给 xxx::xx 这种嵌套写法，例如 Marker::Impl）",
             )
             else -> ReturnSpec(TypeRef("void", funTok.at), ReturnStyle.OMITTED, false, funTok.at)
         }
