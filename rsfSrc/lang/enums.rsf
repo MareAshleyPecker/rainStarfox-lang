@@ -14,7 +14,7 @@
 // ---------------------------------------------------------------- 枚举声明
 
 // 值的顺序就是声明顺序；允许尾逗号（写多行时不用为了最后一行删逗号）
-public enum TokenKind {
+enum TokenKind {
     IDENT,
     INT_LIT,
     STRING,
@@ -25,13 +25,13 @@ public enum TokenKind {
 }
 
 // 枚举可以当参数、返回值、字段、数组元素，可空也没问题（`?TokenKind`）
-public enum Op {
+enum Op {
     ADD,
     SUB,
 }
 
 // 打印枚举就是打印**值名**：`println(k)` 与 `"kind = " + k` 都是 `IDENT`
-public fun nameOf(k : TokenKind) -> string {
+fun nameOf(k : TokenKind) -> string {
     switch (k) {
         case TokenKind.IDENT : rtn "标识符"
         case TokenKind.INT_LIT : rtn "整数"
@@ -44,7 +44,7 @@ public fun nameOf(k : TokenKind) -> string {
 }
 
 // `switch` 是语句：命中哪一支就只跑哪一支，没有 fallthrough（也不需要写 break）
-public fun describe(k : TokenKind) -> string {
+fun describe(k : TokenKind) -> string {
     var out = ""
     switch (k) {
         case TokenKind.IDENT : out = "名字"
@@ -59,7 +59,7 @@ public fun describe(k : TokenKind) -> string {
 }
 
 // 带 `else` 的 switch：不必穷尽，剩下的都进 else
-public fun isOperator(k : TokenKind) -> bool {
+fun isOperator(k : TokenKind) -> bool {
     switch (k) {
         case TokenKind.PLUS : rtn true
         case TokenKind.MINUS : rtn true
@@ -68,7 +68,7 @@ public fun isOperator(k : TokenKind) -> bool {
 }
 
 // 操作符 → 枚举：返回类型是枚举，参数也是枚举
-public fun opOf(k : TokenKind) -> ?Op {
+fun opOf(k : TokenKind) -> ?Op {
     switch (k) {
         case TokenKind.PLUS : rtn Op.ADD
         case TokenKind.MINUS : rtn Op.SUB
@@ -76,7 +76,7 @@ public fun opOf(k : TokenKind) -> ?Op {
     }
 }
 
-public fun apply(a : int, b : int, op : Op) -> int {
+fun apply(a : int, b : int, op : Op) -> int {
     switch (op) {
         case Op.ADD : rtn a + b
         case Op.SUB : rtn a - b
@@ -85,7 +85,7 @@ public fun apply(a : int, b : int, op : Op) -> int {
 
 // ---------------------------------------------------------------- 枚举当字段与数组元素
 
-public class Lexeme {
+class Lexeme {
     var kind : TokenKind = TokenKind.EOF
     var text : string = ""
     var ops : Op[] = new Op[2]
@@ -96,13 +96,13 @@ public class Lexeme {
     }
 
     // 枚举比较用 == / !=（枚举值是单例，比的就是「同一个常量」）
-    public fun isIdent() -> bool {
+    fun isIdent() -> bool {
         rtn kind == TokenKind.IDENT
     }
 }
 
 // 枚举值的数组：没填过的元素是 null，和枚举常量比较不会命中（两端都是 false）
-public fun countKinds(items : TokenKind[], want : TokenKind) -> int {
+fun countKinds(items : TokenKind[], want : TokenKind) -> int {
     var n = 0
     var i = 0
     while (i < items.length) {
@@ -117,20 +117,20 @@ public fun countKinds(items : TokenKind[], want : TokenKind) -> int {
 
 // ---------------------------------------------------------------- 短路逻辑
 
-public class Tracer {
+class Tracer {
     var calls : int = 0
     var log : string = ""
 }
 
 // 左边：记一笔调用、返回 false
-public fun no(t : Tracer, tag : string) -> bool {
+fun no(t : Tracer, tag : string) -> bool {
     t.calls = t.calls + 1
     t.log = t.log + tag
     rtn false
 }
 
 // 右边：记一笔调用、返回 true
-public fun yes(t : Tracer, tag : string) -> bool {
+fun yes(t : Tracer, tag : string) -> bool {
     t.calls = t.calls + 1
     t.log = t.log + tag
     rtn true
@@ -138,7 +138,7 @@ public fun yes(t : Tracer, tag : string) -> bool {
 
 // 用短路把「先看边界、再看内容」写在一行里：
 // 下标越界检查放左边，左边为假时右边**根本不会被求值**
-public fun startsWithSlash(s : string, i : int) -> bool {
+fun startsWithSlash(s : string, i : int) -> bool {
     rtn i < s.length() && s.charAt(i) == '/'
 }
 

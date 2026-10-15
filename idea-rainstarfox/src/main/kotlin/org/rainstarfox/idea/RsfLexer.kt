@@ -376,6 +376,9 @@ class RsfLexer : Lexer() {
         "," -> RsfTokens.COMMA
         ";" -> RsfTokens.SEMICOLON
         "." -> RsfTokens.DOT
+        // 阶段 21：注解记号。插件这边不细分「注解记号」这个类别，落到通用符号色
+        // （和 `->` / `::` 同一类），关键是**不能再当非法字符**。
+        "@" -> RsfTokens.OPERATION
         in OPERATORS -> RsfTokens.OPERATION
         else -> RsfTokens.BAD_CHARACTER
     }
@@ -395,6 +398,9 @@ class RsfLexer : Lexer() {
         /** 长的放前面，否则 `->` 会被切成 `-` 和 `>`。 */
         private val PUNCT = OPERATORS.sortedByDescending { it.length } + listOf(
             "(", ")", "{", "}", "[", "]", ",", ";", ".",
+            // 阶段 21：注解使用点的 `@`。它不是运算符，单独列在这里
+            // （不放进 OPERATORS，免得「运算符」这个词被撑大）。
+            "@",
         )
 
         private fun punctuation(text: CharSequence, at: Int, to: Int): String {

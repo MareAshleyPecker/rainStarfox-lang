@@ -6,7 +6,7 @@
 
 // ---------------------------------------------------------------- 基本类
 
-public class Point {
+class Point {
     var x : int = 0
     var y : int = 0
     imutvar label : string = "point"   // 不可变字段：声明时定值，之后不能改
@@ -17,22 +17,22 @@ public class Point {
         y = y0
     }
 
-    public fun sum() -> int {
+    fun sum() -> int {
         rtn x + y
     }
 
     // 方法体里可以直接写字段名（裸字段名）；和参数重名时才必须写 this.
-    public fun shift(dx : int, dy : int) -> void {
+    fun shift(dx : int, dy : int) -> void {
         x = x + dx
         y = y + dy
     }
 
-    public fun describe() -> string {
+    fun describe() -> string {
         rtn label + "(" + x + ", " + y + ")"
     }
 
     // 实例方法里直接调另一个实例方法（隐式 this）
-    public fun doubleBoth() -> void {
+    fun doubleBoth() -> void {
         shift(x, y)
     }
 
@@ -41,30 +41,30 @@ public class Point {
         rtn 42
     }
 
-    public fun reveal() -> int {
+    fun reveal() -> int {
         rtn secret()
     }
 
     // 静态方法：用「类名.方法()」调，不能用对象调
-    public static fun origin() -> Point {
+    static fun origin() -> Point {
         rtn new Point(0, 0)
     }
 }
 
 // ---------------------------------------------------------------- 可空类字段
 
-public class Holder {
+class Holder {
     var held : ?Point = null          // 可空的自定义类字段
 
-    public fun keep(p : Point) -> void {
+    fun keep(p : Point) -> void {
         held = p
     }
 
-    public fun has() -> bool {
+    fun has() -> bool {
         rtn held != null
     }
 
-    public fun sumOrZero() -> int {
+    fun sumOrZero() -> int {
         // 注意：三目要带 if —— 写法是 `if 条件 ? 甲 : 乙`
         rtn if held == null ? 0 : held!!.sum()
     }
@@ -72,13 +72,13 @@ public class Holder {
 
 // ---------------------------------------------------------------- 类当参数/返回类型
 
-public fun distanceSquared(a : Point, b : Point) -> int {
+fun distanceSquared(a : Point, b : Point) -> int {
     var dx = a.x - b.x
     var dy = a.y - b.y
     rtn dx * dx + dy * dy
 }
 
-public fun makePoint(n : int) -> Point {
+fun makePoint(n : int) -> Point {
     rtn new Point(n, n * 2)
 }
 

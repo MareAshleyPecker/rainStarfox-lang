@@ -559,10 +559,11 @@ object ClassPath {
         desc == "F" -> RsfType.FLOAT
         desc == "D" -> RsfType.DOUBLE
         desc.length > 2 && desc.startsWith("L") && desc.endsWith(";") -> {
-            val internal = desc.substring(1, desc.length - 1)
-            if (internal == "java/lang/String") RsfType.STRING
-            else if (internal == "java/lang/Object") RsfType.OBJECT
-            else RsfType.external(internal)
+            when (val internal = desc.substring(1, desc.length - 1)) {
+                "java/lang/String" -> RsfType.STRING
+                "java/lang/Object" -> RsfType.OBJECT
+                else -> RsfType.external(internal)
+            }
         }
         else -> null
     }

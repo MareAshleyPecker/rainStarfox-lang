@@ -64,6 +64,36 @@ enum class TokenKind(val text: String) {
      * 两者都不写返回类型，也**不能**用「名字等于类名的方法」冒充（那个现在直接报错）。
      */
     KW_CONSTRUCTOR("constructor"),
+    /**
+     * 注解声明（阶段 21）：`public annotation Marker(value : string = "x") { ... }`。
+     *
+     * 注意与 [KW_INTERFACE] 是**两个不同的关键字**：注解虽然也编译成 JVM 接口
+     * （`ACC_ANNOTATION|ACC_INTERFACE`），但语法里它是独立的一种声明，
+     * 而且内部**只能**放一个伴生实体（见 [KW_COMPANION]）。
+     *
+     * 它是**硬关键字**（不是修饰词）：`isControlKeyword` / `isModifierKeyword`
+     * 都不包含它——`annotation` 只能出现在声明最前面，不能跟 public/static 混写。
+     */
+    KW_ANNOTATION("annotation"),
+    /**
+     * 伴生实体（阶段 21）：只写在注解体里，`companion entity [名字] [: 父接口] { 类体 }`。
+     *
+     * 「伴生」是注解特有的东西：注解自己只能带常量元素，行为（方法/字段/构造器）
+     * 要写在同一个注解块里的这个实体里，编译产物是 `注解名$名字`（匿名则 `注解名$companion`）。
+     */
+    KW_COMPANION("companion"),
+    /** 实体声明（阶段 21）：目前**只**作为 `companion entity` 的第二半出现。 */
+    KW_ENTITY("entity"),
+    /**
+     * 数学类（阶段 22）的**预留**关键字（2026-10-15 用户拍板先收进词法表）。
+     *
+     * 语法还没定：`BOOTSTRAP.md` 的阶段 22 只登记了意图与待决点（`mathematic class Math { }`？
+     * 成员隐式 `static`？能不能实例化？…）。所以这里**只做保留**——
+     * [isControlKeyword] / [isStaticKeyword] / [isModifierKeyword] / [isTypeKeyword]
+     * 一个都不包含它：现在写它会在顶层得到一句「阶段 22 还没实现」，
+     * 而不是被当成普通名字悄悄用掉，也不会被误当修饰词。
+     */
+    KW_MATHEMATIC("mathematic"),
     /** `new 类名(实参)`。 */
     KW_NEW("new"),
     /** 当前对象：只在类的方法里有效。 */
@@ -124,6 +154,15 @@ enum class TokenKind(val text: String) {
     ARROW("->"),
     COLON(":"),
     DOUBLE_COLON("::"),
+    /**
+     * `@`（阶段 21）：**只**用作注解使用点的前缀——`@Marker`、`@Marker("hi")`。
+     *
+     * 写法固定是「`@` 写在被标注的声明前面」，和 `public` / `static` / `override`
+     * 这些修饰词**顺序任意、可连写多个**；v1 的可标注位置是类 / 接口 / 注解声明 /
+     * 方法 / 字段，参数与局部变量上写 `@` 会在语法阶段报错。
+     * 注意它不参与返回子句：`fun f() :: int` 仍然报旧错（`::` 只留给 `A::B` 嵌套类型）。
+     */
+    AT("@"),
     QUESTION("?"),
     ELVIS("?:"),
     RANGE(".."),

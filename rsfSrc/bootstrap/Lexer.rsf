@@ -230,13 +230,17 @@ fun isNumberSuffix(c : char) -> bool {
 
 // ---------------------------------------------------------------- 关键字表
 //
-// 与 Kotlin 版 Lexer.kt 的 KEYWORDS **逐条对应**（那条 Map 有 45 个键；
+// 与 Kotlin 版 Lexer.kt 的 KEYWORDS **逐条对应**（那条 Map 有 51 个键；
 // str / boolean 是 string / bool 的别名，也各占一个键）。
 // 顺序无关紧要，只做查表。
 //
 // 阶段 17a 冻结时只有 42 个键（少 enum / switch / case，阶段 19c 才加）；
 // 17b 把这三个补齐 —— 补完之后 rsf 版词法器与 Kotlin 版**逐字节一致**，
 // 差分对拍因此不再需要把「用了新语法的样例」分流出去。
+//
+// 2026-10-15 自举同步（词法那一刀）：补上阶段 20 的 override / interface、
+// 阶段 21 的 annotation / companion / entity，以及阶段 22 先占位的 mathematic
+// （45 → 51 项）。同时 readPunct 收下注解前缀 `@`（AT）。
 
 fun keywordKind(word : string) -> string {
     if (word == "fun") { rtn "KW_FUN" }
@@ -252,7 +256,17 @@ fun keywordKind(word : string) -> string {
     if (word == "private") { rtn "KW_PRIVATE" }
     if (word == "protected") { rtn "KW_PROTECTED" }
     if (word == "static") { rtn "KW_STATIC" }
+    // 阶段 20：可选的 override（语义照 Java 的 @Override）
+    if (word == "override") { rtn "KW_OVERRIDE" }
     if (word == "class") { rtn "KW_CLASS" }
+    // 阶段 20：接口声明（注意与注解是两个不同的关键字）
+    if (word == "interface") { rtn "KW_INTERFACE" }
+    // 阶段 21：注解声明与它的伴生实体（annotation / companion / entity 都是硬关键字）
+    if (word == "annotation") { rtn "KW_ANNOTATION" }
+    if (word == "companion") { rtn "KW_COMPANION" }
+    if (word == "entity") { rtn "KW_ENTITY" }
+    // 阶段 22：数学类的预留关键字（语法未定，先占住这个词）
+    if (word == "mathematic") { rtn "KW_MATHEMATIC" }
     // 阶段 17b 补：阶段 19c 的三个关键字（枚举声明 + 枚举分派）。
     // 17a 冻结这一版时它们还不存在，所以那时 `enum E { A }` 里的 enum 被切成 IDENT。
     if (word == "enum") { rtn "KW_ENUM" }
@@ -289,7 +303,7 @@ fun keywordKind(word : string) -> string {
     rtn ""
 }
 
-// 老写法 `varis` 的统一文案：**不在这张关键字表里**（表要跟 Kotlin 版逐条对齐，45 项不变），
+// 老写法 `varis` 的统一文案：**不在这张关键字表里**（表要跟 Kotlin 版逐条对齐，51 项不变），
 // 拦截改在 readIdentOrKeyword 里单独做一次。文案与 Kotlin 版 Lexer.kt 的
 // LEGACY_VAR_MESSAGE **逐字相同**——差分测试里有一条把两边取出来比。
 fun legacyVarMessage() -> string {
@@ -492,7 +506,7 @@ public class Lexer(source : string) {
         }
         // 老写法 `varis`（2026-10-11 改名为 `var`）：与 Kotlin 版 Lexer.kt 的
         // readIdentOrKeyword 里那条判断**一一对应**。它**不在**关键字表里
-        // （keywordKind 里的 45 项要跟 Kotlin 版逐条对齐，不能多一项），
+        // （keywordKind 里的 51 项要跟 Kotlin 版逐条对齐，不能多一项），
         // 所以单独拦一次；文案也跟 Kotlin 版逐字相同（有差分测试守着）。
         // 位置取这个词的开头，与 Kotlin 版 `RsfError(.., at.line, at.column, ..)` 同口径。
         if (word == "varis") {
@@ -738,6 +752,12 @@ public class Lexer(source : string) {
         var startLine = line
         var startCol = column
         var c = advance()
+
+        // 阶段 21：注解使用点的前缀 `@Marker`（不是运算符，单独一个记号）
+        if (c == '@') {
+            add("AT", "@", startLine, startCol)
+            rtn
+        }
 
         // 阶段 17b 补的两个逻辑运算符（阶段 19c 加的）。
         //

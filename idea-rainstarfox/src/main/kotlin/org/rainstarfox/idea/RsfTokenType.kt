@@ -89,19 +89,28 @@ object RsfKeywords {
         "var", "imutvar", "let", "true", "false", "null",
         // 阶段 12：类
         "class", "new", "this",
-        // 阶段 14：错误处理（漏了一阵，和 EditorSupport.KEYWORDS、
-        // vscode 的 tmLanguage 三处必须一致）
+        // 阶段 14：错误处理（漏了一阵，和 EditorSupport.KEYWORDS 必须一致）
         "fail", "try", "catch",
         // 阶段 18：次构造
         "constructor",
+        // 阶段 19c：枚举声明 + 枚举分派。这三只当时只进了编译器自己的补全表
+        // （EditorSupport.KEYWORDS），插件这张表漏了（阶段 21 补上；有
+        // EditorKeywordParityTest 盯着两边，缺了会红）
+        "enum", "switch", "case",
         // 阶段 20：接口声明（`@interface` 是阶段 21 的事，先不列）
         "interface",
+        // 阶段 21：注解声明与它的伴生实体（三个都是硬关键字；`@` 是标点，见
+        // RsfLexer 的 PUNCT 表）
+        "annotation", "companion", "entity",
+        // 阶段 22：数学类的**预留**关键字（2026-10-15 先收进词法表，语法还没定；
+        // 编译器那边现在会在顶层报「阶段 22 还没实现」，这里只把它上成关键字色）
+        "mathematic",
     )
 
     /**
      * 类型关键字。**必须和编译器前端的 Lexer.KEYWORDS 对齐**（多一个少一个都会让高亮串味）。
-     * 阶段 16 加上了 `byte` / `char`，同一个列表在另外两处也有一份：
-     * 编译器自己的补全表（EditorSupport.TYPES）和 VS Code 的 tmLanguage。
+     * 阶段 16 加上了 `byte` / `char`，同一个列表在编译器自己的补全表
+     * （EditorSupport.TYPES）里也有一份。
      */
     val TYPES = setOf(
         "void", "int", "long", "float", "double", "string", "str", "bool", "boolean",

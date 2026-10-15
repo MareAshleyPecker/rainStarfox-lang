@@ -66,16 +66,16 @@ fun sumGrid(grid : int[][]) -> int {
 // ---------------------------------------------------------------- 类：数组当字段、类数组、泛型类数组
 
 // 数组可以当类的字段（字段类型写在名字前面，初值照样必填）
-public class Bag {
+class Bag {
     var items : int[] = new int[2]
     imutvar label : string = "bag"
 
-    public fun total() -> int {
+    fun total() -> int {
         rtn items[0] + items[1]
     }
 }
 
-public class Point {
+class Point {
     var x : int = 0
     var y : int = 0
 
@@ -84,14 +84,14 @@ public class Point {
         y = y0
     }
 
-    public fun sum() -> int { rtn x + y }
+    fun sum() -> int { rtn x + y }
 }
 
 // 泛型类：类型参数也能套数组（`Box&<int[]>` 这种实参是允许的）
-public class Box&<T> {
+class Box&<T> {
     var value : T = 0
-    public fun get() -> T { rtn value }
-    public fun set(v : T) -> void { value = v }
+    fun get() -> T { rtn value }
+    fun set(v : T) -> void { value = v }
 }
 
 // ---------------------------------------------------------------- 入口

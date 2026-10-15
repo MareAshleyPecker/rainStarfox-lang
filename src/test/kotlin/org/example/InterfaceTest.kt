@@ -843,6 +843,41 @@ class InterfaceTest {
 
         assertEquals("java/lang/Object", model.typeOf(elvis).externalName)
     }
+
+    @Test
+    fun `接口里的 void 方法能被类实现`() {
+        val src = source(
+            "public interface P {\n" +
+                "    fun show() -> void\n" +
+                "}\n" +
+                "public class D : P {\n" +
+                "    public fun show() -> void {\n" +
+                "        println(\"d\")\n" +
+                "        rtn\n" +
+                "    }\n" +
+                "}\n",
+        )
+        val program = Rsf.parse(src)
+        Rsf.analyze(program, src)
+    }
+
+    @Test
+    fun `void 方法不能拿别的返回类型顶替`() {
+        val src = source(
+            "public interface P {\n" +
+                "    fun show() -> void\n" +
+                "}\n" +
+                "public class D : P {\n" +
+                "    public fun show() -> int {\n" +
+                "        rtn 1\n" +
+                "    }\n" +
+                "}\n",
+        )
+        val program = Rsf.parse(src)
+        val err = assertFailsWith<RsfError> { Rsf.analyze(program, src) }
+
+        assertTrue(err.message.contains("返回类型"), err.message)
+    }
 }
 
 private fun source(text: String): SourceFile = SourceFile.of("<test>", text)

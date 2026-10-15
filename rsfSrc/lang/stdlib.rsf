@@ -1,4 +1,8 @@
-// 阶段 16 示例：byte / char 与标准库切片
+// rainStarfox 阶段 16 示例：byte / char 与标准库切片
+//
+// 跑：rsf run   rsfSrc/lang/stdlib.rsf      （解释器）
+//     rsf build rsfSrc/lang/stdlib.rsf      （字节码：生成 stdlib.class）
+// 查：rsf check rsfSrc/lang/stdlib.rsf
 //
 // 这一阶段补的是「自己写一个词法器」最少要用的那套积木：
 //
@@ -62,9 +66,7 @@ fun summarize(s : string) -> string {
     }
     rtn "数字 " + digits + " 个，字母 " + letters + " 个，空白 " + spaces + " 个"
 }
-fun f(){
 
-}
 // ------------------------------------------------------------------ 主程序
 
 fun main() -> void {

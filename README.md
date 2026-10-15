@@ -957,6 +957,34 @@ fun main() -> void {
 **已知边界**：`rsfSrc/**`（用 rsf 写的自举版编译器）**还没同步 `interface` / `override`**，
 所以自举链上写的代码暂时用不了这两个特性（详见 `BOOTSTRAP.md` 的「阶段 20 实际做法与结果」）。
 
+### 注解 `annotation`（阶段 21）
+
+```rsf
+annotation Marker(value : string = "x", count : int = 0) {
+    companion entity Impl : Runnable {          // 注解的行为写在这里，至多一个
+        fun run() -> void {
+            println(value + " x" + intToString(count))   // 元素按裸名读
+            rtn
+        }
+    }
+}
+
+@Marker(value = "hi", count = 3)                 // 可标：类/接口/注解声明/方法/字段
+class Greeter { }
+
+fun main() -> void {
+    var m : Marker::Impl = new Marker("hi", 3)   // 在 rsf 这边把行为 new 出来跑
+    m.run()                                      // hi x3
+    rtn
+}
+```
+
+- 手写预案里「元素 + 伴生实体」两半：元素是名字后的圆括号参数表、可带默认值；行为写进 `companion entity`。
+- 伴生实体可具名（`Marker::Impl`）也可匿名（`Marker$companion`）；**继承本阶段只收接口**，不能继承类。
+- 一个地方同一个注解只能标一次；没有默认值的元素必须给值。
+- 注解接口带 `@Retention(RUNTIME)`、伴生类带 `annotationType()`；解释器与字节码两条路输出逐字节一致（设计见 `DESIGN-21.md`）。
+- 已知边界：枚举元素的默认值还不支持；rsf 枚举不是 `java.lang.Enum`，用 Java 反射读枚举元素会 `AnnotationTypeMismatchException`。
+
 ### 内置函数
 
 `print(x)` / `println(x)`，也支持 `println()` 只换行。
@@ -1253,9 +1281,8 @@ rsfSrc/bootstrap/Backend.rsf        **用 rsf 写的字节码后端**（阶段 1
 rsfSrc/bootstrap/BackendCli.rsf     rsf 版字节码后端的命令行入口（读 `-Drsf.backend.file` / `-Drsf.backend.out`）
 rsfSrc/bootstrap/Sources.rsf        **用 rsf 写的多文件装载器**（阶段 17e，纯库：loadProgram，语义对齐 Kotlin 侧 SourceLoader.kt）
 tools/devbuild.ps1, rundev.ps1      不依赖 Gradle 的开发编译/运行脚本
-vscode-rainstarfox/                 VS Code 语法高亮扩展（自带语法自检脚本）
 idea-rainstarfox/                   IntelliJ IDEA 插件（高亮 / 诊断 / 补全 / 运行）
-src/test/kotlin/org/example/        测试（248 个 = RsfTest 221 + InteropTest 13 + OverloadTest 14；含两端一致性、rsf 版词法器/语法器/解释器/字节码后端的差分测试）
+src/test/kotlin/org/example/        测试（359 个：两端一致性、rsf 版词法器/语法器/解释器/字节码后端的差分、注解语法、编辑器关键字表守卫）
 ```
 
 ### 关于 `Binding`
@@ -1264,53 +1291,12 @@ src/test/kotlin/org/example/        测试（248 个 = RsfTest 221 + InteropTest
 「类型 + 能不能赋值 + 在局部变量表里占哪一格」。这样解释器和字节码后端就不必到处
 分情况判断「这是参数还是局部变量」，槽位分配（`Lowering`）也只需要一套逻辑。
 
-### VS Code 扩展
-
-`vscode-rainstarfox/` 是一个独立的 VS Code 扩展，提供：
-
-- **语法高亮**（TextMate 语法，作用域 `source.rsf`）+ 代码片段 + 括号配对
-- **报错诊断**：输入/保存后自动检查，错误和警告画波浪线
-- **代码补全**：关键字、类型、内置函数、函数（带签名）、参数、局部变量；
-  被 `import` / `module` 带进来的函数也会出现在候选里（签名用的是源文件里那份）；
-  `Math.` 这种成员访问会列出类的方法与字段
-
-诊断和补全**不是扩展自己实现的**，而是调用编译器自己的 CLI：
-
-```
-rsf check    <file> --json
-rsf complete <file> --line L --col C
-```
-
-编译器前端本来就能给出带位置的诊断和带类型的作用域信息，复用它最不容易走样。
-扩展会把未保存的缓冲区写成临时文件再交给编译器（用 `--base` 指明真实目录，
-这样相对 import 仍然解析得对），所以没保存也能看到报错。
-
-```bat
-:: 打包
-cd vscode-rainstarfox
-npm install
-npm run build                                        :: esbuild 打包 TS
-npx @vscode/vsce package --allow-missing-repository
-
-:: 安装
-code --install-extension rainstarfox-0.2.0.vsix
-```
-
-改动语法后可以跑一遍自检——它用 `vscode-textmate` + Oniguruma（**和 VS Code 同一套引擎**）
-真的分词一遍，断言每段文本命中的作用域：
-
-```bat
-npm run check-grammar
-```
-
-语法里有两个不太好写的点，都用注释标了原因：`step` 只在 `for (i in a..b step n)` 头部
-当关键字（靠一个带前瞻的区间规则实现），以及行首 `名字:` 要排除关键字且不能吃掉 `::`。
-
 ### IntelliJ IDEA 插件
 
 `idea-rainstarfox/` 是给 IntelliJ 平台写的插件（文件类型、语法高亮、实时诊断、
-代码补全、一键运行/编译），依赖的同样是上面那两个 CLI 命令——所以两个编辑器的
-行为天然一致。用本机已装的 IDEA 当 SDK 编译，不下载 IDE 分发包：
+代码补全、一键运行/编译），诊断与补全走 `rsf check --json` 和 `rsf complete`
+两个 CLI 命令——报错和补全全部来自编译器，只有一份语义实现。用本机已装的
+IDEA 当 SDK 编译，不下载 IDE 分发包：
 
 ```bat
 cd idea-rainstarfox
@@ -1318,9 +1304,9 @@ gradlew.bat buildPlugin test      :: 产物 build/distributions/idea-rainstarfox
 gradlew.bat verifyPlugin          :: 官方校验器静态检查
 ```
 
-装到 IDE 里：Setting → Plugins → ⚙ → Install Plugin from Disk…。跟 VS Code 那份
-不同的是，IDEA 插件用的是**自己写的词法器**（高亮、括号配对着色），但报错和补全
-依然全部来自编译器——只有一份语义实现这件事没有变。
+装到 IDE 里：Setting → Plugins → ⚙ → Install Plugin from Disk…。IDEA 插件用的是
+**自己写的词法器**（高亮、括号配对着色），但报错和补全依然全部来自编译器——
+只有一份语义实现这件事没有变。
 
 ### 为什么有两个开发脚本
 
@@ -1389,13 +1375,11 @@ gradlew.bat verifyPlugin          :: 官方校验器静态检查
   是**语句**不是表达式（要取值用三目）；`case` 只接受枚举常量，不支持区间 / 比较 / 字面量；
   没有 fallthrough，也不接受 `break` 跳出 `switch`（分支里写的 `break` 作用于外层循环）
 - **`&&` / `||`**：两边必须是 `bool`（`?bool` 要先解包 / 兜底）；没有按位运算（单独的 `|` 报错）
-- **编辑器高亮：`enum` / `switch` / `case` 还没进 IDEA 插件与 VS Code**：编译器的补全表
-  （`EditorSupport.KEYWORDS`）一直带着这三个词，但 **IDEA 插件的 `RsfKeywords` /
-  `RsfLexer` 与 VS Code 的 tmLanguage 还没同步**（三处关键字表本来是要一起改的）——
-  在编辑器里这三个词暂时按普通标识符上色，`&&` / `||` 也还没进高亮规则。补齐它们是独立的小改动
-  （IDEA 插件那边还要同步它的 `COMPILER_KEYWORDS` 快照测试与运算符表）。
-  **阶段 20 的 `interface` / `override` 已经三处同步**（`EditorSupport`、`RsfTokenType.RsfKeywords`、
-  `rainstarfox.tmLanguage.json` 都有），所以这条只欠 19c 那三个词
+- **注解（阶段 21）**：元素默认值只支持常量字面量（枚举常量 / 注解 / 数组都不行）；`@` 只能标
+  类 / 接口 / 注解声明 / 方法 / 字段（参数、局部变量、枚举声明都不行）；不做元注解 / `@Repeatable` /
+  内建 `@Deprecated`；伴生实体只继承接口，注解也不能当父类型；`rsfSrc/**` 还没同步注解
+- **类型转换与类型判断**：`(byte) x` 那类窄化仍只能走内置函数；计划里的 `as` / `?as` / `is` / `!is`
+  （`DESIGN-24.md`）还没实现
 
 ## 路线图
 
@@ -1405,7 +1389,7 @@ gradlew.bat verifyPlugin          :: 官方校验器静态检查
 | 2 | `if`（花括号 / 冒号 / 三目）+ `while` + `break` / `continue` + `goto` + 标签 | ✅ |
 | 2.5 | `else` 与 `else if`；`var` / `imutvar` 取代 `let` | ✅ |
 | 3 | `for`（Java 式与 Kotlin 式） | ✅ |
-| 3.5 | VS Code 语法高亮扩展 | ✅ |
+| 3.5 | 编辑器语法高亮（关键字 / 运算符上色） | ✅ |
 | 4 | `?T` 可空（null 一等值、`?:`、`!!`、基本类型装箱） | ✅ |
 | 5 | 函数参数（含递归、加宽、参数可变） | ✅ |
 | 6a | `import`（三种语法）+ `module` 多文件 | ✅ |
@@ -1413,7 +1397,7 @@ gradlew.bat verifyPlugin          :: 官方校验器静态检查
 | 7 | 构造对象（`new`，含 `new 导入的 JVM 类(...)`） | ✅ |
 | 8 | `!T` 错误返回 | ✅（阶段 14） |
 | 9 | 用户自定义类/结构体 | ✅（阶段 12） |
-| 10 | 编辑器支持：诊断 + 补全（VS Code 扩展，走 sf check --json / sf complete） | ✅ |
+| 10 | 编辑器支持：诊断 + 补全（走 `rsf check --json` / `rsf complete`） | ✅ |
 | 11 | Language Server（增量分析 / 跳转定义 / 悬停类型） | 待做 |
 | 12 | 用户自定义类 + `new` 构造 | ✅ |
 | 13 | 数组类型 `T[]` | ✅ |
@@ -1422,8 +1406,8 @@ gradlew.bat verifyPlugin          :: 官方校验器静态检查
 | 16 | `byte`/`char` + 标准库切片（字符分类、`charToInt`/`toChar`、`parseInt`） | ✅ |
 | 16b | `byte[]` + 文件落盘（`readText` / `writeText` / `readBytes` / `writeBytes`，互操作认数组签名） | ✅ |
 | 18 | 构造器：主构造（类头）+ 次构造 `constructor(...)` + `this(...)` 委托 | ✅ |
-| 19 | 语法现代化：后缀类型 `名字 : 类型`、参数双风格、返回子句只留 `->`/`::`、缺省即 `public`、构造可省 `new` | ✅ |
-| 19b | `catch (e : string)`：错误变量的类型标注也改成 Kotlin 风格（老写法 `catch (e string)` 继续接受）；编辑器三处关键字表补全 | ✅ |
+| 19 | 语法现代化：后缀类型 `名字 : 类型`、参数双风格、返回子句只留 `->`/`:`、缺省即 `public`、构造可省 `new` | ✅ |
+| 19b | `catch (e : string)`：错误变量的类型标注也改成 Kotlin 风格（老写法 `catch (e string)` 继续接受）；编辑器关键字表补全 | ✅ |
 | 17 | **自举**：用 rsf 写 rsf 编译器 → 编译自己 → 与 Kotlin 版输出逐字节一致 | 🚧 17a 词法器 ✅ / 17b 语法器 ✅ / 17c 解释器 ✅ / 17d 字节码后端 ✅ / 17e 闭环 ✅ |
 | 17a | rsf 版词法器（`rsfSrc/bootstrap/Lexer.rsf`）：token 流与 Kotlin 版逐条相同 | ✅ |
 | 17b | rsf 版语法器（`rsfSrc/bootstrap/Parser.rsf`）：AST 打印成文本，两边逐行相同 | ✅ |
@@ -1434,7 +1418,9 @@ gradlew.bat verifyPlugin          :: 官方校验器静态检查
 | 19c | 为 17b 补的三样：`&&` / `||` 短路 + `enum` + `switch` 枚举分派 | ✅ |
 | 19d | **函数/方法重载**：顶层函数与类方法共用一套解析（个数 → 类型打分 → 同分报错）、擦除冲突编译期拒绝、`main` 唯一入口 | ✅ 2026-10-11 |
 | 20 | `interface`（抽象/默认方法、接口继承接口、`class X : A, B` 多接口实现、`override`、JVM 接口互操作与桥方法） | ✅ 2026-10-15 |
-| 21 | `@interface` 注解声明 | 待做 |
+| 21 | 注解 `annotation`：元素 + 默认值 + `companion entity` 行为、`@` 使用点、`Marker::Impl` 嵌套类型、字节码与解释器两端逐字节一致 | ✅ 2026-10-15 |
+| 23 | 显式指针（`&` 取地址 / `*` 解引用，C 风格） | ⏳ 计划（2026-10-15，`DESIGN-23.md`，等预案） |
+| 24 | 类型转换与类型判断（`as` / `?as` / `is` / `!is`） | ⏳ 计划（2026-10-15，`DESIGN-24.md`） |
 
 ### 19c：为 17b 补的三样（enum / switch / `&&` `||`）
 
@@ -1685,5 +1671,11 @@ A 编自己得（B），B 再编自己得（C），**B 与 C 的输出 126 个 `
 写 `m.put(k, v)` 这种**丢弃返回值**的语句不会因为旧值是 `null` 而炸——
 两端都在「结果被丢弃」时跳过泛型结果收敛（Java 的 `map.put(...)` 当语句也不拆箱）。
 细节见 [`BOOTSTRAP.md`](BOOTSTRAP.md) 的「17d 前置三件」与「17d 的下一步」。
+
+**2026-10-15 现状**：17e 闭环（B ≡ C）之后，离「rsf 版顶替 Kotlin 版」还差四类（详见
+[`BOOTSTRAP.md`](BOOTSTRAP.md)）：① `rsfSrc/bootstrap/**` 还没同步阶段 20 / 21 的新语法
+（**词法那一刀已同步**：关键字 45 → 51 项 + `@` 记号；下一刀是 `Parser.rsf` 的
+`interface` / `override`）；② 后端 / 解释器的「暂不支持清单」；③ 语言层没有类继承；
+④ 工具面（自举侧只有 4 个单文件 CLI，没有统一 CLI / LSP）。
 
 **每个阶段改哪些文件、验收标准、风险、以及要先拍板的 5 个语法点，都在 [`BOOTSTRAP.md`](BOOTSTRAP.md)。**

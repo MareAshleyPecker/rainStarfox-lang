@@ -113,6 +113,7 @@ class Parser(
         val classes = ArrayList<ClassDecl>()
         val enums = ArrayList<EnumDecl>()
         val interfaces = ArrayList<InterfaceDecl>()
+        val annotations = ArrayList<AnnotationDecl>()
 
         // pkg 只能出现在最前面（在 import 之前），和 Java 的 package 一样
         var packageName: String? = null
@@ -121,22 +122,59 @@ class Parser(
         }
 
         while (!check(TokenKind.EOF)) {
+            // 声明前的注解（阶段 21）：`@Marker public class C { }`。
+            // 注解与 `public`/`static`/`override` **顺序任意、可连写多个**，所以先在
+            // 这里收干净，再按「接下来是什么声明」分派；每一种声明都带一个
+            // `annotations` 参数（缺省空表），既有调用点因此一行都不用改。
+            val declAnnotations = parseAnnotations()
             if (check(TokenKind.KW_IMPORT) || check(TokenKind.KW_MODULE)) {
                 imports.add(parseImport())
             } else if (check(TokenKind.KW_PKG)) {
                 val t = peek()
                 throw error(t, "'pkg' 只能写在文件最前面（在所有 import 之前）")
             } else if (check(TokenKind.KW_ENUM) || isEnumDeclAhead()) {
+                // 枚举**不是** v1 的可标注位置（DESIGN-21.md §2.3 的可标注位置只有
+                // 类 / 接口 / 注解声明 / 方法 / 字段）。这里明确拦下，别让 `@Marker`
+                // 被悄悄丢掉——用户会以为标上了。
+                if (declAnnotations.isNotEmpty()) {
+                    val first = declAnnotations.first()
+                    throw RsfError(
+                        "parser",
+                        "注解不能标在枚举声明上：v1 的可标注位置是类 / 接口 / 注解声明 / 方法 / 字段" +
+                            "（枚举留到后续阶段）：把 '${first.display()}' 删掉，或者改标在别的声明上",
+                        first.at.line,
+                        first.at.column,
+                        source,
+                    )
+                }
                 enums.add(parseEnumDecl())
-            } else if (check(TokenKind.KW_CLASS) || isClassDeclAhead()) {
-                classes.add(parseClassDecl())
-            } else if (check(TokenKind.KW_INTERFACE) || isInterfaceDeclAhead()) {
-                interfaces.add(parseInterfaceDecl())
+            } else if (check(TokenKind.KW_CLASS)) {
+                classes.add(parseClassDecl(declAnnotations))
+            } else if (isClassDeclAhead()) {
+                classes.add(parseClassDecl(declAnnotations))
+            } else if (check(TokenKind.KW_INTERFACE)) {
+                interfaces.add(parseInterfaceDecl(declAnnotations))
+            } else if (isInterfaceDeclAhead()) {
+                interfaces.add(parseInterfaceDecl(declAnnotations))
+            } else if (check(TokenKind.KW_ANNOTATION)) {
+                annotations.add(parseAnnotationDecl(declAnnotations))
+            } else if (isAnnotationDeclAhead()) {
+                annotations.add(parseAnnotationDecl(declAnnotations))
+            } else if (check(TokenKind.KW_MATHEMATIC)) {
+                // 数学类的预留关键字（`mathematic` 在词法层已经收成关键字，但语法还没定；
+                // 2026-10-15 用户把它移出计划，词本身保留）：在这里明确拦下，
+                // 别让它落到 parseFuncDecl 里报一句关于 `fun` 的错。
+                val t = peek()
+                throw error(
+                    t,
+                    "'mathematic' 是保留关键字（数学类预留）：语法还没定，编译器还没实现它" +
+                        "（现在还只能当关键字用，不能当名字）",
+                )
             } else {
-                functions.add(parseFuncDecl())
+                functions.add(parseFuncDecl(annotations = declAnnotations, allowLeadingAnnotations = true))
             }
         }
-        return Program(imports, functions, classes, packageName, enums, interfaces)
+        return Program(imports, functions, classes, packageName, enums, interfaces, annotations)
     }
 
     /**
@@ -177,22 +215,389 @@ class Parser(
         return parts.joinToString(".")
     }
 
-    /** 顶层下一个声明是不是类：`[public|protected|private] class ...`。 */
-    private fun isClassDeclAhead(): Boolean {
-        val offset = if (peek().kind.isControlKeyword) 1 else 0
-        return peek(offset).kind == TokenKind.KW_CLASS
+    /**
+     * 顶层声明的前瞻：注解（`@Name` / `@Name(...)`）和修饰词（`public`/`protected`/
+     * `private`/`static`/`override`）顺序任意、数量不限，所以跳着数一遍。
+     */
+    private fun declLookaheadOffset(): Int {
+        var offset = 0
+        while (true) {
+            val kind = peek(offset).kind
+            if (kind == TokenKind.AT) {
+                offset++
+                if (peek(offset).kind == TokenKind.IDENT) {
+                    offset++
+                } else {
+                    return offset
+                }
+                while (peek(offset).kind == TokenKind.DOT || peek(offset).kind == TokenKind.DOUBLE_COLON) {
+                    offset++
+                    if (peek(offset).kind == TokenKind.IDENT) offset++ else return offset
+                }
+                if (peek(offset).kind == TokenKind.LPAREN) {
+                    var depth = 1
+                    offset++
+                    while (true) {
+                        val k = peek(offset).kind
+                        if (k == TokenKind.EOF) return offset
+                        if (k == TokenKind.LPAREN) depth++
+                        if (k == TokenKind.RPAREN) {
+                            depth--
+                            if (depth == 0) {
+                                offset++
+                                break
+                            }
+                        }
+                        offset++
+                    }
+                }
+                continue
+            }
+            if (kind.isModifierKeyword) {
+                offset++
+                continue
+            }
+            return offset
+        }
     }
 
-    /** 顶层下一个声明是不是枚举：`[public|protected|private] enum ...`。 */
-    private fun isEnumDeclAhead(): Boolean {
-        val offset = if (peek().kind.isControlKeyword) 1 else 0
-        return peek(offset).kind == TokenKind.KW_ENUM
+    /** 顶层下一个声明是不是类：`[@注解]* [public|protected|private] class ...`。 */
+    private fun isClassDeclAhead(): Boolean =
+        peek(declLookaheadOffset()).kind == TokenKind.KW_CLASS
+
+    /** 顶层下一个声明是不是枚举：`[@注解]* [public|protected|private] enum ...`。 */
+    private fun isEnumDeclAhead(): Boolean =
+        peek(declLookaheadOffset()).kind == TokenKind.KW_ENUM
+
+    /** 顶层下一个声明是不是接口：`[@注解]* [public|protected|private] interface ...`。 */
+    private fun isInterfaceDeclAhead(): Boolean =
+        peek(declLookaheadOffset()).kind == TokenKind.KW_INTERFACE
+
+    /** 顶层下一个声明是不是注解声明：`[@注解]* [public|protected|private] annotation ...`。 */
+    private fun isAnnotationDeclAhead(): Boolean =
+        peek(declLookaheadOffset()).kind == TokenKind.KW_ANNOTATION
+
+    // ------------------------------------------------------------------
+    // 注解：`@Marker` 使用点 / `annotation Marker(...) { companion entity ... }` 声明
+    // （阶段 21 M1，定稿见 DESIGN-21.md §2）
+    // ------------------------------------------------------------------
+
+    /**
+     * 收下声明前零个或多个注解：`@Marker`、`@Marker("hi")`、`@Marker(value = "hi", count = 3)`。
+     *
+     * 多个注解**可以连写**（`@A @B fun f()`），且与 `public`/`static`/`override` 顺序任意。
+     * 调用方拿到这张表后传给对应声明的 `annotations` 参数；声明自己的解析函数里还会再收一轮，
+     * 因为 `public @M fun` 这种顺序也合法。
+     *
+     * 这里**不做**「这个位置能不能标注解」的判断：参数和局部变量位置 v1 不开放注解，
+     * 由各自的解析函数给出更精确的报错（它们会自然读到 `@` 这个记号）。
+     */
+    private fun parseAnnotations(): List<AnnotationUse> {
+        if (!check(TokenKind.AT)) return emptyList()
+        val result = ArrayList<AnnotationUse>()
+        while (check(TokenKind.AT)) {
+            result.add(parseAnnotationUse())
+        }
+        return result
     }
 
-    /** 顶层下一个声明是不是接口：`[public|protected|private] interface ...`。 */
-    private fun isInterfaceDeclAhead(): Boolean {
-        val offset = if (peek().kind.isControlKeyword) 1 else 0
-        return peek(offset).kind == TokenKind.KW_INTERFACE
+    /**
+     * 注解使用点：`@名字` 或 `@名字(实参表)`。
+     *
+     * 表可以带 `.`/`::` 限定（`@a.b`、`@Outer::Inner`）。实参表**只有注解使用点**支持
+     * 具名实参（`value = "hi"`），普通调用的实参语法一行没改。
+     */
+    private fun parseAnnotationUse(): AnnotationUse {
+        val atTok = expect(TokenKind.AT, "注解要写在 '@' 后面")
+        val nameTok = expect(TokenKind.IDENT, "'@' 后面缺少注解名（写法是 @Marker 或 @Marker(...)）")
+        var name = nameTok.lexeme
+        while (check(TokenKind.DOT) || check(TokenKind.DOUBLE_COLON)) {
+            val sep = advance()
+            val partTok = expect(
+                TokenKind.IDENT,
+                "注解名 '$name' 后面缺少名字：'${sep.lexeme}' 后面要跟一个名字（例如 @a.b 或 @Outer::Inner）",
+            )
+            name = "$name.${partTok.lexeme}"
+        }
+        val args = if (check(TokenKind.LPAREN)) parseAnnotationArgs() else emptyList()
+        return AnnotationUse(name, args, atTok.at)
+    }
+
+    /** 注解使用点的实参表：位置式与具名式**可以混写**（`@M("hi", count = 3)` 也行）。 */
+    private fun parseAnnotationArgs(): List<AnnotationArg> {
+        expect(TokenKind.LPAREN, "注解实参表缺少 '('")
+        val args = ArrayList<AnnotationArg>()
+        if (!check(TokenKind.RPAREN)) {
+            while (true) {
+                args.add(parseAnnotationArg())
+                if (!match(TokenKind.COMMA)) break
+                if (check(TokenKind.RPAREN)) break // 尾逗号
+            }
+        }
+        expect(TokenKind.RPAREN, "注解实参表没有闭合，缺少 ')'")
+
+        // 语义上「位置式不能写到具名式后面」，但这里只做最省的语法检查：
+        // 一旦出现过具名实参，后面再来位置式就没法确定它是哪个元素了。
+        var seenNamed = false
+        for (arg in args) {
+            when (arg) {
+                is NamedAnnotationArg -> seenNamed = true
+                is PositionalAnnotationArg -> if (seenNamed) {
+                    throw error(
+                        previous(),
+                        "注解实参里具名式要写在最后：'${exprText(arg.value)}' 前面已经出现了 '名字 = 值'，" +
+                            "位置式实参没法确定对应哪个元素",
+                    )
+                }
+            }
+        }
+        return args
+    }
+
+    /**
+     * 一个注解实参。具名式的判据是「IDENT 后面紧跟 `=`」——前端记号表里没有 `+=`、`==` 这类
+     * 复合记号（`=` 只有 `ASSIGN("=")` 一种），所以这个前瞻不会误伤。
+     */
+    private fun parseAnnotationArg(): AnnotationArg {
+        if (check(TokenKind.IDENT) && peek(1).kind == TokenKind.ASSIGN) {
+            val nameTok = advance()
+            advance() // =
+            val value = parseExpr()
+            return NamedAnnotationArg(nameTok.lexeme, value, nameTok.at)
+        }
+        val at = peek().at
+        return PositionalAnnotationArg(parseExpr(), at)
+    }
+
+    /**
+     * 注解声明：
+     * ```
+     * [public|protected|private] annotation Marker(value : string = "x", count : int = 0) {
+     *     companion entity Impl : Runnable { ... }
+     * }
+     * ```
+     *
+     * 元素表可省（`annotation Marker { }`）。注解体里**至多一个** `companion entity`，
+     * 别的成员（`fun`/`var`/`imutvar`/`constructor`）是语法错误——在 parser 层就报，
+     * 不留给语义层（DESIGN-21.md §4）。
+     */
+    private fun parseAnnotationDecl(annotations: List<AnnotationUse> = emptyList()): AnnotationDecl {
+        var control = ControlType.DEFAULT
+        if (peek().kind.isControlKeyword) {
+            control = ControlType.of(advance().kind)
+        }
+        val annotationTok = expect(TokenKind.KW_ANNOTATION, "注解声明缺少 'annotation'")
+        val nameTok = expect(TokenKind.IDENT, "'annotation' 后面缺少注解名")
+
+        val elements = if (check(TokenKind.LPAREN)) parseAnnotationElementList() else emptyList()
+        val companion: CompanionEntityDecl? = if (match(TokenKind.LBRACE)) {
+            val entity = parseAnnotationBody(nameTok.lexeme)
+            // 体里**至多一个**伴生实体（DESIGN-21 §2.1）：第二个要在这里说清楚，
+            // 不然只会撞上一句「注解没有闭合，缺少 '}'」，看不出是数量的问题。
+            if (check(TokenKind.KW_COMPANION)) {
+                val t = peek()
+                throw error(
+                    t,
+                    "注解 '${nameTok.lexeme}' 的体里只能写一个 companion entity（这里已经是第二个了）：" +
+                        "把第二个的字段/方法合并进第一个伴生实体（实际读到 ${t.describe()}）",
+                )
+            }
+            expect(TokenKind.RBRACE, "注解 '${nameTok.lexeme}' 没有闭合，缺少 '}'")
+            entity
+        } else {
+            null
+        }
+        return AnnotationDecl(
+            control = control,
+            name = nameTok.lexeme,
+            elements = elements,
+            at = annotationTok.at,
+            companion = companion,
+            annotations = annotations,
+        )
+    }
+
+    /** 注解的元素表：`(value : string = "x", count : int = 0)`。 */
+    private fun parseAnnotationElementList(): List<AnnotationElement> {
+        expect(TokenKind.LPAREN, "注解元素表缺少 '('")
+        val elements = ArrayList<AnnotationElement>()
+        if (!check(TokenKind.RPAREN)) {
+            while (true) {
+                elements.add(parseAnnotationElement())
+                if (!match(TokenKind.COMMA)) break
+                if (check(TokenKind.RPAREN)) break // 尾逗号
+            }
+        }
+        expect(TokenKind.RPAREN, "注解元素表没有闭合，缺少 ')'")
+
+        val seen = HashMap<String, SourceLine>()
+        for (element in elements) {
+            val previousAt = seen.put(element.name, element.at)
+            if (previousAt != null) {
+                throw RsfError(
+                    "parser",
+                    "注解元素 '${element.name}' 重复定义了（元素名是 '名字 : 类型' 里的那个名字）：" +
+                        "上一个写在第 ${previousAt.line} 行",
+                    element.at.line,
+                    element.at.column,
+                    source,
+                )
+            }
+        }
+        return elements
+    }
+
+    /**
+     * 一个注解元素：`名字 : 类型` 或 `名字 : 类型 = 常量默认值`。
+     *
+     * 类型只收**后缀风格**（`value : string`），和字段/参数的后缀风格一致；
+     * 写成 Java 风格（`string value`）会在这里报错。
+     */
+    private fun parseAnnotationElement(): AnnotationElement {
+        val nameTok = expect(
+            TokenKind.IDENT,
+            "注解元素要写成「名字 : 类型」（可以有默认值「名字 : 类型 = 常量」），实际读到 ${peek().describe()}",
+        )
+        expect(
+            TokenKind.COLON,
+            "注解元素 '${nameTok.lexeme}' 缺少类型：要写成「名字 : 类型」" +
+                "（例如 ${nameTok.lexeme} : string），当前读到 ${peek().describe()}",
+        )
+        val type = parseTypeRef()
+        val default = if (match(TokenKind.ASSIGN)) parseAnnotationDefault(nameTok.lexeme) else null
+        return AnnotationElement(nameTok.lexeme, type, default, nameTok.at)
+    }
+
+    /**
+     * 注解元素的默认值：v1 只收**常量字面量**——int/long/float/double/string/char/bool、
+     * `null`，以及数值字面量前面一个 `-`。
+     *
+     * 枚举常量、注解、数组默认值明确不在 v1 里（DESIGN-21.md §12.6），这里报「暂不支持」，
+     * 并指向伴生实体（要现算的默认值写在伴生实体里）。
+     */
+    private fun parseAnnotationDefault(owner: String): Expr {
+        val start = peek()
+        val value = parseExpr()
+        validateAnnotationDefault(owner, value, start)
+        return value
+    }
+
+    /**
+     * 默认值的形状检查：只让常量字面量过（V1_DEFAULT_KINDS），以及它们前面**一个** `-`。
+     *
+     * 用「先按普通表达式解析、再按形状校验收窄」而不是「写一个小的常量表达式解析器」：
+     * 这样 `-1`、`- 1.5` 这类写法与程序里其它地方的解析结果**是同一个 AST**，
+     * 也免得再维护一份字面量识别逻辑（漏一个记号就会静默收下一个奇怪的值）。
+     */
+    private fun validateAnnotationDefault(owner: String, value: Expr, start: Token) {
+        if (value is UnaryExpr && value.op == TokenKind.MINUS) {
+            val operand = value.operand
+            if (operand is IntLit || operand is LongLit || operand is FloatLit || operand is DoubleLit) return
+        }
+        if (isDefaultConstantLiteral(value)) return
+        throw error(
+            start,
+            "注解元素 '$owner' 的默认值只支持常量字面量（int/long/float/double/string/char/bool/null，" +
+                "数值可以带前导 '-'），实际读到 ${start.describe()}。" +
+                "枚举常量、注解、数组默认值 v1 都还不支持；要现算的默认值请写进伴生实体里",
+        )
+    }
+
+    /** 注解默认值里允许出现的裸字面量。 */
+    private fun isDefaultConstantLiteral(value: Expr): Boolean = when (value) {
+        is IntLit, is LongLit, is FloatLit, is DoubleLit,
+        is StringLit, is CharLit, is BoolLit, is NullLit,
+        -> true
+
+        else -> false
+    }
+
+    /**
+     * 注解体：**至多一个** `companion entity [名字] [: 父接口 [, 父接口]*] { 普通类体 }`。
+     *
+     * 别的成员一律报错——注解体不是类体，这是 v1 的语法决定（DESIGN-21.md §2.1/§4）。
+     * 返回 null 表示「体里没有伴生实体」（`annotation Marker { }` 或 `annotation Marker { ... }` 空体）。
+     */
+    private fun parseAnnotationBody(annotationName: String): CompanionEntityDecl? {
+        parseAnnotations() // 伴生实体自己也能带注解（语义层忽略也没关系）
+        if (check(TokenKind.KW_COMPANION)) {
+            return parseCompanionEntity(annotationName)
+        }
+        if (check(TokenKind.RBRACE)) return null
+        throw error(
+            peek(),
+            "注解 '$annotationName' 的体里只能写一个 companion entity（例如 " +
+                "companion entity Impl : Runnable { ... }），实际读到 ${peek().describe()}。" +
+                "注解不是类：字段/方法/构造器都要写进伴生实体里",
+        )
+    }
+
+    /**
+     * 伴生实体：
+     * ```
+     * companion entity Impl : Runnable {
+     *     var hits : int = 0
+     *     fun run() -> void { }
+     * }
+     * ```
+     *
+     * 名字可省（匿名：`companion entity : Runnable { }`），父类型列表可省。体是**普通类体**
+     * （字段/方法/构造器），复用 parseFieldDecl / parseConstructor / parseFuncDecl。
+     */
+    private fun parseCompanionEntity(annotationName: String): CompanionEntityDecl {
+        val companionTok = expect(TokenKind.KW_COMPANION, "伴生实体缺少 'companion'")
+        expect(
+            TokenKind.KW_ENTITY,
+            "companion 后面缺少 'entity'（伴生实体要写成 companion entity [名字] [: 父接口] { ... }）",
+        )
+        val name: String? = if (check(TokenKind.IDENT)) advance().lexeme else null
+        if (name != null && peek().kind.isTypeKeyword) {
+            val t = peek()
+            throw error(
+                t,
+                "伴生实体 '${name}' 缺少 '{'：名字后面的类型要写成父接口列表（companion entity $name : 父接口 { ... }），" +
+                    "实际读到 ${t.describe()}",
+            )
+        }
+        val supertypes = parseSupertypeList("注解 '${annotationName}' 的伴生实体")
+        expect(
+            TokenKind.LBRACE,
+            "伴生实体${if (name == null) "" else " '${name}'"}缺少 '{'（伴生实体要有类体，写法是 companion entity 名字 : 父接口 { ... }）",
+        )
+
+        val fields = ArrayList<FieldDecl>()
+        val methods = ArrayList<FuncDecl>()
+        while (!check(TokenKind.RBRACE) && !check(TokenKind.EOF)) {
+            val memberAnnotations = parseAnnotations()
+            if (isFieldDeclAhead()) {
+                fields.add(parseFieldDecl(memberAnnotations))
+                continue
+            }
+            if (check(TokenKind.KW_CONSTRUCTOR)) {
+                if (memberAnnotations.isNotEmpty()) {
+                    throw error(
+                        peek(),
+                        "伴生实体的构造器上不能写注解（'@'）：注解只标在类/接口/注解声明/方法/字段上",
+                    )
+                }
+                methods.add(parseConstructor(name ?: annotationName))
+                continue
+            }
+            // 伴生实体的体就是普通类体：override 的**语义**检查留给 Checker
+            // （类和伴生实体走同一套规矩，不在这里多加一条只有注解才有的限制）。
+            val member = parseFuncDecl(
+                annotations = ArrayList(memberAnnotations),
+                allowOverride = true,
+                allowLeadingAnnotations = true,
+            )
+            if (check(TokenKind.SEMI)) advance()
+            methods.add(member)
+        }
+        expect(
+            TokenKind.RBRACE,
+            "伴生实体${if (name == null) "" else " '${name}'"}没有闭合，缺少 '}'",
+        )
+        return CompanionEntityDecl(name, fields, methods, supertypes, companionTok.at)
     }
 
     /**
@@ -210,6 +615,9 @@ class Parser(
      * 逗号分隔、允许尾逗号。三件语义上的事交给 Checker——
      * 值名重复、枚举名与类名/函数名重名、以及「枚举名撞程序类名」（那是 codegen 的事）。
      * 这么分工是为了报错能带上**正确的文件**（多文件编译时 Checker 才知道每个声明来自哪）。
+     *
+     * 注解（阶段 21 M1）：枚举**不**收注解——可标注位置只有类 / 接口 / 注解声明 /
+     * 方法 / 字段，写在 `enum` 前面的 `@` 由 [parseProgram] 在分派到这里之前就报错。
      */
     private fun parseEnumDecl(): EnumDecl {
         var control = ControlType.DEFAULT
@@ -258,7 +666,7 @@ class Parser(
      * 有一组参数、有一个函数体的普通函数——槽位分配、降级、解释器、字节码后端
      * 全都不用为它分家。主构造的「体」就是字段初值（不需要 init 块）。
      */
-    private fun parseClassDecl(): ClassDecl {
+    private fun parseClassDecl(annotations: List<AnnotationUse> = emptyList()): ClassDecl {
         var control = ControlType.DEFAULT
         if (peek().kind.isControlKeyword) {
             control = ControlType.of(advance().kind)
@@ -302,19 +710,44 @@ class Parser(
         val methods = ArrayList<FuncDecl>()
         if (primary != null) methods.add(primary)
         while (!check(TokenKind.RBRACE) && !check(TokenKind.EOF)) {
+            // 注解可以和修饰词混写（`@M public fun f()` / `public @M fun f()`），
+            // 所以先收注解再分派；字段/方法各自带走自己的那份表。
+            val memberAnnotations = parseAnnotations()
             when {
-                peek().kind.isVarKeyword -> fields.add(parseFieldDecl())
+                isFieldDeclAhead() -> fields.add(parseFieldDecl(memberAnnotations))
                 // `constructor` 以及「修饰词 + constructor」（后者交给 parseConstructor
                 // 报「不能写权限修饰词 / 不能写 override」，别掉进 parseFuncDecl
                 // 变成一句看不懂的通用错误）。修饰词可以排好几个，所以先把这一串数出来。
-                peek(modifierRun()).kind == TokenKind.KW_CONSTRUCTOR ->
+                peek(modifierRun()).kind == TokenKind.KW_CONSTRUCTOR -> {
+                    if (memberAnnotations.isNotEmpty()) {
+                        throw error(
+                            peek(),
+                            "构造器上不能写注解（'@'）：v1 的注解只标在类/接口/注解声明/方法/字段上",
+                        )
+                    }
                     methods.add(parseConstructor(nameTok.lexeme))
+                }
                 // 类里的方法：`override` 在这里是合法的（接口里的方法也能写，见 parseInterfaceDecl）
-                else -> methods.add(parseFuncDecl(allowOverride = true))
+                else -> methods.add(
+                    parseFuncDecl(
+                        annotations = memberAnnotations,
+                        allowOverride = true,
+                        allowLeadingAnnotations = true,
+                    ),
+                )
             }
         }
         expect(TokenKind.RBRACE, "类 '${nameTok.lexeme}' 没有闭合，缺少 '}'")
-        return ClassDecl(control, nameTok.lexeme, fields, methods, classTok.at, typeParams, supertypes)
+        return ClassDecl(
+            control = control,
+            name = nameTok.lexeme,
+            fields = fields,
+            methods = methods,
+            at = classTok.at,
+            typeParams = typeParams,
+            supertypes = supertypes,
+            annotations = annotations,
+        )
     }
 
     /**
@@ -410,7 +843,7 @@ class Parser(
      * 方法**可以没有体**（抽象方法）——这是接口与类在语法上唯一的分叉，见
      * [parseFuncDecl] 的 `allowAbstractBody`。
      */
-    private fun parseInterfaceDecl(): InterfaceDecl {
+    private fun parseInterfaceDecl(annotations: List<AnnotationUse> = emptyList()): InterfaceDecl {
         var control = ControlType.DEFAULT
         if (peek().kind.isControlKeyword) {
             control = ControlType.of(advance().kind)
@@ -425,6 +858,9 @@ class Parser(
 
         val methods = ArrayList<FuncDecl>()
         while (!check(TokenKind.RBRACE) && !check(TokenKind.EOF)) {
+            // 接口方法也能带注解（注解在**声明**上，不在方法体里），与修饰词顺序任意：
+            // 先收注解，再让下面的修饰词数数循环照旧工作。
+            val methodAnnotations = parseAnnotations()
             val t = peek()
             if (t.kind.isVarKeyword) {
                 throw error(
@@ -471,12 +907,27 @@ class Parser(
                 )
             }
             // 接口里的方法也能写 override：意思是「它必须覆盖到继承来的接口方法」
-            methods.add(parseFuncDecl(allowAbstractBody = true, allowOverride = true))
+            methods.add(
+                parseFuncDecl(
+                    annotations = methodAnnotations,
+                    allowAbstractBody = true,
+                    allowOverride = true,
+                    allowLeadingAnnotations = true,
+                ),
+            )
             while (match(TokenKind.SEMI)) { /* 可选的分号，吃掉 */ }
         }
         expect(TokenKind.RBRACE, "接口 '${nameTok.lexeme}' 没有闭合，缺少 '}'")
 
-        return InterfaceDecl(control, nameTok.lexeme, methods, supertypes, ifaceTok.at, typeParams)
+        return InterfaceDecl(
+            control = control,
+            name = nameTok.lexeme,
+            methods = methods,
+            supertypes = supertypes,
+            at = ifaceTok.at,
+            typeParams = typeParams,
+            annotations = annotations,
+        )
     }
 
     /**
@@ -517,6 +968,17 @@ class Parser(
      */
     private fun parseParam(): Param {
         val t = peek()
+
+        // 0. 参数上的注解：v1 的可标位置是「类 / 接口 / 注解声明 / 方法 / 字段」，
+        // 参数与局部变量都不在其中（DESIGN-21 §2.3）。这里给一条说清边界的报错，
+        // 而不是掉到末尾那句「参数要写成「类型 名字」…」上。
+        if (t.kind == TokenKind.AT) {
+            throw error(
+                t,
+                "'@' 不能标在参数上：v1 的注解只标在类 / 接口 / 注解声明 / 方法 / 字段前面" +
+                    "（参数与局部变量的注解留到后续阶段），把 '@...' 删掉",
+            )
+        }
 
         // 1. Kotlin 风格：名字 : 类型
         if (t.kind == TokenKind.IDENT && peek(1).kind == TokenKind.COLON) {
@@ -592,7 +1054,13 @@ class Parser(
      *
      * 体的第一句可以是 `this(实参)`（委托给另一个构造器），由 Checker 校验。
      */
-    private fun parseConstructor(className: String): FuncDecl {
+    private fun parseConstructor(className: String, annotations: List<AnnotationUse> = emptyList()): FuncDecl {
+        if (annotations.isNotEmpty()) {
+            throw error(
+                peek(),
+                "构造器上不能写注解（'@'）：v1 的注解只标在类/接口/注解声明/方法/字段上",
+            )
+        }
         // 修饰词要**先**看：它们排在 constructor 前面，所以这时游标还停在修饰词上
         if (peek().kind.isControlKeyword) {
             val m = peek()
@@ -649,14 +1117,17 @@ class Parser(
     /**
      * 字段：`var 名字 : 类型 = 初值`（Kotlin 后缀风格，和局部变量一致；初值必填）。
      */
-    private fun parseFieldDecl(): FieldDecl {
+    private fun parseFieldDecl(annotations: List<AnnotationUse> = emptyList()): FieldDecl {
         val kwTok = advance() // var / imutvar
         val mutable = kwTok.kind == TokenKind.KW_VAR
         val nameTok = if (check(TokenKind.IDENT)) {
             advance()
         } else {
             val t = peek()
-            val hint = if (t.kind.isTypeKeyword) {
+            val hint = if (t.kind == TokenKind.KW_MATHEMATIC) {
+                // 数学类的预留关键字：字段名位置也一样要说清
+                "；'mathematic' 是保留关键字（数学类预留），语法还没定，现在还不能当名字用"
+            } else if (t.kind.isTypeKeyword) {
                 // 老写法 `var int x = 0`：类型写在名字前面已经废弃。
                 // 名字就在类型后面那个记号上，所以能把改写后的写法直接写出来。
                 val name = if (peek(1).kind == TokenKind.IDENT) peek(1).lexeme else "名字"
@@ -686,8 +1157,25 @@ class Parser(
                 "'${kwTok.lexeme} ${nameTok.lexeme} : ${type.name} = 初值'",
         )
         val init = parseExpr()
-        return FieldDecl(nameTok.lexeme, type, init, mutable, kwTok.at)
+        return FieldDecl(
+            name = nameTok.lexeme,
+            type = type,
+            initializer = init,
+            mutable = mutable,
+            at = kwTok.at,
+            annotations = annotations,
+        )
     }
+
+    /**
+     * 从当前位置往前看，接下来是不是一个字段声明。
+     *
+     * 类体/伴生实体体的调用方**已经先收过注解**（`@M var x` 里的 `@M`），所以这里只看
+     * 落地的记号是不是 `var`/`imutvar`——**不跳修饰词**：字段不写权限修饰词，
+     * `override var x` 要照旧掉进 parseFuncDecl 去撞那句「override 只能写在方法前面」，
+     * 而不是被当成字段后报一句「字段缺少名字」。
+     */
+    private fun isFieldDeclAhead(): Boolean = peek().kind.isVarKeyword
 
     // ------------------------------------------------------------------ import
 
@@ -753,8 +1241,15 @@ class Parser(
     private fun parseFuncDecl(
         allowAbstractBody: Boolean = false,
         allowOverride: Boolean = false,
+        annotations: List<AnnotationUse> = emptyList(),
+        allowLeadingAnnotations: Boolean = false,
     ): FuncDecl {
-        // <ControlType> 与 <override>：都排在 fun 前面，顺序随意，一起收
+        val leading = ArrayList(annotations)
+        // <注解> 与 <ControlType> 与 <override> 与 <static>：都排在 fun 前面，顺序随意，一起收。
+        // 注解与修饰词可以混着出现（`@M public fun` / `public @M fun` / `@A @B fun`
+        // / `public static @M fun`），所以每收完一段修饰词都要再看一眼有没有注解，
+        // 而不是只在一个固定的位置收一轮。
+        collectLeadingAnnotations(leading, allowLeadingAnnotations)
         var control = ControlType.DEFAULT
         var isOverride = false
         while (true) {
@@ -767,20 +1262,33 @@ class Parser(
                 isOverride = true
                 continue
             }
+            // 修饰词后面又能接注解（`public @M fun`），所以这里再收一轮
+            if (check(TokenKind.AT)) {
+                collectLeadingAnnotations(leading, allowLeadingAnnotations)
+                continue
+            }
             break
         }
 
-        // <static>：紧跟 <ControlType> 之后、fun 之前，控制「怎么调用」
+        // <static>：排在 <ControlType> 之后、fun 之前，控制「怎么调用」。
+        // `static override fun` / `public static @M fun` 也收：修饰词顺序本身没有语义，
+        // 没必要让用户因为换个顺序就撞一句看不懂的报错。
         var isStatic = false
-        if (peek().kind.isStaticKeyword) {
-            advance()
-            isStatic = true
-        }
-
-        // `static override fun` 也收：`override` 是新关键字，收它不会影响任何旧程序，
-        // 而修饰词顺序本身没有语义——没必要让用户因为换个顺序就撞一句看不懂的报错。
-        if (consumeOverride(allowOverride)) {
-            isOverride = true
+        while (true) {
+            if (peek().kind.isStaticKeyword) {
+                advance()
+                isStatic = true
+                continue
+            }
+            if (consumeOverride(allowOverride)) {
+                isOverride = true
+                continue
+            }
+            if (check(TokenKind.AT)) {
+                collectLeadingAnnotations(leading, allowLeadingAnnotations)
+                continue
+            }
+            break
         }
 
         if (!peek().kind.isFunKeyword) {
@@ -879,18 +1387,42 @@ class Parser(
         return FuncDecl(
             control, mainType, nameTok.lexeme, params, ret, body, funTok.at, isStatic,
             isOverride = isOverride,
+            annotations = leading,
         )
     }
 
     /**
-     * `fun` 前面那串修饰词有几个（`public` / `private` / `protected` / `static` / `override`
-     * 任意顺序都算）。只数不消费——调用方拿这个偏移去 `peek(n)` 看 `fun` 后面跟着的是不是
-     * 它要的那个声明（类体里要靠它把「修饰词 + constructor」认出来）。
+     * `fun`/`constructor` 前面那串修饰词有几个（`public` / `private` / `protected` /
+     * `static` / `override` 任意顺序都算）。只数不消费——调用方拿这个偏移去 `peek(n)`
+     * 看后面跟着的是不是它要的那个声明（类体里要靠它把「修饰词 + constructor」认出来）。
+     *
+     * [extra] 是从当前位置再往前看的偏移量（阶段 21）：调用方**已经收过注解**时传 0 即可，
+     * 只有「当前位置之前还夹着若干未消费的记号」才需要非 0。
      */
-    private fun modifierRun(): Int {
-        var n = 0
+    private fun modifierRun(extra: Int = 0): Int {
+        var n = extra
         while (peek(n).kind.isModifierKeyword) n++
         return n
+    }
+
+    /**
+     * 收下一段声明前的注解（`@M` / `@M("hi")` / `@M(value = "hi")`）。
+     *
+     * [allowLeadingAnnotations] 为 false 的位置（参数、语句里）直接给出说清边界的报错。
+     * 抽成一个函数是因为 `fun` 前面的注解与修饰词**顺序任意**：每收完一段修饰词都要再看一眼。
+     */
+    private fun collectLeadingAnnotations(leading: ArrayList<AnnotationUse>, allowLeadingAnnotations: Boolean) {
+        while (check(TokenKind.AT)) {
+            if (!allowLeadingAnnotations) {
+                val t = peek()
+                throw error(
+                    t,
+                    "注解要写在声明前面（v1 只支持标在类/接口/注解声明/方法/字段上）：" +
+                        "这里不能出现 '@'（实际读到 ${t.describe()}）",
+                )
+            }
+            leading.add(parseAnnotationUse())
+        }
     }
 
     /**
@@ -966,6 +1498,34 @@ class Parser(
             )
         }
         var base = TypeRef(if (nullable) "?$name" else name, t.at)
+
+        // 嵌套类型写法（阶段 21 M1）：`注解名 :: 伴生名`，例如 `Marker::Impl`。
+        // v1 **只支持一层**（DESIGN-21.md §12.3）：写完一对再看一眼，还有 `::` 就报错。
+        // name 留 **owner**（`Marker`），伴生名放 nested（`Impl`）——语义层拼内部名 `Marker$Impl`。
+        if (check(TokenKind.DOUBLE_COLON)) {
+            if (t.kind.isTypeKeyword) {
+                throw error(
+                    peek(),
+                    "'$name' 是内置类型，没有嵌套类型：'::' 只能写成「注解名 :: 伴生名」" +
+                        "（例如 Marker::Impl）",
+                )
+            }
+            advance() // ::
+            val innerTok = expect(
+                TokenKind.IDENT,
+                "'::' 后面缺少嵌套类型名：写法是「注解名 :: 伴生名」（例如 Marker::Impl）",
+            )
+            base = base.copy(nested = innerTok.lexeme)
+            if (check(TokenKind.DOUBLE_COLON)) {
+                val extra = peek()
+                throw error(
+                    extra,
+                    "嵌套类型 v1 只支持一层：'${base.display()}::...' 里的第二个 '::' 不支持" +
+                        "（写法是「注解名 :: 伴生名」，例如 Marker::Impl）",
+                )
+            }
+        }
+
         if (check(TokenKind.AMP)) {
             if (t.kind.isTypeKeyword) {
                 throw error(
@@ -1176,6 +1736,14 @@ class Parser(
                 t,
                 "'catch' 只能跟在 try 块后面，写法是 try { ... } catch (e : string) { ... }" +
                     "（也接受老写法 catch (e string)）",
+            )
+
+            // 局部变量上的注解：v1 只标在声明（类 / 接口 / 注解声明 / 方法 / 字段）前面，
+            // 语句里的 '@' 给一条说清边界的报错（DESIGN-21 §2.3）。
+            t.kind == TokenKind.AT -> throw error(
+                t,
+                "'@' 不能标在语句里（局部变量）：v1 的注解只标在类 / 接口 / 注解声明 / 方法 / 字段前面" +
+                    "（参数与局部变量的注解留到后续阶段），把 '@...' 删掉",
             )
 
             t.kind == TokenKind.IDENT && peek(1).kind == TokenKind.ASSIGN -> parseAssign()
@@ -1524,7 +2092,10 @@ class Parser(
             advance()
         } else {
             val t = peek()
-            val hint = if (t.kind.isTypeKeyword) {
+            val hint = if (t.kind == TokenKind.KW_MATHEMATIC) {
+                // 数学类的预留关键字（语法还没定）：这里要说清它不是「少写了名字」
+                "；'mathematic' 是保留关键字（数学类预留），语法还没定，现在还不能当名字用"
+            } else if (t.kind.isTypeKeyword) {
                 // 老写法 `var int x = 0`：类型写在名字前面已经废弃
                 val name = if (peek(1).kind == TokenKind.IDENT) peek(1).lexeme else "名字"
                 "；类型现在写在**名字后面**：'${kwTok.lexeme} ${t.lexeme} $name = 初值' " +

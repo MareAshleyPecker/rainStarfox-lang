@@ -63,6 +63,7 @@ object Rsf {
             loaded.sourceOfClass,
             loaded.sourceOfEnum,
             loaded.sourceOfInterface,
+            loaded.sourceOfAnnotation,
         ).check()
 
     // ------------------------------------------------------------------ 解释

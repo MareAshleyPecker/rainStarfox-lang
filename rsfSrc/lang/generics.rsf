@@ -5,7 +5,7 @@
 // 查：rsf check rsfSrc/lang/generics.rsf
 //
 // 类型实参写成 `&<...>`：`&` 让它和比较运算的 `<` 一眼分开，
-// 也不会跟 rsfSrc/lang/example.rsf 草稿里的 `<ControlType>` 占位符混淆（[] 留给数组）。
+// 也不会跟文档里写的 `<ControlType>` 那种占位符混淆（[] 留给数组）。
 //
 // 擦除：`Box&<int>` 与 `Box&<string>` 在 JVM 上是**同一个类**，
 // 字段是 `Ljava/lang/Object;`；类型实参只活在编译期——所以
@@ -17,29 +17,29 @@ import java.util.ArrayList
 
 // ---------------------------------------------------------------- 自定义泛型类
 
-public class Box&<T> {
+class Box&<T> {
     var value : T = 0                 // 字段可以是 T
 
-    constructor(v0 : T) {               // 参数可以是 T
+    constructor(v0 : T) {              // 参数可以是 T
         value = v0
     }
 
-    public fun get() -> T {           // 返回类型可以是 T
+    fun get() -> T {                   // 返回类型可以是 T
         rtn value
     }
 
-    public fun set(v : T) -> void {
+    fun set(v : T) -> void {
         value = v
     }
 
-    public fun echo(v : T) -> T {
+    fun echo(v : T) -> T {
         var copy : T = v              // 局部变量也可以是 T
         rtn copy
     }
 }
 
 // 多个类型参数用逗号分隔
-public class Pair&<K, V> {
+class Pair&<K, V> {
     var key : K = 0
     var val : V = 0
 
@@ -48,22 +48,22 @@ public class Pair&<K, V> {
         val = v0
     }
 
-    public fun keyOf() -> K {
+    fun keyOf() -> K {
         rtn key
     }
 
-    public fun valOf() -> V {
+    fun valOf() -> V {
         rtn val
     }
 }
 
 // ---------------------------------------------------------------- 泛型类当参数/返回类型
 
-public fun boxed(n : int) -> Box&<int> {
+fun boxed(n : int) -> Box&<int> {
     rtn new Box&<int>(n * 10)
 }
 
-public fun twice(b : Box&<int>) -> int {
+fun twice(b : Box&<int>) -> int {
     rtn b.get() + b.get()
 }
 

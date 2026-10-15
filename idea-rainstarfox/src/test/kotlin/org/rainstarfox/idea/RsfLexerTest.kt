@@ -131,10 +131,20 @@ class RsfLexerTest {
 
     @Test
     fun `不认识的字符合法地被标成非法字符`() {
-        val types = types("fun f() { @ }")
+        // 注意：这里以前拿 `@` 当非法字符的样例，阶段 21 之后 `@` 是**合法的记号和
+        // 标点**（`@Marker` 的注解记号），不能再用它了，换成 `#`。
+        val types = types("fun f() { # }")
         assertTrue(types.contains(RsfTokens.BAD_CHARACTER.toString()), types.toString())
         // 非法字符不该把后面的花括号带歪
         assertTrue(types.contains(RsfTokens.RBRACE.toString()), types.toString())
+    }
+
+    @Test
+    fun `注解记号 @ 与阶段 21 的三个新关键字都被认出来`() {
+        assertEquals(RsfTokens.OPERATION.toString(), tokenOf("@Marker", "@"))
+        assertEquals(RsfTokens.CONTROL_KEYWORD.toString(), tokenOf("annotation Marker { }", "annotation"))
+        assertEquals(RsfTokens.CONTROL_KEYWORD.toString(), tokenOf("companion entity Impl { }", "companion"))
+        assertEquals(RsfTokens.CONTROL_KEYWORD.toString(), tokenOf("companion entity Impl { }", "entity"))
     }
 
     @Test
@@ -175,6 +185,12 @@ class RsfLexerTest {
         // `override` 是阶段 20 追加的可选修饰词，和 public/static 同族
         "public", "private", "protected", "static", "override",
         "class", "new", "this", "constructor", "interface",
+        // 阶段 19c：枚举声明 + 枚举分派（这份快照和插件的高亮表当时都漏抄了）
+        "enum", "switch", "case",
+        // 阶段 21：注解声明与伴生实体（三个都是硬关键字）
+        "annotation", "companion", "entity",
+        // 阶段 22：数学类的预留关键字（先占词，语法未定）
+        "mathematic",
         "if", "else", "while", "for", "in", "break", "continue", "goto",
         "fail", "try", "catch", "true", "false", "null",
         "void", "int", "long", "float", "double", "string", "str", "bool", "boolean", "byte", "char",

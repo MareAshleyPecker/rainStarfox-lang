@@ -7,7 +7,7 @@ import org.example.complie.diag.SourceFile
  * 可变变量/字段的老关键字（2026-10-11 起唯一写法是 `var`）。
  *
  * 它**不**在 [KEYWORDS] 里——关键字表要与 rsf 版自举词法器（`rsfSrc/bootstrap/Lexer.rsf`
- * 的 `keywordKind`）**逐条对齐**，条数不能变（45 项）。所以拦它靠的是
+ * 的 `keywordKind`）**逐条对齐**，条数不能变（51 项）。所以拦它靠的是
  * [Lexer.readIdentOrKeyword] 里一条独立的判断，rsf 版那边也写了同一条。
  */
 internal const val LEGACY_VAR_KEYWORD: String = "varis"
@@ -35,6 +35,12 @@ private val KEYWORDS: Map<String, TokenKind> = buildMap {
     // 阶段 19c：枚举声明与枚举分派
     put("enum", TokenKind.KW_ENUM)
     put("interface", TokenKind.KW_INTERFACE)
+    // 阶段 21：注解声明与它的伴生实体（annotation / companion / entity 都是硬关键字）
+    put("annotation", TokenKind.KW_ANNOTATION)
+    put("companion", TokenKind.KW_COMPANION)
+    put("entity", TokenKind.KW_ENTITY)
+    // 阶段 22：数学类的预留关键字（语法未定，先占住这个词；见 Token.KW_MATHEMATIC）
+    put("mathematic", TokenKind.KW_MATHEMATIC)
     put("switch", TokenKind.KW_SWITCH)
     put("case", TokenKind.KW_CASE)
     put("new", TokenKind.KW_NEW)
@@ -393,6 +399,8 @@ class Lexer(private val source: SourceFile) {
             '/' -> one(TokenKind.SLASH)
             '\\' -> one(TokenKind.BACKSLASH)
             '%' -> one(TokenKind.PERCENT)
+            // 阶段 21：注解使用点的前缀 `@Marker`（不是运算符，单独一个记号）
+            '@' -> one(TokenKind.AT)
             '&' -> if (peek() == '&') two(TokenKind.ANDAND) else one(TokenKind.AMP)
             // 逻辑或是 `||`；rsf 没有按位或，孤零零一个 `|` 直接报清楚，
             // 别让它以「不认识的字符」的样子出现（那个提示对用户没有指导性）

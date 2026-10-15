@@ -342,9 +342,9 @@ class Interpreter(
                             }
                         }
                         val fallback = instr.defaultTarget
-                        when {
-                            chosen != null -> pc = target(body, chosen)
-                            fallback != null -> pc = target(body, fallback)
+                        pc = when {
+                            chosen != null -> target(body, chosen)
+                            fallback != null -> target(body, fallback)
                             // 没写 else 且 case 穷尽：到这里说明值是 null（枚举常量都不是 null）。
                             // 抛的消息和编译产物那条 `throw new RuntimeException(...)` 一字不差。
                             else -> throw RsfFailure(
@@ -536,11 +536,8 @@ class Interpreter(
             }
 
             is ForceExpr -> {
-                val value = eval(expr.operand, slots, body)
-                if (value == null) {
-                    // 和编译产物保持一致：都是 NullPointerException、同样的消息
-                    throw NullPointerException("rsf: 对 null 使用了 '!!'")
-                }
+                val value = eval(expr.operand, slots, body) ?: // 和编译产物保持一致：都是 NullPointerException、同样的消息
+                throw NullPointerException("rsf: 对 null 使用了 '!!'")
                 coerce(value, model.typeOf(expr))
             }
 
@@ -590,7 +587,11 @@ class Interpreter(
                 // 接口方法一律虚分派（`INVOKEINTERFACE` 的语义）：默认方法跑它自己那份体，
                 // 抽象方法去运行期真实类里找实现。见 [callInterfaceMethod]。
                 if (member.interfaceOwner && !method.isStatic) {
-                    return callInterfaceMethod(eval(expr.receiver, slots, body) as RsfObject, method, args)
+                    val self = eval(expr.receiver, slots, body) as RsfObject
+                    // 阶段 21：静态类型是**注解接口**（`Marker`）——伴生对象的元素访问器
+                    // 走这条路，不能交给 callInterfaceMethod（注解接口不在 interfaces 表里）
+                    annotationElementCall(self, method.name, args)?.let { return it }
+                    return callInterfaceMethod(self, method, args)
                 }
                 val self = if (method.isStatic) null else eval(expr.receiver, slots, body) as RsfObject
                 return callMethod(member.className, method, self, args)
@@ -928,10 +929,10 @@ class Interpreter(
     private fun javaHandler(obj: RsfObject): java.lang.reflect.InvocationHandler =
         java.lang.reflect.InvocationHandler { proxy, method, rawArgs ->
             val args = rawArgs?.toList().orEmpty()
-            when {
-                method.name == "equals" && args.size == 1 -> proxy === args[0]
-                method.name == "hashCode" && args.isEmpty() -> System.identityHashCode(obj)
-                method.name == "toString" && args.isEmpty() -> obj.toString()
+            when (method.name) {
+                "equals" if args.size == 1 -> proxy === args[0]
+                "hashCode" if args.isEmpty() -> System.identityHashCode(obj)
+                "toString" if args.isEmpty() -> obj.toString()
                 else -> {
                     val impl = findInterfaceImplementation(
                         obj.className, method.name, List(args.size) { RsfType.OBJECT },
@@ -1021,11 +1022,21 @@ class Interpreter(
             frame[0] = obj
             val params = model.paramsOf(ctor)
             for (i in params.indices) {
+                // 阶段 21：伴生类的构造器允许**少给尾部实参**（省略的元素走默认值，
+                // 由 [fillElementDefaults] 补）。普通构造器的个数由 Checker 保证一致，
+                // 这里的越界判断只对那条路生效，行为不变。
+                if (i >= args.size) break
                 frame[params[i].slot] = coerce(args[i], params[i].type)
             }
             // 不委托 = 链的根：先跑字段初值，再跑自己的体
             if (model.classModel.delegationOf(ctor) == null) {
-                runFieldInitializers(decl, obj, frame, lowered)
+                // 阶段 21：伴生类的元素字段值来自构造器形参槽，实测参数个数少于元素表的
+                // （`new Marker("hi")`）时要先把缺的元素补上——语义层不补齐，补齐是后端的事
+                val annotation = model.companionAnnotationOf(decl.name)
+                if (annotation != null) {
+                    fillElementDefaults(companionElementCount(decl), decl, ctor, frame, lowered, args)
+                }
+                runFieldInitializers(decl, obj, frame, lowered, ctor, args)
             }
             execute(lowered, frame, 0)
         } finally {
@@ -1042,14 +1053,86 @@ class Interpreter(
         obj: RsfObject,
         frame: Array<Any?>,
         owner: LoweredFunction,
+        ctor: FuncDecl? = null,
+        args: List<Any?> = emptyList(),
     ) {
         val fieldTypes = model.classModel.fieldTypes[decl].orEmpty()
+        // 阶段 21：伴生类的前 n 个字段是**合成的元素字段**，它们的 `initializer` 只是
+        // 占位（默认值字面量，或与类型相配的零值）——有实参的取构造器形参槽（见
+        // [fillElementDefaults]），省略的才落回这个占位。
+        val elementCount = companionElementCount(decl)
+        val params = ctor?.let { model.paramsOf(it) }.orEmpty()
         for ((index, field) in decl.fields.withIndex()) {
-            // 字段初值都是纯表达式（没有 goto / 标签），所以这里的 [owner] 只用来
-            // 传参——求值只用 [frame]（`this` 在 0 号槽）
-            val value = eval(field.initializer, frame, owner)
+            val value = if (index < elementCount && index < args.size && index < params.size) {
+                frame[params[index].slot]
+            } else {
+                // 字段初值都是纯表达式（没有 goto / 标签），所以这里的 [owner] 只用来
+                // 传参——求值只用 [frame]（`this` 在 0 号槽）
+                eval(field.initializer, frame, owner)
+            }
             obj.fields[index] = coerce(value, fieldTypes.getOrElse(index) { RsfType.INT })
         }
+    }
+
+    /**
+     * 注解元素字段的**省略实参**（阶段 21）：把没给实参的元素形参槽填成元素默认值。
+     *
+     * 为什么需要这一步：`new Marker("hi")` 少给的实参在语义层**不做补齐**（Checker 只保证
+     * 「省略的元素有默认值」），补齐是后端的事——M3 在 `emitNew` 里补，解释器就得在这儿补，
+     * 而且必须补在 `execute` **之前**：伴生体自己的行为方法（`describe`）要读这些形参槽。
+     *
+     * 补的是 `field.initializer`——对元素字段它就是元素默认值（或与类型相配的零值，
+     * 见 M2 的 `companionElementField`），基本类型因此不会拿到 null。
+     */
+    private fun fillElementDefaults(
+        elementCount: Int,
+        decl: ClassDecl,
+        ctor: FuncDecl?,
+        frame: Array<Any?>,
+        owner: LoweredFunction,
+        args: List<Any?>,
+    ) {
+        val params = ctor?.let { model.paramsOf(it) }.orEmpty()
+        val fieldTypes = model.classModel.fieldTypes[decl].orEmpty()
+        for (index in 0 until elementCount) {
+            val slot = params.getOrNull(index)?.slot ?: continue
+            if (index < args.size && frame[slot] != null) continue
+            val field = decl.fields[index]
+            frame[slot] = coerce(
+                eval(field.initializer, frame, owner),
+                fieldTypes.getOrElse(index) { RsfType.INT },
+            )
+        }
+    }
+
+    // ------------------------------------------------------------------ 注解（阶段 21）
+
+    /**
+     * 伴生类的元素字段个数（[ClassDecl.fields] 的前 n 个）；不是伴生类就是 0。
+     *
+     * 这是「元素字段的值来自构造器参数」唯一需要知道的那点形状信息，M2 把它
+     * 登记在 [SemanticModel.companionAnnotations] 里，M3 的 `emitUserConstructor` 读的
+     * 也是这一份（`elementCount`）——两端同一把尺子，不各自对着 AST 数。
+     */
+    private fun companionElementCount(decl: ClassDecl): Int =
+        model.companionAnnotationOf(decl.name)?.companion?.elementFields?.size ?: 0
+
+    /**
+     * 注解元素访问器的实现（阶段 21）：接收者运行期是个**伴生类的对象**，
+     * 静态类型却是**注解接口**（`Marker`），[member] 是元素名。
+     *
+     * 为什么不能交给 [callInterfaceMethod]：合成注解接口**不进 `interfaces` 表**
+     * （`@interface` 装不进 `InterfaceDecl`），所以 `findInterfaceImplementation` 沿
+     * 接口链一路走空——访问器一旦无体就会抛「内部错误」，有体也只能靠回退跑到
+     * `decl` 那一份上（`className` 还不是伴生类）。元素访问器是**非虚**的：伴生类
+     * 自己就带一份（[SemanticModel.elementAccessorOf]），查到了直接当普通实例方法调。
+     *
+     * 查不到（不是伴生对象，或者元素名不对）返回 null，让调用方保持原来的报错路径。
+     */
+    private fun annotationElementCall(self: RsfObject, member: String, args: List<Any?>): Any? {
+        val annotation = model.companionAnnotationOf(self.className) ?: return null
+        val accessor = model.elementAccessorOf(annotation.name, member) ?: return null
+        return callMethod(self.className, accessor, self, args)
     }
 
     /**
@@ -1167,7 +1250,7 @@ class Interpreter(
      */
     private fun checkArrayIndex(array: Any?, index: Int) {
         val length = java.lang.reflect.Array.getLength(array)
-        if (index < 0 || index >= length) {
+        if (index !in 0..<length) {
             throw RsfFailure(ArrayRuntime.indexFailure(length, index))
         }
     }
@@ -1254,14 +1337,14 @@ class Interpreter(
             // 同一个接口里的另一个接口方法（Checker 记的 interfaceOwner）——那时 `this`
             // 是实现类的对象，得和显式 `this.greet(...)` 走同一条虚分派路。
             if (member.interfaceOwner && !method.isStatic) {
-                return callInterfaceMethod(
-                    thisObject(slots)
-                        ?: throw RsfError(
-                            "interp", "内部错误：接口方法 '${method.name}' 的调用点没有 this",
-                            expr.at.line, expr.at.column, null,
-                        ),
-                    method, args,
-                )
+                val self = thisObject(slots)
+                    ?: throw RsfError(
+                        "interp", "内部错误：接口方法 '${method.name}' 的调用点没有 this",
+                        expr.at.line, expr.at.column, null,
+                    )
+                // 阶段 21：伴生体里按裸名调元素访问器（`value()`）与显式 `m.value()` 同一条路
+                annotationElementCall(self, method.name, args)?.let { return it }
+                return callInterfaceMethod(self, method, args)
             }
             val self = if (method.isStatic) null else thisObject(slots)
             return callMethod(member.className, method, self, args)

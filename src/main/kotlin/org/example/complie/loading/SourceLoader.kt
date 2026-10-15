@@ -1,5 +1,6 @@
 package org.example.complie.loading
 
+import org.example.complie.ast.AnnotationDecl
 import org.example.complie.ast.ClassDecl
 import org.example.complie.ast.ClassImport
 import org.example.complie.ast.EnumDecl
@@ -45,11 +46,16 @@ class LoadedProgram(
     val interfaces: List<InterfaceDecl> = emptyList(),
     /** 每个接口来自哪个文件——接口相关的报错要指对文件（和 [sourceOfClass] 同一个理由）。 */
     val sourceOfInterface: IdentityHashMap<InterfaceDecl, SourceFile> = IdentityHashMap(),
+    /** 注解声明（阶段 21）。和类、枚举、接口共用类型命名空间。 */
+    val annotations: List<AnnotationDecl> = emptyList(),
+    /** 每个注解来自哪个文件——注解相关的报错要指对文件（和 [sourceOfClass] 同一个理由）。 */
+    val sourceOfAnnotation: IdentityHashMap<AnnotationDecl, SourceFile> = IdentityHashMap(),
     /** 根文件的包名（`pkg a.b`）；没写就是 null。生成 .class 时它就是 JVM 的包。 */
     val packageName: String? = null,
 ) {
     /** 合成一个 Program 交给 Checker。 */
-    fun toProgram(): Program = Program(importDecls, functions, classes, packageName, enums, interfaces)
+    fun toProgram(): Program =
+        Program(importDecls, functions, classes, packageName, enums, interfaces, annotations)
 }
 
 /**
@@ -72,6 +78,8 @@ class SourceLoader {
     private val sourceOfEnum = IdentityHashMap<EnumDecl, SourceFile>()
     private val interfaces = ArrayList<InterfaceDecl>()
     private val sourceOfInterface = IdentityHashMap<InterfaceDecl, SourceFile>()
+    private val annotations = ArrayList<AnnotationDecl>()
+    private val sourceOfAnnotation = IdentityHashMap<AnnotationDecl, SourceFile>()
 
     /** 根文件所在目录：相对路径的最后一个搜索基准。 */
     private var rootDir: File? = null
@@ -101,6 +109,8 @@ class SourceLoader {
             sourceOfEnum = sourceOfEnum,
             interfaces = interfaces.toList(),
             sourceOfInterface = sourceOfInterface,
+            annotations = annotations.toList(),
+            sourceOfAnnotation = sourceOfAnnotation,
             packageName = rootPackage,
         )
     }
@@ -141,6 +151,13 @@ class SourceLoader {
         for (iface in program.interfaces) {
             interfaces.add(iface)
             sourceOfInterface[iface] = source
+        }
+
+        // 阶段 21：注解声明也要一路带到 Checker——漏掉这里的话 `rsf check` 会
+        // 悄悄把注解当没写过（M1 只做了语法，这条通路是 M2 补上的）
+        for (ann in program.annotations) {
+            annotations.add(ann)
+            sourceOfAnnotation[ann] = source
         }
 
         val dir = baseOverride ?: file.parentFile ?: File(".")

@@ -1,5 +1,9 @@
 package org.example.complie.sema
 
+import org.example.complie.ast.AnnotationArg
+import org.example.complie.ast.AnnotationDecl
+import org.example.complie.ast.AnnotationElement
+import org.example.complie.ast.AnnotationUse
 import org.example.complie.ast.AssignStmt
 import org.example.complie.ast.BinaryExpr
 import org.example.complie.ast.Block
@@ -9,6 +13,7 @@ import org.example.complie.ast.CallExpr
 import org.example.complie.ast.CharLit
 import org.example.complie.ast.ClassDecl
 import org.example.complie.ast.ClassImport
+import org.example.complie.ast.CompanionEntityDecl
 import org.example.complie.ast.ContinueStmt
 import org.example.complie.ast.ControlType
 import org.example.complie.ast.DoubleLit
@@ -34,11 +39,16 @@ import org.example.complie.ast.LabelStmt
 import org.example.complie.ast.LongLit
 import org.example.complie.ast.MemberAssignStmt
 import org.example.complie.ast.MemberExpr
+import org.example.complie.ast.NamedAnnotationArg
 import org.example.complie.ast.NewArrayExpr
 import org.example.complie.ast.NewExpr
 import org.example.complie.ast.NullLit
+import org.example.complie.ast.Param
+import org.example.complie.ast.PositionalAnnotationArg
 import org.example.complie.ast.Program
+import org.example.complie.ast.ReturnSpec
 import org.example.complie.ast.ReturnStmt
+import org.example.complie.ast.ReturnStyle
 import org.example.complie.ast.Stmt
 import org.example.complie.ast.StringLit
 import org.example.complie.ast.SwitchStmt
@@ -50,6 +60,7 @@ import org.example.complie.ast.UnaryExpr
 import org.example.complie.ast.VarDeclStmt
 import org.example.complie.ast.VarExpr
 import org.example.complie.ast.WhileStmt
+import org.example.complie.ast.exprText
 import org.example.complie.diag.Diagnostic
 import org.example.complie.diag.RsfError
 import org.example.complie.diag.Severity
@@ -108,6 +119,10 @@ class Checker(
     /** 每个接口来自哪个文件（接口相关的报错要指对文件，和 [sourceOfClass] 同一个理由）。
 */
     private val sourceOfInterface: Map<InterfaceDecl, SourceFile> = emptyMap(),
+
+    /** 每个注解来自哪个文件（注解相关的报错要指对文件，阶段 21，和上面几个同一个理由）。
+*/
+    private val sourceOfAnnotation: Map<AnnotationDecl, SourceFile> = emptyMap(),
 ) {
 
     /**
@@ -161,6 +176,9 @@ class Checker(
 
     fun check(): SemanticModel {
         collectImports()
+        // 注解名最先占住（阶段 21）：注解和类/枚举/接口共用类型命名空间，先占住名字，
+        // 后面三趟才能报出「重名」——反过来的顺序只能报一半（谁先谁后报谁）。
+        declareAnnotationNames()
         // 枚举最先声明：它们不引用任何别的类型，而且**类名/函数名重名检查要看得见它们**
         // （枚举和类共用类型命名空间，先占住名字，后面两趟才好报「重名」）。
         declareEnums()
@@ -173,6 +191,10 @@ class Checker(
         // 接口的方法与父接口放在类声明**之后**：`interface A : B` 里的 B 得先能分清
         // 「这是接口」还是「这是类（D2：暂不支持继承类）」——那要靠类表已经填满。
         declareInterfaceBodies()
+        // 注解的**体**（阶段 21）：元素类型白名单 + companion entity 合成类。
+        // 放在类声明与接口体之后：元素类型可能是枚举/注解（要那两张表已经填满），
+        // 伴生实体自己写的父接口可能是这份程序里的接口（要接口表已经填满）。
+        declareAnnotationBodies()
         declareFunctions()
         // 实现配对只看签名，不看方法体，所以放在查任何体之前：先把「你没实现 greet」
         // 这种错报出来，用户改完再看体里的错。
@@ -185,6 +207,9 @@ class Checker(
         }
         checkInterfaceBodies()
         checkClassBodies()
+        // 使用点（`@Marker(...)`）放在最后：它要按元素的**已解析**类型表配对，
+        // 也可能引用伴生类（`new Marker(...)` 的实参），所以等所有声明都查完再配对。
+        checkAnnotationUses()
 
         // 阶段 12 分三步：语法 ✅ → 语义 ✅ → 后端 ✅（解释器与字节码都通了）
         // 类的 .class 用 BytecodeCompiler 按类逐个生成）。
@@ -225,6 +250,11 @@ class Checker(
             enumValues = enumValueRefs,
             interfaces = interfaceTable.mapValues { it.value.decl },
             superInterfaces = collectSuperInterfaces(),
+            annotations = annotationTable.mapValues { it.value.spec ?: throw IllegalStateException("注解 '${it.key}' 没有解析结果") },
+            annotationUses = annotationUses.toList(),
+            annotationNewTargets = annotationNewTargets,
+            companionAnnotations = companionAnnotations,
+            annotationAccessors = annotationAccessors.toList(),
         )
     }
 
@@ -255,6 +285,9 @@ class Checker(
             }
             if (interfaceTable.containsKey(fn.name)) {
                 throw err("'${fn.name}' 已经是一个接口名了，函数名和接口名不能重名", fn.at)
+            }
+            if (annotationTable.containsKey(fn.name)) {
+                throw err("'${fn.name}' 已经是一个注解名了，函数名和注解名不能重名", fn.at)
             }
             // 阶段 19d：同名函数不再一律报错——先收进候选表，最后统一做
             // 「擦除后签名是否撞车」的检查（见 checkErasureConflicts）。
@@ -428,6 +461,61 @@ class Checker(
     private val classSuperRefs = IdentityHashMap<ClassDecl, List<SuperRef>>()
 
 
+    // ------------------------------------------------------------------ 注解（阶段 21）
+
+    /**
+     * 一个注解声明的解析产物（阶段 21）。
+     *
+     * 与 [ClassInfo] / [InterfaceInfo] 平级，但注解**不是**两者中的任何一个：
+     * 它既有「接口」那一面（元素是抽象访问器，两个后端要生成注解接口），
+     * 又有「类」那一面（companion entity 是一个实实在在的类）。
+     */
+    private class AnnotationInfo(
+        val decl: AnnotationDecl,
+        val source: SourceFile,
+        /** 伴生类的 JVM 内部名（`Marker$Impl`）；没有 companion entity 就是 null。 */
+        val companionJvmName: String?,
+        /**
+         * 合成出来的**注解接口**信息（元素访问器都在里面）。
+         *
+         * 它**不进 [interfaceTable]**：`@interface` 不是 rsf 接口（没有 `new`、
+         * 不能当父类型、方法都是抽象的元素访问器），塞进去会让「这个名字是不是接口」
+         * 在后端各处都答错。它只用来复用接口那一套成员检查（[checkInterfaceMember]、
+         * 实现要求收集）。
+         */
+        var iface: InterfaceInfo? = null,
+        var spec: AnnotationSpec? = null,
+    ) {
+        /** 注解接口的类型：和用户类/接口同一个形状（`RsfType.external(注解名)`）。 */
+        val type: RsfType get() = RsfType.external(decl.name)
+    }
+
+    /**
+     * 注解声明，按名字索引。
+     *
+     * 注解、类、枚举、接口**共用类型命名空间**：重名要报错。注解名最先占住
+     * （见 [check]），所以另外三张表的查重都能看见它。
+     */
+    private val annotationTable = LinkedHashMap<String, AnnotationInfo>()
+
+    /** 伴生类 → 合成它的那个 [CompanionEntityDecl]（与方法体检查的上下文还原有关）。 */
+    private val companionDecls = IdentityHashMap<ClassDecl, CompanionEntityDecl>()
+
+    /** 伴生类的 JVM 内部名 → 注解名。 */
+    private val companionAnnotations = LinkedHashMap<String, String>()
+
+    /** 合成出来的元素字段 → 它的元素（[checkClassBodies] 跳过它们的初值检查）。 */
+    private val elementFields = IdentityHashMap<FieldDecl, AnnotationElementSpec>()
+
+    /** 使用点与目标的配对（[checkAnnotationUses] 填，进 [SemanticModel.annotationUses]）。 */
+    private val annotationUses = ArrayList<AnnotationUseSite>()
+
+    /** 方案 B 要生成的访问器规格（进 [SemanticModel.annotationAccessors]）。 */
+    private val annotationAccessors = ArrayList<AnnotationAccessor>()
+
+    /** `new Marker(...)` 这种构造伴生实例的点 → 注解。 */
+    private val annotationNewTargets = IdentityHashMap<Expr, AnnotationSpec>()
+
     // ------------------------------------------------------------------ 枚举（阶段 19c）
 
     /**
@@ -455,6 +543,9 @@ class Checker(
                     "枚举 '${decl.name}' 和同名的类冲突：枚举名和类名在同一个命名空间里",
                     decl.at,
                 )
+            }
+            if (annotationTable.containsKey(decl.name)) {
+                throw err("枚举 '${decl.name}' 和同名的注解冲突：$annotationNamespaceNote", decl.at)
             }
             if (enumTable.putIfAbsent(decl.name, decl) != null) {
                 throw err("枚举 '${decl.name}' 重复定义", decl.at)
@@ -491,6 +582,644 @@ class Checker(
     /** 接口、类、枚举共用类型命名空间时，报错里统一这么说。 */
     private val namespaceNote = "接口名、类名、枚举名在同一个命名空间里，不能重名"
 
+    /** 阶段 21：注解也占类型命名空间，多这一句把话说全。 */
+    private val annotationNamespaceNote = "接口名、类名、枚举名、注解名在同一个命名空间里，不能重名"
+
+    /**
+     * 第一遍（注解，阶段 21）：只把注解名占上。
+     *
+     * **必须最先跑**（[check] 里排在 [declareEnums] 之前）：另外三张表（枚举/接口/类）
+     * 的占名趟都要查「这个名字是不是注解」，注解名不先占住就只能报一半冲突
+     * （谁先占谁赢，报错取决于声明顺序，不稳）。元素与伴生实体这一趟都不碰——
+     * 元素类型里可能出现注解/枚举（那要等 [declareEnums] 与 [declareClasses] 填完表），
+     * 见 [declareAnnotationBodies]。
+     */
+    private fun declareAnnotationNames() {
+        for (decl in program.annotations) {
+            currentSource = sourceOfAnnotation[decl] ?: source
+            if (classTable.containsKey(decl.name)) {
+                throw err("注解 '${decl.name}' 和同名的类冲突：$annotationNamespaceNote", decl.at)
+            }
+            if (enumTable.containsKey(decl.name)) {
+                throw err("注解 '${decl.name}' 和同名的枚举冲突：$annotationNamespaceNote", decl.at)
+            }
+            if (interfaceTable.containsKey(decl.name)) {
+                throw err("注解 '${decl.name}' 和同名的接口冲突：$annotationNamespaceNote", decl.at)
+            }
+            val companionName = decl.companion?.let { decl.name + it.internalSuffix }
+            val info = AnnotationInfo(decl, currentSource, companionName)
+            if (annotationTable.putIfAbsent(decl.name, info) != null) {
+                throw err("注解 '${decl.name}' 重复定义", decl.at)
+            }
+            if (companionName != null) {
+                companionAnnotations[companionName] = decl.name
+            }
+        }
+    }
+
+    /**
+     * 第二遍（注解，阶段 21）：元素表 + companion entity 的**合成类**。
+     *
+     * 必须排在 [declareClasses] 之后：元素的类型可以是类/枚举/注解（`元素 : Dog`、
+     * `元素 : TokenKind`、`元素 : Marker2`），三张表都填完才判得出「这个类型合不合法」。
+     *
+     * 一趟做三件事，顺序不能换：
+     * 1. **元素校验**（DESIGN-21 §6）：类型白名单、不能可空、默认值类型对得上；
+     * 2. **注解接口**（合成的 [InterfaceInfo]，**不进 [interfaceTable]**）：每个元素一个
+     *    无参抽象方法，这样「伴生类实现了注解接口」可以直接走接口那一套实现检查；
+     * 3. **companion entity → 合成的 [ClassDecl]**（走用户类那条一模一样的检查路径），
+     *    见 [declareCompanionEntity]。
+     */
+    private fun declareAnnotationBodies() {
+        for (decl in program.annotations) {
+            val info = annotationTable.getValue(decl.name)
+            currentSource = info.source
+            val elements = annotationElementsOf(info)
+            info.iface = annotationInterfaceOf(info, elements)
+            info.spec = AnnotationSpec(decl, elements, declareCompanionEntity(info, elements))
+        }
+    }
+
+    /**
+     * 注解元素表：解析类型 + 白名单校验（DESIGN-21 §6）。
+     *
+     * 元素的**默认值**在这里也顺便查类型（`int` 的元素写 `= "x"` 要报错）——
+     * Parser 只保证「默认值是个常量字面量」，字面量的类型和声明的类型对不对得上只有
+     * 这里知道。默认值本身留在 `AnnotationElement.default` 上，两个后端要的
+     * `AnnotationDefault` 就是那个常量。
+     */
+    private fun annotationElementsOf(info: AnnotationInfo): List<AnnotationElementSpec> {
+        val decl = info.decl
+        val out = ArrayList<AnnotationElementSpec>(decl.elements.size)
+        for (el in decl.elements) {
+            val type = resolveType(el.type)
+            // 可空：数组元素也可空（`int[]?` / `?int[]`）——两者在 JVM 上都是 null 装不进注解
+            if (type.nullable || (type.isArray && type.elementType.nullable)) {
+                throw err(
+                    "注解元素 '${el.name}' 不能是可空类型：注解元素在 JVM 里不能是 null",
+                    el.type.at,
+                )
+            }
+            if (!isAnnotationElementType(type)) {
+                throw err(
+                    "注解元素 '${el.name}' 的类型 '${el.type.display()}' 不合法：" +
+                        "注解元素只能是 string、基本类型、枚举、注解，或它们的数组",
+                    el.type.at,
+                )
+            }
+            el.default?.let { checkAnnotationDefaultValue(el, type, it) }
+            out.add(AnnotationElementSpec(el, type, el.default != null))
+        }
+        return out
+    }
+
+    /**
+     * 这个类型能不能当注解元素（DESIGN-21 §6 的白名单）。
+     *
+     * 判据：`string` / 基本类型 / 枚举 / 注解 / **这些的一维数组**。void、null 类型、
+     * 类型参数、普通类/接口、二维数组都在白名单外（二维数组要写成 `int[][]`，
+     * 注解元素只到一维）。
+     */
+    private fun isAnnotationElementType(type: RsfType): Boolean {
+        if (type.arrayDepth > 1) return false
+        val scalar = if (type.isArray) type.elementType else type
+        if (scalar.isArray || scalar.isVoid || scalar.isNullLiteral) return false
+        if (scalar.isExternal) {
+            val name = scalar.externalName ?: return false
+            // 枚举与注解是**引用类型**里的例外：它们能进注解（普通类/接口不能）
+            return enumTable.containsKey(name) || annotationTable.containsKey(name)
+        }
+        return when (scalar.base) {
+            RsfBase.BOOL, RsfBase.BYTE, RsfBase.CHAR, RsfBase.INT,
+            RsfBase.LONG, RsfBase.FLOAT, RsfBase.DOUBLE, RsfBase.STRING -> true
+            else -> false
+        }
+    }
+
+    /** 元素的默认值：只要类型对得上就行（Parser 已经保证它是常量字面量）。 */
+    private fun checkAnnotationDefaultValue(el: AnnotationElement, want: RsfType, value: Expr) {
+        val got = type(value)
+        if (got == RsfType.VOID) {
+            throw err("注解元素 '${el.name}' 的默认值不能是 void 表达式", value.at)
+        }
+        if (!acceptsValue(want, value, got)) {
+            throw err(
+                "注解元素 '${el.name}' 的默认值 ${exprText(value)} 的类型是 ${got.rsfName}，" +
+                    "和声明的 ${want.rsfName} 对不上",
+                value.at,
+            )
+        }
+    }
+
+    /**
+     * 注解接口（合成）：元素 → 无参抽象方法。
+     *
+     * 这个 [InterfaceInfo] **不进 [interfaceTable]**（`@interface` 不是 rsf 接口：不能 new、
+     * 不能当父类型），它只被两处用到：伴生类的额外父接口（[declareCompanionEntity]），
+     * 以及「赋给 `Marker` 的变量只剩元素方法可见」（[checkAnnotationMember]）。
+     * 这样接口那一套实现要求收集（[collectRsfRequired]）、子类型判定（[isSubtypeName]）
+     * 全都不用改一行。
+     */
+    private fun annotationInterfaceOf(
+        info: AnnotationInfo,
+        elements: List<AnnotationElementSpec>,
+    ): InterfaceInfo {
+        val decl = info.decl
+        val accessors = elements.map { elementAccessorOf(it, abstract = true) }
+        val synthetic = InterfaceDecl(
+            control = ControlType.PUBLIC,
+            name = decl.name,
+            methods = accessors,
+            supertypes = emptyList(),
+            at = decl.at,
+        )
+        val methods = LinkedHashMap<String, MutableList<FuncDecl>>()
+        for ((index, m) in accessors.withIndex()) {
+            methods.getOrPut(m.name) { ArrayList() }.add(m)
+            methodParams[m] = emptyList()
+            methodReturns[m] = elements[index].type
+        }
+        return InterfaceInfo(synthetic, info.source, methods, emptyList())
+    }
+
+    /**
+     * 一个元素的访问器：`fun value() -> string`。
+     *
+     * [abstract] = true 时没有体（注解接口里的元素方法，DESIGN-21 §5 的
+     * `ACC_PUBLIC|ACC_ABSTRACT`）；false 时体是 `rtn 元素名`（伴生类上的实现，
+     * 在类体里那个裸名解析成**元素字段**的读取）。
+     */
+    private fun elementAccessorOf(el: AnnotationElementSpec, abstract: Boolean): FuncDecl {
+        val at = el.decl.at
+        val body = if (abstract) {
+            null
+        } else {
+            Block(listOf(ReturnStmt(VarExpr(el.name, at), at)), at)
+        }
+        return FuncDecl(
+            control = ControlType.PUBLIC,
+            mainType = TypeRef("void", at),
+            name = el.name,
+            params = emptyList(),
+            ret = ReturnSpec(el.decl.type, ReturnStyle.ARROW, mayError = false, at = at),
+            body = body,
+            at = at,
+        )
+    }
+
+    /**
+     * companion entity → 合成的 [ClassDecl]（阶段 21 的「设计约束」那一条的落点）。
+     *
+     * 为什么是合成一个**类**、走 [declareClassBody]：伴生实体本来就是一个类
+     * （有字段、有方法体、继承接口、要进 `classTable`），M3 的 `BytecodeCompiler`
+     * 也要把它当普通类发射。另起一套平行的成员检查只会把「字段重名 / 签名 /
+     * 擦除冲突 / 方法体 / 构造器链 / 实现检查」抄一遍，两处迟早不一致。
+     * 复用的代价只有 [declareClassBody] 的两个参数：额外的父接口（注解接口）与
+     * 「继承类时报错指向类继承那一阶段」。
+     *
+     * 合成类的组成（顺序就是成员顺序）：构造器（手写的或自动生成的）、元素访问器、
+     * 元素字段（**摆在自己写的字段前面**，位置要和构造器参数对齐）、用户自己写的字段与方法。
+     */
+    private fun declareCompanionEntity(
+        info: AnnotationInfo,
+        elements: List<AnnotationElementSpec>,
+    ): CompanionSpec? {
+        val entity = info.decl.companion ?: return null
+        val annotationName = info.decl.name
+        val jvmName = info.companionJvmName
+            ?: throw IllegalStateException("注解 '$annotationName' 没有伴生类名")
+        currentSource = info.source
+
+        // 名字不能和元素重名（DESIGN-21 §6）：`companion entity value` 会和一个元素
+        // 的访问器/字段重名，怎么生成都是坏的，在这里就拦下
+        if (entity.name != null && elements.any { it.name == entity.name }) {
+            throw err(
+                "companion entity 的名字 '${entity.name}' 和注解元素重名了：换一个名字",
+                entity.at,
+            )
+        }
+
+        val constructor = entity.constructors.firstOrNull()?.let { checkCompanionConstructor(it, elements) }
+            ?: companionPrimaryConstructor(elements, entity.at, jvmName)
+
+        val elementDecls = elements.map { companionElementField(it) }
+        for (f in elementDecls) elementFields[f] = elements.first { it.name == f.name }
+        val fields = elementDecls + entity.fields
+        val accessors = elements.map { elementAccessorOf(it, abstract = false) }
+        val methods = listOf(constructor) + accessors + entity.plainMethods
+
+        val decl = ClassDecl(
+            control = ControlType.PUBLIC,
+            name = jvmName,
+            fields = fields,
+            methods = methods,
+            at = entity.at,
+            supertypes = entity.supertypes,
+        )
+        companionDecls[decl] = entity
+        // 伴生类 = 一个普通的类：父接口 = 注解接口（摆在最前面）+ 自己写的那些接口
+        declareClassBody(
+            decl,
+            info.source,
+            extraSupers = listOf(SuperRef.Rsf(info.iface!!)),
+            companionEntity = true,
+        )
+        return CompanionSpec(
+            annotation = annotationName,
+            jvmName = jvmName,
+            decl = decl,
+            constructor = constructor,
+            accessors = accessors,
+            elementFields = elementDecls,
+        )
+    }
+
+    /**
+     * 用户手写的 `constructor(...)`：参数必须与注解元素**同名同序**（DESIGN-21 §6）。
+     *
+     * 参数类型也要对得上——只比名字的话 `constructor(value : int)` 配 `value : string`
+     * 会生成一个字段是 string、参数是 int 的类，M3 写 `<init>` 时才发现。
+     */
+    private fun checkCompanionConstructor(
+        ctor: FuncDecl,
+        elements: List<AnnotationElementSpec>,
+    ): FuncDecl {
+        for ((index, el) in elements.withIndex()) {
+            val p = ctor.params.getOrNull(index)
+                ?: throw err(
+                    "companion entity 的构造器参数必须和注解元素一致：缺少 '${el.name}'",
+                    ctor.at,
+                )
+            if (p.name != el.name) {
+                throw err(
+                    "companion entity 的构造器参数必须和注解元素一致：" +
+                        "第 ${index + 1} 个参数应该是 '${el.name}'，写的是 '${p.name}'" +
+                        "（名字和顺序都要和元素表一样：" +
+                        elements.joinToString("、") { it.name } + "）",
+                    p.at,
+                )
+            }
+            val declared = resolveType(p.type)
+            if (declared != el.type) {
+                throw err(
+                    "companion entity 的构造器参数 '${p.name}' 的类型应该是 ${el.type.rsfName}，" +
+                        "写的是 ${declared.rsfName}",
+                    p.type.at,
+                )
+            }
+        }
+        if (ctor.params.size > elements.size) {
+            val extra = ctor.params[elements.size]
+            throw err(
+                "companion entity 的构造器参数必须和注解元素一致：多出了 '${extra.name}'" +
+                    "（元素表只有：" + elements.joinToString("、") { it.name } + "）",
+                extra.at,
+            )
+        }
+        // 伴生类只有这一个构造器，它就是主构造：元素字段的初值（它们按裸名写在
+        // 方法体里）靠它拿值。次构造还要求 `this(...)` 委托，对伴生实体没有意义。
+        return ctor.copy(isPrimary = true)
+    }
+
+    /**
+     * 没写 `constructor` 时自动生成的主构造：参数表 = 元素表（DESIGN-21 §1）。
+     *
+     * 体是空的：**元素字段的赋值由 M3 的 `<init>` 生成**（见 [CompanionSpec] 的注释），
+     * 语义层只用它把参数绑进作用域，让访问器和用户方法里的裸名 `value` 解析得到。
+     */
+    private fun companionPrimaryConstructor(
+        elements: List<AnnotationElementSpec>,
+        at: SourceLine,
+        jvmName: String,
+    ): FuncDecl = FuncDecl(
+        control = ControlType.PUBLIC,
+        mainType = TypeRef("void", at),
+        name = jvmName,
+        params = elements.map { Param(it.decl.type, it.name, it.decl.at) },
+        ret = ReturnSpec(TypeRef("void", at), ReturnStyle.OMITTED, mayError = false, at = at),
+        body = Block(emptyList(), at),
+        at = at,
+        isConstructor = true,
+        isPrimary = true,
+    )
+
+    /**
+     * 合成的元素字段（`var value : string`）。
+     *
+     * 初值只是**占位**：默认值字面量（有默认值时），否则与类型相配的零值——两者都必须
+     * 是合法表达式，否则字节码后端按「普通字段初值」抄进 `<init>` 时会编出非法指令
+     * （`int` 字段拿到 null）。真正的赋值在 M3 的 `<init>` 里按构造器参数生成
+     * （见 [CompanionSpec]），M2 的初值类型检查对它用 [elementFields] 跳过。
+     */
+    private fun companionElementField(el: AnnotationElementSpec): FieldDecl = FieldDecl(
+        name = el.name,
+        type = el.decl.type,
+        initializer = el.decl.default ?: zeroLiteralOf(el.type, el.decl.at),
+        mutable = false,
+        at = el.decl.at,
+    )
+
+    /** 与类型相配的零值字面量（合成元素字段的占位初值）。 */
+    private fun zeroLiteralOf(type: RsfType, at: SourceLine): Expr = when (type.base) {
+        RsfBase.BOOL -> BoolLit(false, at)
+        RsfBase.CHAR -> CharLit('\u0000', at)
+        RsfBase.BYTE, RsfBase.INT -> IntLit(0, at)
+        RsfBase.LONG -> LongLit(0L, at)
+        RsfBase.FLOAT -> FloatLit(0f, at)
+        RsfBase.DOUBLE -> DoubleLit(0.0, at)
+        RsfBase.STRING -> StringLit("", at)
+        // 枚举 / 注解 / 数组：null 是唯一和任何引用类型都相配的占位
+        else -> NullLit(at)
+    }
+
+    /** 报错文案里的「已定义的注解」清单。 */
+    private fun annotationListHint(): String =
+        if (annotationTable.isEmpty()) "这份程序里还没有任何 annotation 声明"
+        else "已定义的注解：${annotationTable.keys.joinToString(", ")}"
+
+    /**
+     * 第三遍（注解，阶段 21）：**使用点**（`@Marker(...)`）。
+     *
+     * 放在最后跑：实参的类型要查「未声明的变量」之类的老报错，得等所有表都填好；
+     * 访问器同名冲突要看得见目标类型自己的成员，也要等类体查完。
+     *
+     * v1 能标的位置（DESIGN-21 §1）：类、接口、注解声明、方法、字段。
+     * 参数与局部变量上的注解 Parser 就不收；**构造器上的注解** Parser 也报掉了
+     * （`构造器上不能写注解`）——companion entity 自己的注解由 Parser 丢弃
+     * （这条记在阶段 21 的已知差异里）。顶层函数能写注解，但方案 B 的访问器要挂在**类型**上，
+     * 所以带 companion entity 的注解标在顶层函数上会报错（见 [checkAnnotationList]）。
+     */
+    private fun checkAnnotationUses() {
+        for (decl in program.annotations) {
+            checkAnnotationList(decl.annotations, AnnotationTarget.OnAnnotation(decl))
+            val entity = decl.companion ?: continue
+            val owner = annotationTable.getValue(decl.name).companionJvmName
+            for (f in entity.fields) {
+                checkAnnotationList(f.annotations, AnnotationTarget.OnField(f, owner))
+            }
+            for (m in entity.plainMethods) {
+                checkAnnotationList(m.annotations, AnnotationTarget.OnMethod(m, owner))
+            }
+        }
+        for (decl in program.interfaces) {
+            checkAnnotationList(decl.annotations, AnnotationTarget.OnInterface(decl))
+            for (m in decl.methods) {
+                checkAnnotationList(m.annotations, AnnotationTarget.OnMethod(m, decl.name))
+            }
+        }
+        for (decl in program.classes) {
+            checkAnnotationList(decl.annotations, AnnotationTarget.OnClass(decl))
+            for (f in decl.fields) {
+                checkAnnotationList(f.annotations, AnnotationTarget.OnField(f, decl.name))
+            }
+            // 类里的方法是普通方法（构造器上的注解 Parser 已经报过）
+            for (m in decl.methods.filter { !it.isConstructor }) {
+                checkAnnotationList(m.annotations, AnnotationTarget.OnMethod(m, decl.name))
+            }
+        }
+        for (fn in program.functions) {
+            checkAnnotationList(fn.annotations, AnnotationTarget.OnMethod(fn, null))
+        }
+    }
+
+    /**
+     * 同一个目标上的一串注解：名字存在吗、重复标了吗、实参配得上元素表吗。
+     *
+     * [target] 同时决定两件事：报错落款（`类 'Point'`），以及方案 B 的访问器挂到哪
+     * （[AnnotationTarget.hostName]）。
+     */
+    private fun checkAnnotationList(uses: List<AnnotationUse>, target: AnnotationTarget) {
+        val seen = HashSet<String>()
+        for (use in uses) {
+            val info = annotationTable[use.name]
+                ?: throw err(
+                    "没有这个注解：'@${use.name}'（${annotationListHint()}）",
+                    use.at,
+                )
+            val spec = info.spec ?: throw IllegalStateException("注解 '${use.name}' 没有解析结果")
+            if (!seen.add(use.name)) {
+                throw err(
+                    "${target.label} 上重复标了 '@${use.name}'：同一个地方同一个注解只能标一次",
+                    use.at,
+                )
+            }
+            checkAnnotationArguments(spec, use)
+            // 方案 B：带 companion entity 的注解要生成访问器，而访问器只能挂在类型上
+            if (spec.companion != null && target.hostName == null) {
+                throw err(
+                    "顶层函数 '${target.memberName}' 上不能标带 companion entity 的注解 '@${spec.name}'：" +
+                        "方案 B 的访问器要挂在类型上（把注解标在类/接口/它们的方法或字段上）",
+                    use.at,
+                )
+            }
+            checkAnnotationAccessorClash(spec, use, target)
+            annotationUses.add(AnnotationUseSite(spec, use, target))
+            spec.companion?.let { addAnnotationAccessor(spec, it, use, target) }
+        }
+    }
+
+    /**
+     * 实参与元素表的配对（DESIGN-21 §6）：位置式按顺序、具名按名字、缺省值兜底。
+     *
+     * 具名实参写在位置式实参**后面**是 Parser 的规矩（它已经报过混写顺序）；
+     * 这里把「位置式写在具名后面」再兜一次，因为声明里元素顺序是权威，
+     * 真混起来时按 index 配对会给出莫名其妙的错。
+     */
+    private fun checkAnnotationArguments(spec: AnnotationSpec, use: AnnotationUse) {
+        val values = arrayOfNulls<Expr>(spec.elements.size)
+        var namedSeen = false
+        for ((index, arg) in use.arguments.withIndex()) {
+            when (arg) {
+                is PositionalAnnotationArg -> {
+                    if (namedSeen) {
+                        throw err(
+                            "注解 '${spec.name}' 的实参顺序不对：位置式实参（${arg.display()}）" +
+                                "不能写在具名实参后面${spec.elementHint()}",
+                            arg.at,
+                        )
+                    }
+                    val element = spec.elements.getOrNull(index)
+                        ?: throw err(
+                            "注解 '${spec.name}' 的实参个数不对：给了 ${use.arguments.size} 个，" +
+                                "但它的元素只有 ${spec.elements.size} 个${spec.elementHint()}",
+                            arg.at,
+                        )
+                    checkAnnotationArgValue(spec, element, arg.value)
+                    values[index] = arg.value
+                }
+                is NamedAnnotationArg -> {
+                    namedSeen = true
+                    val element = spec.elementOf(arg.name)
+                        ?: throw err(
+                            "注解 '${spec.name}' 没有元素 '${arg.name}'${spec.elementHint()}",
+                            arg.at,
+                        )
+                    val slot = spec.elements.indexOf(element)
+                    if (values[slot] != null) {
+                        throw err(
+                            "注解 '${spec.name}' 的元素 '${arg.name}' 给了两次值" +
+                                "（同名具名写两次，或者位置式与具名各给了一次）",
+                            arg.at,
+                        )
+                    }
+                    checkAnnotationArgValue(spec, element, arg.value)
+                    values[slot] = arg.value
+                }
+            }
+        }
+        for ((index, element) in spec.elements.withIndex()) {
+            if (values[index] == null && !element.hasDefault) {
+                throw err(
+                    "注解 '${spec.name}' 的元素 '${element.name}' 没有默认值：" +
+                        "写 @${spec.name} 时必须给出 ${element.name}",
+                    use.at,
+                )
+            }
+        }
+    }
+
+    /** 一个注解实参的类型：要和元素的类型配得上（枚举、数组也走这一条）。 */
+    private fun checkAnnotationArgValue(spec: AnnotationSpec, element: AnnotationElementSpec, value: Expr) {
+        val got = type(value)
+        if (got == RsfType.VOID) {
+            throw err(
+                "注解 '${spec.name}' 的元素 '${element.name}' 的实参是 void 表达式，不能当值传",
+                value.at,
+            )
+        }
+        if (!acceptsValue(element.type, value, got)) {
+            throw err(
+                "注解 '${spec.name}' 的元素 '${element.name}' 需要 ${element.type.rsfName}，" +
+                    "实际给的是 ${got.rsfName}（${exprText(value)}）",
+                value.at,
+            )
+        }
+    }
+
+    /**
+     * 方案 B 的访问器会不会和用户自己写的成员撞名（DESIGN-21 §3）。
+     *
+     * 只有带 companion entity 的注解才要生成访问器，也只有这时候才可能撞。
+     * 判据取**同名**（不是同签名）：访问器是 `public static`，用户写个实例的
+     * `Marker()` 虽然描述符不同，但源码里读起来仍然是一团乱麻——报出来让人改名字最省事。
+     */
+    private fun checkAnnotationAccessorClash(spec: AnnotationSpec, use: AnnotationUse, target: AnnotationTarget) {
+        if (spec.companion == null) return
+        val host = target.hostName ?: return
+        val names = memberNamesOfType(host) ?: return
+        if (names.contains(spec.name)) {
+            throw err(
+                "${target.label} 里已经有了成员 '${spec.name}'：方案 B 要在它上面生成注解访问器 " +
+                    "'${spec.name}(...)'，名字撞上了——把已有的那个成员改个名",
+                use.at,
+            )
+        }
+    }
+
+    /**
+     * 一个类型自己的成员名（字段 + 方法），用于访问器同名冲突。
+     *
+     * 注解自己的成员是**元素**，元素名和访问器名（= 注解名）不可能一样
+     * （Parser 已经保证元素名不与注解名相同——元素名是标识符，注解名也是，
+     * 而 `annotation Marker(Marker : int)` 在 Parser 里就重名报错了），所以返回空集即可。
+     */
+    private fun memberNamesOfType(host: String): Set<String>? {
+        classTable[host]?.let { info ->
+            return info.decl.fields.map { it.name }.toSet() + info.decl.methods.map { it.name }.toSet()
+        }
+        interfaceTable[host]?.let { info -> return info.decl.methods.map { it.name }.toSet() }
+        if (annotationTable.containsKey(host)) return emptySet()
+        return null
+    }
+
+    /**
+     * 记下方案 B 要生成的访问器规格（M2 只出规格，M3 生成字节码）。
+     *
+     * 类型级（标在类/接口/注解本身上）：`public static <伴生类型> Marker()`；
+     * 成员级（标在方法/字段上）：`public static <伴生类型> Marker(string member)`。
+     * 挂在哪：就是被标的那个类型（[AnnotationTarget.hostName]）。
+     */
+    private fun addAnnotationAccessor(
+        spec: AnnotationSpec,
+        companion: CompanionSpec,
+        use: AnnotationUse,
+        target: AnnotationTarget,
+    ) {
+        val host = target.hostName ?: return
+        annotationAccessors.add(
+            AnnotationAccessor(
+                annotation = spec,
+                use = use,
+                target = target,
+                hostName = host,
+                memberName = target.memberName,
+                companionName = companion.jvmName,
+            ),
+        )
+    }
+
+    /**
+     * 静态类型是**注解接口**时的成员访问（阶段 21，DESIGN-21 §1 的
+     * 「赋给 `Marker` 后只剩元素方法可见」）。
+     *
+     * 只放行元素：`x.value`（字段式）与 `x.value()`（方法式）都行，前者落到伴生类的
+     * 元素字段上（GETFIELD），后者落到伴生类那个访问器上（接口调用，`interfaceOwner = true`）。
+     * **行为方法**（companion entity 里自己写的 `describe`/`run`）看不见——它们不在注解
+     * 接口里，这就是「行为方法不能进注解接口」在类型层面的落地。
+     */
+    private fun checkAnnotationMember(
+        info: AnnotationInfo,
+        expr: MemberExpr,
+    ): RsfType {
+        val spec = info.spec ?: throw IllegalStateException("注解 '${info.decl.name}' 没有解析结果")
+        val annotation = info.decl.name
+        val element = spec.elementOf(expr.name)
+        if (element == null) {
+            throw err(
+                "注解 '$annotation' 上没有元素 '${expr.name}'${annotationElementHint(spec, annotation, expr.name)}",
+                expr.at,
+            )
+        }
+        val companion = spec.companion
+            ?: throw err(
+                "注解 '$annotation' 的元素 '${element.name}' 只有伴生实例才有：" +
+                    "给注解加一个 companion entity 块才能 `new $annotation(...)`",
+                expr.at,
+            )
+        val accessor = companion.accessors.first { it.name == element.name }
+        if (expr.arguments != null) {
+            if (expr.arguments.isNotEmpty()) {
+                throw err(
+                    "注解 '$annotation' 的元素 '${element.name}' 是个无参访问器：" +
+                        "要取值写 `${expr.name}`（或 `${expr.name}()`），不要传实参",
+                    expr.at,
+                )
+            }
+            userMembers[expr] = UserMember.Method(annotation, accessor, interfaceOwner = true)
+        } else {
+            val index = companion.elementFields.indexOfFirst { it.name == element.name }
+            userMembers[expr] = UserMember.Field(companion.jvmName, index, element.type)
+        }
+        return element.type
+    }
+
+    /** 「这个注解有哪些元素/为什么看不见这个成员」的报错补语。 */
+    private fun annotationElementHint(spec: AnnotationSpec, annotation: String, member: String): String {
+        val companion = spec.companion
+        if (companion == null) {
+            return "（'$annotation' 没有 companion entity，所以只有元素看得见：${spec.elementHint()}）"
+        }
+        if (companion.accessors.any { it.name == member }) {
+            return "（'$member' 是 companion entity 的行为方法，只有伴生类的对象看得见：" +
+                "先 `new $annotation(...)` 再用）"
+        }
+        if (companion.decl.fields.any { it.name == member } || companion.decl.methods.any { it.name == member }) {
+            return "（'$member' 是 companion entity 的成员，只有伴生类的对象看得见：" +
+                "先 `new $annotation(...)` 再用）"
+        }
+        return spec.elementHint()
+    }
+
     /**
      * 第一遍（接口）：只把接口名占上。
      *
@@ -506,6 +1235,9 @@ class Checker(
             }
             if (enumTable.containsKey(decl.name)) {
                 throw err("接口 '${decl.name}' 和同名的枚举冲突：$namespaceNote", decl.at)
+            }
+            if (annotationTable.containsKey(decl.name)) {
+                throw err("接口 '${decl.name}' 和同名的注解冲突：$annotationNamespaceNote", decl.at)
             }
             val placeholder = InterfaceInfo(decl, currentSource, LinkedHashMap(), emptyList())
             if (interfaceTable.putIfAbsent(decl.name, placeholder) != null) {
@@ -609,7 +1341,19 @@ class Checker(
      * `T` 换成 `int`（实现配对与调用点都靠它）；对 JVM 接口则一律忽略——
      * JVM 的擦除把 `Comparator&<string>` 变成 `Comparator`，两端都只看擦除后的描述符。
      */
-    private fun resolveSuperTypeRef(ref: TypeRef, ownerKind: String, ownerName: String): SuperRef {
+    private fun resolveSuperTypeRef(
+        ref: TypeRef,
+        ownerKind: String,
+        ownerName: String,
+        /**
+         * true = 调用方是 `companion entity`（阶段 21）。
+         *
+         * 只影响继承**类**时的文案：伴生实体的规矩是死的（DESIGN-21 §6），
+         * 用户写的是 `companion entity Impl : Base` 而不是类头，报「类的父类型」
+         * 会把人带偏；而且 v1 的类继承本来就没做，指向那个阶段最有用。
+         */
+        companionEntity: Boolean = false,
+    ): SuperRef {
         val where = "$ownerKind '$ownerName'"
         val display = ref.display()
         if (ref.arrayDepth > 0) {
@@ -618,12 +1362,25 @@ class Checker(
         if (RsfType.fromName(ref.name) != null) {
             throw err("'$display' 是内置类型，不能当父类型——父类型只能是接口名", ref.at)
         }
+        if (annotationTable.containsKey(ref.name)) {
+            throw err(
+                "'$display' 是注解，不能当父类型：注解只能用来标注（@$display）或 new 出伴生实例",
+                ref.at,
+            )
+        }
         interfaceTable[ref.name]?.let { info ->
             val args = ref.typeArgs.map { resolveType(it) }
             checkArity(ref.name, info.decl.typeParams.size, args, ref.at, info.decl.typeParams)
             return SuperRef.Rsf(info, args)
         }
         if (classTable.containsKey(ref.name) || enumTable.containsKey(ref.name)) {
+            if (companionEntity) {
+                throw err(
+                    "companion entity 暂时只能继承接口：rsf 还没有类继承" +
+                        "（继承 '$display' 这类写法留到类继承那一阶段）",
+                    ref.at,
+                )
+            }
             val kind = if (enumTable.containsKey(ref.name)) "枚举" else "类"
             throw err(
                 "$where 想继承 '$display'，但 '$display' 是个${kind}——rsf 现在还不支持类继承（本阶段只做接口）。" +
@@ -638,6 +1395,13 @@ class Checker(
                 ref.at,
             )
         if (!cls.isInterface) {
+            if (companionEntity) {
+                throw err(
+                    "companion entity 暂时只能继承接口：rsf 还没有类继承" +
+                        "（继承 '$display' 这类写法留到类继承那一阶段）",
+                    ref.at,
+                )
+            }
             throw err(
                 "$where 想继承 '$display'，但它是 classpath 上的类（不是接口）——" +
                     "rsf 现在还不支持类继承（本阶段只做接口）",
@@ -1294,6 +2058,9 @@ class Checker(
      */
     private fun retCovers(want: RsfType, actual: RsfType): Boolean {
         if (want.isTypeParam) return true
+        // `-> void` 与 `-> void` 必须放行：`RsfType.accepts` 对 VOID 一律 false（void 不是值，
+        // 不能参与赋值/加宽），但「接口要求 void，类里也写 void」是唯一合法的兑现方式。
+        if (want.base == RsfBase.VOID && actual.base == RsfBase.VOID) return true
         if (want.accepts(actual)) return true
         return isSourceSubtype(want, actual)
     }
@@ -1447,103 +2214,132 @@ class Checker(
             if (interfaceTable.containsKey(cls.name)) {
                 throw err("类 '${cls.name}' 和同名的接口冲突：$namespaceNote", cls.at)
             }
+            if (annotationTable.containsKey(cls.name)) {
+                throw err("类 '${cls.name}' 和同名的注解冲突：$annotationNamespaceNote", cls.at)
+            }
             classTable[cls.name] = ClassInfo(cls, currentSource, LinkedHashMap(), LinkedHashMap(), emptyList())
         }
 
         // 第二遍：字段、方法、构造器（这时所有类名都已经可见）
         for (cls in program.classes) {
-            currentSource = sourceOfClass[cls] ?: source
-            // 这个类的类型参数只在它自己的签名与类体里有意义
-            typeParams = cls.typeParams.associateWith { RsfType.typeParam(it) }
-
-            val fields = LinkedHashMap<String, FieldDecl>()
-            for (f in cls.fields) {
-                if (fields.put(f.name, f) != null) {
-                    throw err("类 '${cls.name}' 里的字段 '${f.name}' 重复定义", f.at)
-                }
-            }
-            classFieldTypes[cls] = cls.fields.map { resolveType(it.type) }
-
-            val methods = LinkedHashMap<String, MutableList<FuncDecl>>()
-            val constructors = ArrayList<FuncDecl>()
-            for (m in cls.methods) {
-                if (m.isConstructor) {
-                    // 主构造是解析时合成的（体是空块），次构造来自 constructor(...)；
-                    // 两者的返回类型都固定 void、都不能 static——parser 已经拦过，
-                    // 这里再确认一次，因为签名合成的入口不止一处
-                    if (m.isStatic) throw err("构造器不能是 static 的（它一定要有当前对象 this）", m.at)
-                    if (m.ret.mayError || m.ret.type.name != "void") {
-                        throw err("构造器没有返回值，也不可能是可能失败的（!T）", m.at)
-                    }
-                    constructors.add(m)
-                    continue
-                }
-                if (m.name == cls.name) {
-                    throw err(
-                        "类 '${cls.name}' 里的方法不能和类同名。构造器现在有两种写法：" +
-                            "主构造写在类头括号里（class ${cls.name}(参数) { ... }），" +
-                            "次构造写成 constructor(参数) { ... }",
-                        m.at,
-                    )
-                }
-                checkSignature(m)
-                // 阶段 19d：同一个名字可以有多个方法（重载）。合法性在下面统一查
-                // ——两个重载在 JVM 上必须是不同的方法（擦除后的描述符不能撞车）。
-                methods.getOrPut(m.name) { ArrayList() }.add(m)
-            }
-
-            // 方法/构造器的参数绑定与返回类型：按 FuncDecl 记，不写进按名字索引的那两张表
-            for (m in cls.methods) {
-                methodOwner[m] = cls
-                // 报错时的称呼：构造器就说「构造器 '类名'」，方法就说「方法 '名字'」
-                val what = if (m.isConstructor) "构造器 '${cls.name}'" else "方法 '${m.name}'"
-                val bindings = ArrayList<Binding>(m.params.size)
-                val seen = HashSet<String>()
-                for ((index, p) in m.params.withIndex()) {
-                    val paramType = resolveType(p.type)
-                    if (paramType == RsfType.VOID) {
-                        throw err("$what 的参数 '${p.name}' 的类型不能是 void", p.at)
-                    }
-                    if (!seen.add(p.name)) {
-                        throw err("$what 的参数 '${p.name}' 重名了", p.at)
-                    }
-                    bindings.add(Binding(p.name, paramType, mutable = true, paramIndex = index, at = p.at))
-                }
-                methodParams[m] = bindings
-                methodReturns[m] =
-                    if (m.ret.type.name == "void") RsfType.VOID else resolveType(m.ret.type)
-            }
-
-            // 阶段 19d：同一个方法名下的多个重载必须在 JVM 上是**不同的方法**
-            // （擦除后的参数描述符不能撞车）。构造器不适用——它保留老规矩（见 resolveCtor）。
-            checkErasureConflicts(cls.name, methods)
-
-            // 构造器签名不能重复：`constructor(int)` 与主构造 `(int)` 同时存在就说不清 new 哪个。
-            // 判据用**解析后的参数类型**（不是源码写法）：`int` 和 `int`、`Box&<int>` 和
-            // `Box&<int>` 才算同一个签名——和 JVM 一样按擦除后的描述符比。
-            val seenSignatures = HashMap<String, FuncDecl>()
-            for (c in constructors) {
-                val key = methodParams[c].orEmpty().joinToString(",") { it.type.rsfName }
-                val prev = seenSignatures.put(key, c)
-                if (prev != null) {
-                    throw err(
-                        "类 '${cls.name}' 有两个参数表完全一样的构造器（都是 ($key)）——" +
-                            "new ${cls.name}(...) 时没法判断该用哪一个",
-                        c.at,
-                    )
-                }
-            }
-
-            // 父类型（阶段 20：`class Dog : Greeter, Runnable`）。
-            // **只收接口，而且收不下就报错**（D2）：静默忽略的话 `class A : B` 会编出一个
-            // 悄悄丢掉 B 的类，错误要拖到运行期才炸——那正是「不许产出半成品」要避免的。
-            classSuperRefs[cls] = cls.supertypes.map {
-                resolveSuperTypeRef(it, ownerKind = "类", ownerName = cls.name)
-            }
-
-            classTable[cls.name] = ClassInfo(cls, currentSource, fields, methods, constructors.toList())
+            declareClassBody(cls, sourceOfClass[cls] ?: source)
         }
         // 出了类的签名范围，类型参数就不再是类型名
+        typeParams = emptyMap()
+    }
+
+    /**
+     * 一个类声明的**第二遍**：字段、方法、构造器、父类型，全部解析并登记。
+     *
+     * 从 [declareClasses] 里拆出来（阶段 21）是为了让注解的 **companion entity 复用同一条路径**：
+     * 伴生实体在语义层里就是一个类（合成的 [ClassDecl]），字段重名、`checkSignature`、
+     * 擦除冲突、参数绑定、父接口解析这些规矩一条都不该少，也不该另写一份。
+     * 复用的代价只有两个参数：[extraSupers]（伴生类额外实现的注解接口）与
+     * [companionEntity]（继承类时的报错要指向「类继承那一阶段」）。
+     */
+    private fun declareClassBody(
+        cls: ClassDecl,
+        src: SourceFile,
+        extraSupers: List<SuperRef> = emptyList(),
+        companionEntity: Boolean = false,
+    ) {
+        currentSource = src
+        // 这个类的类型参数只在它自己的签名与类体里有意义
+        typeParams = cls.typeParams.associateWith { RsfType.typeParam(it) }
+
+        val fields = LinkedHashMap<String, FieldDecl>()
+        for (f in cls.fields) {
+            if (fields.put(f.name, f) != null) {
+                throw err("类 '${cls.name}' 里的字段 '${f.name}' 重复定义", f.at)
+            }
+        }
+        classFieldTypes[cls] = cls.fields.map { resolveType(it.type) }
+
+        val methods = LinkedHashMap<String, MutableList<FuncDecl>>()
+        val constructors = ArrayList<FuncDecl>()
+        for (m in cls.methods) {
+            if (m.isConstructor) {
+                // 主构造是解析时合成的（体是空块），次构造来自 constructor(...)；
+                // 两者的返回类型都固定 void、都不能 static——parser 已经拦过，
+                // 这里再确认一次，因为签名合成的入口不止一处
+                if (m.isStatic) throw err("构造器不能是 static 的（它一定要有当前对象 this）", m.at)
+                if (m.ret.mayError || m.ret.type.name != "void") {
+                    throw err("构造器没有返回值，也不可能是可能失败的（!T）", m.at)
+                }
+                constructors.add(m)
+                continue
+            }
+            if (m.name == cls.name) {
+                throw err(
+                    "类 '${cls.name}' 里的方法不能和类同名。构造器现在有两种写法：" +
+                        "主构造写在类头括号里（class ${cls.name}(参数) { ... }），" +
+                        "次构造写成 constructor(参数) { ... }",
+                    m.at,
+                )
+            }
+            checkSignature(m)
+            // 阶段 19d：同一个名字可以有多个方法（重载）。合法性在下面统一查
+            // ——两个重载在 JVM 上必须是不同的方法（擦除后的描述符不能撞车）。
+            methods.getOrPut(m.name) { ArrayList() }.add(m)
+        }
+
+        // 方法/构造器的参数绑定与返回类型：按 FuncDecl 记，不写进按名字索引的那两张表
+        for (m in cls.methods) {
+            methodOwner[m] = cls
+            // 报错时的称呼：构造器就说「构造器 '类名'」，方法就说「方法 '名字'」
+            val what = if (m.isConstructor) "构造器 '${cls.name}'" else "方法 '${m.name}'"
+            val bindings = ArrayList<Binding>(m.params.size)
+            val seen = HashSet<String>()
+            for ((index, p) in m.params.withIndex()) {
+                val paramType = resolveType(p.type)
+                if (paramType == RsfType.VOID) {
+                    throw err("$what 的参数 '${p.name}' 的类型不能是 void", p.at)
+                }
+                if (!seen.add(p.name)) {
+                    throw err("$what 的参数 '${p.name}' 重名了", p.at)
+                }
+                bindings.add(Binding(p.name, paramType, mutable = true, paramIndex = index, at = p.at))
+            }
+            methodParams[m] = bindings
+            methodReturns[m] =
+                if (m.ret.type.name == "void") RsfType.VOID else resolveType(m.ret.type)
+        }
+
+        // 阶段 19d：同一个方法名下的多个重载必须在 JVM 上是**不同的方法**
+        // （擦除后的参数描述符不能撞车）。构造器不适用——它保留老规矩（见 resolveCtor）。
+        checkErasureConflicts(cls.name, methods)
+
+        // 构造器签名不能重复：`constructor(int)` 与主构造 `(int)` 同时存在就说不清 new 哪个。
+        // 判据用**解析后的参数类型**（不是源码写法）：`int` 和 `int`、`Box&<int>` 和
+        // `Box&<int>` 才算同一个签名——和 JVM 一样按擦除后的描述符比。
+        val seenSignatures = HashMap<String, FuncDecl>()
+        for (c in constructors) {
+            val key = methodParams[c].orEmpty().joinToString(",") { it.type.rsfName }
+            val prev = seenSignatures.put(key, c)
+            if (prev != null) {
+                throw err(
+                    "类 '${cls.name}' 有两个参数表完全一样的构造器（都是 ($key)）——" +
+                        "new ${cls.name}(...) 时没法判断该用哪一个",
+                    c.at,
+                )
+            }
+        }
+
+        // 父类型（阶段 20：`class Dog : Greeter, Runnable`）。
+        // **只收接口，而且收不下就报错**（D2）：静默忽略的话 `class A : B` 会编出一个
+        // 悄悄丢掉 B 的类，错误要拖到运行期才炸——那正是「不许产出半成品」要避免的。
+        // [extraSupers] 是注解伴生类额外实现的注解接口（摆在最前面：它才是这个类的"根"）。
+        classSuperRefs[cls] = extraSupers + cls.supertypes.map {
+            resolveSuperTypeRef(
+                it,
+                ownerKind = "类",
+                ownerName = cls.name,
+                companionEntity = companionEntity,
+            )
+        }
+
+        classTable[cls.name] = ClassInfo(cls, src, fields, methods, constructors.toList())
+        // 出了这个类的签名范围，它的类型参数就不再是类型名（调用方自己也会清一次）
         typeParams = emptyMap()
     }
 
@@ -1661,6 +2457,9 @@ class Checker(
             for ((index, f) in info.decl.fields.withIndex()) {
                 val declared = declaredFields.getOrElse(index) { resolveType(f.type) }
                 if (declared.isVoid) throw err("字段 '${f.name}' 不能是 void", f.at)
+                // 阶段 21：注解伴生类里的**元素字段**是合成出来的，初值只是个占位
+                // （真正的值由 M3 在 `<init>` 里按构造器参数写进去），不参与初值检查。
+                if (elementFields.containsKey(f)) continue
                 val initType = type(f.initializer)
                 if (!acceptsValue(declared, f.initializer, initType)) {
                     throw err(
@@ -1807,7 +2606,8 @@ class Checker(
      * 不是类，`int(5)` 不会被当成构造。
      */
     private fun isConstructionName(name: String): Boolean =
-        classTable.containsKey(name) || interfaceTable.containsKey(name) || resolver.resolveClass(name) != null
+        classTable.containsKey(name) || interfaceTable.containsKey(name) ||
+            annotationTable.containsKey(name) || resolver.resolveClass(name) != null
 
     /**
      * **构造点**的公共实现：显式 `new X(...)` 与省掉 `new` 的 `X(...)` 都走这里。
@@ -1827,6 +2627,9 @@ class Checker(
         key: Expr,
     ): RsfType {
         val args = typeArgRefs.map { resolveType(it) }
+        // 阶段 21：`new Marker(...)` 构造的是**注解的伴生实例**（方案 B 的使用面）——
+        // 注解接口自己没有构造器，能构造的是它的 companion entity 合成的那个类。
+        annotationTable[className]?.let { return checkCompanionConstruction(it, args, arguments, key) }
         // 接口不能 new（阶段 20，D3）：接口没有构造器，也就没有对象。
         // 和 JVM 接口那条拒绝（checkExternalConstructor）用同一句话，用户不用分辨
         // 「这个接口是我写的还是 Java 的」。
@@ -1870,6 +2673,72 @@ class Checker(
         } else {
             RsfType.external(cls.internalName).withArgs(args)
         }
+    }
+
+    /**
+     * `new Marker(实参…)`：构造注解的**伴生实例**（方案 B 的使用面，DESIGN-21 §1/§6）。
+     *
+     * 不走 [resolveCtor]：配对规则由**元素表**定（位置式按顺序、缺省值兜底），
+     * 和「按类型打分选重载」不是一回事；逐个元素配对给出的报错也能精确到
+     * 「第几个实参、是哪个元素、要什么类型」。
+     *
+     * 记进模型的是三样东西：`newTargets` = 合成伴生类（M3 按普通类 `new` 发射）、
+     * `newCtors` = 那个构造器、`annotationNewTargets` = 注解规格（M4 的解释器要按
+     * 元素的默认值补齐省略的实参）。
+     */
+    private fun checkCompanionConstruction(
+        info: AnnotationInfo,
+        args: List<RsfType>,
+        arguments: List<Expr>,
+        key: Expr,
+    ): RsfType {
+        val spec = info.spec ?: throw IllegalStateException("注解 '${info.decl.name}' 没有解析结果")
+        checkArity(spec.name, 0, args, key.at)
+        val companion = spec.companion
+            ?: throw err(
+                "注解 '${spec.name}' 没有 companion entity，不能 new：" +
+                    "要带行为就给它加一个 companion entity 块",
+                key.at,
+            )
+        // 具名实参只在**注解**位置开放（Parser 的收法），构造调用里只有位置式：
+        // 一个实参对一个元素，多出来的、少了的都要说清是哪一个
+        if (arguments.size > spec.elements.size) {
+            throw err(
+                "new ${spec.name}(...) 的实参个数不对：给了 ${arguments.size} 个，" +
+                    "但它的元素只有 ${spec.elements.size} 个${spec.elementHint()}",
+                arguments[spec.elements.size].at,
+            )
+        }
+        for ((index, arg) in arguments.withIndex()) {
+            val element = spec.elements[index]
+            val got = type(arg)
+            if (got == RsfType.VOID) {
+                throw err(
+                    "new ${spec.name}(...) 的第 ${index + 1} 个实参是 void 表达式，不能当参数传",
+                    arg.at,
+                )
+            }
+            if (!acceptsValue(element.type, arg, got)) {
+                throw err(
+                    "new ${spec.name}(...) 的第 ${index + 1} 个实参类型不对：" +
+                        "元素 '${element.name}' 需要 ${element.type.rsfName}，实际给的是 ${got.rsfName}" +
+                        "（${exprText(arg)}）",
+                    arg.at,
+                )
+            }
+        }
+        for ((index, element) in spec.elements.withIndex()) {
+            if (index >= arguments.size && !element.hasDefault) {
+                throw err(
+                    "new ${spec.name}(...) 少了元素 '${element.name}'：它没有默认值${spec.elementHint()}",
+                    key.at,
+                )
+            }
+        }
+        newTargets[key] = companion.decl
+        newCtors[key] = companion.constructor
+        annotationNewTargets[key] = spec
+        return RsfType.external(companion.jvmName)
     }
 
     /**
@@ -3392,6 +4261,12 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
         }
         // 阶段 13：数组只有 .length 这一个成员，而且它是**属性**（不带括号）
         if (receiverType.isArray) return checkArrayMember(receiverType, expr)
+        // 阶段 21：静态类型是**注解接口**（`Marker`）时只剩元素可见。
+        // 这条必须排在 userClassOf / interfaceOf 前面：注解伴生类的那个类型
+        // （`Marker::Impl`）走的是普通类那条路，而注解接口自己不在 classTable 里。
+        if (receiverType.isExternal) {
+            annotationTable[receiverType.externalName]?.let { return checkAnnotationMember(it, expr) }
+        }
         // 用户自定义类的实例：`p.x` / `p.sum()`
         // 泛型实参要替进成员签名里：`b` 是 `Box&<int>` 时 `b.get()` 才是 int
         userClassOf(receiverType)?.let {
@@ -4181,6 +5056,40 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
             return finish(builtin)
         }
 
+        // 3d-1) 嵌套类型（阶段 21）：源码里只有 `注解名 :: 伴生名` 这一种写法。
+        // 必须排在「用户类」之前：`Dog::Impl` 里的 Dog 是个普通类，不能悄悄按
+        // `Dog` 解析然后把 `::Impl` 吞掉——那样写错名字反而编过。
+        if (ref.nested != null) {
+            val nested = ref.nested
+            val info = annotationTable[bare]
+                ?: throw err(
+                    "'$bare' 不是注解，没有 '${ref.display()}' 这种嵌套类型：" +
+                        "'::' 只能写成「注解名 :: 伴生名」（例如 Marker::Impl）",
+                    ref.at,
+                )
+            val entity = info.decl.companion
+                ?: throw err(
+                    "注解 '$bare' 没有 companion entity，所以没有 '${ref.display()}' 这个类型：" +
+                        "要给注解加一个 companion entity 块才能写 $bare::伴生名",
+                    ref.at,
+                )
+            val declared = entity.name
+                ?: throw err(
+                    "注解 '$bare' 的 companion entity 没有名字，写不出它的类型：" +
+                        "给它起个名字（companion entity Impl : ...）才能写 $bare::Impl",
+                    ref.at,
+                )
+            if (declared != nested) {
+                throw err(
+                    "注解 '$bare' 的 companion entity 叫 '$declared'，不是 '$nested'：" +
+                        "要写就写 $bare::$declared",
+                    ref.at,
+                )
+            }
+            checkArity(bare, 0, args, ref.at)
+            return finish(RsfType.external(info.companionJvmName!!).let { if (nullable) it.asNullable() else it })
+        }
+
         // 3) 用户自定义类：元数必须和 class 声明的类型参数个数一致
         if (classTable.containsKey(bare)) {
             val info = classTable.getValue(bare)
@@ -4211,6 +5120,15 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
             val info = interfaceTable.getValue(bare)
             checkArity(bare, info.decl.typeParams.size, args, ref.at, info.decl.typeParams)
             return finish(RsfType.external(bare).withArgs(args).let { if (nullable) it.asNullable() else it })
+        }
+
+        // 3d-2) 注解接口类型（阶段 21）：`Marker` 和接口**同形**
+        // （`RsfType.external(注解名)`），于是「注解类型的变量/字段/参数/数组/可空」
+        // 这些位置一行都不用特判。它与接口的差别只有两处，都在别处落地：
+        // 成员可见性（checkMember 只放行元素访问器）与「不能 new 注解接口本身」。
+        if (annotationTable.containsKey(bare)) {
+            checkArity(bare, 0, args, ref.at)
+            return finish(RsfType.external(bare).let { if (nullable) it.asNullable() else it })
         }
 
         // 4) 导入的 JVM 类（`ArrayList&<int>` 靠这条）。元数从 class 文件的

@@ -22,7 +22,7 @@ import org.example.complie.sema.SemanticModel
 import java.io.File
 
 /**
- * 给编辑器用的查询接口（VS Code 扩展调它）。
+ * 给编辑器用的查询接口（编辑器插件调它，走 `rsf check --json` / `rsf complete`）。
  *
  * 输出是 JSON 文本，一行一个对象，直接打到 stdout。之所以不做成常驻的 LSP 服务，
  * 是想让扩展保持"零依赖 + 不需要常驻进程"：每次请求起一次 JVM，靠编辑器侧防抖
@@ -132,7 +132,7 @@ object EditorSupport {
     }
 }
 
-/** 一条补全建议。kind 会映射成 VS Code 的 CompletionItemKind。 */
+/** 一条补全建议。kind 会映射成编辑器的 CompletionItemKind。 */
 data class CompletionItem(val label: String, val kind: String, val detail: String)
 
 /**
@@ -327,8 +327,8 @@ class Completer(
         val KEYWORDS = listOf(
             "fun", "rtn", "return", "var", "imutvar", "if", "else", "while", "for",
             "in", "step", "break", "continue", "goto", "true", "false", "null",
-            // pkg（阶段 6a）一直漏在补全表外：三处关键字表要同步——
-            // 这里、idea 插件的 RsfKeywords、vscode 的 tmLanguage
+            // pkg（阶段 6a）一直漏在补全表外：关键字表要同步——
+            // 这里和 idea 插件的 RsfKeywords 一起改（由 EditorKeywordParityTest 守着）。
             "import", "module", "pkg", "public", "protected", "private", "static",
             "class", "new", "this",
             // 阶段 14 的错误处理关键字也漏过一阵
@@ -339,16 +339,19 @@ class Completer(
             "enum", "switch", "case",
             // 阶段 20：接口声明（`@interface` 是阶段 21 的事，各表先都不列）
             "interface",
-            // 阶段 20 追加：可选的 override（类/接口方法都能写），三处关键字表照旧同步
+            // 阶段 20 追加：可选的 override（类/接口方法都能写），两处关键字表照旧同步
             "override",
+            // 阶段 21：注解声明与它的伴生实体。三个都是硬关键字——写进补全表，
+            // 同时也是「标在声明前面的 @ 连同名字一起高亮」那件事的词汇面。
+            "annotation", "companion", "entity",
             // `let` 在词法器里仍然是保留字（写了会得到「let 已经换成 var 与 imutvar」
             // 的提示），所以补全表也留着它，但 detail 会标成已废弃
             "let",
         )
-        // 阶段 16：byte / char 也要在候选里（类型关键字表三处同步：这里、
-        // idea 插件的 RsfKeywords.TYPES、vscode 的 tmLanguage）。
+        // 阶段 16：byte / char 也要在候选里（类型关键字表两处同步：这里、
+        // idea 插件的 RsfKeywords.TYPES）。
         // `str` / `boolean` 是 `string` / `bool` 的别名（Lexer.KEYWORDS 里也认），
-        // 一并列出来，免得三张表对不上。
+        // 一并列出来，免得两张表对不上。
         val TYPES = listOf(
             "void", "int", "long", "float", "double", "string", "str",
             "bool", "boolean", "byte", "char",

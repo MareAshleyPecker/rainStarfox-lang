@@ -1,10 +1,16 @@
+@file:Suppress("unused")
+
 package org.example.complie.sema
 
+import org.example.complie.ast.AnnotationDecl
+import org.example.complie.ast.AnnotationElement
+import org.example.complie.ast.AnnotationUse
 import org.example.complie.ast.AssignStmt
 import org.example.complie.ast.CallExpr
 import org.example.complie.ast.ClassDecl
 import org.example.complie.ast.EnumDecl
 import org.example.complie.ast.Expr
+import org.example.complie.ast.FieldDecl
 import org.example.complie.ast.FuncDecl
 import org.example.complie.ast.InterfaceDecl
 import org.example.complie.ast.MemberAssignStmt
@@ -18,6 +24,7 @@ import org.example.complie.diag.Severity
 import org.example.complie.interop.ResolvedMember
 import org.example.complie.interop.ResolvedMethod
 import org.example.complie.ir.LoweredFunction
+import org.example.complie.lexing.SourceLine
 import java.util.IdentityHashMap
 
 /** 用户自定义类的成员，解析完的样子。 */
@@ -190,6 +197,176 @@ data class EnumValueRef(
     val valueName: String,
 )
 
+// ---------------------------------------------------------------------- 注解（阶段 21）
+
+/**
+ * 一个注解元素的**已解析**形状（阶段 21，M2）。
+ *
+ * [type] 已经过白名单校验（string / 基本类型 / 枚举 / 注解 / 这些的一维数组，且非可空），
+ * 后端可以直接照它走「元素值要发什么字节码」的分支，不必再看 AST 上的 [AnnotationElement.type]。
+ * 默认值的**字面量表达式**仍留在 [decl] 上（`AnnotationDefault` 要的是那个常量）。
+ */
+data class AnnotationElementSpec(
+    val decl: AnnotationElement,
+    /** 解析后的类型（非可空、非 void，数组最多一维）。 */
+    val type: RsfType,
+    /** 写了 `= 常量` 就是 true。缺省值的实参可以省略。 */
+    val hasDefault: Boolean,
+) {
+    val name: String get() = decl.name
+}
+
+/**
+ * 注解的 **companion entity**（阶段 21，M2）——语义层里它就是**一个类**。
+ *
+ * 这是「设计约束」里那条的落点：伴生实体不另起一套成员检查，而是被包装成一个
+ * **合成的 [ClassDecl]**（[decl]，名字是 JVM 内部名 `Marker$Impl`），走的是用户类
+ * 那条一模一样的检查路径（字段重名、`checkSignature`、擦除冲突、方法体检查、
+ * 构造器链、实现检查……全部复用）。M3 的 `BytecodeCompiler` 因此可以把它当成
+ * 普通类发射：父接口 = 注解接口 + 伴生实体自己写的接口。
+ *
+ * [elementFields] 是**合成出来的**元素字段（每个元素一个），[accessors] 是它们的
+ * 公开访问器（每个元素一个，无参）。两者都按元素声明顺序排列。
+ *
+ * ⚠️ 给 M3 的约定：[elementFields] 里的字段**不是**靠 [ClassDecl.fields] 上的
+ * `initializer` 拿到值的——那个初值只是**占位**（默认值字面量，或与类型相配的零值），
+ * 真正的赋值要在伴生类 `<init>` 里按构造器参数生成（DESIGN-21 §5）。这样占位
+ * 即使被照抄进 `<init>` 也不会产生非法字节码（基本类型字段不会拿到 null）。
+ */
+data class CompanionSpec(
+    /** 它属于哪个注解。 */
+    val annotation: String,
+    /** 伴生类的 JVM 内部名：`Marker$Impl`（没写名字时 `Marker$companion`）。 */
+    val jvmName: String,
+    /** **合成**出来的类声明（源码里没有这个类；[ClassDecl.at] 指向 `companion entity` 那一行）。 */
+    val decl: ClassDecl,
+    /** 伴生类唯一的那个构造器：手写的那个，或者元素表自动生成的主构造。 */
+    val constructor: FuncDecl,
+    /** 元素访问器（每个元素一个，无参，名字 = 元素名）。 */
+    val accessors: List<FuncDecl>,
+    /** 元素字段（合成的，按元素声明顺序）。 */
+    val elementFields: List<FieldDecl>,
+)
+
+/** 一个注解声明解析完的样子（阶段 21，M2）。 */
+data class AnnotationSpec(
+    val decl: AnnotationDecl,
+    /** 元素表，按声明顺序。 */
+    val elements: List<AnnotationElementSpec>,
+    /** companion entity；没写就是 null（那就是一个纯标注用的注解）。 */
+    val companion: CompanionSpec?,
+) {
+    val name: String get() = decl.name
+
+    fun elementOf(name: String): AnnotationElementSpec? = elements.firstOrNull { it.name == name }
+
+    /** 报错文案里的元素名提示：`（Marker 的元素有：value、count）`。 */
+    fun elementHint(): String =
+        if (elements.isEmpty()) "（'$name' 没有元素）"
+        else "（'$name' 的元素有：${elements.joinToString("、") { it.name }}）"
+}
+
+/** 注解使用点落在什么东西上（阶段 21 v1 开放的位置）。 */
+enum class AnnotationTargetKind(val label: String) {
+    CLASS("类"),
+    INTERFACE("接口"),
+    ANNOTATION("注解"),
+    METHOD("方法"),
+    FIELD("字段"),
+}
+
+/**
+ * 一个注解使用点的**目标**（阶段 21，M2）。
+ *
+ * [hostName] 是「方案 B 要挂访问器的那个类型」（类型级 = 被标的类型自己，成员级 = 它所属的
+ * 类型）；顶层函数是 null（没有类型可以挂）。[memberName] 是成员级注解的成员名。
+ */
+sealed interface AnnotationTarget {
+    val at: SourceLine
+    /** 这是个什么位置（类 / 接口 / 注解 / 方法 / 字段）——后端按它决定生成哪一种标注。 */
+    val kind: AnnotationTargetKind
+    /** 报错落款，如 `类 'Point'`、`方法 'Point.shift'`。 */
+    val label: String
+    val hostName: String?
+    val memberName: String?
+
+    data class OnClass(val decl: ClassDecl) : AnnotationTarget {
+        override val at: SourceLine get() = decl.at
+        override val kind: AnnotationTargetKind get() = AnnotationTargetKind.CLASS
+        override val label: String get() = "${AnnotationTargetKind.CLASS.label} '${decl.name}'"
+        override val hostName: String get() = decl.name
+        override val memberName: String? get() = null
+    }
+
+    data class OnInterface(val decl: InterfaceDecl) : AnnotationTarget {
+        override val at: SourceLine get() = decl.at
+        override val kind: AnnotationTargetKind get() = AnnotationTargetKind.INTERFACE
+        override val label: String get() = "${AnnotationTargetKind.INTERFACE.label} '${decl.name}'"
+        override val hostName: String get() = decl.name
+        override val memberName: String? get() = null
+    }
+
+    data class OnAnnotation(val decl: AnnotationDecl) : AnnotationTarget {
+        override val at: SourceLine get() = decl.at
+        override val kind: AnnotationTargetKind get() = AnnotationTargetKind.ANNOTATION
+        override val label: String get() = "${AnnotationTargetKind.ANNOTATION.label} '${decl.name}'"
+        override val hostName: String get() = decl.name
+        override val memberName: String? get() = null
+    }
+
+    data class OnMethod(val decl: FuncDecl, val ownerName: String?) : AnnotationTarget {
+        override val at: SourceLine get() = decl.at
+        override val kind: AnnotationTargetKind get() = AnnotationTargetKind.METHOD
+        override val label: String get() = if (ownerName == null) "方法 '${decl.name}'" else "方法 '$ownerName.${decl.name}'"
+        override val hostName: String? get() = ownerName
+        override val memberName: String get() = decl.name
+    }
+
+    data class OnField(val decl: FieldDecl, val ownerName: String?) : AnnotationTarget {
+        override val at: SourceLine get() = decl.at
+        override val kind: AnnotationTargetKind get() = AnnotationTargetKind.FIELD
+        override val label: String get() = if (ownerName == null) "字段 '${decl.name}'" else "字段 '$ownerName.${decl.name}'"
+        override val hostName: String? get() = ownerName
+        override val memberName: String get() = decl.name
+    }
+}
+
+/**
+ * 一个**注解使用点**与它的目标的配对（阶段 21，M2）。
+ *
+ * 使用点的实参**已经**按元素表校验过（位置式按顺序、具名按名字、缺省值兜底、重复标注查过）。
+ * 后端要多一个「哪个 `@Marker(...)` 落在哪个声明上」的权威表，就只读这一份，
+ * 不要自己再拿 AST 对一遍。
+ */
+data class AnnotationUseSite(
+    val annotation: AnnotationSpec,
+    val use: AnnotationUse,
+    val target: AnnotationTarget,
+)
+
+/**
+ * 方案 B 要在某个类型上生成的**注解访问器**规格（阶段 21，M2 只出规格，M3 才生成）。
+ *
+ * - 类型级（[memberName] 为 null）：`public static <伴生类型> <注解名>()`
+ * - 成员级：[`public static <伴生类型> <注解名>(string member)`]，取不到返回 null
+ */
+data class AnnotationAccessor(
+    val annotation: AnnotationSpec,
+    val use: AnnotationUse,
+    val target: AnnotationTarget,
+    /** 访问器挂到哪个类型上（被标的类/接口/注解；方案 B 只挂静态成员）。 */
+    val hostName: String,
+    /** 成员级访问器的 `string member` 实参值；类型级是 null。 */
+    val memberName: String?,
+    /** 返回类型：伴生类的 JVM 内部名。 */
+    val companionName: String,
+) {
+    /** 给人看的签名，如 `public static Marker$Impl Marker()`。 */
+    fun signature(): String =
+        "public static $companionName ${annotation.name}(" +
+            (memberName?.let { "string member" } ?: "") + ")"
+}
+
 /**
  * 语义检查的产物：函数表、类型标注、名字解析结果、降级后的指令，以及分析告警。
  *
@@ -299,6 +476,50 @@ class SemanticModel(
      * 的 `interfaces` 数组，不必也不该自己再解析一遍 AST 上的名字。
      */
     val superInterfaces: Map<String, List<SuperInterface>> = emptyMap(),
+
+    /**
+     * 阶段 21：注解声明，按**名字**索引。
+     *
+     * 注解的类型在检查器里和用户类/接口是**同一个形状**（`RsfType.external(注解名)`，
+     * 那个名字就是注解接口的类名），这张表的用处是让后端问得出「这个名字是不是注解」——
+     * 字节码后端据此生成注解接口（`ACC_ANNOTATION` + 元素方法），
+     * 解释器据此知道它没有对象可以 `new`（要带行为就得用 [AnnotationSpec.companion]）。
+     *
+     * 顺带说清楚：**`@interface` 本身不进 [interfaces]**——[InterfaceDecl] 装不下注解
+     * （元素表、伴生实体都在 [AnnotationDecl] 上），硬塞进去只会让后端到处做类型判断。
+     */
+    val annotations: Map<String, AnnotationSpec> = emptyMap(),
+
+    /**
+     * 阶段 21：**每一个注解使用点**（`@Marker(...)`）落在哪个目标上的配对表。
+     *
+     * 两端后端写 `RuntimeVisibleAnnotations` 时只该读这一份：目标是谁、实参是什么、
+     * 缺省值补了没有，全在 Checker 里定过一次了。
+     */
+    val annotationUses: List<AnnotationUseSite> = emptyList(),
+
+    /**
+     * 阶段 21：`new Marker(...)` / `Marker(...)` 这种**构造伴生实例**的点 → 注解。
+     *
+     * 和 [ClassModel.newTargets] 同时命中（伴生类也是一个普通的类），这一张额外回答
+     * 「它其实是哪个注解的伴生实例」——元素访问器要按注解的元素表配对，报错也要说注解的话。
+     */
+    val annotationNewTargets: IdentityHashMap<Expr, AnnotationSpec> = IdentityHashMap(),
+
+    /**
+     * 阶段 21：**伴生类的 JVM 内部名** → 它属于哪个注解（`Marker$Impl` → `Marker`）。
+     *
+     * [ClassModel.classes] 里也有那个合成的 `ClassDecl`（键就是这个名字），后端据此
+     * 认出「这个类不是用户写的类，而是某个注解的伴生实体」。
+     */
+    val companionAnnotations: Map<String, String> = emptyMap(),
+
+    /**
+     * 阶段 21：方案 B 要在哪些类型上生成哪些注解访问器（M2 只出规格，M3 生成字节码）。
+     *
+     * 一个使用点一条；同一个使用点只有一个注解（同一个目标上同一个注解重复标会报错）。
+     */
+    val annotationAccessors: List<AnnotationAccessor> = emptyList(),
 ) {
     /** 给命令行用的文本形式。 */
     val warnings: List<String>
@@ -445,4 +666,55 @@ class SemanticModel(
      * 参数写类名或接口名都行——两者共用命名空间，键也就是同一个。
      */
     fun superInterfacesOf(name: String): List<SuperInterface> = superInterfaces[name].orEmpty()
+
+    // ------------------------------------------------------------------ 注解（阶段 21）
+
+    /** 这个名字的注解声明；不是注解就是 null。 */
+    fun annotationOf(name: String): AnnotationSpec? = annotations[name]
+
+    /** 这个注解的伴生类；没有 companion entity 就是 null。 */
+    fun companionOf(annotation: String): CompanionSpec? = annotations[annotation]?.companion
+
+    /**
+     * 这个类型是不是某个 **rsf 注解**（判据和 [isEnumType] / [isInterfaceType] 同型）。
+     *
+     * 注意「注解接口类型」（`Marker`）和「伴生类类型」（`Marker::Impl`）是**两个**类型：
+     * 前者只看得见元素访问器，后者是完整的那个类。
+     */
+    fun isAnnotationType(t: RsfType): Boolean =
+        t.isExternal && t.externalName != null && annotations.containsKey(t.externalName)
+
+    /** 这个名字是不是某个注解的**伴生类**（`Marker$Impl`）。 */
+    fun isCompanionClass(name: String): Boolean = companionAnnotations.containsKey(name)
+
+    /** 这个伴生类属于哪个注解；不是伴生类就是 null。 */
+    fun companionAnnotationOf(name: String): AnnotationSpec? =
+        companionAnnotations[name]?.let { annotations[it] }
+
+    /** 这个使用点（AST 节点）的配对结果；没经过检查（或不是使用点）就是 null。 */
+    fun useSiteOf(use: AnnotationUse): AnnotationUseSite? = annotationUses.firstOrNull { it.use === use }
+
+    /** 这个表达式是不是「构造某个注解的伴生实例」。 */
+    fun isAnnotationConstruction(expr: Expr): Boolean = annotationNewTargets.containsKey(expr)
+
+    /** `new Marker(...)` 构造的是哪个注解的伴生实例；不是就是 null。 */
+    fun annotationConstructionOf(expr: Expr): AnnotationSpec? = annotationNewTargets[expr]
+
+    /** 挂在某个类型上的注解访问器（方案 B，M3 生成用），按注解在源码里的顺序。 */
+    fun accessorsOn(hostName: String): List<AnnotationAccessor> =
+        annotationAccessors.filter { it.hostName == hostName }
+
+    /**
+     * 注解 [annotation] 的**元素访问器**：元素名 → 它在伴生类上的那个无参方法。
+     *
+     * 「赋给 `Marker` 类型的变量只剩元素方法可见」（DESIGN-21 §1）就是靠它实现的：
+     * 接收者静态类型是注解接口时，成员解析只查这张表，行为方法（`describe`/`run`）
+     * 自然照不进来。查不到就是 null。
+     */
+    fun elementAccessorOf(annotation: String, member: String): FuncDecl? =
+        companionOf(annotation)?.accessors?.firstOrNull { it.name == member }
+
+    /** 注解 [annotation] 的元素**字段**（伴生类上的那个字段，按元素名）；没有就是 null。 */
+    fun elementFieldOf(annotation: String, member: String): FieldDecl? =
+        companionOf(annotation)?.elementFields?.firstOrNull { it.name == member }
 }

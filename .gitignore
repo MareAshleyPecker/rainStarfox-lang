@@ -35,8 +35,6 @@
 idea-rainstarfox/build/
 idea-rainstarfox/.gradle/
 idea-rainstarfox/.kotlin/
-vscode-rainstarfox/node_modules/
-vscode-rainstarfox/out/
 
 ### IntelliJ IDEA ###
 .idea/modules.xml
@@ -72,7 +70,6 @@ bin/
 /nbdist/
 /.nb-gradle/
 
-### VS Code ###
 .vscode/
 
 ### 本机其它 ###

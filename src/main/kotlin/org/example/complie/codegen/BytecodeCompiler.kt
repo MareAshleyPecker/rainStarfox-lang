@@ -1,5 +1,6 @@
 package org.example.complie.codegen
 
+import org.example.complie.ast.AnnotationDecl
 import org.example.complie.ast.BinaryExpr
 import org.example.complie.ast.BoolLit
 import org.example.complie.ast.CallExpr
@@ -10,6 +11,7 @@ import org.example.complie.ast.DoubleLit
 import org.example.complie.ast.ElvisExpr
 import org.example.complie.ast.EnumDecl
 import org.example.complie.ast.Expr
+import org.example.complie.ast.FieldDecl
 import org.example.complie.ast.FloatLit
 import org.example.complie.ast.ForceExpr
 import org.example.complie.ast.FuncDecl
@@ -19,10 +21,12 @@ import org.example.complie.ast.IntLit
 import org.example.complie.ast.InterfaceDecl
 import org.example.complie.ast.LongLit
 import org.example.complie.ast.MemberExpr
+import org.example.complie.ast.NamedAnnotationArg
 import org.example.complie.ast.NewArrayExpr
 import org.example.complie.ast.NewExpr
 import org.example.complie.ast.Node
 import org.example.complie.ast.NullLit
+import org.example.complie.ast.PositionalAnnotationArg
 import org.example.complie.ast.StringLit
 import org.example.complie.ast.ThisExpr
 import org.example.complie.ast.UnaryExpr
@@ -46,6 +50,11 @@ import org.example.complie.interop.ClassPath
 import org.example.complie.interop.ResolvedField
 import org.example.complie.interop.ResolvedMethod
 import org.example.complie.lexing.TokenKind
+import org.example.complie.sema.AnnotationAccessor
+import org.example.complie.sema.AnnotationElementSpec
+import org.example.complie.sema.AnnotationSpec
+import org.example.complie.sema.AnnotationTarget
+import org.example.complie.sema.AnnotationUseSite
 import org.example.complie.sema.ArrayRuntime
 import org.example.complie.sema.Builtin
 import org.example.complie.sema.Builtins
@@ -56,11 +65,13 @@ import org.example.complie.sema.RsfBase
 import org.example.complie.sema.RsfType
 import org.example.complie.sema.SemanticModel
 import org.example.complie.sema.UserMember
+import org.objectweb.asm.AnnotationVisitor
 import org.objectweb.asm.ClassWriter
 import org.objectweb.asm.Handle
 import org.objectweb.asm.Label
 import org.objectweb.asm.MethodVisitor
 import org.objectweb.asm.Opcodes
+import org.objectweb.asm.Type
 import java.io.File
 
 /**
@@ -167,6 +178,23 @@ class BytecodeCompiler(
                 )
             }
             pending += internalName to enumClass(internalName, decl).toByteArray()
+        }
+
+        // 注解接口（阶段 21 M3）：`annotation Marker(...)` 自己也是一个 .class
+        // （`ACC_ANNOTATION|ACC_INTERFACE|ACC_ABSTRACT` + 父接口 `java.lang.annotation.Annotation`）。
+        // 伴生类（`Marker$Impl`）**不在这里**：M2 已经把它包成一个普通 ClassDecl 放进了
+        // model.classModel.classes，走上面第一个循环照常发光（DESIGN-21 §5）。
+        for (spec in model.annotations.values) {
+            val internalName = classInternalName(spec.name)
+            if (internalName.equals(className, ignoreCase = true)) {
+                throw RsfError(
+                    "codegen",
+                    "'$internalName' 既是程序类名（来自文件名或 -n），又是这份程序里的一个注解名：" +
+                        "两者会写到同一个 $className.class 上互相覆盖。用 `-n <别的名字>` 换个程序类名。",
+                    1, 1, null,
+                )
+            }
+            pending += internalName to annotationClass(internalName, spec).toByteArray()
         }
 
         if (!outDir.exists() && !outDir.mkdirs()) {
@@ -527,11 +555,19 @@ class BytecodeCompiler(
 
     /** 用户类的内部名：跟着程序类的包走（`pkg a.b` + `P` → `a/b/P`）。 */
     private fun classInternalName(simpleName: String): String {
-        // 只有**用户自定义类 / 枚举**才跟着程序类的包走；classpath 上的 JVM 类
+        // 只有**用户自定义类 / 枚举 / 注解**才跟着程序类的包走；classpath 上的 JVM 类
         // （`java/util/ArrayList`）内部名本来就是绝对的，不能再加包前缀。
         // 枚举和类一样在默认包里生成，所以两者都要带上包路径——漏了枚举的话，
         // `pkg a.b` 里的 `GETSTATIC TokenKind.IDENT` 会指向默认包里的 TokenKind。
-        if (!model.classModel.classes.containsKey(simpleName) && !model.enums.containsKey(simpleName)) {
+        // 注解接口（阶段 21 M3）**不在此列**：它和 rsf 的接口一样只在默认包里生成，
+        // 因为 `sema` 交给后端的父接口表（`SuperInterface.internalName`）里，这份程序
+        // 自己声明的接口写的都是**简名**（`Marker`）——伴生类 `Marker$Impl` 的
+        // `implements` 列表就来自那里，后端要是把注解接口改成带包的名字，两边就对不上
+        // （NoClassDefFoundError: Marker）。保持和 rsf 接口同样的约定，前后端只有一处说法。
+        if (
+            !model.classModel.classes.containsKey(simpleName) &&
+            !model.enums.containsKey(simpleName)
+        ) {
             return simpleName
         }
         return model.packageName
@@ -570,6 +606,9 @@ class BytecodeCompiler(
         if (type.isExternal && name != null && model.enums.containsKey(name)) {
             return enumDescriptorOf(name)
         }
+        // 注解接口类型（阶段 21 M3）：和 rsf 接口一样只在默认包里生成，所以
+        // `var m : Marker` 的描述符就是 `LMarker;`（`type.descriptor` 直接给对了）——
+        // 这里刻意**不**接 `classInternalName`，免得 `pkg` 下和使用点/父接口表对不上。
         return type.descriptor
     }
 
@@ -610,10 +649,16 @@ class BytecodeCompiler(
         )
         cw.visitSource(sourceName, null)
 
+        // 类级注解使用点（阶段 21 M3）：必须在 visitEnd() 之前写。
+        emitUseSites({ descriptor, visible -> cw.visitAnnotation(descriptor, visible) }, decl)
+
         val fieldTypes = fieldTypesOf(decl)
         for ((i, f) in decl.fields.withIndex()) {
             val type = fieldTypes.getOrElse(i) { RsfType.INT }
-            cw.visitField(ACC_PUBLIC, f.name, descriptorOfType(type), null, null).visitEnd()
+            val fv = cw.visitField(ACC_PUBLIC, f.name, descriptorOfType(type), null, null)
+            // 字段级注解使用点：写在 fv.visitEnd() 之前
+            emitUseSites({ descriptor, visible -> fv.visitAnnotation(descriptor, visible) }, f)
+            fv.visitEnd()
         }
 
         // 构造器：**写了几个就发几条 `<init>`**（JVM 本来就靠描述符区分重载的构造器）。
@@ -631,6 +676,15 @@ class BytecodeCompiler(
         emitBridges(cw, internalName, decl)
         emitUserToString(cw, internalName, decl, fieldTypes)
         emitOrElseMethods(cw)
+        // 伴生类（`Marker$Impl`）额外要三样东西（阶段 21 M3，DESIGN-21 §5）：
+        // 1) 访问器的**懒构造缓存字段**（每个使用点一个，方案 B 不写 <clinit>）；
+        // 2) `annotationType()`：返回 `Marker.class`（rsf 层没有 class 字面量，只能在字节码里发）；
+        // 3) 它自己（以及它的成员）身上的注解使用点。
+        if (model.isCompanionClass(decl.name)) {
+            emitAnnotationCaches(cw, decl.name)
+            model.companionAnnotationOf(decl.name)?.let { emitAnnotationType(cw, it.name) }
+        }
+        emitAnnotationAccessors(cw, decl.name)
         cw.visitEnd()
         return cw
     }
@@ -839,10 +893,15 @@ class BytecodeCompiler(
         )
         cw.visitSource(sourceName, null)
 
+        // 接口级注解使用点（阶段 21 M3）
+        emitUseSites({ descriptor, visible -> cw.visitAnnotation(descriptor, visible) }, decl)
+
         for (method in decl.methods) {
             if (method.isAbstract) {
-                cw.visitMethod(ACC_PUBLIC or ACC_ABSTRACT, method.name, descriptorOf(method), null, null)
-                    .visitEnd()
+                val mv = cw.visitMethod(ACC_PUBLIC or ACC_ABSTRACT, method.name, descriptorOf(method), null, null)
+                // 抽象方法的注解使用点：写在 mv.visitEnd() 之前
+                emitUseSites({ descriptor, visible -> mv.visitAnnotation(descriptor, visible) }, method)
+                mv.visitEnd()
             } else {
                 emitUserMethod(cw, internalName, method)
             }
@@ -852,8 +911,406 @@ class BytecodeCompiler(
         // 末尾会清空缓冲，所以每个类各发自己那一份，不会串到下一个类上）。
         // V17 的接口允许 private static 方法（Java 9 起），所以合成方法的可见性不用改。
         emitOrElseMethods(cw)
+        // 方案 B 的访问器（挂在这个接口上的那些）
+        emitAnnotationAccessors(cw, decl.name)
         cw.visitEnd()
         return cw
+    }
+
+    // ------------------------------------------------------------------ 注解（阶段 21 M3）
+
+    /**
+     * 一个注解声明 → **注解接口** class（DESIGN-21 §5）。
+     *
+     * 形状（`build/verify21/m3probe/` 里实测过的配方）：
+     * ```
+     * flags: (0x2601) ACC_PUBLIC, ACC_INTERFACE, ACC_ABSTRACT, ACC_ANNOTATION
+     * this_class: Marker      super_class: java/lang/Object
+     * interfaces: java/lang/annotation/Annotation
+     * fields: 0               无 <init>
+     * public abstract value()Ljava/lang/String;
+     *     AnnotationDefault: "x"
+     * RuntimeVisibleAnnotations: @java.lang.annotation.Retention(RUNTIME)
+     * ```
+     * 三条漏了都不报编译错、只在**运行期**炸的地方：
+     * - `ACC_ABSTRACT` 不能少：不带 Code 属性的方法只有 native/abstract 才合法，
+     *   漏掉会在类加载时报 `ClassFormatError: Absent Code attribute in method that is
+     *   not native or abstract`；
+     * - 父接口写死 `java/lang/annotation/Annotation`（rsf 源码里写不出这个 `:` 子句）；
+     * - **必须**带 `@Retention(RUNTIME)`：注解接口默认是 CLASS 保留，运行期
+     *   `Demo.class.getAnnotation(Marker.class)` 会**静默**返回 null——不报错，最难查。
+     */
+    private fun annotationClass(internalName: String, spec: AnnotationSpec): ClassWriter {
+        val cw = newClassWriter()
+        cw.visit(
+            V17,
+            ACC_PUBLIC or ACC_INTERFACE or ACC_ABSTRACT or ACC_ANNOTATION,
+            internalName,
+            null,
+            "java/lang/Object",
+            arrayOf("java/lang/annotation/Annotation"),
+        )
+        cw.visitSource(sourceName, null)
+
+        // @Retention(RetentionPolicy.RUNTIME)：写在 cw.visitEnd() 之前
+        val retention = cw.visitAnnotation("Ljava/lang/annotation/Retention;", true)
+        retention.visitEnum("value", "Ljava/lang/annotation/RetentionPolicy;", "RUNTIME")
+        retention.visitEnd()
+
+        // 元素方法：`public abstract <元素类型> <元素名>()`，有默认值的补 AnnotationDefault
+        for (element in spec.elements) {
+            val mv = cw.visitMethod(
+                ACC_PUBLIC or ACC_ABSTRACT, element.name, elementDescriptor(element), null, null,
+            )
+            val default = element.decl.default
+            if (element.hasDefault && default != null) {
+                annotationConstant(element.type, default)?.let { value ->
+                    // 元素默认值的名字槽是 **null**（不是元素名）
+                    mv.visitAnnotationDefault().visit(null, value)
+                }
+            }
+            mv.visitEnd()
+        }
+
+        // 注解声明自己身上的注解（`@Marker` 标在 `annotation Other` 上）
+        emitUseSites({ descriptor, visible -> cw.visitAnnotation(descriptor, visible) }, spec.decl)
+        emitAnnotationAccessors(cw, spec.name)
+        cw.visitEnd()
+        return cw
+    }
+
+    /** 元素方法的描述符：`()Ljava/lang/String;`（无参，返回元素类型）。 */
+    private fun elementDescriptor(element: AnnotationElementSpec): String =
+        "()" + descriptorOfType(element.type)
+
+    /** 伴生类的 JVM 描述符（跟着程序类的包走）。 */
+    private fun companionDescriptor(companionName: String): String =
+        "L${classInternalName(companionName)};"
+
+    /**
+     * [node] 身上有哪些注解使用点。
+     *
+     * 判定用**同一性**（`===`）：M2 的 `annotationUses` 里存的就是 AST 上的那些声明对象，
+     * 同一个 `FuncDecl` 只会有一条 `OnMethod` 记录（同名重载也各是各的对象）。
+     */
+    private fun useSitesOn(node: Node): List<AnnotationUseSite> =
+        model.annotationUses.filter { site ->
+            when (val target = site.target) {
+                is AnnotationTarget.OnClass -> node is ClassDecl && target.decl === node
+                is AnnotationTarget.OnInterface -> node is InterfaceDecl && target.decl === node
+                is AnnotationTarget.OnAnnotation -> node is AnnotationDecl && target.decl === node
+                is AnnotationTarget.OnMethod -> node is FuncDecl && target.decl === node
+                is AnnotationTarget.OnField -> node is FieldDecl && target.decl === node
+            }
+        }
+
+    /**
+     * 把 [node] 身上的注解写成 `RuntimeVisibleAnnotations`。
+     *
+     * [av] 是「开一条注解」的入口：类上 `cw.visitAnnotation`、方法上 `mv.visitAnnotation`、
+     * 字段上 `fv.visitAnnotation`——三处都必须在对应的 `visitEnd()` **之前**调，
+     * 之后写进去的会被 ASM 直接丢掉（DESIGN-21 §7）。
+     *
+     * 使用点与目标的配对**只读** `model.annotationUses`（M2 的结论），后端不再拿 AST 对一遍。
+     */
+    private fun emitUseSites(av: (String, Boolean) -> AnnotationVisitor, node: Node) {
+        for (site in useSitesOn(node)) {
+            val visitor = av("L${classInternalName(site.annotation.name)};", true)
+            val explicit = explicitValues(site)
+            for ((index, element) in site.annotation.elements.withIndex()) {
+                val value = explicit[index] ?: element.decl.default ?: continue
+                // 类文件里没有「null 注解值」这个编码（元素值只能是常量），跳过不写：
+                // 运行期读这个元素会抛 IncompleteAnnotationException，但不会产出坏类文件。
+                if (value is NullLit) continue
+                val enumRef = model.enumValueOf(value)
+                if (enumRef != null) {
+                    visitor.visitEnum(element.name, enumDescriptorOf(enumRef.enumName), enumRef.valueName)
+                    continue
+                }
+                annotationConstant(element.type, value)?.let { constant ->
+                    visitor.visit(element.name, constant)
+                }
+            }
+            visitor.visitEnd()
+        }
+    }
+
+    /**
+     * 一个使用点的实参 → 元素表（下标对齐元素声明顺序，没给的位置是 null）。
+     *
+     * 规则和 M2 的 `checkAnnotationArguments` 是**同一套**：位置式实参按**实参下标**
+     * 对上元素下标，具名实参按名字对上（`@Marker(value="hi", count=3)`）。
+     * 调用方拿到 null 时再退到元素默认值。
+     */
+    private fun explicitValues(site: AnnotationUseSite): List<Expr?> {
+        val elements = site.annotation.elements
+        val out = arrayOfNulls<Expr>(elements.size)
+        for ((index, arg) in site.use.arguments.withIndex()) {
+            when (arg) {
+                is PositionalAnnotationArg -> if (index < out.size) out[index] = arg.value
+                is NamedAnnotationArg -> {
+                    val at = elements.indexOfFirst { it.name == arg.name }
+                    if (at >= 0) out[at] = arg.value
+                }
+            }
+        }
+        return out.toList()
+    }
+
+    /**
+     * 注解元素值 → **类文件里的常量**（`AnnotationVisitor.visit` / `visitAnnotationDefault`
+     * 收的那种装箱值）。
+     *
+     * 装箱按**元素声明的类型**来：`@M(b = 1)` 的元素是 `byte`，值必须是 `Byte`
+     * ——塞 `Integer` 的话类文件里 tag 会变成 'I'，反射读它直接
+     * `AnnotationTypeMismatchException`。返回 null 表示「这个值编码不进类文件」
+     * （只有 `null` 字面量会走到这里）。
+     */
+    private fun annotationConstant(type: RsfType, expr: Expr): Any? {
+        val raw: Any = when (expr) {
+            is IntLit -> expr.value
+            is LongLit -> expr.value
+            is FloatLit -> expr.value
+            is DoubleLit -> expr.value
+            is StringLit -> expr.value
+            is CharLit -> expr.value
+            is BoolLit -> expr.value
+            is NullLit -> return null
+            is UnaryExpr -> {
+                if (expr.op != TokenKind.MINUS) throw badAnnotationValue(type, expr)
+                when (val operand = expr.operand) {
+                    is IntLit -> -operand.value
+                    is LongLit -> -operand.value
+                    is FloatLit -> -operand.value
+                    is DoubleLit -> -operand.value
+                    else -> throw badAnnotationValue(type, expr)
+                }
+            }
+            else -> throw badAnnotationValue(type, expr)
+        }
+        return when (type.base) {
+            RsfBase.BOOL -> raw as? Boolean ?: throw badAnnotationValue(type, expr)
+            RsfBase.BYTE -> (raw as? Number)?.toByte() ?: throw badAnnotationValue(type, expr)
+            RsfBase.CHAR -> when (raw) {
+                is Char -> raw
+                is Number -> raw.toInt().toChar()
+                else -> throw badAnnotationValue(type, expr)
+            }
+            RsfBase.INT -> (raw as? Number)?.toInt() ?: throw badAnnotationValue(type, expr)
+            RsfBase.LONG -> (raw as? Number)?.toLong() ?: throw badAnnotationValue(type, expr)
+            RsfBase.FLOAT -> (raw as? Number)?.toFloat() ?: throw badAnnotationValue(type, expr)
+            RsfBase.DOUBLE -> (raw as? Number)?.toDouble() ?: throw badAnnotationValue(type, expr)
+            RsfBase.STRING -> raw as? String ?: throw badAnnotationValue(type, expr)
+            else -> throw badAnnotationValue(type, expr)
+        }
+    }
+
+    private fun badAnnotationValue(type: RsfType, expr: Expr): RsfError = RsfError(
+        "codegen",
+        "注解元素的值必须是编译期常量（字面量、取负的字面量或枚举常量）：" +
+            "'${type.rsfName}' 这里拿不到常量。数组/注解类型的元素 v1 只能用声明里的默认值" +
+            "（rsf 还没有数组字面量）。",
+        expr.at.line, expr.at.column, null,
+    )
+
+    /**
+     * 把一个注解元素值**压到操作数栈上**（重写 `new Marker(...)` 和方案 B 访问器里
+     * 补默认值的那几段用）。
+     *
+     * 和 [annotationConstant] 是一对：那边给类文件的装箱常量，这边给 JVM 指令。
+     * 元素类型是枚举时发 `GETSTATIC`（枚举常量在 JVM 上就是它自己的单例字段）。
+     */
+    private fun pushAnnotationValue(mv: MethodVisitor, type: RsfType, elementName: String, expr: Expr) {
+        model.enumValueOf(expr)?.let { enumRef ->
+            mv.visitFieldInsn(
+                GETSTATIC, classInternalName(enumRef.enumName), enumRef.valueName,
+                enumDescriptorOf(enumRef.enumName),
+            )
+            return
+        }
+        if (type.isArray) {
+            throw RsfError(
+                "codegen",
+                "注解元素 '$elementName' 是数组：v1 的数组元素只能用注解声明里的默认值，" +
+                    "使用点给不了（rsf 还没有数组字面量）。",
+                expr.at.line, expr.at.column, null,
+            )
+        }
+        val value = annotationConstant(type, expr) ?: throw RsfError(
+            "codegen",
+            "注解元素 '$elementName' 不能是 null：类文件里的注解值没有 null 这个编码。",
+            expr.at.line, expr.at.column, null,
+        )
+        when (type.base) {
+            RsfBase.BOOL -> mv.visitInsn(if (value as Boolean) ICONST_1 else ICONST_0)
+            RsfBase.BYTE -> pushInt(mv, (value as Byte).toInt())
+            RsfBase.CHAR -> pushInt(mv, (value as Char).code)
+            RsfBase.INT -> pushInt(mv, value as Int)
+            RsfBase.LONG -> mv.visitLdcInsn(value as Long)
+            RsfBase.FLOAT -> mv.visitLdcInsn(value as Float)
+            RsfBase.DOUBLE -> mv.visitLdcInsn(value as Double)
+            RsfBase.STRING -> mv.visitLdcInsn(value as String)
+            else -> throw badAnnotationValue(type, expr)
+        }
+    }
+
+    /**
+     * 方案 B 的懒构造缓存字段（一个使用点一个），都挂在**伴生类**上。
+     *
+     * 名字形如 `__rsf_ann$宿主$成员`：rsf 的标识符写不出 `$`（见 `Lexer.isIdentStart`），
+     * 所以不可能和用户字段撞名。访问器在宿主类型上，缓存字段在伴生类上，两边同包
+     * （都是 `model.packageName`）所以包私有就够了——不额外公开一个实现细节。
+     */
+    private fun emitAnnotationCaches(cw: ClassWriter, companionName: String) {
+        for (accessor in model.annotationAccessors) {
+            if (accessor.companionName != companionName) continue
+            cw.visitField(ACC_STATIC, cacheFieldName(accessor), companionDescriptor(companionName), null, null)
+                .visitEnd()
+        }
+    }
+
+    private fun cacheFieldName(accessor: AnnotationAccessor): String =
+        "__rsf_ann\$${accessor.hostName}\$${accessor.memberName ?: ""}"
+
+    /**
+     * 方案 B 的注解访问器（DESIGN-21 §3）：**每个使用点一个静态方法**。
+     *
+     * - 类型级 → `public static Marker$Impl Marker()`，注解名就是方法名（rsf 的无缝重载）；
+     * - 成员级 → `public static Marker$Impl Marker(string member)`，`member` 对不上返回 **null**。
+     *
+     * 懒构造：先读缓存字段，非空直接返回，否则 `new` 一个存回去。方法带
+     * `ACC_SYNCHRONIZED`（§3 定的），所以不需要 `<clinit>` 也不需要 DCL。
+     *
+     * 访问标志**不走** [accessOf]（那是给 rsf 源码里的 `FuncDecl` 用的，
+     * 这里没有 FuncDecl 可查），直接发 ACC_PUBLIC|ACC_STATIC|ACC_SYNCHRONIZED。
+     */
+    private fun emitAnnotationAccessors(cw: ClassWriter, hostName: String?) {
+        if (hostName == null) return
+        val sites = model.accessorsOn(hostName)
+        if (sites.isEmpty()) return
+        // 同一个宿主上：同注解的类型级只有一个；成员级按注解分组，一个 member 一个分支
+        val groups = LinkedHashMap<String, MutableList<AnnotationAccessor>>()
+        for (accessor in sites) {
+            val key = accessor.annotation.name + if (accessor.memberName == null) "#type" else "#member"
+            groups.getOrPut(key) { ArrayList() }.add(accessor)
+        }
+        for (group in groups.values) {
+            val first = group.first()
+            val desc = companionDescriptor(first.companionName)
+            if (first.memberName == null) {
+                emitTypeLevelAccessor(cw, first, desc)
+            } else {
+                emitMemberLevelAccessor(cw, group, desc)
+            }
+        }
+    }
+
+    private fun emitTypeLevelAccessor(cw: ClassWriter, accessor: AnnotationAccessor, desc: String) {
+        val companion = classInternalName(accessor.companionName)
+        val mv = cw.visitMethod(
+            ACC_PUBLIC or ACC_STATIC or ACC_SYNCHRONIZED, accessor.annotation.name, "()$desc", null, null,
+        )
+        mv.visitCode()
+        mv.visitFieldInsn(GETSTATIC, companion, cacheFieldName(accessor), desc)
+        mv.visitVarInsn(ASTORE, 0)
+        mv.visitVarInsn(ALOAD, 0)
+        val ready = Label()
+        mv.visitJumpInsn(IFNONNULL, ready)
+        emitAccessorNew(mv, accessor)
+        mv.visitInsn(DUP)
+        mv.visitFieldInsn(PUTSTATIC, companion, cacheFieldName(accessor), desc)
+        mv.visitVarInsn(ASTORE, 0)
+        mv.visitLabel(ready)
+        mv.visitVarInsn(ALOAD, 0)
+        mv.visitInsn(ARETURN)
+        mv.visitMaxs(0, 0)
+        mv.visitEnd()
+    }
+
+    private fun emitMemberLevelAccessor(cw: ClassWriter, group: List<AnnotationAccessor>, desc: String) {
+        val first = group.first()
+        val companion = classInternalName(first.companionName)
+        val mv = cw.visitMethod(
+            ACC_PUBLIC or ACC_STATIC or ACC_SYNCHRONIZED, first.annotation.name,
+            "(Ljava/lang/String;)$desc", null, null,
+        )
+        mv.visitCode()
+        for (accessor in group) {
+            val next = Label()
+            mv.visitVarInsn(ALOAD, 0)
+            mv.visitLdcInsn(accessor.memberName ?: "")
+            mv.visitMethodInsn(INVOKEVIRTUAL, "java/lang/String", "equals", "(Ljava/lang/Object;)Z", false)
+            mv.visitJumpInsn(IFEQ, next)
+            mv.visitFieldInsn(GETSTATIC, companion, cacheFieldName(accessor), desc)
+            mv.visitVarInsn(ASTORE, 1)
+            mv.visitVarInsn(ALOAD, 1)
+            val ready = Label()
+            mv.visitJumpInsn(IFNONNULL, ready)
+            emitAccessorNew(mv, accessor)
+            mv.visitInsn(DUP)
+            mv.visitFieldInsn(PUTSTATIC, companion, cacheFieldName(accessor), desc)
+            mv.visitVarInsn(ASTORE, 1)
+            mv.visitLabel(ready)
+            mv.visitVarInsn(ALOAD, 1)
+            mv.visitInsn(ARETURN)
+            mv.visitLabel(next)
+        }
+        // 没有这个成员：返回 null（§3：「取不到返回 null」）
+        mv.visitInsn(ACONST_NULL)
+        mv.visitInsn(ARETURN)
+        mv.visitMaxs(0, 0)
+        mv.visitEnd()
+    }
+
+    /**
+     * 一个使用点的伴生实例：`new Marker$Impl(实参…)` —— 实参按**元素声明顺序**摆，
+     * 使用点没给的元素在这里补上它的默认值（M2 允许少给实参）。
+     */
+    private fun emitAccessorNew(mv: MethodVisitor, accessor: AnnotationAccessor) {
+        val spec = accessor.annotation
+        val companion = spec.companion
+            ?: throw IllegalStateException(
+                "内部错误：注解 '@${spec.name}' 没有 companion entity，不该有方案 B 的访问器。",
+            )
+        val companionName = classInternalName(accessor.companionName)
+        val params = model.paramTypesOf(companion.constructor)
+        mv.visitTypeInsn(NEW, companionName)
+        mv.visitInsn(DUP)
+        val explicit = explicitValues(
+            AnnotationUseSite(spec, accessor.use, accessor.target),
+        )
+        for ((index, element) in spec.elements.withIndex()) {
+            val value = explicit[index] ?: element.decl.default
+                ?: throw RsfError(
+                    "codegen",
+                    "内部错误：注解 '@${spec.name}' 的元素 '${element.name}' 在使用点没有值，" +
+                        "也没有默认值（M2 本该拦掉）。",
+                    accessor.target.at.line, accessor.target.at.column, null,
+                )
+            pushAnnotationValue(mv, element.type, element.name, value)
+        }
+        mv.visitMethodInsn(
+            INVOKESPECIAL, companionName, "<init>",
+            "(" + params.joinToString("") { descriptorOfType(it) } + ")V", false,
+        )
+    }
+
+    /**
+     * 伴生类的 `annotationType()`：返回 `Marker.class`。
+     *
+     * rsf 层没有 class 字面量（`Marker` 上也没有这个元素），所以这一条**只在字节码里发**，
+     * 源码里写不出来。描述符用 `()Ljava/lang/Class;`——这正是
+     * `java.lang.annotation.Annotation.annotationType()` 的擦除签名，所以伴生类是一个
+     * **完整**的注解实现；写成 `()LMarker;` 就只是同名的另一个方法，
+     * 接口那条抽象方法仍然没人实现，通过接口调它会在运行期 AbstractMethodError。
+     */
+    private fun emitAnnotationType(cw: ClassWriter, annotationName: String) {
+        val mv = cw.visitMethod(ACC_PUBLIC, "annotationType", "()Ljava/lang/Class;", null, null)
+        mv.visitCode()
+        mv.visitLdcInsn(Type.getObjectType(classInternalName(annotationName)))
+        mv.visitInsn(ARETURN)
+        mv.visitMaxs(0, 0)
+        mv.visitEnd()
     }
 
     /**
@@ -977,11 +1434,26 @@ class BytecodeCompiler(
             // 主构造的参数就在 1..n 号槽上，所以 `class P(x0 : int) { var x : int = x0 }`
             // 的初值表达式能直接用 x0（帧就是主构造的帧，和解释器一致）。
             val ctx = ExprCtx(mv, owner, ctor?.let { model.loweredOf(it) }, localOffset = 0)
+            // 伴生类的**元素字段**例外（阶段 21 M3）：M2 给它们的 initializer 只是占位
+            // （元素默认值字面量或零值），真正的值来自构造器参数——`new Marker("hi", 3)`
+            // 和方案 B 的访问器都把实参压进来。伴生主构造的形参顺序 = 元素顺序（§6 校验过），
+            // 所以第 i 个元素字段直接取第 i 个形参的槽位。
+            val elementCount = if (model.isCompanionClass(decl.name)) {
+                model.companionAnnotationOf(decl.name)?.companion?.elementFields?.size ?: 0
+            } else {
+                0
+            }
+            val ctorParams = if (ctor == null) emptyList() else model.paramsOf(ctor)
             for ((i, f) in decl.fields.withIndex()) {
                 val type = fieldTypes.getOrElse(i) { RsfType.INT }
                 mv.visitVarInsn(ALOAD, 0)
-                emitExpr(ctx, f.initializer)
-                emitWiden(mv, model.typeOf(f.initializer), type)
+                val param = ctorParams.getOrNull(i)
+                if (i < elementCount && param != null) {
+                    loadSlot(mv, param.type, param.slot)
+                } else {
+                    emitExpr(ctx, f.initializer)
+                    emitWiden(mv, model.typeOf(f.initializer), type)
+                }
                 mv.visitFieldInsn(PUTFIELD, owner, f.name, descriptorOfType(type))
             }
         }
@@ -1007,6 +1479,8 @@ class BytecodeCompiler(
     private fun emitUserMethod(cw: ClassWriter, owner: String, fn: FuncDecl) {
         val access = accessOf(fn) or if (fn.isStatic) ACC_STATIC else 0
         val mv = cw.visitMethod(access, fn.name, descriptorOf(fn), null, null)
+        // 方法级注解使用点（阶段 21 M3）：写在 mv.visitEnd() 之前
+        emitUseSites({ descriptor, visible -> mv.visitAnnotation(descriptor, visible) }, fn)
         mv.visitCode()
         emitBody(mv, owner, fn, localOffset = 0, returnType = model.returnTypeOf(fn))
         mv.visitMaxs(0, 0)
@@ -1199,6 +1673,9 @@ class BytecodeCompiler(
 
         // 顶层函数一律是静态方法（rsf 没有全局对象），<static> 槽在顶层只是把它写出来而已
         val mv = cw.visitMethod(accessOf(fn) or ACC_STATIC, fn.name, descriptorOf(fn), null, null)
+        // 顶层函数上的注解使用点（阶段 21 M3）：hostName 是 null（顶层函数没有类型可挂
+        // 访问器，带 companion 的注解 M2 已经拦掉了），但标注本身照样要写出来。
+        emitUseSites({ descriptor, visible -> mv.visitAnnotation(descriptor, visible) }, fn)
         mv.visitCode()
         emitBody(mv, owner, fn, localOffset = if (isEntry(fn)) 1 else 0, returnType = returnType)
         mv.visitMaxs(0, 0)
@@ -1832,6 +2309,23 @@ class BytecodeCompiler(
             emitExpr(ctx, arg)
             emitWiden(mv, model.typeOf(arg), params[i])
         }
+        // `new Marker("hi")`（阶段 21 M3）：注解的伴生主构造有**每个元素**一个形参，
+        // 而使用点可以只写一部分（其余的落到元素默认值上，M2 允许少给实参）。
+        // 少了这一步，`new Marker("hi")` 会去调一个不存在的 `<init>(Ljava/lang/String;)V`，
+        // 运行期 NoSuchMethodError。缺的实参在这里按元素声明顺序补上默认值。
+        model.annotationConstructionOf(expr)?.let { spec ->
+            for (i in args.size until spec.elements.size) {
+                val element = spec.elements[i]
+                val default = element.decl.default
+                    ?: throw RsfError(
+                        "codegen",
+                        "内部错误：注解 '@${spec.name}' 的元素 '${element.name}' 在使用点没有值，" +
+                            "也没有默认值（M2 本该拦掉）。",
+                        expr.at.line, expr.at.column, null,
+                    )
+                pushAnnotationValue(mv, element.type, element.name, default)
+            }
+        }
         mv.visitMethodInsn(
             INVOKESPECIAL, owner, "<init>",
             "(" + params.joinToString("") { descriptorOfType(it) } + ")V", false,
@@ -1927,8 +2421,13 @@ class BytecodeCompiler(
         if (type.nullable && type.base.isPrimitive) return type.base.wrapper!!
         val name = type.externalName
         if (type.isExternal && name != null) {
-            // 用户类要跟着程序类的包走；classpath 上的 JVM 类原样用内部名
-            return if (model.classModel.classes.containsKey(name)) classInternalName(name) else name
+            // 用户类要跟着程序类的包走；classpath 上的 JVM 类原样用内部名。
+            // 接口（含注解接口，阶段 21 M3）不在此列——见 `classInternalName` 的说明。
+            return if (model.classModel.classes.containsKey(name)) {
+                classInternalName(name)
+            } else {
+                name
+            }
         }
         if (type.base == RsfBase.STRING) return "java/lang/String"
         throw IllegalStateException("不能 CHECKCAST 到 $type")
@@ -2741,6 +3240,10 @@ class BytecodeCompiler(
         // 阶段 20 M4-c：桥方法（泛型擦除后实现签名比接口窄时合成的那一条）
         const val ACC_BRIDGE = Opcodes.ACC_BRIDGE
         const val ACC_SYNTHETIC = Opcodes.ACC_SYNTHETIC
+        // 阶段 21 M3：注解接口的头（`ACC_ANNOTATION|ACC_INTERFACE|ACC_ABSTRACT` = 0x2601）
+        // 与方案 B 访问器上的 `ACC_SYNCHRONIZED`（懒构造必须串行化）
+        const val ACC_ANNOTATION = Opcodes.ACC_ANNOTATION
+        const val ACC_SYNCHRONIZED = Opcodes.ACC_SYNCHRONIZED
 
         // Java 17：既支持 StringConcatFactory 的 invokedynamic（Java 9+），也不至于太新
         const val V17 = Opcodes.V17

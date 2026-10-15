@@ -22,16 +22,16 @@ import java.io.File
 class TempFile(name : string) {
     var file : File = new File(System.getProperty("java.io.tmpdir"), "rsf-16b-" + name)
 
-    public fun path() -> string {
+    fun path() -> string {
         rtn file.getAbsolutePath()
     }
 
-    public fun label() -> string {
+    fun label() -> string {
         rtn file.getName()
     }
 
     // 删除是**尽力而为**：删不掉不报错（临时目录本来就由系统回收）
-    public fun cleanup() -> void {
+    fun cleanup() -> void {
         if (file.delete()) {
             println("  （临时文件已删除: " + label() + "）")
         } else {

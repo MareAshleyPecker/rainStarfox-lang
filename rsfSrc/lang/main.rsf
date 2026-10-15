@@ -1,21 +1,21 @@
-// rainStarfox sample -- v0.6
+// rainStarfox 示例：语法速查（入口示例，跑：rsf run rsfSrc/lang/main.rsf）
 //
-// Signature:  <ControlType> fun <MainType> name(<参数表>) <返回子句> { ... }
-//   <ControlType> = public / protected / private (optional, leftmost; 省略就是 public)
-//   <MainType>    = type slot after `fun`, defaults to void
-//   return clause = -> T  /  :: T           (both equivalent; `: T` was removed)
-//   参数写法      = 两种风格都行、可以混：Java 风格 `int a` / Kotlin 风格 `a : int`，逗号分隔
-//   变量 / 字段   = Kotlin 后缀风格：`var 名字 : 类型 = 初值`（类型可省）
-//   构造对象      = `new` 可以省：`Point(1, 2)` 等价于 `new Point(1, 2)`
-//   可空          = 类型名前加 ?，例如 ?string / ?int
+// 函数签名： <访问控制> fun <返回类型槽> 名字(<参数表>) <返回子句> { ... }
+//   <访问控制>   = public / protected / private（可省，写在最左；省了就是 public）
+//   <返回类型槽> = `fun` 后面那一格，缺省是 void
+//   返回子句     = -> T  或者  : T（两种等价；'::' 不再当返回子句，留给 Marker::Impl 这类嵌套写法）
+//   参数写法     = 两种风格都行、可以混：Java 风格 `int a` / Kotlin 风格 `a : int`，逗号分隔
+//   变量 / 字段  = Kotlin 后缀风格：`var 名字 : 类型 = 初值`（类型可省）
+//   构造对象     = `new` 可以省：`Point(1, 2)` 等价于 `new Point(1, 2)`
+//   可空         = 类型名前加 ?，例如 ?string / ?int
 //
-// Variables:  var    = mutable
-//             imutvar  = immutable (reassigning it is a compile error)
+// 变量：  var      = 可变（可以重新赋值）
+//         imutvar  = 不可变（重新赋值是编译错误）
 //
-// Control flow: if / else / else if / while / for (two styles) /
-//               break / continue / goto + labels / ternary / ?: / !!
+// 控制流：if / else / else if / while / for（两种写法）/ switch / try + catch /
+//         break / continue / goto + 标签 / 三目 / ?: / !!
 
-public fun greeting() -> string {
+fun greeting() -> string {
     rtn "hello, rainStarfox!"
 }
 

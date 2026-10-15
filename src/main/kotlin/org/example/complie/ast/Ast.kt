@@ -27,12 +27,192 @@ data class TypeRef(
     val typeArgs: List<TypeRef> = emptyList(),
     /** 数组维度：`int[]` → 1，不是数组 → 0。 */
     val arrayDepth: Int = 0,
+    /**
+     * 嵌套类型写的**内层名字**（阶段 21）：`Marker::Impl` → name = `Marker`、nested = `Impl`；
+     * 普通类型（`int`、`Point`）是 `null`，所以既有代码一行都不用改。
+     *
+     * **v1 只支持一层**（`A::B::C` 在 Parser 就报错），所以这里是一个名字而不是列表。
+     * 内部名（`Marker$Impl`）由语义层自己拼——前端只管把 owner（[name]）与内层名字
+     * 都留住，`display()` 原样写成 `Marker::Impl` 给人和报错看。
+     */
+    val nested: String? = null,
 ) : Node {
-    /** 写给人看的完整类型名：`Box&<int>`、`Box&<Box&<int>>`、`int[][]`。 */
+    /** 写给人看的完整类型名：`Box&<int>`、`Box&<Box&<int>>`、`int[][]`、`Marker::Impl`。 */
     fun display(): String {
         val base = if (typeArgs.isEmpty()) name else "$name&<" + typeArgs.joinToString(", ") { it.display() } + ">"
-        return base + "[]".repeat(arrayDepth)
+        val whole = if (nested == null) base else "$base::$nested"
+        return whole + "[]".repeat(arrayDepth)
     }
+}
+
+// ------------------------------------------------------------------ 注解（阶段 21）
+
+/**
+ * 注解声明（阶段 21）：
+ * ```
+ * public annotation Marker(value : string = "x", count : int = 0) {
+ *     companion entity Impl : Runnable {
+ *         var hits : int = 0
+ *         fun describe() -> string { rtn "Marker(" + value + "," + count + ")" }
+ *         fun run() -> void { println("run " + value) }
+ *     }
+ * }
+ * ```
+ *
+ * ## 形状
+ * - `[public|protected|private] annotation 名字(元素表) { 伴生实体? }`，**缺省 public**；
+ * - 元素表**可以整个省掉**（`annotation M { }`）也可以空着（`annotation M() { }`）；
+ * - 注解体里**至多一个** [companion]——除它之外写任何东西（`fun` / `var` / `constructor`…）
+ *   在 Parser 层就报错，见 [CompanionEntityDecl]。
+ *
+ * ## 为什么元素与行为要分家
+ * [elements] 是**常量**（编译进 class 文件的那种，默认值只能是字面量），
+ * 行为写在 [companion] 里——那是一个普通类体（字段/方法/构造器）。
+ * 两边的规矩完全不同，所以用两个字段而不是一张混在一起的成员表。
+ *
+ * ## 编译产物（codegen 在后续里程碑做，这里先把口径写死）
+ * 两个 class：注解自己（`ACC_ANNOTATION|ACC_INTERFACE`）与伴生类
+ * （`注解名$内层名`，匿名时 `注解名$companion`）。
+ */
+data class AnnotationDecl(
+    val control: ControlType,
+    val name: String,
+    /** 元素表：`(value : string = "x", count : int = 0)`。空表 = 没写括号或括号里空的。 */
+    val elements: List<AnnotationElement>,
+    override val at: SourceLine,
+    /**
+     * 伴生实体；没写就是 `null`。
+     *
+     * 「至多一个」在 Parser 强制（第二个 `companion` 当场报错），所以这里不是列表。
+     */
+    val companion: CompanionEntityDecl? = null,
+    /** 写在注解声明自己前面的注解（元注解）：`@Meta annotation M { }`，v1 只解析不做语义。 */
+    val annotations: List<AnnotationUse> = emptyList(),
+) : Node
+
+/**
+ * 注解元素：`value : string = "x"`（名字 + 类型 + 可选的常量默认值）。
+ *
+ * **不复用 [Param]**：那个没有默认值槽，而默认值是注解元素的一半价值
+ * （使用点不写实参时取它）。硬塞一个可空字段进去会让所有普通参数都多背一个
+ * 「这里不可能是默认值」的状态。
+ *
+ * 元素类型只写类型，**默认值限定为字面量常量**（int / long / float / double / bool /
+ * string / char / 它们的 `-` 前缀 / `null`）——这是 Parser 强制的，见
+ * `Parser.parseAnnotationElementDefault`。枚举常量、注解、数组默认值 v1 明确不支持。
+ */
+data class AnnotationElement(
+    val name: String,
+    val type: TypeRef,
+    /** 常量默认值表达式的**源码文本**（`"x"` / `3` / `-1.5` / `true` / `null`）。 */
+    val default: Expr?,
+    override val at: SourceLine,
+) : Node
+
+/**
+ * 伴生实体（阶段 21）：`companion entity [名字] [: 父接口, 父接口] { 类体 }`。
+ *
+ * - 名字**可以省**（匿名）：那就只在源码里占位，内部名由语义层拼成 `注解名$companion`；
+ * - 父类型表与类/接口的 `:` 子句**同一套语法**（[ClassDecl.supertypes]），
+ *   所以直接复用 [parseSupertypeList] 的结果；
+ * - 体就是普通类体：字段 / 方法 / 构造器，和类体用同一批解析函数，
+ *   所以 `override` / `static` / 权限修饰词在这里的规矩与类里完全一致。
+ *
+ * [methods] 与 [ClassDecl.methods] 同一约定：**构造器也装在里面**（靠
+ * [FuncDecl.isConstructor] 区分），顺序按源码。
+ */
+data class CompanionEntityDecl(
+    val name: String?,
+    val fields: List<FieldDecl>,
+    val methods: List<FuncDecl>,
+    val supertypes: List<TypeRef>,
+    override val at: SourceLine,
+) : Node {
+    /** 所有构造器（按源码顺序）。 */
+    val constructors: List<FuncDecl> get() = methods.filter { it.isConstructor }
+
+    /** 除构造器之外的普通方法。 */
+    val plainMethods: List<FuncDecl> get() = methods.filter { !it.isConstructor }
+
+    /** 内部名：匿名伴生给 `$companion`，具名给 `$名字`（语义层拼全名时用）。 */
+    val internalSuffix: String get() = "\$" + (name ?: "companion")
+}
+
+/**
+ * 一个注解使用点：`@Marker(value = "hi", count = 3)`。
+ *
+ * - [name] 是注解名（v1 只认一个标识符，不认 `a.b.C` 这种路径写法）；
+ * - [arguments] 区分**位置式**与**具名式**（[AnnotationArg]）——具名实参
+ *   **只在注解使用点开放**，普通调用的语法一行都没动；
+ * - 位置与具名可以混写，顺序原样保留（`@M("x", count = 1)`）。
+ */
+data class AnnotationUse(
+    val name: String,
+    val arguments: List<AnnotationArg>,
+    override val at: SourceLine,
+) : Node {
+    /** 写给人看的写法，报错文案里用。 */
+    fun display(): String =
+        if (arguments.isEmpty()) "@$name"
+        else "@$name(" + arguments.joinToString(", ") { it.display() } + ")"
+}
+
+/**
+ * 把一个表达式还原成**源码文本**（只给注解那一小撮地方用：报错文案、以及
+ * `AstDump` 之外的自查）。
+ *
+ * 为什么不给 [Expr] 加一个通用 `display()`：AST 是**解析结果**，不是语法树的可逆表示——
+ * 写成 `a  +  b` 的表达式还原出来只能是 `a + b`，别处没人需要这种“看着像源码”的字符串，
+ * 加了只会让人以为它和源文件逐字节对得上。覆盖范围就按注解里真会出现的表达式来：
+ * 字面量、`-` 前缀、以及 `AnnotationUse` 里被原样解析出来的少量形式；其余给个 `?` 兜底
+ * （它只可能出现在报错文案里，不会参与任何判等）。
+ */
+internal fun exprText(e: Expr): String = when (e) {
+    is IntLit -> e.value.toString()
+    is LongLit -> e.value.toString()
+    is FloatLit -> e.value.toString()
+    is DoubleLit -> e.value.toString()
+    is StringLit -> "\"" + e.value + "\""
+    is CharLit -> "'" + e.value + "'"
+    is BoolLit -> e.value.toString()
+    is NullLit -> "null"
+    is VarExpr -> e.name
+    is UnaryExpr -> (if (e.op == TokenKind.MINUS || e.op == TokenKind.BANG) e.op.text else e.op.text + " ") +
+        exprText(e.operand)
+    is BinaryExpr -> exprText(e.left) + " " + e.op.text + " " + exprText(e.right)
+    is CallExpr -> e.name + "(" + e.arguments.joinToString(", ") { exprText(it) } + ")"
+    else -> "?"
+}
+
+/**
+ * 注解使用点的一个实参：位置式 `"hi"` 或具名式 `value = "hi"`。
+ *
+ * 用**两个节点**（而不是一个带可空名字的节点）表达：下游读具名实参时不用先判空，
+ * 读位置式实参时也不会看到「名字可能是个幌子」的状态。
+ */
+sealed interface AnnotationArg : Node {
+    /** 实参表达式。 */
+    val value: Expr
+
+    /** 写给人看的写法（位置式就是值本身，具名式带 `名字 = ` 前缀）。 */
+    fun display(): String
+}
+
+/** 位置式实参：`@Marker("hi")` 里的 `"hi"`。 */
+data class PositionalAnnotationArg(
+    override val value: Expr,
+    override val at: SourceLine,
+) : AnnotationArg {
+    override fun display(): String = exprText(value)
+}
+
+/** 具名实参：`@Marker(value = "hi")` 里的 `value = "hi"`。 */
+data class NamedAnnotationArg(
+    val name: String,
+    override val value: Expr,
+    override val at: SourceLine,
+) : AnnotationArg {
+    override fun display(): String = "$name = ${exprText(value)}"
 }
 
 // ------------------------------------------------------------------ 声明
@@ -172,6 +352,14 @@ data class FuncDecl(
      * `ControlType` 里只有 public / private / protected。
      */
     val isOverride: Boolean = false,
+    /**
+     * 写在方法前面的注解（阶段 21）：`@Marker fun f() -> void { }`。
+     *
+     * 加在**构造参数末尾**且带默认值（空表），所以既有的 `FuncDecl(...)` 调用点
+     * 一行都不用改。注解和修饰词一样排在 `fun` 前面，**顺序任意**（`@M public static fun`
+     * 与 `public @M fun` 等价）。主构造与次构造同样可以带注解——它们本来就复用这个节点。
+     */
+    val annotations: List<AnnotationUse> = emptyList(),
 ) : Node {
     /**
      * 抽象方法：只有签名没有体（[body] == null）。**只可能出现在接口里**——
@@ -237,6 +425,14 @@ data class Program(
      * 都和类不一样。静态类型仍然是 `RsfType.external(接口名)`（引用类型那一套）。
      */
     val interfaces: List<InterfaceDecl> = emptyList(),
+    /**
+     * 注解声明（阶段 21）。和类/接口**共用同一个类型命名空间**（重名要报错），
+     * 单独一张表的原因和 [enums] / [interfaces] 一样：让下游一眼看出「哪些名字是注解」。
+     *
+     * 语义层本阶段**忽略**注解（不认识就是不认识），所以这张表当下只有前端与
+     * 编辑器在消费；加它也是为了让 AST 里「注解声明真的被解析出来了」有据可查。
+     */
+    val annotations: List<AnnotationDecl> = emptyList(),
 ) : Node {
     override val at: SourceLine get() = SourceLine(1, 1)
 }
@@ -310,6 +506,13 @@ data class FieldDecl(
     val initializer: Expr,
     val mutable: Boolean,
     override val at: SourceLine,
+    /**
+     * 写在字段声明前面的注解（阶段 21）：`@Marker var hits : int = 0`。
+     *
+     * 加在**构造参数末尾**并带缺省值：既有构造点（解释器、后端、测试里的手写 AST）
+     * 一行都不用改，语义层也照旧忽略它。
+     */
+    val annotations: List<AnnotationUse> = emptyList(),
 ) : Node
 
 /**
@@ -358,6 +561,13 @@ data class ClassDecl(
      * 类型实参写在名字后面（`class C : Box&<int>`，擦除后 `LBox;`）。
      */
     val supertypes: List<TypeRef> = emptyList(),
+    /**
+     * 写在 `class` 前面的注解（阶段 21）：`@Marker public class C { }`。
+     *
+     * 缺省空表——既有 `ClassDecl(...)` 调用点一行都不用改。顺序任意：
+     * `@M public class C` 与 `public @M class C` 解析结果一样。
+     */
+    val annotations: List<AnnotationUse> = emptyList(),
 ) : Node {
     /**
      * 所有构造器：主构造（写了类头括号才有）在前，次构造（`constructor`）按源码顺序在后。
@@ -436,6 +646,10 @@ data class InterfaceDecl(
      * 不做类型实参推导增强，擦除后一律 `L接口名;`。
      */
     val typeParams: List<String> = emptyList(),
+    /**
+     * 写在 `interface` 前面的注解（阶段 21）：`@Marker interface I { }`。缺省空表。
+     */
+    val annotations: List<AnnotationUse> = emptyList(),
 ) : Node {
     /** 抽象方法：只声明签名，实现类/子接口必须提供（多接口默认方法冲突也看这里）。 */
     val abstractMethods: List<FuncDecl> get() = methods.filter { it.isAbstract }

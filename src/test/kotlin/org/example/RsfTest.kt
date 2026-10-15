@@ -1408,7 +1408,7 @@ class RsfTest {
     @Test
     fun `varis 已改名为 var 并给出改写提示`() {
         // 2026-10-11 拍板：`var` 是唯一写法，`varis` **不再接受**。
-        // 它已经不在关键字表里（表要跟 rsf 版逐条对齐，45 项不变），所以是在词法层
+        // 它已经不在关键字表里（表要跟 rsf 版逐条对齐，51 项不变），所以是在词法层
         // 被一条独立判断拦下的 —— 这条测试钉住「报错清楚 + 给出改写 + 两端同一句话」。
         val e = assertFailsWith<RsfError> {
             Rsf.parse(source("fun main() -> void {\n    varis x : int = 0\n    rtn\n}\n"))
@@ -6525,9 +6525,16 @@ class RsfTest {
         //
         // 所以这条把 Kotlin 版 TokenKind 里的**所有**关键字与标点各写一份，
         // 要求两边 dump 逐字节相同。少一个关键字 / 多一个记号，这条立刻红。
+        //
+        // 2026-10-15 自举同步（词法那一刀）：把阶段 20 的 override / interface、
+        // 阶段 21 的 annotation / companion / entity、阶段 22 先占位的 mathematic
+        // 与注解前缀 `@` 也列进来 —— 这几项此前只有 Kotlin 版认，靠下面那条
+        // 「已知差异」用例单独钉着；现在两边都认，那份差异清单随之删掉。
         val keywords = listOf(
             "fun", "rtn", "return", "import", "module", "pkg", "var", "imutvar", "let",
-            "public", "private", "protected", "static", "class", "enum", "switch", "case",
+            "public", "private", "protected", "static", "override", "class",
+            "enum", "interface", "annotation", "companion", "entity", "mathematic",
+            "switch", "case",
             "new", "this", "constructor", "if", "else", "while", "for", "in",
             "break", "continue", "goto", "fail", "try", "catch",
             "true", "false", "null",
@@ -6539,6 +6546,7 @@ class RsfTest {
             "(", ")", "{", "}", "[", "]", ",", ";",
             "->", ":", "::", "?", "?:", "..", ".", "=", "==", "!=",
             "<", ">", "<=", ">=", "+", "-", "*", "/", "%", "!", "&", "&&", "||", "\\",
+            "@",
         )
         // 一行一个，免得 `?` 后面的 `:` 被当成 `?:`
         val allTokens = (keywords + punct).joinToString("\n") + "\n"
@@ -6576,30 +6584,32 @@ class RsfTest {
     }
 
     /**
-     * `interface` 的**已知差异**（阶段 20；设计里是 D10：自举源码本批不动）。
+     * 阶段 20 / 21 / 22 的新关键字：**两边都认，而且 token 流逐字节相同**。
      *
-     * 上面那条「关键字表逐条对齐」用的是**手写清单**，新关键字漏进去它不会红；
-     * 而关键字表漏一项的表现恰恰是「悄悄变成标识符」。所以这里把差异单独钉成
-     * **已知且可见**：Kotlin 版认 `KW_INTERFACE`，自举的 `rsfSrc/bootstrap/Lexer.rsf`
-     * 这一批仍然把它切成 `IDENT`。等自举同步的批次做完，这条会翻红——那时把它改成
-     * 「两边都是 KW_INTERFACE」即可。
+     * 2026-10-15 自举同步（词法那一刀）之前，`rsfSrc/bootstrap/Lexer.rsf` 的关键字表
+     * 停在 45 项 —— `interface` / `override` / `annotation` / `companion` / `entity` /
+     * `mathematic` 在 rsf 版里都被切成 `IDENT`，注解前缀 `@` 是「不认识的字符」。
+     * 这条用例当年就是为那个**已知差异**写的。关键字表补齐（45 → 51）并收下 `@` 之后，
+     * 同一条用例**逐条翻转**成现在这样：两个词法器在这些输入上完全一致。
      */
     @Test
-    fun `rsf 版词法器尚未收 interface（自举同步前的已知差异）`() {
-        val text = "interface Greeter { }\n"
-        assertTrue(
-            referenceTokenDump(Rsf.tokens(source(text))).any { it.contains("KW_INTERFACE") },
-            "Kotlin 版应当把 'interface' 认成关键字",
-        )
-        assertTrue(
-            normalize(rsfLexerOutput(probeFor(text))).contains("IDENT"),
-            "自举版此刻应当把 'interface' 切成 IDENT（它的关键字表里还没有这一项）",
-        )
-        assertTrue(
-            !tokenDumpsAgreeFor(text),
-            "这条钉的是**已知差异**：若两边已经一致，说明自举同步做完了，" +
-                "请把本用例改成「两边都认 KW_INTERFACE」的断言。",
-        )
+    fun `rsf 版词法器已经收下阶段 20、21、22 的新关键字并与 Kotlin 版一致`() {
+        val text = "interface Greeter { }\n" +
+            "override fun f() -> void { }\n" +
+            "annotation Marker(value : string = \"x\") { }\n" +
+            "companion entity Impl { }\n" +
+            "entity E\n" +
+            "mathematic Math\n" +
+            "@Marker(\"hi\")\n"
+        val reference = referenceTokenDump(Rsf.tokens(source(text)))
+        for (kind in listOf(
+            "KW_INTERFACE", "KW_OVERRIDE", "KW_ANNOTATION",
+            "KW_COMPANION", "KW_ENTITY", "KW_MATHEMATIC", "AT",
+        )) {
+            assertTrue(reference.any { it.contains(kind) }, "Kotlin 版应当把新语法切成 $kind")
+        }
+        assertTokenStreamsMatch(label = "<阶段 20/21/22 新关键字>", text = text, reference = reference)
+        assertTrue(tokenDumpsAgreeFor(text), "两个词法器在新关键字上的 dump 必须一致")
     }
 
     /** 把一份源码写成临时文件，拼出「让 rsf 版词法器 dump 它」的探针 main。 */

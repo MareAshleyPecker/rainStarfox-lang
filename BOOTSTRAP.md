@@ -10,16 +10,16 @@
 
 ## 现状核对（2026-10-08 逐项对着代码查过）
 
-| 需要的能力 | 现状 | 证据 |
-| --- | --- | --- |
-| 读源文件 | ✅ 可用 | `import java.nio.file.Files` + `Paths.get` 走静态方法互操作 |
-| 字符串处理 | ✅ 可用 | `string` 的实例方法直接调 JVM（`length`/`substring`/`charAt`…） |
-| 递归下降 / 优先级爬升 | ✅ 够用 | 函数、递归、`if`/`else`/`while`/`for`/`goto` 都在 |
-| 表示 Token / AST 节点 | ✅ 可用 | 阶段 12：`class` + `new`（`new` 还可以省）+ 字段/方法/构造器；类的类型复用 `RsfType.external(类名)`，**没有** `RsfBase.CLASS`（`sema/RsfType.kt`） |
-| `new` 出对象 | ✅ 可用 | `new` 是关键字（阶段 19 起可省）；用户类走解释器对象模型 / `NEW`+`INVOKESPECIAL`，JVM 类走 `ClassPath` 的构造器解析 |
-| 装一列 Token / 子节点 | ✅ 可用（阶段 13） | 数组 `T[]`：`new int[n]`、`a[i]`、`a.length`；两端逐字节一致（`rsfSrc/lang/arrays.rsf`） |
-| 报错后继续 | ✅ 可用 | 阶段 14：`fail` / `!T` / `try`+`catch`，漏处理编译期就报错 |
-| 写出 `.class` | ✅ 通了（16b 已完成） | `byte[]` 接得住 `ClassWriter.toByteArray()`，四个文件函数（`readText`/`writeText`/`readBytes`/`writeBytes`）把它交给 `java.nio.file`；互操作也认数组签名（`[B` → `byte[]`）。示例：`rsfSrc/lang/files.rsf` |
+| 需要的能力             | 现状            | 证据                                                                                                                                                                         |
+|-------------------|---------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 读源文件              | ✅ 可用          | `import java.nio.file.Files` + `Paths.get` 走静态方法互操作                                                                                                                        |
+| 字符串处理             | ✅ 可用          | `string` 的实例方法直接调 JVM（`length`/`substring`/`charAt`…）                                                                                                                      |
+| 递归下降 / 优先级爬升      | ✅ 够用          | 函数、递归、`if`/`else`/`while`/`for`/`goto` 都在                                                                                                                                  |
+| 表示 Token / AST 节点 | ✅ 可用          | 阶段 12：`class` + `new`（`new` 还可以省）+ 字段/方法/构造器；类的类型复用 `RsfType.external(类名)`，**没有** `RsfBase.CLASS`（`sema/RsfType.kt`）                                                       |
+| `new` 出对象         | ✅ 可用          | `new` 是关键字（阶段 19 起可省）；用户类走解释器对象模型 / `NEW`+`INVOKESPECIAL`，JVM 类走 `ClassPath` 的构造器解析                                                                                        |
+| 装一列 Token / 子节点   | ✅ 可用（阶段 13）   | 数组 `T[]`：`new int[n]`、`a[i]`、`a.length`；两端逐字节一致（`rsfSrc/lang/arrays.rsf`）                                                                                                  |
+| 报错后继续             | ✅ 可用          | 阶段 14：`fail` / `!T` / `try`+`catch`，漏处理编译期就报错                                                                                                                              |
+| 写出 `.class`       | ✅ 通了（16b 已完成） | `byte[]` 接得住 `ClassWriter.toByteArray()`，四个文件函数（`readText`/`writeText`/`readBytes`/`writeBytes`）把它交给 `java.nio.file`；互操作也认数组签名（`[B` → `byte[]`）。示例：`rsfSrc/lang/files.rsf` |
 
 ---
 
@@ -52,17 +52,17 @@ fun main() -> void {
 
 *要改的地方*
 
-| 文件 | 改什么 |
-| --- | --- |
-| `lexing/Lexer.kt` | 加 `class` / `new` / `this` 三个关键字 |
-| `ast/Ast.kt` | `ClassDecl`、`FieldDecl`、`NewExpr`、`ThisExpr`；`Program` 增加 `classes` |
-| `parsing/Parser.kt` | 顶层 `class`；成员声明（字段 / 方法 / 构造器）；`new 类名(实参)`；`this.x` |
-| `sema/RsfType.kt` | 新增 `RsfBase.CLASS`（内部类名走 `externalName` 那一栏），描述符 `L<内部名>;` |
-| `sema/Checker.kt` | 类符号表、字段/方法解析、构造器与 `new` 的实参匹配、`this` 的类型 |
-| `ir/Lowering.kt` | 字段访问降级成「对象槽 + 字段序号」；`new` 降级成分配对象 |
-| `interp/Interpreter.kt` | 对象模型：字段值放一条按声明顺序排的数组，类名 + 该数组 = 一个对象 |
+| 文件                            | 改什么                                                                                             |
+|-------------------------------|-------------------------------------------------------------------------------------------------|
+| `lexing/Lexer.kt`             | 加 `class` / `new` / `this` 三个关键字                                                                |
+| `ast/Ast.kt`                  | `ClassDecl`、`FieldDecl`、`NewExpr`、`ThisExpr`；`Program` 增加 `classes`                             |
+| `parsing/Parser.kt`           | 顶层 `class`；成员声明（字段 / 方法 / 构造器）；`new 类名(实参)`；`this.x`                                            |
+| `sema/RsfType.kt`             | 新增 `RsfBase.CLASS`（内部类名走 `externalName` 那一栏），描述符 `L<内部名>;`                                      |
+| `sema/Checker.kt`             | 类符号表、字段/方法解析、构造器与 `new` 的实参匹配、`this` 的类型                                                        |
+| `ir/Lowering.kt`              | 字段访问降级成「对象槽 + 字段序号」；`new` 降级成分配对象                                                               |
+| `interp/Interpreter.kt`       | 对象模型：字段值放一条按声明顺序排的数组，类名 + 该数组 = 一个对象                                                            |
 | `codegen/BytecodeCompiler.kt` | 为每个类生成 `<init>`、字段、方法；`new` → `NEW` + `DUP` + `INVOKESPECIAL <init>`；字段 → `GETFIELD`/`PUTFIELD` |
-| `interop/ClassPath.kt` | 不再跳过 `<init>`（外部类的构造器要能被 `new` 调用） |
+| `interop/ClassPath.kt`        | 不再跳过 `<init>`（外部类的构造器要能被 `new` 调用）                                                              |
 
 *验收*
 
@@ -84,17 +84,17 @@ fun main() -> void {
 
 *实际改的地方*
 
-| 文件 | 改什么 |
-| --- | --- |
-| `lexing/Token.kt` + `Lexer.kt` | 新增 `LBRACKET` / `RBRACKET`（`[` `]` 原来在编译器词法里**根本没有**，只有 IDE 那边的 lexer 有） |
-| `ast/Ast.kt` | `TypeRef.arrayDepth`；新节点 `NewArrayExpr`（`new T[n]`/`new T[n][m]`）、`IndexExpr`（`a[i]`）、`IndexAssignStmt`（`a[i] = v`） |
-| `parsing/Parser.kt` | `parseTypeRef` 吃 `[]` 后缀（可叠多层）；`parsePrimary` 的 `new` 分支分流「对象 / 数组」；`parsePostfix` 加下标；语句位置的下标赋值（和成员赋值同一套收尾逻辑） |
-| `sema/RsfType.kt` | 类型加 `arrayDepth: Int`（**不是**递归的元素类型，也不加 `RsfBase` 枚举值）；描述符 = `"[".repeat(depth) + 元素描述符` |
-| `sema/Checker.kt` | 下标必须是 `int`；`new T[n]` 的长度必须是 int；元素的赋值/传参/返回检查；`.length` 只有数组才有；数组不能直接打印/拼字符串（身份哈希两端没法一致） |
-| `sema/Builtins.kt` | `ArrayRuntime`：越界 / 负长度的消息格式与两个辅助方法名（**两端唯一的真源**） |
-| `ir/Lowering.kt` | 新增 `IIndexAssign`（读/建/长度都在表达式里，不需要新指令） |
-| `codegen/BytecodeCompiler.kt` | `NEWARRAY` / `ANEWARRAY` / `MULTIANEWARRAY`、`*ALOAD` / `*ASTORE`（byte→`BALOAD`、char→`CALOAD`）、`ARRAYLENGTH`、程序类上的 `__rsf_arrayIndex$rt` / `__rsf_arrayLength$rt` |
-| `interp/Interpreter.kt` | 数组直接用 `java.lang.reflect.Array`（默认值/边界/引用语义天然与 JVM 一致） |
+| 文件                             | 改什么                                                                                                                                                              |
+|--------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `lexing/Token.kt` + `Lexer.kt` | 新增 `LBRACKET` / `RBRACKET`（`[` `]` 原来在编译器词法里**根本没有**，只有 IDE 那边的 lexer 有）                                                                                         |
+| `ast/Ast.kt`                   | `TypeRef.arrayDepth`；新节点 `NewArrayExpr`（`new T[n]`/`new T[n][m]`）、`IndexExpr`（`a[i]`）、`IndexAssignStmt`（`a[i] = v`）                                              |
+| `parsing/Parser.kt`            | `parseTypeRef` 吃 `[]` 后缀（可叠多层）；`parsePrimary` 的 `new` 分支分流「对象 / 数组」；`parsePostfix` 加下标；语句位置的下标赋值（和成员赋值同一套收尾逻辑）                                                   |
+| `sema/RsfType.kt`              | 类型加 `arrayDepth: Int`（**不是**递归的元素类型，也不加 `RsfBase` 枚举值）；描述符 = `"[".repeat(depth) + 元素描述符`                                                                         |
+| `sema/Checker.kt`              | 下标必须是 `int`；`new T[n]` 的长度必须是 int；元素的赋值/传参/返回检查；`.length` 只有数组才有；数组不能直接打印/拼字符串（身份哈希两端没法一致）                                                                       |
+| `sema/Builtins.kt`             | `ArrayRuntime`：越界 / 负长度的消息格式与两个辅助方法名（**两端唯一的真源**）                                                                                                                |
+| `ir/Lowering.kt`               | 新增 `IIndexAssign`（读/建/长度都在表达式里，不需要新指令）                                                                                                                           |
+| `codegen/BytecodeCompiler.kt`  | `NEWARRAY` / `ANEWARRAY` / `MULTIANEWARRAY`、`*ALOAD` / `*ASTORE`（byte→`BALOAD`、char→`CALOAD`）、`ARRAYLENGTH`、程序类上的 `__rsf_arrayIndex$rt` / `__rsf_arrayLength$rt` |
+| `interp/Interpreter.kt`        | 数组直接用 `java.lang.reflect.Array`（默认值/边界/引用语义天然与 JVM 一致）                                                                                                           |
 
 *验收*：创建 / 下标读写 / `length` / 默认值、传参与返回的引用语义、用户类数组与泛型类数组、
 数组当字段、嵌套数组、越界（读 / 写 / 负数下标 / 负长度）——**8 条新测试，两端逐字节一致**；
@@ -145,13 +145,13 @@ fun main() -> void {
 
 *要改的地方*
 
-| 文件 | 改什么 |
-| --- | --- |
-| `parsing/Parser.kt` | `try` / `catch` 语句；`fail` 或 `throw` 表达式（`ReturnSpec.mayError` 已经解析了） |
-| `sema/Checker.kt` | `!T` 的传播规则：调用 `!T` 函数必须显式处理（用 `!!`、`?:`、或者放进 `try`）；没处理直接编译报错 |
-| `ir/Lowering.kt` | 每个可能出错的点降级成「抛出分支 + 正常分支」；记录 try 区间 |
-| `codegen/BytecodeCompiler.kt` | `visitTryCatchBlock` + `ATHROW`；异常类型用 rsf 自己的一个类 |
-| `interp/Interpreter.kt` | 解释器里的异常帧（不需要 JVM 反射异常，保持一致即可） |
+| 文件                            | 改什么                                                                  |
+|-------------------------------|----------------------------------------------------------------------|
+| `parsing/Parser.kt`           | `try` / `catch` 语句；`fail` 或 `throw` 表达式（`ReturnSpec.mayError` 已经解析了） |
+| `sema/Checker.kt`             | `!T` 的传播规则：调用 `!T` 函数必须显式处理（用 `!!`、`?:`、或者放进 `try`）；没处理直接编译报错        |
+| `ir/Lowering.kt`              | 每个可能出错的点降级成「抛出分支 + 正常分支」；记录 try 区间                                   |
+| `codegen/BytecodeCompiler.kt` | `visitTryCatchBlock` + `ATHROW`；异常类型用 rsf 自己的一个类                     |
+| `interp/Interpreter.kt`       | 解释器里的异常帧（不需要 JVM 反射异常，保持一致即可）                                        |
 
 *验收*：错误跨函数传播、`try` 兜得住、漏处理**编译期**就报错（这条是给自举用的关键：自举后的编译器要靠它把「语法错误」变回正常控制流）。
 
@@ -162,7 +162,8 @@ fun main() -> void {
 **这条是分岔口。**
 
 - **走数组路线**（阶段 13 已完成）：不需要泛型。编译器里用 `Token[]`、`Node[]` 这种就够了，代价是要自己手写「动态数组扩容」。
-- **走集合互操作路线**：需要泛型。因为 `java.util.ArrayList.get()` 返回 `Object`，rsf 现在**没有顶层类型能接住它**，所以不实现泛型就用不了 JVM 集合。
+- **走集合互操作路线**：需要泛型。因为 `java.util.ArrayList.get()` 返回 `Object`，rsf 现在**没有顶层类型能接住它**
+  ，所以不实现泛型就用不了 JVM 集合。
 
 若做，建议按 JVM 擦除语义来（跟 Java 互通，`List<Token>` 走 `List`），边界插入检查、取值插强转。单态化（每种实参类型生成一份特化）能让解释器更简单，但会让两端行为分叉，不建议。
 
@@ -206,13 +207,13 @@ rsf 里必须接得住才能落盘成 `.class`。这一步做完，落盘那条�
 
 用 rsf 重写编译器，**按前端到后端的顺序一块块替换**，每块都能和 Kotlin 版对拍：
 
-| 小步 | 写什么 | 对拍方式 | 状态 |
-| --- | --- | --- | --- |
-| 17a | rsf 版词法器 | 同一个 `.rsf` 输入，token 流（类型 + 文本 + 行列）与 Kotlin 版逐条相同 | ✅ 2026-10-08 |
-| 17b | rsf 版语法器 | AST 打印成文本，两边逐行相同 | ✅ 2026-10-08 |
-| 17c | rsf 版解释器 | 跑 `rsfSrc/lang/` 下所有示例，stdout 逐字节相同 | ✅ 2026-10-08 |
-| 17d | rsf 版字节码后端 | 生成 `.class`，反汇编（`rsf build --dump`）逐行相同 | ✅ 2026-10-13（**做到字节级相同**，见「17d 实际做法」） |
-| 17e | **三阶段自举** | ① Kotlin 版编译 rsf 版编译器 → 编译器 A；② A 编译 rsf 版源码 → 编译器 B；③ B 编译自己 → C；要求 **B 与 C 逐字节一致**，且 A、B 对 `rsfSrc/lang/main.rsf` 的输出与 Kotlin 版一致 | ✅ **闭环达成 2026-10-13**（B ≡ C：126 个 `.class` 逐字节相同）；三处已知缺口 2026-10-14 补齐（`pkg` 声明、`module "目录"` 导入、`?:` 左边的成员/隐式调用）；**J2「与 Kotlin 产物逐字节相同」2026-10-14 全同**（次构造器的 `LineNumberTable` 补齐） |
+| 小步  | 写什么        | 对拍方式                                                                                                                                | 状态                                                                                                                                                                                  |
+|-----|------------|-------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 17a | rsf 版词法器   | 同一个 `.rsf` 输入，token 流（类型 + 文本 + 行列）与 Kotlin 版逐条相同                                                                                   | ✅ 2026-10-08                                                                                                                                                                        |
+| 17b | rsf 版语法器   | AST 打印成文本，两边逐行相同                                                                                                                    | ✅ 2026-10-08                                                                                                                                                                        |
+| 17c | rsf 版解释器   | 跑 `rsfSrc/lang/` 下所有示例，stdout 逐字节相同                                                                                                 | ✅ 2026-10-08                                                                                                                                                                        |
+| 17d | rsf 版字节码后端 | 生成 `.class`，反汇编（`rsf build --dump`）逐行相同                                                                                             | ✅ 2026-10-13（**做到字节级相同**，见「17d 实际做法」）                                                                                                                                               |
+| 17e | **三阶段自举**  | ① Kotlin 版编译 rsf 版编译器 → 编译器 A；② A 编译 rsf 版源码 → 编译器 B；③ B 编译自己 → C；要求 **B 与 C 逐字节一致**，且 A、B 对 `rsfSrc/lang/main.rsf` 的输出与 Kotlin 版一致 | ✅ **闭环达成 2026-10-13**（B ≡ C：126 个 `.class` 逐字节相同）；三处已知缺口 2026-10-14 补齐（`pkg` 声明、`module "目录"` 导入、`?:` 左边的成员/隐式调用）；**J2「与 Kotlin 产物逐字节相同」2026-10-14 全同**（次构造器的 `LineNumberTable` 补齐） |
 
 ### 17a 实际做法（2026-10-08）
 
@@ -284,11 +285,11 @@ fc kt.txt rsf.txt
 
 **两端本来就不同的边界**（照实钉在测试里，不假装一致）：
 
-| 输入 | Kotlin 版 | rsf 版 |
-| --- | --- | --- |
-| 未闭合字符串 | 抛 `RsfError`（1:20） | `lex()` 返回空数组 + `lexError()` 给同一条消息；`lexSafe()` 落一个 `ILLEGAL`（位置同为 1:20）后停 |
-| 整数字面量超 int 范围（`99999999999`） | 词法阶段按 int 解析 → 报「超出 int 范围」 | 不算值（只按形状切），照常给 `INT_LIT` |
-| 块注释没闭合 | 抛 `RsfError` | 同「未闭合字符串」：错误位置指向 `/*` |
+| 输入                           | Kotlin 版                    | rsf 版                                                                      |
+|------------------------------|-----------------------------|----------------------------------------------------------------------------|
+| 未闭合字符串                       | 抛 `RsfError`（1:20）          | `lex()` 返回空数组 + `lexError()` 给同一条消息；`lexSafe()` 落一个 `ILLEGAL`（位置同为 1:20）后停 |
+| 整数字面量超 int 范围（`99999999999`） | 词法阶段按 int 解析 → 报「超出 int 范围」 | 不算值（只按形状切），照常给 `INT_LIT`                                                   |
+| 块注释没闭合                       | 抛 `RsfError`                | 同「未闭合字符串」：错误位置指向 `/*`                                                      |
 
 **测试**（`RsfTest.kt`，5 条）：`rsf 版词法器与 Kotlin 版 token 流逐条一致`、
 `rsf 版词法器能处理字面量与注释的刁钻写法`、`rsf 版词法器覆盖关键字别名与各种边角形态`、
@@ -324,11 +325,11 @@ fc kt.txt rsf.txt
 **第 0 步：给 17a 的词法器补上阶段 19c 的三样。** `rsfSrc/bootstrap/Lexer.rsf` 是 17a 的
 冻结产物，关键字表停在 42 项、记号表没有 `&&` / `||`。17b 补了：
 
-| 补什么 | 改哪 | 结果 |
-| --- | --- | --- |
-| `enum` / `switch` / `case` | `keywordKind` 加三行（表 42 → **45** 项，与 Kotlin 版 `KEYWORDS` 逐条对齐） | 不再是标识符 |
-| `&&` | `readPunct` 里先看第二个字符再决定 `ANDAND` / `AMP` | 一个记号，不是两个 `&` |
-| `||` | 同上；**孤零零一个 `|`** 报「逻辑或要写成两个竖线 '||'（rsf 里没有按位或，单独一个 '|' 不是运算符）」——文案与 Kotlin 版**逐字相同** | 一个记号 + 一致的失败 |
+| 补什么                        | 改哪                                                            | 结果            |
+|----------------------------|---------------------------------------------------------------|---------------|
+| `enum` / `switch` / `case` | `keywordKind` 加三行（表 42 → **45** 项，与 Kotlin 版 `KEYWORDS` 逐条对齐） | 不再是标识符        |
+| `&&`                       | `readPunct` 里先看第二个字符再决定 `ANDAND` / `AMP`                      | 一个记号，不是两个 `&` |
+| `                          |                                                               | `             | 同上；**孤零零一个 `|`** 报「逻辑或要写成两个竖线 '||'（rsf 里没有按位或，单独一个 '|' 不是运算符）」——文案与 Kotlin 版**逐字相同** | 一个记号 + 一致的失败 |
 
 补完之后差分对拍**不再分流任何样例**：原来那条 `usesPhase20Syntax` 筛子整套删掉，
 `rsfSrc/lang/**` 下全部 `.rsf`（含 `enums.rsf`）都进覆盖；原来那条「还不认识新记号」的
@@ -359,19 +360,19 @@ public class Node(kind : NodeKind, text : string)
 
 **children 的约定**（dump 里靠显式列表节点表达，不靠缩进猜）：
 
-| 节点 | children 顺序 |
-| --- | --- |
-| `PROGRAM` | `PKG`（有 `pkg` 才有）/ `IMPORTS` / `FUNCS` / `CLASSES` / `ENUMS` |
-| `FUNC` | `PARAMS`（`PARAM…`）/ `BLOCK` |
-| `CLASS` | `TYPE_PARAMS` / `FIELDS` / `METHODS`（主构造排在最前，与 Kotlin 版一致） |
-| `IF` | 条件 / 体 `BLOCK` / else 体（有才加） |
-| `WHILE` | 条件 / 体 `BLOCK` |
-| `FOR` | 条件（有才加）/ 更新（有才加）/ 体 `BLOCK` |
-| `SWITCH` | 主体 / `CASES`（`CASE…`）/ else 体（有才加） |
-| `CASE` | 体 `BLOCK` |
-| `TRY` | try 体 / catch 体 |
-| `MEMBER` | 接收者 / `ARGS`（只有方法调用才有） |
-| `INDEX` / `BINARY` / `ELVIS` / `IF_EXPR` … | 按源码里的左右/前后顺序 |
+| 节点                                         | children 顺序                                                  |
+|--------------------------------------------|--------------------------------------------------------------|
+| `PROGRAM`                                  | `PKG`（有 `pkg` 才有）/ `IMPORTS` / `FUNCS` / `CLASSES` / `ENUMS` |
+| `FUNC`                                     | `PARAMS`（`PARAM…`）/ `BLOCK`                                  |
+| `CLASS`                                    | `TYPE_PARAMS` / `FIELDS` / `METHODS`（主构造排在最前，与 Kotlin 版一致）   |
+| `IF`                                       | 条件 / 体 `BLOCK` / else 体（有才加）                                 |
+| `WHILE`                                    | 条件 / 体 `BLOCK`                                               |
+| `FOR`                                      | 条件（有才加）/ 更新（有才加）/ 体 `BLOCK`                                  |
+| `SWITCH`                                   | 主体 / `CASES`（`CASE…`）/ else 体（有才加）                           |
+| `CASE`                                     | 体 `BLOCK`                                                    |
+| `TRY`                                      | try 体 / catch 体                                              |
+| `MEMBER`                                   | 接收者 / `ARGS`（只有方法调用才有）                                       |
+| `INDEX` / `BINARY` / `ELVIS` / `IF_EXPR` … | 按源码里的左右/前后顺序                                                 |
 
 `TypeRef` / `ReturnSpec` **内联成属性**，不单独成节点（它们没有孩子）：`type=Box&<int>[]`、
 `ret=ARROW mayError=true retType=!int`。注意 `type` 的写法与 `TypeRef.display()` **不同**
@@ -387,10 +388,10 @@ rsf 版若保留一个「FOR_IN」原始节点，两边永远比不平——除�
 
 **对拍方式**（本轮最关键的设计）：
 
-| 侧 | 产出 | 在哪 |
-| --- | --- | --- |
+| 侧        | 产出                      | 在哪                                                          |
+|----------|-------------------------|-------------------------------------------------------------|
 | Kotlin 版 | `AstDump.dump(program)` | `src/test/kotlin/org/example/AstDump.kt`（**测试源集**，不挂任何 CLI） |
-| rsf 版 | `dumpAst(node)` | `rsfSrc/bootstrap/Parser.rsf` |
+| rsf 版    | `dumpAst(node)`         | `rsfSrc/bootstrap/Parser.rsf`                               |
 
 dump 格式：一行一个节点，缩进 = 2 空格 × 深度，行尾统一 `\n`；
 行 = `<KIND>` + 若干 `名字=值`，值里的 `\` `换行` `回车` `制表` **空格** 各自一个转义、
@@ -461,21 +462,21 @@ arrays 1119B/`6D1A2875`、files 666B/`6A0C940A`，第八个 enums 763B/`3A33A504
 
 **写的时候卡住 / 绕开 / 写得别扭的地方**（决定 17c / 17d 的可行性）：
 
-| 缺口 | 具体卡在哪 | 现在怎么绕的 |
-| --- | --- | --- |
-| **没有继承/接口** | 写不出 `Expr`/`Stmt`/`Decl` 的多态节点层次 | 胖节点 + `switch (kind)`。**能用**，但属性只能拼成字符串，把 `ret` 写成 `retType` 编译器一句话不说——对拍成了唯一的正确性防线 |
-| **数组元素不可空** | `Node[]` 放不进 `null`，而「可选的子节点」（`for` 的条件/更新、`if`/`switch` 的 else、`pkg`）到处都是 | 按需 `add`（不存在就不占位）；代价是局部变量层面还得备一个占位节点（`var cond = errorNode()`），因为 rsf 里没法声明「可能没有的值」 |
-| **没有 `HashSet` / `Map`** | 类类型参数重名检查要线性查 `string[]` + 手写数组扩容 | 手写 8 行扩容。**17c 的第一号拦路虎**：解释器要符号表、函数表、类表，全都得手写 |
-| **没有异常（只有 `fail` + `!T`）** | 语法器没法像 Kotlin 版那样「抛 + 在任意层恢复」；`!T` 会顺调用链传染到每一个 parse 函数 | flag + 占位节点。直接后果是**错误消息没法逐字复刻**（那条边界写进测试了） |
-| **没有方法重载 / 可变参数 / 默认参数** | Kotlin 的 `match(vararg kinds)` 写不出来 | 拆成 `matchAny2` / `matchAny3` / `matchAny4`，调用点各写各的。**方法重载后来在阶段 19d 补上了**（2026-10-11），但这些绕开写法按「自举产物冻结」的原则**不改** |
-| **没有多返回值 / 元组** | `parseTypeRef()` 要同时给「名字、泛型实参、数组维度」三样 | 专门加了一个 `TypeInfo` 类。**没有 data class，也没有解构**，类得手写 |
-| **字符串只有 `length` / `charAt` / `substring`** | 没有 `split` / `join` / `trim` / `repeat` | `normalizeImportPath` 手写 30 行；`repeatText` 手写；缩进、`hex2` 都手写 |
-| **没有数组字面量** | `new string[]{"a","b"}` 不存在 | 只能 `new string[8]` + 逐个下标赋值 |
-| **`main` 收不到命令行参数** | 入口没法接输入路径 | 系统属性 `-Drsf.ast.file=`（17a 已经这么干） |
-| **没有 `?.`** | JVM 互操作返回值可能是 null | `?string` 接住再 `?:` 兜底（`System.getProperty` 这条 17a 踩过 NPE） |
-| **枚举不能带字段/方法** | `NodeKind` 挂不了「dump 里的名字」 | 用一个穷尽 switch 的 `kindName()` 代替（顺带换来了穷尽性检查） |
-| **没有模板字符串** | 报错消息一拼就是五六段 `+`，括号层级难看 | 硬拼 |
-| **`!!` / `fail` 只能在 `!T` 函数或 `try` 里** | 入口读文件要用 `readText(path)!!` | 用 `try { ... } catch (readError : string) { ... }` 包住 |
+| 缺口                                          | 具体卡在哪                                                                      | 现在怎么绕的                                                                                                         |
+|---------------------------------------------|----------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------|
+| **没有继承/接口**                                 | 写不出 `Expr`/`Stmt`/`Decl` 的多态节点层次                                           | 胖节点 + `switch (kind)`。**能用**，但属性只能拼成字符串，把 `ret` 写成 `retType` 编译器一句话不说——对拍成了唯一的正确性防线                            |
+| **数组元素不可空**                                 | `Node[]` 放不进 `null`，而「可选的子节点」（`for` 的条件/更新、`if`/`switch` 的 else、`pkg`）到处都是 | 按需 `add`（不存在就不占位）；代价是局部变量层面还得备一个占位节点（`var cond = errorNode()`），因为 rsf 里没法声明「可能没有的值」                            |
+| **没有 `HashSet` / `Map`**                    | 类类型参数重名检查要线性查 `string[]` + 手写数组扩容                                          | 手写 8 行扩容。**17c 的第一号拦路虎**：解释器要符号表、函数表、类表，全都得手写                                                                  |
+| **没有异常（只有 `fail` + `!T`）**                  | 语法器没法像 Kotlin 版那样「抛 + 在任意层恢复」；`!T` 会顺调用链传染到每一个 parse 函数                    | flag + 占位节点。直接后果是**错误消息没法逐字复刻**（那条边界写进测试了）                                                                     |
+| **没有方法重载 / 可变参数 / 默认参数**                    | Kotlin 的 `match(vararg kinds)` 写不出来                                        | 拆成 `matchAny2` / `matchAny3` / `matchAny4`，调用点各写各的。**方法重载后来在阶段 19d 补上了**（2026-10-11），但这些绕开写法按「自举产物冻结」的原则**不改** |
+| **没有多返回值 / 元组**                             | `parseTypeRef()` 要同时给「名字、泛型实参、数组维度」三样                                      | 专门加了一个 `TypeInfo` 类。**没有 data class，也没有解构**，类得手写                                                               |
+| **字符串只有 `length` / `charAt` / `substring`** | 没有 `split` / `join` / `trim` / `repeat`                                    | `normalizeImportPath` 手写 30 行；`repeatText` 手写；缩进、`hex2` 都手写                                                    |
+| **没有数组字面量**                                 | `new string[]{"a","b"}` 不存在                                                | 只能 `new string[8]` + 逐个下标赋值                                                                                    |
+| **`main` 收不到命令行参数**                         | 入口没法接输入路径                                                                  | 系统属性 `-Drsf.ast.file=`（17a 已经这么干）                                                                              |
+| **没有 `?.`**                                 | JVM 互操作返回值可能是 null                                                         | `?string` 接住再 `?:` 兜底（`System.getProperty` 这条 17a 踩过 NPE）                                                      |
+| **枚举不能带字段/方法**                              | `NodeKind` 挂不了「dump 里的名字」                                                  | 用一个穷尽 switch 的 `kindName()` 代替（顺带换来了穷尽性检查）                                                                     |
+| **没有模板字符串**                                 | 报错消息一拼就是五六段 `+`，括号层级难看                                                     | 硬拼                                                                                                             |
+| **`!!` / `fail` 只能在 `!T` 函数或 `try` 里**      | 入口读文件要用 `readText(path)!!`                                                 | 用 `try { ... } catch (readError : string) { ... }` 包住                                                          |
 
 **一句话结论**：**17c 可以做**，但「手写 Map / 符号表」会是主要工作量；
 若想省事，先补一个内置的 `HashMap` 式容器（或者阶段 20 的 `interface` + `java.util.HashMap`
@@ -494,13 +495,13 @@ arrays 1119B/`6D1A2875`、files 666B/`6A0C940A`，第八个 enums 763B/`3A33A504
 
 先写了几个**临时** rsf 程序回答「值与环境怎么表示」（验证完已删，不进仓库）：
 
-| 问题 | 答案 | 影响 |
-| --- | --- | --- |
-| `import java.util.HashMap` + `new HashMap()` / `put` / `get` | ❌ **当时不能用**（**2026-10-11 已修**，见「17d 前置三件」）。两个类型实参时 `put` 的形参停在擦除后的 `Object` 上，`m.put("a", 7)` 报「没有匹配的方法 'put'（实参：string, int）」 | 17c 的符号表 / 函数表 / 类表**手写**（17d 不用再手写） |
-| `import java.util.ArrayList` | ✅ **能用**（`ArrayList&<int>` / `&<string>`），`add` / `get` / `size` 都通——**恰好一个类型实参**时擦除的 `Object` 形参会被替换回元素类型 | 动态数组用它（`JList`） |
-| `import java.util.HashSet` | ⚠️ 一个类型实参、规则同上，理论上可用，本阶段没用到 | — |
-| 外部类写进类型标注（`Object` / `?Object` / 用户类传给 `Object` 形参） | ✅ **能用**。`var s : Object = "hi"` / `?Object` / `fun f(x : Object)` 都编译通过，`"" + obj` 走 `toString` | 本来可以做标签联合的 `objVal : ?Object`——**实测后没用**（见下） |
-| `?T` 与外部类组合（`?Object`） | ✅ 能用 | — |
+| 问题                                                           | 答案                                                                                                                             | 影响                                           |
+|--------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------|
+| `import java.util.HashMap` + `new HashMap()` / `put` / `get` | ❌ **当时不能用**（**2026-10-11 已修**，见「17d 前置三件」）。两个类型实参时 `put` 的形参停在擦除后的 `Object` 上，`m.put("a", 7)` 报「没有匹配的方法 'put'（实参：string, int）」 | 17c 的符号表 / 函数表 / 类表**手写**（17d 不用再手写）         |
+| `import java.util.ArrayList`                                 | ✅ **能用**（`ArrayList&<int>` / `&<string>`），`add` / `get` / `size` 都通——**恰好一个类型实参**时擦除的 `Object` 形参会被替换回元素类型                     | 动态数组用它（`JList`）                              |
+| `import java.util.HashSet`                                   | ⚠️ 一个类型实参、规则同上，理论上可用，本阶段没用到                                                                                                    | —                                            |
+| 外部类写进类型标注（`Object` / `?Object` / 用户类传给 `Object` 形参）          | ✅ **能用**。`var s : Object = "hi"` / `?Object` / `fun f(x : Object)` 都编译通过，`"" + obj` 走 `toString`                               | 本来可以做标签联合的 `objVal : ?Object`——**实测后没用**（见下） |
+| `?T` 与外部类组合（`?Object`）                                       | ✅ 能用                                                                                                                           | —                                            |
 
 **据此选的值表示：纯 rsf 标签联合 + 自己的对象模型。**
 `Val` 上挂一个 `kind : Kind` 枚举（`INTV / LONGV / FLOATV / DOUBLEV / BOOLV / CHARV /
@@ -544,13 +545,13 @@ rsf 没有异常，只有 `fail` / `!T`。解释器需要四种「跳出去」�
 用户 `fail` 出来的消息不可能以它开头。每种跳出在**离它最近的、能处理它的那一层**被接住，
 接不住就原样重新 `fail`：
 
-| 谁接 | 接什么 |
-| --- | --- |
-| `BLOCK` | `goto`（标签在本块里才接，否则往上传） |
-| `WHILE` | `break` / `continue` |
-| `FOR` | `break` / `continue`（`continue` 要先把循环的「更新」跑一遍再进下一轮） |
-| `TRY` | 真错误；**信号一律原样往上传**（否则 `try { rtn 5 } catch ...` 会把 return 吃掉） |
-| 函数调用 | `return`（值放在 `retVal` 字段上，信号消息只能是字符串） |
+| 谁接      | 接什么                                                          |
+|---------|--------------------------------------------------------------|
+| `BLOCK` | `goto`（标签在本块里才接，否则往上传）                                       |
+| `WHILE` | `break` / `continue`                                         |
+| `FOR`   | `break` / `continue`（`continue` 要先把循环的「更新」跑一遍再进下一轮）          |
+| `TRY`   | 真错误；**信号一律原样往上传**（否则 `try { rtn 5 } catch ...` 会把 return 吃掉） |
+| 函数调用    | `return`（值放在 `retVal` 字段上，信号消息只能是字符串）                        |
 
 另外还有一个**不可接**的信号 `X`：`!!` 打到 null、除以零。Kotlin 版那边抛的是
 `NullPointerException` / `ArithmeticException`，而解释器的 `try` **只接 rsf 自己的错误**，
@@ -558,13 +559,13 @@ rsf 没有异常，只有 `fail` / `!T`。解释器需要四种「跳出去」�
 
 #### 覆盖与结果
 
-| 项 | 结果 |
-| --- | --- |
-| 八个示例（`main` / `class` / `generics` / `errors` / `stdlib` / `arrays` / `files` / `enums`） | stdout 与 Kotlin 版**逐字节相同**（实测合计 222 行） |
-| 8 份刁钻语料 | 同上（递归与数值提升 / 数组越界与负长度 / `&&` `||` 短路副作用 / 枚举 `switch` 分派 / 构造器重载与 `this()` 委托 / 字符串与错误处理 / 控制流全家桶 / 泛型集合与对象数组），实测比了 97 行 stdout |
-| 解释执行 vs `rsf build` + `java -cp` | 八例与语料都逐字节相同（`InterpCli` 走两条路） |
-| 测试 | 216 → **220**（+4），全绿 |
-| 八示例 SHA256 | 与 17b 记录的**逐个相同**（main 606B/`28208184`、class 295B/`D2ECC25E`、generics 234B/`056FD6FE`、errors 371B/`E9C8CDB6`、stdlib 948B/`8F397D2A`、arrays 1119B/`6D1A2875`、files 666B/`6A0C940A`、enums 763B/`3A33A504`）——`rsf run` 与 `rsf build` + `java -cp` 两条路也都逐字节相同。**本阶段一行 Kotlin 主源码都没动**（只加了测试源集里的 4 条测试） |
+| 项                                                                                        | 结果                                                                                                                                                                                                                                                                                                 |
+|------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 八个示例（`main` / `class` / `generics` / `errors` / `stdlib` / `arrays` / `files` / `enums`） | stdout 与 Kotlin 版**逐字节相同**（实测合计 222 行）                                                                                                                                                                                                                                                             |
+| 8 份刁钻语料                                                                                  | 同上（递归与数值提升 / 数组越界与负长度 / `&&` `                                                                                                                                                                                                                                                                     ||` 短路副作用 / 枚举 `switch` 分派 / 构造器重载与 `this()` 委托 / 字符串与错误处理 / 控制流全家桶 / 泛型集合与对象数组），实测比了 97 行 stdout |
+| 解释执行 vs `rsf build` + `java -cp`                                                         | 八例与语料都逐字节相同（`InterpCli` 走两条路）                                                                                                                                                                                                                                                                      |
+| 测试                                                                                       | 216 → **220**（+4），全绿                                                                                                                                                                                                                                                                               |
+| 八示例 SHA256                                                                               | 与 17b 记录的**逐个相同**（main 606B/`28208184`、class 295B/`D2ECC25E`、generics 234B/`056FD6FE`、errors 371B/`E9C8CDB6`、stdlib 948B/`8F397D2A`、arrays 1119B/`6D1A2875`、files 666B/`6A0C940A`、enums 763B/`3A33A504`）——`rsf run` 与 `rsf build` + `java -cp` 两条路也都逐字节相同。**本阶段一行 Kotlin 主源码都没动**（只加了测试源集里的 4 条测试） |
 
 > 注：SHA256 是用 JVM 的**默认 stdout 编码**（本机 cp936）+ CRLF 采样的——中文按 GBK
 > 是 2 字节、按 UTF-8 是 3 字节，编码一变字节数就变。两条后端各自跑、各自采样，
@@ -589,13 +590,13 @@ fc kt.txt rsf2.txt
 凡是不支持的语法/语义，都走 `unsupported(what)` → `fail "17c 解释器暂不支持：…"`，
 由入口打成 `运行期错误: 17c 解释器暂不支持：…` 并 `System.exit(1)`。
 
-| 不支持的东西 | 报什么 |
-| --- | --- |
-| **JVM 互操作**：除 `java.util.ArrayList` / `java.io.File` / `System.getProperty` 之外的外部类与静态方法 | `17c 解释器暂不支持：JVM 静态方法 Math.max()`、`构造 JVM 类 'TreeMap'…`、`成员方法 …` |
-| `pkg` 声明 | **不报错也不做事**（对 `rsf run` 的 stdout 没有可观察影响；`rsf build` 才用得上包名） |
-| `import "别的文件.rsf"`（多文件） | 被导入文件里的东西**不会**被装载，引用到就报 `找不到名字 '…'`——不会静默算出一个空值 |
-| 还没在 `switch (node.kind)` 里列出的语句 / 表达式节点 | `17c 解释器暂不支持：语句 X` / `表达式节点 X` |
-| `string` 上除 `length` / `charAt` / `substring` / `isEmpty` / `contains` / `equals` / `startsWith` / `endsWith` 之外的方法 | `17c 解释器暂不支持：string 的方法 'x'` |
+| 不支持的东西                                                                                                              | 报什么                                                              |
+|---------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------|
+| **JVM 互操作**：除 `java.util.ArrayList` / `java.io.File` / `System.getProperty` 之外的外部类与静态方法                             | `17c 解释器暂不支持：JVM 静态方法 Math.max()`、`构造 JVM 类 'TreeMap'…`、`成员方法 …` |
+| `pkg` 声明                                                                                                            | **不报错也不做事**（对 `rsf run` 的 stdout 没有可观察影响；`rsf build` 才用得上包名）     |
+| `import "别的文件.rsf"`（多文件）                                                                                            | 被导入文件里的东西**不会**被装载，引用到就报 `找不到名字 '…'`——不会静默算出一个空值                 |
+| 还没在 `switch (node.kind)` 里列出的语句 / 表达式节点                                                                             | `17c 解释器暂不支持：语句 X` / `表达式节点 X`                                   |
+| `string` 上除 `length` / `charAt` / `substring` / `isEmpty` / `contains` / `equals` / `startsWith` / `endsWith` 之外的方法 | `17c 解释器暂不支持：string 的方法 'x'`                                     |
 
 **刻意不管的两条边界**（照实写清楚，不假装一致）：
 
@@ -635,10 +636,10 @@ fc kt.txt rsf2.txt
 
 *症状*（原样复现）：
 
-| 命令 | 结果 |
-| --- | --- |
-| `rsf check` | 放行（stderr 0 字节） |
-| `rsf run` | 正常，打 `-5` |
+| 命令          | 结果                                          |
+|-------------|---------------------------------------------|
+| `rsf check` | 放行（stderr 0 字节）                             |
+| `rsf run`   | 正常，打 `-5`                                   |
 | `rsf build` | **崩**：`IllegalStateException: 一元减号的操作数不是数值` |
 
 *根因*：`codegen/BytecodeCompiler.kt` 的一元减号发射只比 `RsfType.INT/LONG/FLOAT/DOUBLE`
@@ -650,13 +651,13 @@ byte / char 在 JVM 栈上本来就是 int，所以仍然是一条 `INEG`：
 
 ```kotlin
 TokenKind.MINUS -> mv.visitInsn(
-    when (val base = model.typeOf(expr.operand).base.promoted()) {
-        RsfBase.INT -> INEG      // byte / char 也落在这里
-        RsfBase.LONG -> LNEG
-        RsfBase.FLOAT -> FNEG
-        RsfBase.DOUBLE -> DNEG
-        else -> throw IllegalStateException("一元减号的操作数不是数值（$base）")
-    },
+when (val base = model.typeOf(expr.operand).base.promoted()) {
+    RsfBase.INT -> INEG      // byte / char 也落在这里
+    RsfBase.LONG -> LNEG
+    RsfBase.FLOAT -> FNEG
+    RsfBase.DOUBLE -> DNEG
+    else -> throw IllegalStateException("一元减号的操作数不是数值（$base）")
+},
 )
 ```
 
@@ -692,11 +693,11 @@ TokenKind.MINUS -> mv.visitInsn(
 *做法*：读 `.class` 时把方法的**泛型签名**也解析出来，记下「第 i 个形参 / 返回值是
 类的第几个形式类型参数」，Checker 再按接收者的类型实参还原：
 
-| 文件 | 改什么 |
-| --- | --- |
-| `interop/ClassPath.kt` | `JvmClass.typeParams`（类签名里形式参数的名字，`<K:...;V:...;>` → `["K","V"]`）；`JvmMethod.paramTypeVars` / `returnTypeVar`（方法签名 `put(TK;TV;)TV;` → 形参 `[0,1]`、返回 `1`）；三个签名解析函数（`classTypeParams` / `methodTypeVars` / `readSignatureType`）。方法**自己的**形式类型参数（`<X:...>`）先跳过——它们遮蔽类的同名参数 |
-| `sema/Checker.kt` | 新增 `erasedActual(type, varIndex, typeArgs)`：形参/返回值是**裸的类类型变量**时按类型实参还原；拿不到签名信息就退回原来的 `substituteElement`（单实参那条老路），所以既有行为不变。`findMethod` 的「装箱后再试一趟」从「只有一个类型实参时」放宽到「只要写了类型实参」——`put("a", 7)` 到 Java 侧是 `put(String, Integer)`，形参是擦除后的 `Object`，不装箱就选不中 |
-| `codegen/BytecodeCompiler.kt`、`interp/Interpreter.kt` | **结果被丢弃时不收敛**（`emitExpr(discard = true)` / `eval(discard = true)`）。这是**必须**的：`put` 的返回值是**旧值**，第一次 put 返回 `null`，静态类型却是 `int`；语句位置照样 CHECKCAST + 拆箱就会 NPE。Java 里 `map.put(k, v)` 当语句写也不拆箱，所以这条跟 Java 一致 |
+| 文件                                                    | 改什么                                                                                                                                                                                                                                                                     |
+|-------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `interop/ClassPath.kt`                                | `JvmClass.typeParams`（类签名里形式参数的名字，`<K:...;V:...;>` → `["K","V"]`）；`JvmMethod.paramTypeVars` / `returnTypeVar`（方法签名 `put(TK;TV;)TV;` → 形参 `[0,1]`、返回 `1`）；三个签名解析函数（`classTypeParams` / `methodTypeVars` / `readSignatureType`）。方法**自己的**形式类型参数（`<X:...>`）先跳过——它们遮蔽类的同名参数 |
+| `sema/Checker.kt`                                     | 新增 `erasedActual(type, varIndex, typeArgs)`：形参/返回值是**裸的类类型变量**时按类型实参还原；拿不到签名信息就退回原来的 `substituteElement`（单实参那条老路），所以既有行为不变。`findMethod` 的「装箱后再试一趟」从「只有一个类型实参时」放宽到「只要写了类型实参」——`put("a", 7)` 到 Java 侧是 `put(String, Integer)`，形参是擦除后的 `Object`，不装箱就选不中                    |
+| `codegen/BytecodeCompiler.kt`、`interp/Interpreter.kt` | **结果被丢弃时不收敛**（`emitExpr(discard = true)` / `eval(discard = true)`）。这是**必须**的：`put` 的返回值是**旧值**，第一次 put 返回 `null`，静态类型却是 `int`；语句位置照样 CHECKCAST + 拆箱就会 NPE。Java 里 `map.put(k, v)` 当语句写也不拆箱，所以这条跟 Java 一致                                                                 |
 
 *已知边界*：类型变量只用**下标**对齐，所以要求子类与父类的形式类型参数顺序一致
 （`LinkedHashMap<K,V> extends HashMap<K,V>`、`TreeMap<K,V> extends AbstractMap<K,V>`
@@ -719,13 +720,13 @@ TokenKind.MINUS -> mv.visitInsn(
 `NEW + DUP + 实参 + INVOKESPECIAL <init>` 与反射 `Constructor.newInstance`。
 实测（`rsfSrc/` 下的临时程序，已删）：
 
-| 写法 | 结果 |
-| --- | --- |
-| `new File("x")` / `new File("dir", "two")` | ✅ 两端一致，重载按个数+类型挑中 |
-| `new ArrayList&<string>()` | ✅ |
-| `new HashMap()`（不写类型实参） | ❌ 报「类型实参个数不对：期望 2 个，实际给了 0 个」——**元数检查**是有意的，不是缺口 |
-| `new StringBuilder(16)` / `.length()` / `.charAt` / `.substring` | ❌ → ✅ **这轮修的**，见下 |
-| `new ArrayList&<string>(4)`（泛型类 + 基本类型实参） | ❌ → ✅ **这轮修的**，见下 |
+| 写法                                                               | 结果                                               |
+|------------------------------------------------------------------|--------------------------------------------------|
+| `new File("x")` / `new File("dir", "two")`                       | ✅ 两端一致，重载按个数+类型挑中                                |
+| `new ArrayList&<string>()`                                       | ✅                                                |
+| `new HashMap()`（不写类型实参）                                          | ❌ 报「类型实参个数不对：期望 2 个，实际给了 0 个」——**元数检查**是有意的，不是缺口 |
+| `new StringBuilder(16)` / `.length()` / `.charAt` / `.substring` | ❌ → ✅ **这轮修的**，见下                                |
+| `new ArrayList&<string>(4)`（泛型类 + 基本类型实参）                        | ❌ → ✅ **这轮修的**，见下                                |
 
 补掉的两个真缺口（都加了两端一致的回归测试）：
 
@@ -745,9 +746,10 @@ TokenKind.MINUS -> mv.visitInsn(
    `getDeclaredMethod` + `trySetAccessible()`。
 
 *验证 ASM 可用性*：**能**。临时 rsf 程序里 `new ClassWriter(ClassWriter.COMPUTE_FRAMES)`
+
 + `visit` / `visitMethod` / `visitInsn` / `toByteArray()` 全部走通，
-生成的 `byte[]` 拿给 `ClassLoader.defineClass` 定义出来、反射调它的方法返回 42——
-一轮真实的「生成 → 变形 → 调用」闭环。
+  生成的 `byte[]` 拿给 `ClassLoader.defineClass` 定义出来、反射调它的方法返回 42——
+  一轮真实的「生成 → 变形 → 调用」闭环。
 
 ASM 在**编译器的运行期 classpath** 上（`build.gradle` 的
 `implementation 'org.ow2.asm:asm:9.9.1'` + `asm-util`，`gradlew jar` 打的是胖包），
@@ -791,10 +793,10 @@ ASM 在**编译器的运行期 classpath** 上（`build.gradle` 的
 读 `-Drsf.backend.file` / `-Drsf.backend.out`；rsf 的 `main` 收不到命令行参数）。
 架构是**两阶段**，与 Kotlin 版一一对应：
 
-| rsf 侧 | Kotlin 侧 | 干什么 |
-| --- | --- | --- |
-| `Walker`（`walkStmt` / `walkExpr`） | `ir/Lowering.kt` | 建符号表 / 槽位 / 跳转回填，把语句降成一维 `Ins[]` 指令表 |
-| `Gen` + `emitIns` / `emitExpr` | `codegen/BytecodeCompiler.kt` | 拿 ASM 的 `MethodVisitor` 逐条发指令 |
+| rsf 侧                             | Kotlin 侧                      | 干什么                                  |
+|-----------------------------------|-------------------------------|--------------------------------------|
+| `Walker`（`walkStmt` / `walkExpr`） | `ir/Lowering.kt`              | 建符号表 / 槽位 / 跳转回填，把语句降成一维 `Ins[]` 指令表 |
+| `Gen` + `emitIns` / `emitExpr`    | `codegen/BytecodeCompiler.kt` | 拿 ASM 的 `MethodVisitor` 逐条发指令        |
 
 类表 / 函数表 / 枚举表 / 字段表**都是手写平行数组 + 线性查 + 满则翻倍**
 （`findImport:735` / `findClass:744` / `findEnum:753` / `putFld:769` / `fldOf:785`）——rsf 用不了
@@ -839,18 +841,18 @@ ASM 在**编译器的运行期 classpath** 上（`build.gradle` 的
 所有不支持的构造都走 `g.bad(what)` → `setFailed("17d 后端暂不支持：" + what)`，
 由入口打成 `17d 后端暂不支持：…` 并以非 0 退出码结束。按类别：
 
-| 类别 | 报错文本（`…` 是具体名字/类型） |
-| --- | --- |
-| 顶层声明 | `包声明 pkg …`（pkg 还不支持）、`import 形式 …`、`类成员 …`、`函数 …` |
-| 类型 / 泛型 | `泛型类型 …`（`&<` 括号不配对或实参解析失败）、`非泛型类型 …`（内置/JVM 类型带了实参）、`类型实参个数不符 …`、`类型参数不能带类型实参 …`、`可空数组类型 …`（`?T[]`）、`可空 void`、`空类型`、`类型 …` |
-| 类型转换 | `可空类型转换 A → B`、`数值转换 A → B` |
-| 调用 / 构造 | `函数调用 …()`、`重载调用 …（实参个数 n 没有匹配）`、`成员方法 T.x()`、`按类名调用实例方法 R.x()`、`类 R 的方法 x()（n 个参数）`、`构造对象 new …`、`构造 … 的第 n 个实参类型不匹配`、`类 … 没有 n 个参数的构造器`、`类 … 只有一个隐式无参构造器，却给了 n 个实参`、`构造器委托 this(...)`、`JDK 构造器 …（n 个参数）`、`JDK 静态方法 R.x()` |
-| 成员 / 下标 | `成员访问 .…`、`成员 …`、`静态字段 R.x`、`类 R 没有字段 x`、`对非数组做下标访问`、`下标赋值`（对非数组） |
-| 运算符 | `对非数值取负`、`算术运算 A + B`、`比较 A 与 B`、`三目两支的类型推不出来（A / B）`、`?: 两支的类型推不出来（A / B）` |
-| 语句 / 赋值 | `语句 …`、`变量声明`、`变量 …`、`未声明的变量 …`、`赋值`、`字段赋值`、`给不可变字段赋值：…`、`给字段赋值 T.x`、`把 T 赋给 U`、`对未声明变量赋值：…`、`指令 …`（内部错误） |
-| 控制流 | `循环外的 break`、`循环外的 continue`、`switch`（形状不对）、`switch 的表达式不是枚举（T）`、`switch 分支的枚举常量 E.V`、`switch 分支枚举类型不一致（A / B）`、`goto / 分支的标签没有定义（内部错误）` |
-| 枚举 | `对枚举 R 调方法`、`枚举 R 没有常量 x` |
-| `this` | `… 需要 this，但当前是 static 方法`、`…（不在类里）` |
+| 类别                 | 报错文本（`…` 是具体名字/类型）                                                                                                                                                                                                                                                                                                                                                             |
+|--------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 顶层声明               | `包声明 pkg …`（pkg 还不支持）、`import 形式 …`、`类成员 …`、`函数 …`                                                                                                                                                                                                                                                                                                                             |
+| 类型 / 泛型            | `泛型类型 …`（`&<` 括号不配对或实参解析失败）、`非泛型类型 …`（内置/JVM 类型带了实参）、`类型实参个数不符 …`、`类型参数不能带类型实参 …`、`可空数组类型 …`（`?T[]`）、`可空 void`、`空类型`、`类型 …`                                                                                                                                                                                                                                                    |
+| 类型转换               | `可空类型转换 A → B`、`数值转换 A → B`                                                                                                                                                                                                                                                                                                                                                    |
+| 调用 / 构造            | `函数调用 …()`、`重载调用 …（实参个数 n 没有匹配）`、`成员方法 T.x()`、`按类名调用实例方法 R.x()`、`类 R 的方法 x()（n 个参数）`、`构造对象 new …`、`构造 … 的第 n 个实参类型不匹配`、`类 … 没有 n 个参数的构造器`、`类 … 只有一个隐式无参构造器，却给了 n 个实参`、`构造器委托 this(...)`、`JDK 构造器 …（n 个参数）`、`JDK 静态方法 R.x()`                                                                                                                                                    |
+| 成员 / 下标            | `成员访问 .…`、`成员 …`、`静态字段 R.x`、`类 R 没有字段 x`、`对非数组做下标访问`、`下标赋值`（对非数组）                                                                                                                                                                                                                                                                                                              |
+| 运算符                | `对非数值取负`、`算术运算 A + B`、`比较 A 与 B`、`三目两支的类型推不出来（A / B）`、`?: 两支的类型推不出来（A / B）`                                                                                                                                                                                                                                                                                                    |
+| 语句 / 赋值            | `语句 …`、`变量声明`、`变量 …`、`未声明的变量 …`、`赋值`、`字段赋值`、`给不可变字段赋值：…`、`给字段赋值 T.x`、`把 T 赋给 U`、`对未声明变量赋值：…`、`指令 …`（内部错误）                                                                                                                                                                                                                                                                      |
+| 控制流                | `循环外的 break`、`循环外的 continue`、`switch`（形状不对）、`switch 的表达式不是枚举（T）`、`switch 分支的枚举常量 E.V`、`switch 分支枚举类型不一致（A / B）`、`goto / 分支的标签没有定义（内部错误）`                                                                                                                                                                                                                                       |
+| 枚举                 | `对枚举 R 调方法`、`枚举 R 没有常量 x`                                                                                                                                                                                                                                                                                                                                                      |
+| `this`             | `… 需要 this，但当前是 static 方法`、`…（不在类里）`                                                                                                                                                                                                                                                                                                                                           |
 | 阶段 20 的新语法（D10 缺口） | `interface` / `override`：`rsfSrc/bootstrap/{Lexer,Parser,Backend}.rsf` **尚未同步**，rsf 版编译器编到这类源码在**解析层**就退出——实测 `[rsf-17d] 解析失败：顶层只能写函数声明，格式是 '[public\|protected\|private] [static] fun [类型] 名字() 返回子句 函数体'`（`public interface Greeter { … }` 与类里写 `override fun` 两种写法实测**同一条**，探针 `build/verify20/scratch/rsfIf/{I,O}.rsf`）。补表时**必须按接口发 `INVOKEINTERFACE`**，否则 B 与 Kotlin 产物分叉 |
 
 **测试与回归**：本阶段**只动 rsf 源码**（`rsfSrc/bootstrap/Backend.rsf`、`Parser.rsf`）与文档，
@@ -968,16 +970,17 @@ rsf 侧 `walkStmt` 的 `THIS_CALL` 分支原来什么都不登记，行号便无
 的 `emitOrElseCall` 四条路走（内置 → 隐式调用 → 顶层/类方法 → 成员），合成方法仍挂 `ctx.owner`
 对应的 writer 类（`g.cwNames[g.cwCount - 1]`）。
 **独立验收**：6 个探针（`build/verify17e/probeBC/{S,ARG,ModMain}.rsf` + `pkgapp/a/b/PkgMain.rsf`
+
 + 既有 `build/verify17e/probe/{M,I}.rsf`）与 Kotlin 产物**逐字节相同、运行输出相同**；3 条负例
-（`pkg` 目录不匹配 / `module` 目录不存在 / `module` 空目录）两端都 exit 1、零 `.class`；
-J1 9/9（126 类）、J3 不动点 0 差异、J5 248 全绿、八示例锚点 8/8 不变。
-**仍存边界（已定格，不静默算错）**：装载器报错里的路径候选是**相对路径**（Kotlin 是绝对路径，
-`Sources.rsf` 头部已声明该刻意差异）；rsf CLI 的装载器错误仍只有 `[rsf-17d]` 前缀、没有
-`file:line:col`；`module` 内文件自己写 `pkg` 时只做位置校验、其 `pkg` 被忽略（`rootPackage` 只有一个
-名额，与 Kotlin 一致）；`File.listFiles()` 返回 null 无兜底（调用前已过 `isDirectory()`，实际不可达）；
-`?:` 左边的**外部 JVM 成员调用**按 Kotlin `isErrorCall` 口径走普通可空检查、不进 `emitErrorCallElvis`。
-④ 其余按 `g.bad` 站点归类的既定边界不变（泛型类型实参文本、`switch` 非枚举、按类名调实例方法、
-非 `PrintStream`/`File`/`StringBuilder`/`ArrayList`/`HashMap` 的 JDK 成员等）。
+  （`pkg` 目录不匹配 / `module` 目录不存在 / `module` 空目录）两端都 exit 1、零 `.class`；
+  J1 9/9（126 类）、J3 不动点 0 差异、J5 248 全绿、八示例锚点 8/8 不变。
+  **仍存边界（已定格，不静默算错）**：装载器报错里的路径候选是**相对路径**（Kotlin 是绝对路径，
+  `Sources.rsf` 头部已声明该刻意差异）；rsf CLI 的装载器错误仍只有 `[rsf-17d]` 前缀、没有
+  `file:line:col`；`module` 内文件自己写 `pkg` 时只做位置校验、其 `pkg` 被忽略（`rootPackage` 只有一个
+  名额，与 Kotlin 一致）；`File.listFiles()` 返回 null 无兜底（调用前已过 `isDirectory()`，实际不可达）；
+  `?:` 左边的**外部 JVM 成员调用**按 Kotlin `isErrorCall` 口径走普通可空检查、不进 `emitErrorCallElvis`。
+  ④ 其余按 `g.bad` 站点归类的既定边界不变（泛型类型实参文本、`switch` 非枚举、按类名调实例方法、
+  非 `PrintStream`/`File`/`StringBuilder`/`ArrayList`/`HashMap` 的 JDK 成员等）。
 
 ### 17c 的下一步（rsf 版解释器）—— 已完成，保留作历史记录
 
@@ -1002,19 +1005,19 @@ J1 9/9（126 类）、J3 不动点 0 差异、J5 248 全绿、八示例锚点 8/
 （临时程序已删，不进仓库），两条后端输出逐字节一致（372 字节 / SHA256 `87E525F1…`）。
 逐条对应关系：
 
-| `Lexer.rsf` 现状（阶段 17a） | 用 enum + switch 怎么写 |
-| --- | --- |
-| `class TokenKind { public static fun eof() -> string { rtn "EOF" } ... }` | `enum TokenKind { EOF, IDENT, INT_LIT, ... }` + `TokenKind.EOF` |
-| `var kind : string = TokenKind.intLit()` | `var kind : TokenKind = TokenKind.INT_LIT` |
-| `if (kind == TokenKind.longLit()) { rtn "Long" }`（`typeNameOf` 那种十几条 if 链） | `switch (kind) { case TokenKind.LONG_LIT : rtn "Long" ... }`；**保留 if 链也照样能编译** |
-| `if (kind == "KW_TRUE") { ... }`（和字符串字面量比） | `if (kind == TokenKind.KW_TRUE) { ... }` |
-| `fun keywordKind(word : string) -> string { ... rtn "" }`（**空串**当「没找到」） | `fun keywordKind(word : string) -> ?TokenKind { ... rtn null }` + `if (k == null)` / `k!!` / `k ?: 兜底` |
-| `fun punctKind(c : char) -> string` | 同上，返回 `?TokenKind` |
-| `fun add(kind : string, text : string, ...)`（kind 当普通参数） | `fun add(kind : TokenKind, ...)` |
-| `var kind = punctKind(c); if (kind.length() == 0) { ... }` | `var k = punctKind(c); if (k == null) { ... }`（**「空串哨兵」换成 null，这是唯一需要动脑的地方**） |
-| `padRight(t.kindName(), 12)`（dump 需要**名字文本**） | `padRight("" + t.kind, 12)`——字符串拼接自动调 `toString()`，出来的就是值名 |
-| 42 条关键字表（`put("if", "KW_IF")` 之类） | 照旧一张表，只是值的类型从 `string` 变成 `TokenKind`（数组 `TokenKind[]` 两端都通） |
-| `if (c == '/' && peek(1) == '/')`（只能嵌套 if 写） | 一行写完，右边在左边为假时**不会被求值** |
+| `Lexer.rsf` 现状（阶段 17a）                                                     | 用 enum + switch 怎么写                                                                                    |
+|----------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------|
+| `class TokenKind { public static fun eof() -> string { rtn "EOF" } ... }`  | `enum TokenKind { EOF, IDENT, INT_LIT, ... }` + `TokenKind.EOF`                                        |
+| `var kind : string = TokenKind.intLit()`                                   | `var kind : TokenKind = TokenKind.INT_LIT`                                                             |
+| `if (kind == TokenKind.longLit()) { rtn "Long" }`（`typeNameOf` 那种十几条 if 链） | `switch (kind) { case TokenKind.LONG_LIT : rtn "Long" ... }`；**保留 if 链也照样能编译**                         |
+| `if (kind == "KW_TRUE") { ... }`（和字符串字面量比）                                 | `if (kind == TokenKind.KW_TRUE) { ... }`                                                               |
+| `fun keywordKind(word : string) -> string { ... rtn "" }`（**空串**当「没找到」）    | `fun keywordKind(word : string) -> ?TokenKind { ... rtn null }` + `if (k == null)` / `k!!` / `k ?: 兜底` |
+| `fun punctKind(c : char) -> string`                                        | 同上，返回 `?TokenKind`                                                                                     |
+| `fun add(kind : string, text : string, ...)`（kind 当普通参数）                   | `fun add(kind : TokenKind, ...)`                                                                       |
+| `var kind = punctKind(c); if (kind.length() == 0) { ... }`                 | `var k = punctKind(c); if (k == null) { ... }`（**「空串哨兵」换成 null，这是唯一需要动脑的地方**）                          |
+| `padRight(t.kindName(), 12)`（dump 需要**名字文本**）                              | `padRight("" + t.kind, 12)`——字符串拼接自动调 `toString()`，出来的就是值名                                             |
+| 42 条关键字表（`put("if", "KW_IF")` 之类）                                          | 照旧一张表，只是值的类型从 `string` 变成 `TokenKind`（数组 `TokenKind[]` 两端都通）                                           |
+| `if (c == '/' && peek(1) == '/')`（只能嵌套 if 写）                               | 一行写完，右边在左边为假时**不会被求值**                                                                                 |
 
 两个必须记住的差别（不影响可行性，但改写时要按新形状写）：
 
@@ -1028,10 +1031,10 @@ J1 9/9（126 类）、J3 不动点 0 差异、J5 248 全绿、八示例锚点 8/
 不认识新记号，所以现在那条「rsf 版词法器与 Kotlin 版 token 流逐条一致」的差分对拍
 只覆盖阶段 19c 之前的样例（用了新语法的 `enums.rsf` 被分流到另一条测试里显式记录差异）。
 
-**另一件顺手的小事**：三处编辑器关键字表按惯例要一起改（编译器 `EditorSupport.KEYWORDS`、
-IDEA 插件的 `RsfKeywords` + `RsfLexer` 运算符表、VS Code 的 tmLanguage）。
-阶段 19c 只改了**编译器自己那一处**，IDEA 插件与 VS Code 扩展还没同步——
-那边还各有一条「与 `Lexer.KEYWORDS` 逐条对齐」的快照测试要跟着更新。纯高亮问题，不挡自举。
+**另一件顺手的小事**：两处编辑器关键字表按惯例要一起改（编译器 `EditorSupport.KEYWORDS`、
+IDEA 插件的 `RsfKeywords` + `RsfLexer` 运算符表）。阶段 19c 只改了**编译器自己那一处**，
+IDEA 插件那张表漏了 `enum`/`switch`/`case`——那边还有一条「与 `Lexer.KEYWORDS` 逐条对齐」的
+快照测试要跟着更新。阶段 21 补齐了这三只词，并加了 `EditorKeywordParityTest` 直接读源码守着两边。纯高亮问题，不挡自举。
 
 ---
 
@@ -1052,7 +1055,8 @@ IDEA 插件的 `RsfKeywords` + `RsfLexer` 运算符表、VS Code 的 tmLanguage�
 
 自举时「用一个类表示 Token / AST 节点」会大量用到构造器，而老写法（`fun 类名(...)`）一个类只能有一个，
 于是把构造器的语法与语义重新定了一遍：主构造写在类头、次构造用 `constructor(...)`、委托用 `this(...)`，
-并放开**构造器重载**（方法重载后来在阶段 19d 单独做了，见下文；当时仍然不做）。它不挡 16b / 17，但先做完能让后面写 rsf 版编译器时少绕路。
+并放开**构造器重载**（方法重载后来在阶段 19d 单独做了，见下文；当时仍然不做）。它不挡 16b / 17，但先做完能让后面写 rsf
+版编译器时少绕路。
 
 ## 顺手该补的小项（不挡路，但自举时天天用）
 
@@ -1113,18 +1117,18 @@ IDEA 插件的 `RsfKeywords` + `RsfLexer` 运算符表、VS Code 的 tmLanguage�
 2. **字段**：`var 名字 : 类型 = 初值` —— **Kotlin 后缀风格**（类型写在名字后面，
    与局部变量一致），**初值必填**（避开「字段没初始化」，JVM 默认值那套就不用操心了）
 3. **变量**：`var 名字 : 类型 = 初值`，类型可省（`var x = 0` 靠推断）。
-   - **`var` 是唯一写法**（2026-10-11 用户拍板）：可变变量/字段的关键字由 `varis` **改名**而来。
-     `varis` 不再接受，写了直接报
-     `error[lexer]: 'varis' 已改名为 'var'：请写成 'var x : int = 0'`。
-     `imutvar` **没改名、语义也没变**。
-   - 它**不在关键字表里**（`Lexer.KEYWORDS` / `Lexer.rsf` 的 `keywordKind` 仍是 **45 项**、
-     与 rsf 版逐条对齐），拦它靠词法器里一条独立判断——所以 `varis` 出现在哪儿都报同一句话。
-   - 老写法 `varis int x = 0`（类型写在名字**前面**）**已废弃**（2026-10-08 起报错，提示改成后缀风格）
+    - **`var` 是唯一写法**（2026-10-11 用户拍板）：可变变量/字段的关键字由 `varis` **改名**而来。
+      `varis` 不再接受，写了直接报
+      `error[lexer]: 'varis' 已改名为 'var'：请写成 'var x : int = 0'`。
+      `imutvar` **没改名、语义也没变**。
+    - 它**不在关键字表里**（`Lexer.KEYWORDS` / `Lexer.rsf` 的 `keywordKind` 现在是 **51 项**、
+      与 rsf 版逐条对齐；2026-10-15 自举同步从 45 项补到 51 项），拦它靠词法器里一条独立判断——所以 `varis` 出现在哪儿都报同一句话。
+    - 老写法 `varis int x = 0`（类型写在名字**前面**）**已废弃**（2026-10-08 起报错，提示改成后缀风格）
 4. **参数**：**两种风格都收、同一个表里可以混写** —— Java 风格 `int a` / Kotlin 风格 `a : int`。
    泛型 `&<...>`、数组 `[]`、可空 `?T` 两种风格下都自动可用
-   - **泛型实参表的规范写法是无空格**的 `Box&<int>`（2026-10-11 起全库统一）。
-     带空格的 `Box &<int>` **仍然能编译**（词法上空白本来就不重要，**刻意不打死**），
-     但新写的代码与文档一律不带空格。
+    - **泛型实参表的规范写法是无空格**的 `Box&<int>`（2026-10-11 起全库统一）。
+      带空格的 `Box &<int>` **仍然能编译**（词法上空白本来就不重要，**刻意不打死**），
+      但新写的代码与文档一律不带空格。
 5. **返回子句**：只有 `-> T` 和 `:: T` 两种写法（`:` 那条别名 2026-10-08 已删除，
    理由：`:` 现在专门留给「名字 : 类型」和「if c : 语句」）
 6. **构造对象**：`new` 可以省 —— `Point(1, 2)` 等价于 `new Point(1, 2)`。
@@ -1140,29 +1144,30 @@ IDEA 插件的 `RsfKeywords` + `RsfLexer` 运算符表、VS Code 的 tmLanguage�
 
 ## 阶段进度
 
-| 阶段 | 状态 |
-| --- | --- |
-| `protected` 关键字（本文件之外的追加需求） | ✅ 已实现：`ACC_PROTECTED`；Checker 补了可见性规则 |
-| `static` 关键字 | ✅ 已实现：签名里的 `<static>` 槽 |
-| 12 · 语法层 | ✅ **完成**：`class` / 字段 / 方法 / 构造器 / `new` / `this` 都能解析成 AST，`Program.classes` 与 `SourceLoader` 已带上类；编辑器关键字表（编译器补全 / IDEA 插件 / VS Code 语法）同步 |
-| 12 · 语义层 | ✅ **完成**：类符号表、字段与方法解析、构造器实参匹配、`static`/实例调用方式校验、`private` 成员、`imutvar` 字段只读、未知成员报错时列出可用成员；类型引用接受类名（字段/参数/返回/局部变量都行）；字段赋值语法（`p.x = 1`、`this.x = 1`、方法体里的裸字段名 `x = ...`） |
-| 12 · 后端 | ✅ **完成**：解释器对象模型 + 字节码生成（`NEW` / `<init>` / `GETFIELD` / `PUTFIELD`）+ 两端一致性测试 |
-| 13 · 数组 `T[]` | ✅ **完成**：类型后缀 / `new T[n]` / `a[i]` / `a.length` / 嵌套数组 / 越界两端同一条错误；`rsfSrc/lang/arrays.rsf` + 8 条新测试 |
-| 14 · `!T` + `try`/`catch` | ✅ **完成**：`fail` / `?:` 兜底 / `!!` 上抛 / `try`+`catch`（按 pc 区间的处理器表，和 JVM 异常表同构） |
-| 15 · 泛型（可选） | ✅ **完成**：`class Box&<T>` + 擦除语义 + JVM 集合互操作 |
-| 16a · `byte`/`char` + 标准库切片 | ✅ **完成**：`toByte` / `toChar` / `charToInt` / `parseInt` / 字符分类… |
-| 16b · `byte[]` + 文件落盘 | ✅ **完成**：`ClassPath.typeFromDescriptor` 认数组签名（`[B` → `byte[]`）、四个文件函数（`readText`/`writeText`/`readBytes`/`writeBytes`，都是 `!T`）两端消息一字不差、`rsfSrc/lang/files.rsf` 示例 + 两端一致性测试 |
-| 17 · 自举闭环 | 🚧 **17a 已完成**（2026-10-08）：`rsfSrc/bootstrap/Lexer.rsf`（1011 行，纯库；17a 冻结版是 955 行，17b 补了阶段 19c 的三关键字两记号，2026-10-11 的 `varis`→`var` 迁移又补了老写法拦截）+ `LexerCli.rsf`（40 行入口）；token 流与 Kotlin 版逐条相同（`rsfSrc/lang/**` 全部 16 个 .rsf + 刁钻写法 + 边角形态，编译产物与解释执行两条路都验过），5 条差分测试。**17b 也已完成**（2026-10-08）：`Parser.rsf`（1919 行，纯库）+ `ParserCli.rsf`（62 行入口）；语法树与 Kotlin 版逐行相同（见下面「17b 实际做法」）；17a 的词法器补齐阶段 19c 的三关键字两记号；测试 211 → 216。**17c 也已完成**（2026-10-08）：`Interp.rsf`（2277 行，纯库）+ `InterpCli.rsf`（64 行入口）；八个示例 + 8 份刁钻语料的 stdout 与 Kotlin 版**逐字节相同**，解释与编译两条路都验过；测试 216 → 220。**17d 前置三件也已完成**（2026-10-11）：`byte`/`char` 一元负号的后端缺陷、`HashMap&<K, V>` 多类型实参的擦除互操作、外部类 `new` 的确认与补全（见上面「17d 前置三件」）；测试 221 → **234**（新增 `src/test/kotlin/org/example/InteropTest.kt` 13 条），八示例 SHA256 逐个不变；**17d 字节码后端现在可以开始**。**17d 也已完成**（2026-10-13）：`Backend.rsf`（4929 行，纯库）+ `BackendCli.rsf`（111 行入口）；八示例共 **20 个 `.class` 与 Kotlin 版逐字节相同**（对拍口径与暂不支持清单见上面「17d 实际做法」），运行期 stdout / stderr 也逐个一致；测试仍是 248（本阶段只加 rsf 源码，Kotlin 侧一行没动）。**17e 也已完成**（2026-10-13）：新增装载器 `rsfSrc/bootstrap/Sources.rsf`（多文件 `import "x.rsf"`，语义对齐 `SourceLoader.kt`）、补齐 ASM 26 条 + `java/*` 12 条互操作与 JDK 静态字段机制、顺带修掉 6 处 17d 遗留缺陷；**三阶段闭环成立**——A（Kotlin 编 `BackendCli.rsf`，30 个类）能编 `rsfSrc/bootstrap/` 下 9 个源，A 的产物与 B 的产物 **126 个 `.class` 逐字节相同（B ≡ C）**，八示例经 rsf 版后端编出来的产物与 Kotlin 版**字节级也全同**，`gradlew test` **248 全绿**、八示例 SHA256 与历轮锚点逐个不变；与 Kotlin 产物逐字节相同这一条 **2026-10-14 也已全同**（补齐次构造器的 `LineNumberTable`：`walkStmt` 的 `THIS_CALL` 分支多登记一条零码 `label` 指令，对齐 Kotlin 的 `ICtorDelegate`；修后四个 CLI 源 `diff -r` 全部 0 差异），三处已知缺口于 **2026-10-14 补齐**（`pkg` 声明、`module "目录"` 导入、`?:` 左边的成员/隐式调用；实现对齐 `SourceLoader.kt` 与 `BytecodeCompiler.kt:1795-1872`，6 个探针与 Kotlin 产物逐字节相同 + 运行输出相同，3 条负例两端都拒绝，回归仍 248 全绿、八示例锚点不变）。细节见上面「17e 第一步实际做法与结果」 |
-| 18 · 构造器（主构造 + 次构造 + 委托） | ✅ **完成**：`class P(参数)` 主构造（参数在字段初值里可见）/ `constructor(...)` 可写多个（按实参在编译期挑；阶段 19d 起构造器**不再是**唯一能重载的东西）/ `this(...)` 首句委托（有主构造时次构造必须委托，链不能成环）；每个构造器一条 `<init>`，两端逐字节一致（5 条新测试 + `rsfSrc/lang/class.rsf`、`rsfSrc/lang/arrays.rsf` 已改用新写法） |
-| 19 · 语法现代化（Kotlin 对齐） | ✅ **完成**：变量/字段类型改后缀 `名字 : 类型`；参数两种风格可混写；返回子句删掉 `:` 只留 `->` / `::`；`fun`/`class` 缺省即 `public` 并在清单里显式显示；构造对象可省 `new` |
-| — · 语法/风格迁移（`varis`→`var`、泛型实参无空格） | ✅ **完成（2026-10-11）**：可变变量/字段的关键字由 `varis` **改名**为 `var`，`varis` 不再接受（**词法层**一条独立判断拦下，报 `'varis' 已改名为 'var'：请写成 'var x : int = 0'`；关键字表仍是 **45 项**、与 rsf 版 `keywordKind` 逐条对齐，`varis` **不在表内**）；`imutvar` 未改名未改语义。全库 ` &<` → `&<`（`Box&<int>` 为规范写法，**带空格仍可编译**，刻意不打死）。覆盖面：编译器词法/语法/KDoc、**自举六个 `.rsf`**（`Lexer.rsf` 补同一条拦截 + `legacyVarMessage()`）、`rsfSrc/lang/**` 全部示例、`RsfTest.kt` 源码字符串、README/BOOTSTRAP、IDEA 插件（`RsfTokenType`/`RsfLexer`/`RsfColorSettingsPage`/快照测试）与 VS Code（tmLanguage / snippets / `tools/tokenize-check.js`）。实测替换：`KW_VARIS`→`KW_VAR` 11 处、`varis`→`var` 1707 处、` &<`→`&<` 325 处（45 个文件）；新增 1 条测试（220 → 221），八示例 SHA256 逐个不变 |
-| 19b · `catch` 双风格 + 编辑器关键字表补全 | ✅ **完成**：`Parser.parseTry` 同时收 `catch (e : string)`（推荐）与 `catch (e string)`（老写法不打死），漏类型时两种写法都提示；`rsfSrc/lang/**`、`RsfTest.kt` 的源码字符串、README/BOOTSTRAP 的示例块统一迁到 Kotlin 风格；IDEA 插件的关键字表补 `pkg`、加了「类型位置上的用户类名」上色，编译器补全表补 `pkg` / `let` / `str` / `boolean`；新增测试 `catch 两种类型写法都能用`（两端逐字节一致） |
-| — · 拼接对象两端一致（既有缺陷） | ✅ **修复**：`emitToString` 对对象类型一律发 `String.valueOf(Ljava/lang/Object;)`（原先发的是不存在的 `valueOf(LXxx;)`，运行期 `NoSuchMethodError`）；给每个用户类生成确定性 `toString()`，格式规则与解释器共用 `sema/Builtins.kt` 的 `ObjectFormat` |
-| 19c · `&&`/`||` + `enum` + `switch`（为 17b 补的三样） | ✅ **完成（2026-10-08）**：`&&` / `||` 真短路（解释器先算左、假就不算右；字节码 `IFEQ`/`IFNE` + `GOTO` 把右边夹在跳转之后），优先级插在 `?:` 与 `==` 之间；`enum`（顶层声明、允许尾逗号、至少一值、值名/重名检查）**编译成普通类**（`public static final` 单例 + 私有 `$name` 字段 + `<clinit>` 构造 + `toString()` 返回值名），两端打印名字逐字节一致；`switch`（只对枚举、`case 枚举名.值名`、默认分支写 `else`、无 fallthrough、**无 else 时必须穷尽**并列出缺的值）用新指令 `ISwitch` 表达，字节码 `DUP`+`GETSTATIC`+`IF_ACMPEQ` 过一层 `POP` 跳板进分支体。测试 190 → 211（+21），七个示例输出 SHA256 不变，新增 `rsfSrc/lang/enums.rsf` 示例 |
-| 19d · 函数/方法重载 | ✅ **完成（2026-10-11）**：顶层函数与用户类方法（实例 + `static`）**共用一套重载解析**——先按实参个数筛，再按类型打分（精确 0 分、加宽按档位距离），最低分者胜；**最低分并列报错并列出全部候选签名**，不静默取声明在前。擦除冲突（`f(Box&<int>)` 与 `f(Box&<string>)`）编译期拒绝、`main` 唯一入口、`!T` 重载、泛型类方法重载、递归/互相调用都覆盖；选中结果只由 Checker 决定一次（`callTargets` / `implicitCalls` / `userMembers`），两端读同一份。测试 234 → **248**（`OverloadTest.kt` 14 条），八示例 stdout 的 SHA256 逐个不变 |
-| 20 · `interface` | ✅ **完成（2026-10-15）**：`interface`（抽象方法 + 默认方法）、接口继承接口、类实现多个接口、`override` 修饰符（可选，写了必须真覆盖）、JVM 接口互操作（`Runnable` / `Comparator&<string>` / `Iterator`）、源码实现类交给 JDK 代码回调（桥方法 + 解释器 `Proxy`）。设计 `DESIGN-20.md`（D1–D10 全按批准值），M0–M5 全绿，实际做法与遗留见下「阶段 20 实际做法与结果」 |
-| 21 · `@interface`（注解） | ⏳ **排在 20 之后**（见下） |
-| 22 · `mathematic`（数学类修饰词） | ⏳ **排在自举之后**（用户 2026-10-13 提出；类里放什么"做到的时候再想"，见下） |
+| 阶段                                 | 状态                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+|------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `protected` 关键字（本文件之外的追加需求）        | ✅ 已实现：`ACC_PROTECTED`；Checker 补了可见性规则                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `static` 关键字                       | ✅ 已实现：签名里的 `<static>` 槽                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| 12 · 语法层                           | ✅ **完成**：`class` / 字段 / 方法 / 构造器 / `new` / `this` 都能解析成 AST，`Program.classes` 与 `SourceLoader` 已带上类；编辑器关键字表（编译器补全 / IDEA 插件）同步                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| 12 · 语义层                           | ✅ **完成**：类符号表、字段与方法解析、构造器实参匹配、`static`/实例调用方式校验、`private` 成员、`imutvar` 字段只读、未知成员报错时列出可用成员；类型引用接受类名（字段/参数/返回/局部变量都行）；字段赋值语法（`p.x = 1`、`this.x = 1`、方法体里的裸字段名 `x = ...`）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| 12 · 后端                            | ✅ **完成**：解释器对象模型 + 字节码生成（`NEW` / `<init>` / `GETFIELD` / `PUTFIELD`）+ 两端一致性测试                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| 13 · 数组 `T[]`                      | ✅ **完成**：类型后缀 / `new T[n]` / `a[i]` / `a.length` / 嵌套数组 / 越界两端同一条错误；`rsfSrc/lang/arrays.rsf` + 8 条新测试                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| 14 · `!T` + `try`/`catch`          | ✅ **完成**：`fail` / `?:` 兜底 / `!!` 上抛 / `try`+`catch`（按 pc 区间的处理器表，和 JVM 异常表同构）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| 15 · 泛型（可选）                        | ✅ **完成**：`class Box&<T>` + 擦除语义 + JVM 集合互操作                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| 16a · `byte`/`char` + 标准库切片        | ✅ **完成**：`toByte` / `toChar` / `charToInt` / `parseInt` / 字符分类…                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| 16b · `byte[]` + 文件落盘              | ✅ **完成**：`ClassPath.typeFromDescriptor` 认数组签名（`[B` → `byte[]`）、四个文件函数（`readText`/`writeText`/`readBytes`/`writeBytes`，都是 `!T`）两端消息一字不差、`rsfSrc/lang/files.rsf` 示例 + 两端一致性测试                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| 17 · 自举闭环                          | 🚧 **17a 已完成**（2026-10-08）：`rsfSrc/bootstrap/Lexer.rsf`（1011 行，纯库；17a 冻结版是 955 行，17b 补了阶段 19c 的三关键字两记号，2026-10-11 的 `varis`→`var` 迁移又补了老写法拦截）+ `LexerCli.rsf`（40 行入口）；token 流与 Kotlin 版逐条相同（`rsfSrc/lang/**` 全部 16 个 .rsf + 刁钻写法 + 边角形态，编译产物与解释执行两条路都验过），5 条差分测试。**17b 也已完成**（2026-10-08）：`Parser.rsf`（1919 行，纯库）+ `ParserCli.rsf`（62 行入口）；语法树与 Kotlin 版逐行相同（见下面「17b 实际做法」）；17a 的词法器补齐阶段 19c 的三关键字两记号；测试 211 → 216。**17c 也已完成**（2026-10-08）：`Interp.rsf`（2277 行，纯库）+ `InterpCli.rsf`（64 行入口）；八个示例 + 8 份刁钻语料的 stdout 与 Kotlin 版**逐字节相同**，解释与编译两条路都验过；测试 216 → 220。**17d 前置三件也已完成**（2026-10-11）：`byte`/`char` 一元负号的后端缺陷、`HashMap&<K, V>` 多类型实参的擦除互操作、外部类 `new` 的确认与补全（见上面「17d 前置三件」）；测试 221 → **234**（新增 `src/test/kotlin/org/example/InteropTest.kt` 13 条），八示例 SHA256 逐个不变；**17d 字节码后端现在可以开始**。**17d 也已完成**（2026-10-13）：`Backend.rsf`（4929 行，纯库）+ `BackendCli.rsf`（111 行入口）；八示例共 **20 个 `.class` 与 Kotlin 版逐字节相同**（对拍口径与暂不支持清单见上面「17d 实际做法」），运行期 stdout / stderr 也逐个一致；测试仍是 248（本阶段只加 rsf 源码，Kotlin 侧一行没动）。**17e 也已完成**（2026-10-13）：新增装载器 `rsfSrc/bootstrap/Sources.rsf`（多文件 `import "x.rsf"`，语义对齐 `SourceLoader.kt`）、补齐 ASM 26 条 + `java/*` 12 条互操作与 JDK 静态字段机制、顺带修掉 6 处 17d 遗留缺陷；**三阶段闭环成立**——A（Kotlin 编 `BackendCli.rsf`，30 个类）能编 `rsfSrc/bootstrap/` 下 9 个源，A 的产物与 B 的产物 **126 个 `.class` 逐字节相同（B ≡ C）**，八示例经 rsf 版后端编出来的产物与 Kotlin 版**字节级也全同**，`gradlew test` **248 全绿**、八示例 SHA256 与历轮锚点逐个不变；与 Kotlin 产物逐字节相同这一条 **2026-10-14 也已全同**（补齐次构造器的 `LineNumberTable`：`walkStmt` 的 `THIS_CALL` 分支多登记一条零码 `label` 指令，对齐 Kotlin 的 `ICtorDelegate`；修后四个 CLI 源 `diff -r` 全部 0 差异），三处已知缺口于 **2026-10-14 补齐**（`pkg` 声明、`module "目录"` 导入、`?:` 左边的成员/隐式调用；实现对齐 `SourceLoader.kt` 与 `BytecodeCompiler.kt:1795-1872`，6 个探针与 Kotlin 产物逐字节相同 + 运行输出相同，3 条负例两端都拒绝，回归仍 248 全绿、八示例锚点不变）。细节见上面「17e 第一步实际做法与结果」 |
+| 18 · 构造器（主构造 + 次构造 + 委托）           | ✅ **完成**：`class P(参数)` 主构造（参数在字段初值里可见）/ `constructor(...)` 可写多个（按实参在编译期挑；阶段 19d 起构造器**不再是**唯一能重载的东西）/ `this(...)` 首句委托（有主构造时次构造必须委托，链不能成环）；每个构造器一条 `<init>`，两端逐字节一致（5 条新测试 + `rsfSrc/lang/class.rsf`、`rsfSrc/lang/arrays.rsf` 已改用新写法）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| 19 · 语法现代化（Kotlin 对齐）              | ✅ **完成**：变量/字段类型改后缀 `名字 : 类型`；参数两种风格可混写；返回子句删掉 `:` 只留 `->` / `::`；`fun`/`class` 缺省即 `public` 并在清单里显式显示；构造对象可省 `new`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| — · 语法/风格迁移（`varis`→`var`、泛型实参无空格） | ✅ **完成（2026-10-11）**：可变变量/字段的关键字由 `varis` **改名**为 `var`，`varis` 不再接受（**词法层**一条独立判断拦下，报 `'varis' 已改名为 'var'：请写成 'var x : int = 0'`；关键字表当时是 **45 项**（2026-10-15 自举同步补到 51 项）、与 rsf 版 `keywordKind` 逐条对齐，`varis` **不在表内**）；`imutvar` 未改名未改语义。全库 ` &<` → `&<`（`Box&<int>` 为规范写法，**带空格仍可编译**，刻意不打死）。覆盖面：编译器词法/语法/KDoc、**自举六个 `.rsf`**（`Lexer.rsf` 补同一条拦截 + `legacyVarMessage()`）、`rsfSrc/lang/**` 全部示例、`RsfTest.kt` 源码字符串、README/BOOTSTRAP、IDEA 插件（`RsfTokenType`/`RsfLexer`/`RsfColorSettingsPage`/快照测试）。实测替换：`KW_VARIS`→`KW_VAR` 11 处、`varis`→`var` 1707 处、` &<`→`&<` 325 处（45 个文件）；新增 1 条测试（220 → 221），八示例 SHA256 逐个不变                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| 19b · `catch` 双风格 + 编辑器关键字表补全      | ✅ **完成**：`Parser.parseTry` 同时收 `catch (e : string)`（推荐）与 `catch (e string)`（老写法不打死），漏类型时两种写法都提示；`rsfSrc/lang/**`、`RsfTest.kt` 的源码字符串、README/BOOTSTRAP 的示例块统一迁到 Kotlin 风格；IDEA 插件的关键字表补 `pkg`、加了「类型位置上的用户类名」上色，编译器补全表补 `pkg` / `let` / `str` / `boolean`；新增测试 `catch 两种类型写法都能用`（两端逐字节一致）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| — · 拼接对象两端一致（既有缺陷）                 | ✅ **修复**：`emitToString` 对对象类型一律发 `String.valueOf(Ljava/lang/Object;)`（原先发的是不存在的 `valueOf(LXxx;)`，运行期 `NoSuchMethodError`）；给每个用户类生成确定性 `toString()`，格式规则与解释器共用 `sema/Builtins.kt` 的 `ObjectFormat`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| 19c · `&&`/`                       |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |` + `enum` + `switch`（为 17b 补的三样） | ✅ **完成（2026-10-08）**：`&&` / `||` 真短路（解释器先算左、假就不算右；字节码 `IFEQ`/`IFNE` + `GOTO` 把右边夹在跳转之后），优先级插在 `?:` 与 `==` 之间；`enum`（顶层声明、允许尾逗号、至少一值、值名/重名检查）**编译成普通类**（`public static final` 单例 + 私有 `$name` 字段 + `<clinit>` 构造 + `toString()` 返回值名），两端打印名字逐字节一致；`switch`（只对枚举、`case 枚举名.值名`、默认分支写 `else`、无 fallthrough、**无 else 时必须穷尽**并列出缺的值）用新指令 `ISwitch` 表达，字节码 `DUP`+`GETSTATIC`+`IF_ACMPEQ` 过一层 `POP` 跳板进分支体。测试 190 → 211（+21），七个示例输出 SHA256 不变，新增 `rsfSrc/lang/enums.rsf` 示例 |
+| 19d · 函数/方法重载                      | ✅ **完成（2026-10-11）**：顶层函数与用户类方法（实例 + `static`）**共用一套重载解析**——先按实参个数筛，再按类型打分（精确 0 分、加宽按档位距离），最低分者胜；**最低分并列报错并列出全部候选签名**，不静默取声明在前。擦除冲突（`f(Box&<int>)` 与 `f(Box&<string>)`）编译期拒绝、`main` 唯一入口、`!T` 重载、泛型类方法重载、递归/互相调用都覆盖；选中结果只由 Checker 决定一次（`callTargets` / `implicitCalls` / `userMembers`），两端读同一份。测试 234 → **248**（`OverloadTest.kt` 14 条），八示例 stdout 的 SHA256 逐个不变                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| 20 · `interface`                   | ✅ **完成（2026-10-15）**：`interface`（抽象方法 + 默认方法）、接口继承接口、类实现多个接口、`override` 修饰符（可选，写了必须真覆盖）、JVM 接口互操作（`Runnable` / `Comparator&<string>` / `Iterator`）、源码实现类交给 JDK 代码回调（桥方法 + 解释器 `Proxy`）。设计 `DESIGN-20.md`（D1–D10 全按批准值），M0–M5 全绿，实际做法与遗留见下「阶段 20 实际做法与结果」                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| 21 · `@interface`（注解）              | ✅ **完成（2026-10-15）**：注解声明（元素 + 默认值 + 伴生实体）、`@` 使用点、方案 B 访问器、字节码与解释器两端逐字节一致；设计 `DESIGN-21.md`，M0–M4 全绿（456 条测试、J1 126 类不动点、八示例锚点不变），M5 收尾中 |
+| 23 · 显式指针（C 风格）                  | ⏳ **计划（2026-10-15 用户提出）**：想要 `&x` 取地址 / `*p` 解引用 / `p->f` 这套写法（Java/Kotlin 默认隐式引用）；JVM 上没有裸地址，计划分 L1 引用可见 / L2 可写基本类型指针 / L3 数组指针与偏移三档，只加新写法、旧语料零改动，语法等用户写进 `rsfSrc/语法预案/`；见 `DESIGN-23.md` |
+| 24 · 类型转换与类型判断（`as` / `?as` / `is` / `!is`） | ⏳ **计划（2026-10-15 用户拍板语法）**：`x as Foo` 失败抛异常、`x ?as Foo` 失败给 `null`（`?` 前置，不写 `as?`）、`x is Foo` / `x !is Foo` 判类型；只做引用类型与非空收窄，数值转换仍走 `toByte`/`toChar`/`charToInt`/`intToString`/`parseInt`；见 `DESIGN-24.md` |
 
 ## 阶段 20 / 21：`interface` 与 `@interface`（排在自举闭环之后）
 
@@ -1170,16 +1175,20 @@ IDEA 插件的 `RsfKeywords` + `RsfLexer` 运算符表、VS Code 的 tmLanguage�
 
 **为什么排在 17b~17e 之后**：
 
-1. **自举不需要接口。** 17a 与 17b 已经用事实证明了：只靠类、构造器、`enum`、数组、`!T` 就能写出词法器（1011 行）与语法器（1919 行），token 流与语法树都与 Kotlin 版逐字节/逐行一致。而且 `switch` 到位之后，「按 kind 分派的树遍历」（`switch (node.kind) { case NodeKind.BINARY : ... }`）就是这门语言的惯用写法，访问者模式不是必需的——17b 的 `kindName` 那个穷尽 switch 还顺手换来了「漏一个节点种类就编译报错」。把接口插在 17c/17d 前面只会推迟自举，不会让它更容易。
-   - 例外：如果希望自举版编译器**用访问者模式写得漂亮**，接口就得提前——先让它跑起来、之后再重构，是更划算的顺序。
-2. **`@interface` 必须排在 `interface` 后面，顺序不能反。** 这是 JVM 的硬约束：`public @interface Marker { }` 在字节码里就是**一个继承 `java.lang.annotation.Annotation` 的接口**，元素是接口方法，`@Retention` / `@Target` 是加在它头上的元注解。没有接口就没有注解。
+1. **自举不需要接口。** 17a 与 17b 已经用事实证明了：只靠类、构造器、`enum`、数组、`!T` 就能写出词法器（1011 行）与语法器（1919
+   行），token 流与语法树都与 Kotlin 版逐字节/逐行一致。而且 `switch` 到位之后，「按 kind 分派的树遍历」（
+   `switch (node.kind) { case NodeKind.BINARY : ... }`）就是这门语言的惯用写法，访问者模式不是必需的——17b 的 `kindName`
+   那个穷尽 switch 还顺手换来了「漏一个节点种类就编译报错」。把接口插在 17c/17d 前面只会推迟自举，不会让它更容易。
+    - 例外：如果希望自举版编译器**用访问者模式写得漂亮**，接口就得提前——先让它跑起来、之后再重构，是更划算的顺序。
+2. **`@interface` 必须排在 `interface` 后面，顺序不能反。** 这是 JVM 的硬约束：`public @interface Marker { }` 在字节码里就是
+   **一个继承 `java.lang.annotation.Annotation` 的接口**，元素是接口方法，`@Retention` / `@Target` 是加在它头上的元注解。没有接口就没有注解。
 
 **各自解锁什么**：
 
-| 特性 | 解锁的能力 |
-| --- | --- |
-| `interface` | 多态 + **JVM 互操作**：rsf 类可以**实现别人已有的接口**（`Comparator`、`Runnable`、`Iterable`），把 rsf 对象交给 Java API 才真正可用；也让「一个变量装多种实现」成为可能 |
-| `@interface` | ① **标记编译产物**——「`.class` 别被完全当 Java 看」的另一条实现路径（`@RsfCompiled` 注解，用来替代或补充自定义 class 属性）② 语言内的标记与弃用警告 ③ 将来给 codegen 的提示 |
+| 特性           | 解锁的能力                                                                                                                 |
+|--------------|-----------------------------------------------------------------------------------------------------------------------|
+| `interface`  | 多态 + **JVM 互操作**：rsf 类可以**实现别人已有的接口**（`Comparator`、`Runnable`、`Iterable`），把 rsf 对象交给 Java API 才真正可用；也让「一个变量装多种实现」成为可能 |
+| `@interface` | ① **标记编译产物**——「`.class` 别被完全当 Java 看」的另一条实现路径（`@RsfCompiled` 注解，用来替代或补充自定义 class 属性）② 语言内的标记与弃用警告 ③ 将来给 codegen 的提示   |
 
 **语法提案（Kotlin 风格，沿用既定的继承写法，待拍板）**：
 
@@ -1225,19 +1234,22 @@ class Dog2(name : string) : Greeter {
 ```
 
 **M0（开工前的 P0 修复）**：接口类型的接收者调用，字节码后端原来恒发 `INVOKEVIRTUAL` ⇒ 运行期
-`IncompatibleClassChangeError: Found interface java.util.Iterator, but class was expected`，而解释器照常输出——**两端背离**。
+`IncompatibleClassChangeError: Found interface java.util.Iterator, but class was expected`，而解释器照常输出——**两端背离
+**。
 探针 `build/verify17e/probeIF/Iter.rsf`。修法：`ResolvedMethod` 加 `interfaceOwner`（解析时由 `JvmClass.isInterface` 定一次），
 调用点按它选 `INVOKEINTERFACE`，`visitMethodInsn` 第 5 个实参 `isInterface` 同步为 true。
 
 **M1+M2（语法 + 语义）**：`KW_INTERFACE`、`InterfaceDecl`、`ClassDecl.supertypes`、`FuncDecl.body` 可空（抽象方法）、
-编辑器三处（编译器补全 / IDEA / VS Code）；Checker 侧接口表、实现配对（rsf 接口按签名严格配，JVM 接口按名字+参数个数配，
+编辑器两处（编译器补全 / IDEA）；Checker 侧接口表、实现配对（rsf 接口按签名严格配，JVM 接口按名字+参数个数配，
 因为擦除后的签名 rsf 侧写不出来）、源码子类型判定、`new I()` 拒绝、多接口同签名默认方法冲突（D5：类里必须显式覆盖）、
 接口继承成环报错、接口里不许写字段（D3）。父代理补 `promoteCommon`：`?:` 与三目在「错误返回的接口类型 vs 实现类」上
 收敛到**接口**而不是 `Object`（`RsfType.promote` 两类型不同就只给 `java/lang/Object`）。
 
-**M3（两端代码生成）**：接口 `.class` 是 `ACC_PUBLIC|ACC_INTERFACE|ACC_ABSTRACT`、超类 `java/lang/Object` 且**不带 `ACC_SUPER`**、
+**M3（两端代码生成）**：接口 `.class` 是 `ACC_PUBLIC|ACC_INTERFACE|ACC_ABSTRACT`、超类 `java/lang/Object` 且*
+*不带 `ACC_SUPER`**、
 不发字段不发 `<init>`、抽象方法 `ACC_ABSTRACT` 且无 `Code`、默认方法走普通方法发射；类头的 interfaces 数组来自
-`model.superInterfacesOf`；接口方法/默认方法/接口里的隐式调用一律 `INVOKEINTERFACE`（**漏一处就 `IncompatibleClassChangeError`**）；
+`model.superInterfacesOf`；接口方法/默认方法/接口里的隐式调用一律 `INVOKEINTERFACE`（*
+*漏一处就 `IncompatibleClassChangeError`**）；
 接口里的 `__rsf_orelse$N` 必须发 InterfaceMethodref；解释器按运行期真实类虚分派（`callInterfaceMethod` /
 `findInterfaceImplementation` / `findInterfaceDefault`），并新增 `RsfFailure.dispatched` 让默认方法里的 `?:` 兜底认得出失败来源。
 
@@ -1258,19 +1270,20 @@ class Dog2(name : string) : Greeter {
 
 **验收（父代理每轮自己重跑，不看自报）**：
 
-| 项 | 结果 |
-| --- | --- |
-| `gradlew cleanTest test jar` | **318 全绿**（`RsfTest` 222 / `InterfaceTest` 41 / `InterfaceRuntimeTest` 15 / `InteropTest` 14 / `OverloadTest` 14 / `OverrideTest` 12） |
-| `bash build/verify20/run-probes.sh` | **22 通过 / 0 失败**（9 条运行时两端逐字节 + 13 条 javap 形状） |
-| `bash build/verify20/verify-override/check-override.sh` | **13 通过 / 0 失败**（含擦除性：同名源只差 `override` 关键字，三个 `.class` 逐字节相同） |
-| `bash build/verify17e/accept-after.sh` | J1 9/9＝126 类、`diff -r 差异条目=0`、J2 残差段空、J5 八示例锚点 8/8、**失败项合计 0**（自举链无回归） |
-| `pwsh -File build/tmp17d/acc17d.ps1 -Bout build/verify17e/A` | 八示例**结构+运行 8/8**，逐条「字节级也全同」 |
+| 项                                                            | 结果                                                                                                                                    |
+|--------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------|
+| `gradlew cleanTest test jar`                                 | **318 全绿**（`RsfTest` 222 / `InterfaceTest` 41 / `InterfaceRuntimeTest` 15 / `InteropTest` 14 / `OverloadTest` 14 / `OverrideTest` 12） |
+| `bash build/verify20/run-probes.sh`                          | **22 通过 / 0 失败**（9 条运行时两端逐字节 + 13 条 javap 形状）                                                                                         |
+| `bash build/verify20/verify-override/check-override.sh`      | **13 通过 / 0 失败**（含擦除性：同名源只差 `override` 关键字，三个 `.class` 逐字节相同）                                                                         |
+| `bash build/verify17e/accept-after.sh`                       | J1 9/9＝126 类、`diff -r 差异条目=0`、J2 残差段空、J5 八示例锚点 8/8、**失败项合计 0**（自举链无回归）                                                                |
+| `pwsh -File build/tmp17d/acc17d.ps1 -Bout build/verify17e/A` | 八示例**结构+运行 8/8**，逐条「字节级也全同」                                                                                                           |
 
 **遗留与暂不支持（都显式报错或已定格，不静默算错）**：
 
 - **自举版还没同步**：`rsfSrc/**` 的 `Lexer.rsf` / `Parser.rsf` / `Backend.rsf` **还没有 `interface` 与 `override`**
   （D10：本阶段刻意不碰自举源，否则 17e 的 126 类不动点与八示例锚点全要重记）。`RsfTest` 里有一条
-  「rsf 版词法器尚未收 interface（自举同步前的已知差异）」用例把这条差异钉成可见。将来补表时**同样要按接口发 `INVOKEINTERFACE`**，
+  「rsf 版词法器尚未收 interface（自举同步前的已知差异）」用例把这条差异钉成可见。将来补表时*
+  *同样要按接口发 `INVOKEINTERFACE`**，
   否则 B 与 Kotlin 产物又会分叉；`Backend.rsf` 的 JDK 成员表仍没有 `iterator()` 这类成员（落在既有的「暂不支持清单」里）。
 - **类继承不做**（D2）：`class A : SomeClass` 会在 Checker 里显式报「rsf 现在还不支持类继承（本阶段只做接口）」。
 - **跨边界时不支持 `Object` 成员**：`p.toString()` 仍报「类 'P' 里没有方法 'toString'」（属 D2/类继承遗留）。
@@ -1292,22 +1305,22 @@ class Dog2(name : string) : Greeter {
 
 重载分三种情况，**只有第三种动了**：
 
-| 场景 | 支持重载吗 | 挑选规则 |
-| --- | --- | --- |
-| 用户自定义的**顶层函数**与**类方法**（实例 + `static`） | ✅ 支持（阶段 19d） | 见下 |
-| **构造器** | ✅ 支持（阶段 18，**规则不变**） | 按个数筛 → 类型打分（精确 0 分、可隐式转换 1 分）→ **同分取声明在前**（主构造排最前） |
-| **JVM 互操作**（外部类的方法 / 构造器） | ✅ 天然支持（未改） | `MemberResolver` 按精确/加宽打分选；解释器按「声明类 + 精确参数」反射取方法，与字节码选到同一个重载 |
+| 场景                                    | 支持重载吗                | 挑选规则                                                         |
+|---------------------------------------|----------------------|--------------------------------------------------------------|
+| 用户自定义的**顶层函数**与**类方法**（实例 + `static`） | ✅ 支持（阶段 19d）         | 见下                                                           |
+| **构造器**                               | ✅ 支持（阶段 18，**规则不变**） | 按个数筛 → 类型打分（精确 0 分、可隐式转换 1 分）→ **同分取声明在前**（主构造排最前）           |
+| **JVM 互操作**（外部类的方法 / 构造器）             | ✅ 天然支持（未改）           | `MemberResolver` 按精确/加宽打分选；解释器按「声明类 + 精确参数」反射取方法，与字节码选到同一个重载 |
 
 **函数/方法重载的挑选规则**（`Checker.resolveOverload`，顶层函数与类方法**共用同一套机器**）：
 
 1. **先按实参个数筛**：个数不同的候选直接出局；
 2. 再按类型打分，**每个实参的代价相加**：
-   - 精确匹配 → **0 分**；
-   - 隐式**加宽** → 按**档位距离**计分。阶梯是 `byte` 0 < `int` 1 < `long` 2 < `float` 3 < `double` 4，
-     所以 `byte → int` 1 分、`byte → long` 2 分、`int → double` 3 分——**窄加宽压过宽加宽**；
-     `char` **不在阶梯上**（它跟任何数值之间都不能隐式转，见 `RsfType.kt` 的加宽表）；
-   - `null` 字面量给引用类型、`0..127` 的整数字面量给 `byte` 各记 1 分；
-   - 任何一项对不上（含窄化、`char`/`int` 互转、`bool` 给数值形参）→ 这个候选**整个出局**；
+    - 精确匹配 → **0 分**；
+    - 隐式**加宽** → 按**档位距离**计分。阶梯是 `byte` 0 < `int` 1 < `long` 2 < `float` 3 < `double` 4，
+      所以 `byte → int` 1 分、`byte → long` 2 分、`int → double` 3 分——**窄加宽压过宽加宽**；
+      `char` **不在阶梯上**（它跟任何数值之间都不能隐式转，见 `RsfType.kt` 的加宽表）；
+    - `null` 字面量给引用类型、`0..127` 的整数字面量给 `byte` 各记 1 分；
+    - 任何一项对不上（含窄化、`char`/`int` 互转、`bool` 给数值形参）→ 这个候选**整个出局**；
 3. 总分**最低**者胜；**最低分并列就报错**，把并列的候选签名全列出来，
    **绝不静默取「声明在前」**（这正是与构造器规则的**唯一差异**，见下）。
 
@@ -1341,11 +1354,11 @@ class Dog2(name : string) : Greeter {
 
 「这次调用选中哪个 `FuncDecl`」由 Checker 决定一次，写进语义模型：
 
-| 调用形态 | 记在哪 |
-| --- | --- |
-| 顶层函数 `f(...)` | `SemanticModel.callTargets[CallExpr]` |
+| 调用形态                      | 记在哪                                                   |
+|---------------------------|-------------------------------------------------------|
+| 顶层函数 `f(...)`             | `SemanticModel.callTargets[CallExpr]`                 |
 | `对象.m(...)` / `类名.m(...)` | `ClassModel.members[MemberExpr]`（`UserMember.Method`） |
-| 类体里裸写 `m(...)` | `ClassModel.implicitCalls[CallExpr]` |
+| 类体里裸写 `m(...)`            | `ClassModel.implicitCalls[CallExpr]`                  |
 
 解释器与字节码后端**都只读这三张表**，谁都不再自己解析一遍——这正是「两端逐字节一致」
 在重载上的保证方式。字节码那边 `INVOKEVIRTUAL` / `INVOKESTATIC` 本来就带描述符，发射侧没改；
@@ -1396,7 +1409,6 @@ class Dog2(name : string) : Greeter {
 - **`MemberResolver`（外部类方法的重载选择）不动**。
 - 可变参数 / 默认参数仍然不做（那是另一件事）。
 
-
 **阶段 18 的实现口径（和最初的计划不同）**：构造器**复用 `FuncDecl`**（加 `isConstructor` /
 `isPrimary` 两个标记），主构造在解析时合成一个「名字 = 类名、体为空块」的 FuncDecl 塞进
 `ClassDecl.methods` 的最前面。于是槽位分配、降级、解释器、字节码后端一行都不用为构造器分家
@@ -1404,7 +1416,8 @@ class Dog2(name : string) : Greeter {
 要能吃**空指令序列**（主构造体是空的），解释器的 `construct` 改成「实参在调用方求值 → 走到委托链的根
 → 在根构造器的帧里跑字段初值 → 各层构造器体依次跑完」（字段初值因此能引用主构造参数）。
 
-期间的安全网：类与 `new` 在**后端**接通之前一律明确报错（「阶段 12 进行中：已经能通过类型检查与成员解析，解释器对象模型与字节码生成是下一步 12-C」），
+期间的安全网：类与 `new` 在**后端**接通之前一律明确报错（「阶段 12 进行中：已经能通过类型检查与成员解析，解释器对象模型与字节码生成是下一步
+12-C」），
 不会被静默忽略——「编译成功但什么都没生成」是最难查的失败方式。这条守卫在 `check()` 的**最后**，
 所以类相关的诊断（字段类型、构造器实参、调用方式、可见性……）都会先正常报出来。
 
@@ -1415,7 +1428,9 @@ class Dog2(name : string) : Greeter {
 - **字段赋值单列 IR 指令 `IFieldAssign`**，不复用 `IAssign`：后者写的是局部变量槽（有 `binding.slot`），
   前者要先求值接收者再 `PUTFIELD`，两端实现路径不同。
 
-## 阶段 22：`mathematic`（数学类修饰词）—— 排在自举闭环之后
+## 搁置：`mathematic`（数学类修饰词）—— 2026-10-15 移出计划
+
+**2026-10-15 用户决定**：`mathematic` 保留为关键字，但这一阶段**移出计划** ——用户原话「目前很长一段时间我应该都想不出该干嘛」。本节只留历史意图与待决点，将来想起来再捡回来（阶段号 22 空出）。
 
 **来源（2026-10-13 用户提出）**：加一个 `mathematic` 修饰词（与 `class` / `interface` 同级），声明
 「这是一个数学类」，便于**按数学习惯写纯函数计算**。类里具体放什么（一个值、若干函数……）
@@ -1431,17 +1446,17 @@ class Dog2(name : string) : Greeter {
 
 **待决点（开工前逐条定，用户拍板后才写代码）**：
 
-| # | 待决 | 备选 |
-| --- | --- | --- |
-| 1 | 成员默认性 | 成员是否**隐式 `static`**（省掉「建实例」这一步）；要不要禁止实例字段 |
-| 2 | 类能否实例化 | 像 Java `Math` 那样不可实例化（`final` + 私有构造器），还是允许 |
-| 3 | 函数体写法 | 表达式体 `fun f(x : int) -> int = x * x`；更激进的 `f(x) = x * x` 纯数学形状 |
-| 4 | 调用时「打开」 | 类内成员在别处能否**裸调用**（`using Math` 之类），否则只省了 `new`、没省类名 |
-| 5 | 那个「值」 | 常量怎么声明/访问、是否编译期常量（`static final` 内联进常量池） |
-| 6 | 符号与运算符 | 数学符号是否进语言（`^` 乘方、`√`、`∑`）；`^` 目前不是 rsf 运算符，加了就占掉一个符号，且**必须两端一致 + 解释器同步** |
-| 7 | 数值语义 | 是否强制浮点、整除怎么写；混算提升**建议沿用现有 `RsfType` 规则**，不新开一套 |
-| 8 | 生成物 | 大概率仍是「全 `static` 方法的普通类」，不新增字节码形态 —— 与「两端逐字节一致」的硬约束天然兼容 |
-| 9 | 与 20/21 的关系 | `mathematic` 是否算 `interface` 的一种特例；若先做了 20，能不能复用成员表机制 |
+| # | 待决          | 备选                                                                       |
+|---|-------------|--------------------------------------------------------------------------|
+| 1 | 成员默认性       | 成员是否**隐式 `static`**（省掉「建实例」这一步）；要不要禁止实例字段                                |
+| 2 | 类能否实例化      | 像 Java `Math` 那样不可实例化（`final` + 私有构造器），还是允许                              |
+| 3 | 函数体写法       | 表达式体 `fun f(x : int) -> int = x * x`；更激进的 `f(x) = x * x` 纯数学形状           |
+| 4 | 调用时「打开」     | 类内成员在别处能否**裸调用**（`using Math` 之类），否则只省了 `new`、没省类名                       |
+| 5 | 那个「值」       | 常量怎么声明/访问、是否编译期常量（`static final` 内联进常量池）                                 |
+| 6 | 符号与运算符      | 数学符号是否进语言（`^` 乘方、`√`、`∑`）；`^` 目前不是 rsf 运算符，加了就占掉一个符号，且**必须两端一致 + 解释器同步** |
+| 7 | 数值语义        | 是否强制浮点、整除怎么写；混算提升**建议沿用现有 `RsfType` 规则**，不新开一套                           |
+| 8 | 生成物         | 大概率仍是「全 `static` 方法的普通类」，不新增字节码形态 —— 与「两端逐字节一致」的硬约束天然兼容                  |
+| 9 | 与 20/21 的关系 | `mathematic` 是否算 `interface` 的一种特例；若先做了 20，能不能复用成员表机制                    |
 
 **形状草案（仅示意，未拍板）**：
 
@@ -1458,5 +1473,10 @@ println(hyp(3.0, 4.0))
 
 **落地口径**：与 20/21 相同 —— 开工前先把实现设计（数据链路、分层、构建/运行期细节、难点风险、
 上表待决点）交用户审阅，确认后再动代码；「解释器与字节码两端逐字节一致」这条硬约束不变。
+
+**已经落地的第一步（2026-10-15，用户拍板）**：`mathematic` 先收成**保留关键字**——进词法表、
+IDEA 高亮表与它的快照（`EditorKeywordParityTest` 盯着），但不进访问控制 / 修饰词 / 类型集合。
+现在写它会在顶层报「阶段 22 的预留关键字（数学类）：语法还没拍板」，当名字用也会被拦下。
+语法本身仍未拍板，本节其余内容不变。
 
 
