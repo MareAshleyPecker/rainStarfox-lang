@@ -38,6 +38,26 @@ enum class TokenKind(val text: String) {
      * 所以它是**硬关键字**：当作标识符用的旧代码本来就没有，收进来不会撞。
      */
     KW_OVERRIDE("override"),
+    /**
+     * `open` 修饰词（阶段 25）：**类与方法默认 final**，写了 `open` 才能被继承/覆盖。
+     *
+     * 注意这是与 Java 的**故意偏离**（Java 的类与方法默认可以被继承，要禁才写 `final`）：
+     * rsf 跟 Kotlin 走。理由与 DESIGN-25 §4 一致——这份语言的两端（解释器与字节码）
+     * 要逐字节对拍，默认开放意味着「悄悄多了一层虚分派」这种差异不会有任何编译期信号。
+     */
+    KW_OPEN("open"),
+    /**
+     * `final` 修饰词（阶段 25）：显式收窄一个本来可以覆盖的成员
+     * （典型是 `override final fun f()`，或者给 `open class` 里的方法盖章）。
+     */
+    KW_FINAL("final"),
+    /**
+     * `abstract` 修饰词（阶段 25）：抽象类（不能 `new`）与抽象方法（只声明签名）。
+     *
+     * 它同时是**类**和**方法**的修饰词，所以只能在声明最前面出现；写在别处
+     * （顶层函数、局部变量）由 Parser 与 Checker 分别报错。
+     */
+    KW_ABSTRACT("abstract"),
     /** 类声明（阶段 12）。 */
     KW_CLASS("class"),
     /**
@@ -98,6 +118,14 @@ enum class TokenKind(val text: String) {
     KW_NEW("new"),
     /** 当前对象：只在类的方法里有效。 */
     KW_THIS("this"),
+    /**
+     * `super`（阶段 25）：父类接收者。两种写法 `super.方法()` / `super(接口).方法()`。
+     *
+     * 它是**表达式起始词**，所以不进 [isModifierKeyword]——否则 `modifierRun()`
+     * 会把它当成排在 `fun` 前面的修饰词数进去，`super(1)` 这种构造委托会被
+     * 误判成「修饰词后面写了个 '('」。
+     */
+    KW_SUPER("super"),
     KW_IF("if"),
     KW_ELSE("else"),
     /**
@@ -237,19 +265,29 @@ enum class TokenKind(val text: String) {
     val isControlKeyword: Boolean
         get() = this == KW_PUBLIC || this == KW_PRIVATE || this == KW_PROTECTED
 
-    /** 静态修饰符（<static>），写在 <ControlType> 和 fun 之间。 */
+    /**
+     * 静态修饰符（<static>），写在 <ControlType> 和 fun 之间。 */
     val isStaticKeyword: Boolean
         get() = this == KW_STATIC
 
     /**
+     * 继承修饰词（阶段 25）：`open` / `final` / `abstract`。
+     *
+     * 三者都是**声明级**的修饰词（写在 `class` / `fun` / 字段前面），
+     * 语义见 [KW_OPEN] / [KW_FINAL] / [KW_ABSTRACT]。
+     */
+    val isInheritKeyword: Boolean
+        get() = this == KW_OPEN || this == KW_FINAL || this == KW_ABSTRACT
+
+    /**
      * 方法修饰词：`fun` 前面那串能按**任意顺序**写的词
-     * （`public` / `private` / `protected` / `static` / `override`）。
+     * （`public` / `private` / `protected` / `static` / `override` / `open` / `final` / `abstract`）。
      *
      * 拿来「数一数 fun 前面到底排了几个修饰词」，好让 Parser 在
      * `override public fun` 和 `public override fun` 两种写法上看到同一个 `fun`。
      */
     val isModifierKeyword: Boolean
-        get() = isControlKeyword || isStaticKeyword || this == KW_OVERRIDE
+        get() = isControlKeyword || isStaticKeyword || isInheritKeyword || this == KW_OVERRIDE
 }
 
 data class Token(

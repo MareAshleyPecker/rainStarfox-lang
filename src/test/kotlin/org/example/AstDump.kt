@@ -46,6 +46,8 @@ import org.example.complie.ast.ReturnStmt
 import org.example.complie.ast.SourceImport
 import org.example.complie.ast.Stmt
 import org.example.complie.ast.StringLit
+import org.example.complie.ast.SuperCallStmt
+import org.example.complie.ast.SuperExpr
 import org.example.complie.ast.SwitchCase
 import org.example.complie.ast.SwitchStmt
 import org.example.complie.ast.ThisCallStmt
@@ -158,6 +160,11 @@ object AstDump {
             "primary" to bool(f.isPrimary),
             "override" to bool(f.isOverride),
         )
+        // 阶段 25：open / final **只在写了的时候**才打一行——没写的成员一个字都不多打。
+        // 理由很实在：这份 dump 在 RsfTest 里要和 rsfSrc/bootstrap 的解析器逐字对拍，
+        // 而自举那一侧还不认识这两个修饰词（K5 才同步）。默认形态保持原样是硬约束。
+        if (f.isOpen) line(out, depth + 1, "OPEN")
+        if (f.isFinal) line(out, depth + 1, "FINAL")
         line(out, depth + 1, "PARAMS", "count" to f.params.size.toString())
         for (p in f.params) {
             line(out, depth + 2, "PARAM", "type" to typeText(p.type), "name" to esc(p.name))
@@ -174,6 +181,16 @@ object AstDump {
 
         // 阶段 20：`:` 父类型子句。空表也打一行 `count=0`（和别的列表节点一个规矩）。
         supers(out, depth + 1, c.supertypes)
+
+        // 阶段 25：父**类**（`class D : Base(实参)`）。没写父类时一行都不多打——
+        // 与自举解析器逐字对拍的语料里不会有类继承（K5 之前）。
+        if (c.superClass != null) {
+            line(out, depth + 1, "SUPER_CLASS", "name" to esc(c.superClass.name), "display" to typeText(c.superClass))
+            args(out, depth + 2, c.superArgs)
+        }
+        if (c.isOpen) line(out, depth + 1, "OPEN")
+        if (c.isFinal) line(out, depth + 1, "FINAL")
+        if (c.isAbstract) line(out, depth + 1, "ABSTRACT")
 
         line(out, depth + 1, "TYPE_PARAMS", "count" to c.typeParams.size.toString())
         for (tp in c.typeParams) line(out, depth + 2, "TYPE_PARAM", "name" to esc(tp))
@@ -367,6 +384,12 @@ object AstDump {
                 args(out, depth + 1, s.arguments)
             }
 
+            // 阶段 25：父类构造委托 `super(实参)`（构造器体第一句）
+            is SuperCallStmt -> {
+                line(out, depth, "SUPER_CALL", "argc" to s.arguments.size.toString())
+                args(out, depth + 1, s.arguments)
+            }
+
             is SwitchStmt -> {
                 line(
                     out, depth, "SWITCH",
@@ -448,6 +471,12 @@ object AstDump {
             is BoolLit -> line(out, depth, "BOOL_LIT", "value" to bool(e.value))
             is NullLit -> line(out, depth, "NULL_LIT")
             is ThisExpr -> line(out, depth, "THIS")
+
+            // 阶段 25：`super` 接收者。`target` 是 `super(接口名)` 里那个接口名，裸 `super` 打 `-`。
+            is SuperExpr -> line(
+                out, depth, "SUPER",
+                "target" to (e.target?.let { typeText(it) } ?: "-"),
+            )
 
             is VarExpr -> line(out, depth, "VAR", "name" to esc(e.name))
 

@@ -397,17 +397,17 @@ class InterfaceTest {
     }
 
     @Test
-    fun `继承类要报不支持类继承`() {
+    fun `继承没写 open 的类要报错`() {
         val e = assertFailsWith<RsfError> {
             Rsf.analyze(
                 source(
                     "class Base {\n    var x : int = 0\n}\n" +
-                        "class Sub : Base {\n}\n",
+                        "class Sub : Base() {\n}\n",
                 ),
             )
         }
         assertEquals("checker", e.phase)
-        assertTrue(e.detail.contains("还不支持类继承"), e.detail)
+        assertTrue(e.detail.contains("没有写 'open'"), e.detail)
     }
 
     @Test
@@ -498,7 +498,7 @@ class InterfaceTest {
                 ),
             )
         }
-        assertTrue(e2.detail.contains("还不支持类继承"), e2.detail)
+        assertTrue(e2.detail.contains("是个枚举"), e2.detail)
     }
 
     @Test

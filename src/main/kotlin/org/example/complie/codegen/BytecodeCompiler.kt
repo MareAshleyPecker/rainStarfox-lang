@@ -28,6 +28,7 @@ import org.example.complie.ast.Node
 import org.example.complie.ast.NullLit
 import org.example.complie.ast.PositionalAnnotationArg
 import org.example.complie.ast.StringLit
+import org.example.complie.ast.SuperExpr
 import org.example.complie.ast.ThisExpr
 import org.example.complie.ast.UnaryExpr
 import org.example.complie.ast.VarExpr
@@ -43,6 +44,7 @@ import org.example.complie.ir.IGoto
 import org.example.complie.ir.IIndexAssign
 import org.example.complie.ir.ILabel
 import org.example.complie.ir.IReturn
+import org.example.complie.ir.ISuperDelegate
 import org.example.complie.ir.ISwitch
 import org.example.complie.ir.IVarDecl
 import org.example.complie.ir.LoweredFunction
@@ -112,6 +114,21 @@ class BytecodeCompiler(
      * 用户类跟着程序类的包走：`pkg a.b` 里的 `class Point` → `a/b/Point.class`。
      */
     fun compile(className: String, outDir: File): List<File> {
+        // 阶段 25 K1 的**后端守卫**：类继承这一刀只做到前端 + 语义，字节码后端（K2）还没实现。
+        // 这里必须显式报出来，绝不能让 `class D : Base` 静默生成一个「没有 extends 的 D」——
+        // 那种产物在 `java` 启动时才炸，或者更糟：跑出来一个字段布局不同的错对象。
+        // 判据只读语义模型那一份（model.superClasses），不在这里重新解析 AST。
+        if (model.hasClassInheritance) {
+            val first = model.superClasses.values.first()
+            throw RsfError(
+                "codegen",
+                "阶段 25 的类继承还只做到前端与语义（K1 刀）：字节码后端（K2 刀）还没实现，" +
+                    "带父类的类现在还不能 build。这份程序里第一个有父类的是 " +
+                    "'${model.superClasses.keys.first()}'（父类 ${first.display}）——" +
+                    "先用解释器（K3 到了之后）或者 `check` 验证语义，或者等 K2/K3 落地。",
+                1, 1, null,
+            )
+        }
         programInternalName = className
         // 先把所有类都生成出来（生成期间可能报错），一个字节都还不落盘；
         // 全部成功之后再写文件——失败的一次构建不该留下半套产物。
@@ -1836,6 +1853,16 @@ class BytecodeCompiler(
                 // （见 emitUserConstructor），这里什么都不用发，委托之后的语句照常往下走。
                 is ICtorDelegate -> {}
 
+                // `super(实参)` —— **父类**构造委托（阶段 25 K1）。K1 只把它降到 IR，
+                // 字节码是 K2 的活：这里显式报未实现（发 `INVOKESPECIAL <父类>.<init>` 还要
+                // 连带处理「本类字段初值改在 super 之后跑」的次序，不能按 this(...) 糊过去）。
+                is ISuperDelegate -> throw RsfError(
+                    "codegen",
+                    "阶段 25 的类继承还只做到前端与语义（K1 刀）：父类构造委托 super(...) 的" +
+                        "字节码后端（K2 刀）还没实现。",
+                    instr.at.line, instr.at.column, null,
+                )
+
                 // `数组[下标] = 值`（阶段 13）。求值顺序与解释器逐字对齐：
                 // 接收者 → 长度 → 下标 → **越界检查** → 右值 → `*ASTORE`。
                 // 右值放在检查之后：越界时右值里的副作用一次都不能发生
@@ -1992,6 +2019,14 @@ class BytecodeCompiler(
             is CharLit -> pushInt(mv, expr.value.code)
             is BoolLit -> mv.visitInsn(if (expr.value) ICONST_1 else ICONST_0)
             is NullLit -> mv.visitInsn(ACONST_NULL)
+
+            // `super` / `super(接口)` —— 阶段 25 K1：它**不是**能单独取值的表达式，
+            // 只允许出现在 `super.方法(...)` 的接收者位置，那种情况由 Checker 记进
+            // `superCalls` 表、走成员调用那条路（见 emitExpr 的 MemberExpr 分支）。
+            // 走到这里说明是一个裸 `super`——前端已经拦掉了，这里只是兜底。
+            is SuperExpr -> throw RsfError(
+                "codegen", "'super' 只能当方法调用的接收者（super.方法(...)）", expr.at.line, expr.at.column, null,
+            )
 
             is VarExpr -> {
                 // 方法体里的裸字段名（`rtn x`）：先看类解析结果，其次才是局部变量槽。

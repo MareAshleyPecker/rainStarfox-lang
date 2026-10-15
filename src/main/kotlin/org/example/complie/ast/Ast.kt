@@ -353,6 +353,26 @@ data class FuncDecl(
      */
     val isOverride: Boolean = false,
     /**
+     * 显式写了 `open`（阶段 25）。
+     *
+     * 类的方法**默认 final**（DESIGN-25 §4，与 Java 相反、与 Kotlin 一致）：不写 `open`
+     * 的方法不允许被子类覆盖。写了 `open` 才可以；写了 [isOverride] 的成员**默认也是 open**
+     * （Kotlin 的规矩：`override` 之后可以继续被覆盖），要收窄就显式写 `final`（[isFinal]）。
+     *
+     * 接口方法不适用（接口的方法继承规则是另一套），两个后端与 Checker 的判据都只在
+     * 类继承链上看这三个标记。
+     */
+    val isOpen: Boolean = false,
+    /**
+     * 显式写了 `final`（阶段 25）：**禁止**被子类覆盖；写它也顺带表达「这里就是终点」。
+     *
+     * 缺省 `false` 表示「用户没写」——「默认 final」这件事由
+     * `isOpen || (isOverride && !isFinal)` 统一算出来（见 [isOverridable]），
+     * 而不是把缺省值塞成 `true`：那样就分不清「用户写的 final」与「默认」，
+     * `final` + `open` 同时写时的报错也就没了判据。
+     */
+    val isFinal: Boolean = false,
+    /**
      * 写在方法前面的注解（阶段 21）：`@Marker fun f() -> void { }`。
      *
      * 加在**构造参数末尾**且带默认值（空表），所以既有的 `FuncDecl(...)` 调用点
@@ -362,10 +382,24 @@ data class FuncDecl(
     val annotations: List<AnnotationUse> = emptyList(),
 ) : Node {
     /**
-     * 抽象方法：只有签名没有体（[body] == null）。**只可能出现在接口里**——
-     * 类的成员方法 Parser 就要求写出 `{ ... }`。
+     * 抽象方法：只有签名没有体（[body] == null）。
+     *
+     * 两种合法来源：接口里只写签名的方法（阶段 20），以及**抽象类**里显式写了
+     * `abstract` 的方法（阶段 25）。除此之外，类的普通成员方法 Parser 就要求写出
+     * `{ ... }`。
      */
     val isAbstract: Boolean get() = body == null
+
+    /**
+     * 这个方法能不能被子类覆盖（阶段 25）。
+     *
+     * 「默认 final」由这里统一算：显式 `open` 一定可以；`override` 来的成员默认也可以
+     * （Kotlin 的规矩，不然「覆盖了父类之后又被孙子类覆盖」就得每一层都补 `open`）；
+     * 显式 `final` 一律不行。抽象方法没有体，**不算**可覆盖节点——它只有声明，
+     * 子类的义务是「实现」而不是「覆盖」。
+     */
+    val isOverridable: Boolean
+        get() = !isConstructor && !isStatic && !isAbstract && (isOpen || (isOverride && !isFinal))
 }
 
 /**
@@ -568,6 +602,43 @@ data class ClassDecl(
      * `@M public class C` 与 `public @M class C` 解析结果一样。
      */
     val annotations: List<AnnotationUse> = emptyList(),
+    /**
+     * 类头 `:` 子句里排在**最前面**的父类（阶段 25）：`class D(y : int) : Base(y), Greeter` 里的 `Base`。
+     *
+     * 为什么不塞进 [supertypes]：两者的规矩根本不同——父类**必须带实参表**、只能有一个、
+     * 而且必须排在接口前面；接口不许写实参、可以写任意多个。合成一个列表的话，
+     * 下游每一次遍历都要先问「这一项是类还是接口」，而这正是 D2 要避免的那种含糊。
+     *
+     * 单独一个槽位还有一个好处：**没写父类的类这里就是 `null`**，既有代码与既有的
+     * AST dump 一个字都不用改（自举那侧的对拍要等 K5 才跟上）。
+     */
+    val superClass: TypeRef? = null,
+    /**
+     * 传给父类构造器的实参（[superClass] == null 时是空表）。
+     *
+     * 位置就在类头括号里：`class D(y : int) : Base(y)`。子类构造时先跑
+     * `父 <init>(这些实参)`，再跑自己的字段初值（DESIGN-25 §4 的构造顺序）。
+     *
+     * 语法上**必须写**（`class D : Base` 报错）：父类可能没有无参构造器，
+     * 允许省略就得在语义层猜，猜错就是错的字节码。
+     */
+    val superArgs: List<Expr> = emptyList(),
+    /**
+     * 显式 `open`（阶段 25）：这个类可以被继承。
+     *
+     * 类**默认 final**（DESIGN-25 §4）：不写 `open` 的类不能当父类，
+     * 报错时指向「加 open」。
+     */
+    val isOpen: Boolean = false,
+    /** 显式 `final`：明确表达这个类不能被继承（与 `open` 互斥）。 */
+    val isFinal: Boolean = false,
+    /**
+     * 抽象类（阶段 25）：`public abstract class Shape(x : int) { public abstract fun area() -> double }`。
+     *
+     * 两条副作用：**不能 `new`**；允许有抽象成员，而且子类不把抽象成员实现完时自己也得是
+     * `abstract`（否则报错）。没写 `abstract` 的类里出现抽象方法一律报错。
+     */
+    val isAbstract: Boolean = false,
 ) : Node {
     /**
      * 所有构造器：主构造（写了类头括号才有）在前，次构造（`constructor`）按源码顺序在后。
@@ -767,6 +838,25 @@ data class LabelStmt(
  * 字节码据此发 `INVOKESPECIAL <init>`），一个语句节点最省事。
  */
 data class ThisCallStmt(
+    val arguments: List<Expr>,
+    override val at: SourceLine,
+) : Stmt
+
+/**
+ * `super(实参)` —— **父类构造器委托**（阶段 25）。
+ *
+ * 和 [ThisCallStmt] 是一对：都只能写在构造器体的第一句、都必须是第一句、两者互斥
+ * （一个构造器要么委托给同类的另一个构造器，要么委托给父类的构造器，不能都写）。
+ *
+ * 和 [ThisCallStmt] 的差别在于**谁跑字段初值**：
+ * - `this(...)` 委托之后，字段初值由链根那次构造负责（阶段 18 的老规矩）；
+ * - `super(...)` 的语义是「先跑父类构造器，再跑本类的字段初值」（DESIGN-25 §4），
+ *   所以有 `super(...)` 的构造器自己也要跑本类的字段初值。
+ *
+ * 不写 `super(...)` 但类有父类时：只有父类有**无参**构造器才隐式补一个 `super()`
+ * （Java 的规矩），否则报错要求显式写。
+ */
+data class SuperCallStmt(
     val arguments: List<Expr>,
     override val at: SourceLine,
 ) : Stmt
@@ -1040,5 +1130,27 @@ data class IndexExpr(
  * 字段可以直接按名字访问；只有在「字段和参数/局部变量重名」时才必须写 `this.x`。
  */
 data class ThisExpr(
+    override val at: SourceLine,
+) : Expr
+
+/**
+ * `super` —— 父类（或指定父接口）的接收者（阶段 25）。
+ *
+ * 两种写法，靠 [target] 区分：
+ * - `super`（[target] == null）——**直接父类**这一层：`super.tag()` 调用父类里
+ *   被自己覆盖掉的那个实现，而不是虚分派到自己头上（JVM 的 `invokespecial`）；
+ * - `super(Greeter)`（[target] != null）——**指定的直接父接口**，只用来消歧
+ *   「两个父接口给了同签名默认方法」那种情形（DESIGN-25 §3 的 Q1 拍板：
+ *   写 `super(接口).方法()`，不用 Kotlin 的 `super<A>`——`<` 已经被泛型实参表占了）。
+ *
+ * 它**不是**一个能单独取值的表达式：只允许出现在方法调用的接收者位置
+ * （`super.名字(...)`），`var x = super` 这类写法由 Checker 报错。写成表达式节点
+ * 而不是给 [MemberExpr] 加个布尔标记，是因为「父类」和「父接口」这两种接收者
+ * 的解析路径完全不同（前者沿类链找，后者直接去接口表里找那个接口），
+ * 塞同一个标记里，下游每次都要再分一次支。
+ */
+data class SuperExpr(
+    /** `super(接口名)` 里的接口名；`super` 不写括号时是 null。 */
+    val target: TypeRef?,
     override val at: SourceLine,
 ) : Expr

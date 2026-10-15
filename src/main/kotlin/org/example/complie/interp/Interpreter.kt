@@ -20,6 +20,7 @@ import org.example.complie.ast.NewArrayExpr
 import org.example.complie.ast.NewExpr
 import org.example.complie.ast.NullLit
 import org.example.complie.ast.StringLit
+import org.example.complie.ast.SuperExpr
 import org.example.complie.ast.ThisExpr
 import org.example.complie.ast.UnaryExpr
 import org.example.complie.ast.VarExpr
@@ -36,6 +37,7 @@ import org.example.complie.ir.IGoto
 import org.example.complie.ir.IIndexAssign
 import org.example.complie.ir.ILabel
 import org.example.complie.ir.IReturn
+import org.example.complie.ir.ISuperDelegate
 import org.example.complie.ir.ISwitch
 import org.example.complie.ir.IVarDecl
 import org.example.complie.ir.LoweredFunction
@@ -132,6 +134,19 @@ class Interpreter(
 
     /** 从 main 开始执行。 */
     fun runEntry(): Any? {
+        // 阶段 25 K1 的**解释器守卫**：类继承只做到前端 + 语义，解释器（K3）还没实现。
+        // 显式报出来，绝不静默按「没有父类」跑——那样父类字段没了、覆盖也不分派，
+        // 跑出来的结果和字节码两端会不一致（那正是最坏的一种错）。
+        if (model.hasClassInheritance) {
+            val first = model.superClasses.values.first()
+            throw RsfError(
+                "interp",
+                "阶段 25 的类继承还只做到前端与语义（K1 刀）：解释器（K3 刀）还没实现，" +
+                    "带父类的类现在还不能 run。这份程序里第一个有父类的是 " +
+                    "'${model.superClasses.keys.first()}'（父类 ${first.display}）——" +
+                    "先用 `check` 验证语义，或者等 K2/K3 落地。",
+            )
+        }
         // 阶段 19d：`main(a : int)` 是合法重载但不是入口——「有 main 却带参数」要说清
         // 是参数的问题，而不是「没有 main」（见 SemanticModel.entryProblem）。
         val problem = model.entryProblem
@@ -289,6 +304,15 @@ class Interpreter(
                         pc++
                     }
 
+                    // `super(实参)` —— **父类**构造委托（阶段 25 K1）。解释器是 K3 的活：
+                    // 这里显式报未实现，绝不按 `this(...)` 那条路糊过去（那不是同一条边）。
+                    is ISuperDelegate -> throw RsfError(
+                        "interp",
+                        "阶段 25 的类继承还只做到前端与语义（K1 刀）：父类构造委托 super(...) 的" +
+                            "解释器（K3 刀）还没实现。",
+                        instr.at.line, instr.at.column, null,
+                    )
+
                     // `数组[下标] = 值`（阶段 13）。
                     //
                     // 求值顺序和编译产物严格对齐：接收者 → 下标 → **越界检查** → 右值。
@@ -438,6 +462,14 @@ class Interpreter(
             is CharLit -> expr.value
             is BoolLit -> expr.value
             is NullLit -> null
+
+            // `super` / `super(接口)`（阶段 25 K1）：不是能取值的表达式，只当
+            // `super.方法(...)` 的接收者用，那种调用由 Checker 记进 `superCalls`
+            // 并走成员调用那条路。这里是裸 super 的兜底。
+            is SuperExpr -> throw RsfError(
+                "interp", "'super' 只能当方法调用的接收者（super.方法(...)）",
+                expr.at.line, expr.at.column, null,
+            )
 
             is VarExpr -> {
                 // 方法体里的裸字段名（`rtn x`）：先看类解析结果，其次才是局部变量槽

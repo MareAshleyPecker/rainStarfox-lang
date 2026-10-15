@@ -51,6 +51,8 @@ import org.example.complie.ast.ReturnStmt
 import org.example.complie.ast.ReturnStyle
 import org.example.complie.ast.Stmt
 import org.example.complie.ast.StringLit
+import org.example.complie.ast.SuperCallStmt
+import org.example.complie.ast.SuperExpr
 import org.example.complie.ast.SwitchStmt
 import org.example.complie.ast.ThisCallStmt
 import org.example.complie.ast.ThisExpr
@@ -70,6 +72,7 @@ import org.example.complie.interop.ClassPath
 import org.example.complie.interop.JvmClass
 import org.example.complie.interop.JvmMethod
 import org.example.complie.interop.MemberResolver
+import org.example.complie.interop.JvmField
 import org.example.complie.interop.ResolvedField
 import org.example.complie.interop.ResolvedMember
 import org.example.complie.interop.ResolvedMethod
@@ -84,6 +87,7 @@ import org.example.complie.ir.IGoto
 import org.example.complie.ir.IIndexAssign
 import org.example.complie.ir.ILabel
 import org.example.complie.ir.IReturn
+import org.example.complie.ir.ISuperDelegate
 import org.example.complie.ir.ISwitch
 import org.example.complie.ir.IVarDecl
 import org.example.complie.ir.Instr
@@ -189,6 +193,11 @@ class Checker(
         // 类要先声明：顶层函数的签名里可能用到类名（`fun f(Point p) -> int`），
         // 反过来的顺序会让 resolveType 看不到类表。
         declareClasses()
+        // 类继承的**声明级**规矩（阶段 25）：父类得是 open、字段不许遮蔽、覆盖要写
+        // override 且父类那个方法得 open、abstract 成员得配上 abstract 类。放在这里
+        // 而不是 declareClassBody 里，是因为 `class D : Base` 完全可能写在 Base 前面——
+        // 这一趟才保证每个类的字段表/方法表都已经填好（declareClasses 的第二遍）。
+        checkClassParents()
         // 接口的方法与父接口放在类声明**之后**：`interface A : B` 里的 B 得先能分清
         // 「这是接口」还是「这是类（D2：暂不支持继承类）」——那要靠类表已经填满。
         declareInterfaceBodies()
@@ -245,12 +254,17 @@ class Checker(
                 ctorDelegations = ctorDelegations,
                 implicitCalls = implicitCalls,
                 interfaceOwner = interfaceOwnerTable,
+                superCalls = superCalls,
+                superDelegations = superDelegations,
+                implicitSuperDelegations = implicitSuperDelegations,
+                implicitJvmCalls = implicitJvmCalls,
             ),
             externalNewTargets = externalNewTargets,
             enums = enumTable.toMap(),
             enumValues = enumValueRefs,
             interfaces = interfaceTable.mapValues { it.value.decl },
             superInterfaces = collectSuperInterfaces(),
+            superClasses = classParents.entries.associate { (decl, parent) -> decl.name to parent },
             annotations = annotationTable.mapValues { it.value.spec ?: throw IllegalStateException("注解 '${it.key}' 没有解析结果") },
             annotationUses = annotationUses.toList(),
             annotationNewTargets = annotationNewTargets,
@@ -460,6 +474,840 @@ class Checker(
 
     /** 每个类解析后的父类型列表（`: A, B`）；没写 `:` 的类不在表里，读的时候用空表兜底。 */
     private val classSuperRefs = IdentityHashMap<ClassDecl, List<SuperRef>>()
+
+    // ------------------------------------------------------------------ 类继承（阶段 25 K1）
+
+    /**
+     * 类声明 → 已解析的**父类**（`class D(y : int) : Base(y)` 里的 `Base`）。
+     *
+     * 父类不塞进 [classSuperRefs]：那张表是「父**接口**列表」，下游每一处都默认
+     * 里面是接口（实现配对、`INVOKEVIRTUAL` 的 owner…）。父类的规矩完全不同
+     * （唯一、必须有构造实参、必须排最前），混在一张表里每次都要再问一遍
+     * 「这项是类还是接口」——那正是 D2 要避免的含糊（见 [SuperClass] 的说明）。
+     */
+    private val classParents = IdentityHashMap<ClassDecl, SuperClass>()
+
+    /** 类声明 → 父类的 JVM 类；父类来自 classpath 时才有（rsf 父类不在表里）。 */
+    private val classParentJvm = IdentityHashMap<ClassDecl, JvmClass>()
+
+    /** 构造器 → 它的**父类构造委托**（次构造里那句 `super(实参)`，或主构造的类头实参）。 */
+    private val superDelegations = IdentityHashMap<FuncDecl, SuperDelegation>()
+
+    /** 一个构造器都没写的类 → 隐式无参构造器的父类调用（那时没有 [FuncDecl] 可以当键）。 */
+    private val implicitSuperDelegations = IdentityHashMap<ClassDecl, SuperDelegation>()
+
+    /** `super.方法(...)` / `super(接口).方法(...)` → 解析到的方法（两个后端只读这一份）。 */
+    private val superCalls = IdentityHashMap<MemberExpr, UserMember.Method>()
+
+    /** 隐式 this 调用**JDK 父类继承来**的方法（G5，阶段 25 K1）。 */
+    private val implicitJvmCalls = IdentityHashMap<CallExpr, ResolvedMethod>()
+
+    /** 这个类的父类（没写 `:` 里的类就是 null）。 */
+    private fun parentRecord(info: ClassInfo): SuperClass? = classParents[info.decl]
+
+    /** 这个类的父**类**信息；父类来自 classpath（JDK 类）时是 null。 */
+    private fun parentOf(info: ClassInfo): ClassInfo? =
+        parentRecord(info)?.declaration?.let { classTable[it.name] }
+
+    /** 父类链，从**根祖先**到直接父类（不含自己）。 */
+    private fun ancestorsOf(info: ClassInfo): List<ClassInfo> {
+        val out = ArrayList<ClassInfo>()
+        var cur = parentOf(info)
+        while (cur != null && out.none { it === cur }) {
+            out.add(0, cur)
+            cur = parentOf(cur)
+        }
+        return out
+    }
+
+    /**
+     * 本类字段在对象字段数组里的**起始下标**：父类字段排在前面（DESIGN-25 §5）。
+     *
+     * 于是「绝对下标 = 父链字段总数 + 本类段内下标」，这份布局**只在这里算一次**，
+     * 结果烘进 [UserMember.Field]，两个后端都只读那一份（R1）。
+     */
+    private fun fieldBase(info: ClassInfo): Int = ancestorsOf(info).sumOf { it.decl.fields.size }
+
+    /** 沿父类链找**声明**这个字段的类（含自己，最近的类优先）。 */
+    private fun fieldOwnerOf(info: ClassInfo, name: String): ClassInfo? {
+        if (info.fields.containsKey(name)) return info
+        for (anc in ancestorsOf(info).reversed()) if (anc.fields.containsKey(name)) return anc
+        return null
+    }
+
+    /** 找字段（含父类链）：返回「声明它的类」+ 那个字段；都没有就是 null。 */
+    private fun lookupField(info: ClassInfo, name: String): Pair<ClassInfo, FieldDecl>? {
+        fieldOwnerOf(info, name)?.let { owner -> owner.fields[name]?.let { return owner to it } }
+        return null
+    }
+
+    /**
+     * 在**类链**上找第一个满足 [pick] 的方法（含自己，最近的类优先）。
+     *
+     * 静态方法与 private 方法**不继承**（DESIGN-25 §3）：调用的解析顺序里根本
+     * 不该看见它们，所以这里先滤掉，让「类 'D' 里没有方法 'f'」这类报错如实发生。
+     */
+    private fun methodOnChain(info: ClassInfo, name: String, pick: (FuncDecl) -> Boolean): FuncDecl? {
+        info.methods[name]?.firstOrNull(pick)?.let { return it }
+        for (anc in ancestorsOf(info).reversed()) {
+            anc.methods[name]?.firstOrNull { pick(it) && !it.isStatic && it.control != ControlType.PRIVATE }
+                ?.let { return it }
+        }
+        return null
+    }
+
+    /** [methodOnChain] 的「顺便告诉我它声明在哪个类」版本。 */
+    private fun declaredMethodOnChain(
+        info: ClassInfo,
+        name: String,
+        pick: (FuncDecl) -> Boolean,
+    ): Pair<ClassInfo, FuncDecl>? = declaredMethodOnChain(info, name, includeSelf = true, pick = pick)
+
+    /**
+     * [declaredMethodOnChain] 的可选「含不含自己」版本。
+     *
+     * `super.方法(...)` 必须传 `includeSelf = false`：它要的是**父类那一份**实现，
+     * 把自己也搜进去的话，同名方法会命中「本类刚写的那个 override」，选中自己——
+     * 后端会发出一句自我递归调用（阶段 25，DESIGN-25 §3）。
+     */
+    private fun declaredMethodOnChain(
+        info: ClassInfo,
+        name: String,
+        includeSelf: Boolean,
+        pick: (FuncDecl) -> Boolean,
+    ): Pair<ClassInfo, FuncDecl>? {
+        if (includeSelf) {
+            info.methods[name]?.firstOrNull(pick)?.let { return info to it }
+        }
+        for (anc in ancestorsOf(info).reversed()) {
+            anc.methods[name]?.firstOrNull { pick(it) && !it.isStatic && it.control != ControlType.PRIVATE }
+                ?.let { return anc to it }
+        }
+        return null
+    }
+
+    /** 子类里这个方法同签名的**父类**方法（父链上最近的）；没有就是 null。 */
+    private fun inheritedMethodSameSignature(info: ClassInfo, m: FuncDecl): Pair<ClassInfo, FuncDecl>? {
+        val key = signatureKey(m.name, paramTypesOfDecl(m))
+        for (anc in ancestorsOf(info).reversed()) {
+            for (list in anc.methods.values) {
+                for (p in list) {
+                    if (p.isConstructor || p.isStatic) continue
+                    if (signatureKey(p.name, paramTypesOfDecl(p)) == key) return anc to p
+                }
+            }
+        }
+        return null
+    }
+
+    /**
+     * 把接收者的类型实参**一路上溯代换**到 [owner] 那一层（阶段 25 K1，G4）。
+     *
+     * `open class Holder&<T>(v0 : T) { fun get() -> T }` 配 `class IntHolder(v0 : int) :
+     * Holder&<int>(v0)` 时，`h.get()` 拿到的声明在 Holder 上、返回类型写的是 `T`：
+     * 只看 IntHolder 自己的类型实参（一个都没有）永远代不出 int，必须在每一跳
+     * 把父类实参按当前代换算出来，一层层传到**声明它的那个类**。
+     *
+     * [startSubst] 是 [start] 那一层的代换表（`自己的类型参数 → 实际类型`）。
+     */
+    private fun substitutionAlongChain(
+        start: ClassInfo,
+        startSubst: Map<String, RsfType>,
+        owner: ClassInfo,
+    ): Map<String, RsfType> {
+        var subst = startSubst
+        var cur = start
+        while (cur !== owner) {
+            val next = parentOf(cur) ?: return subst
+            val rec = parentRecord(cur) ?: return subst
+            subst = substitutionFor(next.decl.typeParams, rec.args.map { it.substitute(subst) })
+            cur = next
+        }
+        return subst
+    }
+
+    /**
+     * [substitutionAlongChain] 的「从类体内部出发」版本（阶段 25 K1）。
+     *
+     * 类体里裸写 `v` / `bump()` 时接收者是隐式的 this，当前类自己的类型参数
+     * 保持原样（它们在类体里就是类型变量），只把祖先那一层代换成具体类型。
+     */
+    private fun substitutionFromInside(info: ClassInfo, owner: ClassInfo): Map<String, RsfType> =
+        substitutionAlongChain(info, info.decl.typeParams.associateWith { RsfType.typeParam(it) }, owner)
+
+    /**
+     * 解析类头 `: Base(实参)` 里的**父类名字**（阶段 25 K1），在 [declareClassBody] 里调用。
+     *
+     * 这一趟只认名字：实参表达式要等主构造的参数进作用域之后才算类型（[checkParentCalls]），
+     * 声明级的规矩（open / 遮蔽 / override / abstract）留给 [checkClassParents]
+     * ——因为那时所有类的签名才都看得见（`class D : Base` 写在 Base 前面也要能查）。
+     */
+    private fun registerParentClass(cls: ClassDecl, ref: TypeRef) {
+        val where = "类 '${cls.name}'"
+        val display = ref.display()
+        if (ref.arrayDepth > 0) {
+            throw err("$where 的父类 '$display' 不能是数组——父类要是一个 class", ref.at)
+        }
+        if (RsfType.fromName(ref.name) != null) {
+            throw err(
+                "'$display' 是内置类型，不能当父类——父类要是一个 class（rsf 的或 JDK 的）",
+                ref.at,
+            )
+        }
+        val args = ref.typeArgs.map { resolveType(it) }
+        enumTable[ref.name]?.let {
+            throw err(
+                "$where 不能继承 '$display'：'$display' 是个枚举。" +
+                    "枚举不能被继承，也不能继承别的类（DESIGN-25 §6）",
+                ref.at,
+            )
+        }
+        annotationTable[ref.name]?.let {
+            throw err("$where 不能继承 '$display'：'$display' 是个注解，注解不能当父类", ref.at)
+        }
+        interfaceTable[ref.name]?.let {
+            throw err(
+                "$where 不能继承 '$display'：'$display' 是个接口。接口写在父类型列表里、" +
+                    "而且不写实参（`: $display`）；要继承类就写 ': 父类(实参)'",
+                ref.at,
+            )
+        }
+        val parentInfo = classTable[ref.name]
+        if (parentInfo == null) {
+            val jvm = resolveJvmClass(ref.name)
+                ?: throw err(
+                    "$where 的父类 '$display' 找不到：它既不是这份程序里声明的类，" +
+                        "也不是 classpath 上的类型（要继承 Java/Kotlin 的类得先 import 它）",
+                    ref.at,
+                )
+            if (jvm.isInterface) {
+                throw err(
+                    "$where 不能继承 '$display'：它是 classpath 上的**接口**。" +
+                        "接口写在父类型列表里、而且不写实参（`: $display`）",
+                    ref.at,
+                )
+            }
+            // 抽象 JDK 类（`Thread` 之类）照样可以继承：抽象方法由子类实现（DESIGN-25 §3）
+            jvm.typeParamCount?.let { checkArity(jvm.simpleName, it, args, ref.at) }
+            classParentJvm[cls] = jvm
+            classParents[cls] = SuperClass(
+                name = ref.name,
+                internalName = jvm.internalName,
+                args = args,
+                fromClassPath = true,
+                declaration = null,
+            )
+            return
+        }
+        checkArity(ref.name, parentInfo.decl.typeParams.size, args, ref.at, parentInfo.decl.typeParams)
+        classParents[cls] = SuperClass(
+            name = ref.name,
+            internalName = ref.name,
+            args = args,
+            fromClassPath = false,
+            declaration = parentInfo.decl,
+        )
+    }
+
+    /**
+     * 类继承的**声明级**检查（阶段 25 K1），在 [declareClasses] 之后、实现配对之前跑。
+     *
+     * 为什么单独一趟：`class D : Base` 完全可能写在 Base 前面，那时 [declareClassBody]
+     * 还没走到 Base；而这一趟里所有类的字段表、方法表都已经填好了。
+     */
+    private fun checkClassParents() {
+        // 先把**所有**类的父类名字解析完。为什么不在 declareClassBody 里顺手解析：
+        // 那一趟是按源码顺序走第二遍的，`class D : Base` 写在 Base 前面时还看不见 Base
+        // （classTable 里还没有它）。这一趟在 declareClasses() 之后，所有类名/签名都已就位。
+        for (cls in program.classes) {
+            currentSource = sourceOfClass[cls] ?: source
+            // 父类的泛型实参要用**这个类**的类型参数来解析（`class D&<T> : Base&<T>(...)`）
+            typeParams = cls.typeParams.associateWith { RsfType.typeParam(it) }
+            cls.superClass?.let { registerParentClass(cls, it) }
+        }
+        typeParams = emptyMap()
+        for (info in classTable.values) {
+            if (parentRecord(info) == null) continue
+            currentClass = info
+            currentSource = info.source
+            checkParentCycle(info)
+            checkParentModifiers(info)
+            checkFieldShadowing(info)
+            checkInheritedOverrides(info)
+            checkAbstractMembers(info)
+        }
+        currentClass = null
+    }
+
+    /** 父类成环（`class A : B` + `class B : A`）永远算不完，就地报掉。 */
+    private fun checkParentCycle(info: ClassInfo) {
+        val seen = LinkedHashSet<String>()
+        var cur: ClassInfo? = info
+        while (cur != null) {
+            if (!seen.add(cur.decl.name)) {
+                throw err(
+                    "类继承成了环：${seen.joinToString(" -> ")} -> ${cur.decl.name}。" +
+                        "把其中一条 ': 父类(实参)' 去掉",
+                    cur.decl.at,
+                )
+            }
+            cur = parentOf(cur)
+        }
+    }
+
+    /** 父类必须是 `open`（或 `abstract`）的类：rsf 的类默认 final（DESIGN-25 §4）。 */
+    private fun checkParentModifiers(info: ClassInfo) {
+        val parent = parentRecord(info) ?: return
+        val decl = parent.declaration ?: return
+        if (decl.isOpen || decl.isAbstract) return
+        throw err(
+            "类 '${info.decl.name}' 不能继承 '${decl.name}'：它没有写 'open'。" +
+                "rsf 的类默认是 final 的（不许被继承）——给父类加上 open：" +
+                "open class ${decl.name}(...) { ... }（DESIGN-25 §4）",
+            info.decl.at,
+        )
+    }
+
+    /** 字段遮蔽一律禁止（DESIGN-25 §5）：子类看到的同名会分不清是谁那一份。 */
+    private fun checkFieldShadowing(info: ClassInfo) {
+        for (f in info.decl.fields) {
+            val owner = ancestorsOf(info).firstOrNull { it.fields.containsKey(f.name) } ?: continue
+            throw err(
+                "类 '${info.decl.name}' 的字段 '${f.name}' 和父类 '${owner.decl.name}' 的字段重名了：" +
+                    "rsf 不许字段遮蔽（DESIGN-25 §5）——名字一分不清是谁的，两端逐字节对拍就做不了。" +
+                    "把子类这个字段换个名字，或者直接复用父类那个",
+                f.at,
+            )
+        }
+    }
+
+    /**
+     * 子类方法与父类同名同签名时的两条规矩（DESIGN-25 §4/§5）：
+     *
+     * 1. **必须写 `override`**：不写的同名方法一律报错（rsf 与 Kotlin 的故意偏离——
+     *    静默覆盖会让两端对拍失去意义）；
+     * 2. 父类那个方法必须 **open**（或本来就是 abstract / override 来的）才能被覆盖。
+     *
+     * 「写了 override 却覆盖不到任何东西」不在这里报——那是 [checkOverrides] 的活，
+     * 它同时还要看接口，两处报同一件事只会让用户改两遍。
+     */
+    private fun checkInheritedOverrides(info: ClassInfo) {
+        for (list in info.methods.values) {
+            for (m in list) {
+                if (m.isConstructor) continue
+                val found = inheritedMethodSameSignature(info, m) ?: continue
+                val (owner, parentMethod) = found
+                if (!m.isOverride) {
+                    throw err(
+                        "类 '${info.decl.name}' 的 '${m.name}' 和父类 '${owner.decl.name}' 的 " +
+                            "${describeSignature(parentMethod)} 同签名了，但没写 override。" +
+                            "rsf 不许遮蔽（DESIGN-25 §5）——要覆盖它就写成 'override fun ${m.name}(...)'，" +
+                            "只是重名就换个名字",
+                        m.at,
+                    )
+                }
+                if (parentMethod.isOverridable || parentMethod.isAbstract) continue
+                throw err(
+                    "类 '${info.decl.name}' 的 '${m.name}' 不能覆盖父类 '${owner.decl.name}' 的 " +
+                        "${describeSignature(parentMethod)}：它没有写 'open'（rsf 的方法默认 final，" +
+                        "DESIGN-25 §4）。给父类那个方法加上 open，或者换个名字写一个新方法",
+                    m.at,
+                )
+            }
+        }
+    }
+
+    /** `abstract` 成员的类内规矩（DESIGN-25 §6）：类必须也是 abstract，而且不能是 private/static。 */
+    private fun checkAbstractMembers(info: ClassInfo) {
+        for (m in info.decl.methods) {
+            if (!m.isAbstract) continue
+            if (m.control == ControlType.PRIVATE) {
+                throw err(
+                    "类 '${info.decl.name}' 的 '${m.name}' 不能既是 abstract 又是 private：" +
+                        "private 方法子类根本看不到，没有人能实现它",
+                    m.at,
+                )
+            }
+            if (info.decl.isAbstract) continue
+            throw err(
+                "类 '${info.decl.name}' 里的 '${m.name}' 是 abstract 方法，但类没有写 'abstract'：" +
+                    "把类改成 'abstract class ${info.decl.name}(...)'，或者给 '${m.name}' 写上函数体",
+                m.at,
+            )
+        }
+        checkUnimplementedInheritedAbstract(info)
+    }
+
+    /**
+     * 具体（非 abstract）子类必须把**父类链上**的抽象方法都实现（DESIGN-25 §7）。
+     *
+     * 只报父**类**那一支：接口那一支由 [checkClassCovers] 报（它连返回类型、可见性
+     * 一起管，两处都报会让用户改两遍）。父类的抽象方法则不在它的视界里（接口要求的
+     * 是「接口方法」，父类自己的 abstract 方法属于类链）。
+     */
+    private fun checkUnimplementedInheritedAbstract(info: ClassInfo) {
+        if (info.decl.isAbstract) return
+        val missing = unimplementedAbstractMembers(info, includeInterfaces = false)
+        if (missing.isEmpty()) return
+        throw err(
+            "类 '${info.decl.name}' 还没有实现父类继承来的全部抽象方法，还缺 ${missing.size} 个：\n  - " +
+                missing.joinToString("\n  - ") +
+                "\n（在类 '${info.decl.name}' 里写一个同名、同参数类型的方法把它实现掉，" +
+                "或者把本类也写成 'abstract class ${info.decl.name}(...)'）",
+            info.decl.at,
+        )
+    }
+
+    /**
+     * 这个类**还欠着**的抽象成员，一行一条可读描述（报错与「抽象类不能 new」共用）。
+     *
+     * 三个来源：自己声明的 abstract 方法、父类链上还没有被实现的 abstract 方法、
+     * （[includeInterfaces] 时）父接口要求而类里没给的抽象方法——默认方法顶掉的规则
+     * 与 [checkClassCovers] 保持同一口径，两处不会给出互相矛盾的结论。
+     */
+    private fun unimplementedAbstractMembers(info: ClassInfo, includeInterfaces: Boolean): List<String> {
+        val out = LinkedHashMap<String, String>()
+        for (m in info.decl.methods) {
+            if (m.isAbstract) {
+                out[signatureKey(m.name, paramTypesOfDecl(m))] = "${describeSignature(m)}（本类声明的）"
+            }
+        }
+        for (anc in ancestorsOf(info)) {
+            for (list in anc.methods.values) {
+                for (p in list) {
+                    if (!p.isAbstract || p.control == ControlType.PRIVATE) continue
+                    val key = signatureKey(p.name, paramTypesOfDecl(p))
+                    if (out.containsKey(key)) continue
+                    val implemented = methodOnChain(info, p.name) { m ->
+                        !m.isConstructor && !m.isStatic && !m.isAbstract &&
+                            signatureKey(m.name, paramTypesOfDecl(m)) == key
+                    } != null
+                    if (!implemented) out[key] = "${describeSignature(p)}（父类 '${anc.decl.name}' 的）"
+                }
+            }
+        }
+        if (!includeInterfaces) return out.values.toList()
+        val required = LinkedHashMap<String, MutableList<RequiredMethod>>()
+        val seen = HashSet<String>()
+        for (s in classSuperRefs[info.decl].orEmpty() + inheritedInterfaceRefs(info)) {
+            when (s) {
+                is SuperRef.Rsf -> collectRsfRequired(s.info, s.args, required, seen)
+                is SuperRef.Jvm -> collectJvmRequired(s.cls, required, seen)
+            }
+        }
+        for ((key, reqs) in required) {
+            if (out.containsKey(key) || reqs.any { it.concrete }) continue
+            val wanted = reqs.first()
+            val fromJvm = wanted.decl == null
+            val implemented = methodOnChain(info, wanted.name) { m ->
+                !m.isConstructor && !m.isStatic && !m.isAbstract &&
+                    (m.control == ControlType.PUBLIC || m.control == ControlType.DEFAULT) &&
+                    if (fromJvm) {
+                        m.params.size == wanted.params.size
+                    } else {
+                        signatureKey(m.name, paramTypesOfDecl(m)) == key
+                    }
+            } != null
+            if (!implemented) out[key] = "${wanted.display()}（来自 ${wanted.ownerLabel}）"
+        }
+        return out.values.toList()
+    }
+
+    /**
+     * 父类构造实参的检查与**选中**（阶段 25 K1）。
+     *
+     * [args] 在当前作用域里求类型（主构造那条用的是主构造的参数作用域）；rsf 父类走
+     * [resolveCtor] 挑构造器（和 `new` 同一套打分），JDK 父类用 `resolver` 挑 `<init>`。
+     * 选中结果由调用方记进 [superDelegations]。
+     */
+    private fun checkParentArguments(
+        info: ClassInfo,
+        args: List<Expr>,
+        at: SourceLine,
+        what: String,
+    ): FuncDecl? {
+        val parent = parentRecord(info) ?: return null
+        val argTypes = ArrayList<RsfType>(args.size)
+        for ((i, arg) in args.withIndex()) {
+            val t = type(arg)
+            if (t.isVoid) {
+                throw err("$what 的第 ${i + 1} 个实参是 void 表达式，不能当参数传", arg.at)
+            }
+            argTypes.add(t)
+        }
+        val decl = parent.declaration
+        if (decl == null) {
+            val jvm = classParentJvm[info.decl] ?: return null
+            val ctor = resolver.findConstructor(jvm, argTypes)
+                ?: throw err(
+                    "${parent.display} '${parent.name}' 里没有匹配的构造器（实参：" +
+                        argTypes.joinToString(", ") { it.rsfName } + "）" +
+                        if (jvm.constructors.isNotEmpty()) {
+                            "。可用的有：" + resolver.constructorsOf(jvm).joinToString("；")
+                        } else {
+                            ""
+                        },
+                    at,
+                )
+            for ((i, arg) in args.withIndex()) {
+                val declared = ctor.paramTypes.getOrNull(i) ?: continue
+                if (!acceptsValue(declared, arg, argTypes[i])) {
+                    throw err(
+                        "$what 的第 ${i + 1} 个实参类型不对：需要 ${declared.rsfName}，" +
+                            "实际给人 ${argTypes[i].rsfName}",
+                        arg.at,
+                    )
+                }
+            }
+            return null
+        }
+        val parentInfo = classTable[decl.name]
+            ?: throw err("内部错误：父类 '${decl.name}' 不在类表里", at)
+        if (parentInfo.constructors.isEmpty()) {
+            // 父类一个构造器都没写 ⇒ 等价于一个隐式无参构造器
+            if (args.isEmpty()) return null
+            throw err(
+                "父类 '${decl.name}' 没写构造器，只能 super()（或者 ${decl.name}()），" +
+                    "实际给了 ${args.size} 个实参",
+                at,
+            )
+        }
+        val subst = substitutionFor(parentInfo, parent.args)
+        return resolveCtor(parentInfo, args, argTypes, subst, at)
+    }
+
+    /**
+     * 父类构造实参不许碰**自己的状态**（DESIGN-25 §5/§6）。
+     *
+     * 理由：父类构造器跑完之前，子类那份状态还一个字都没写（字段初值排在
+     * `super(...)` **之后**）——实参里读自己的字段只会读到默认值。顺带把 `this`
+     * 与 `super` 本身也挡掉：它们在那时都还没有意义。
+     */
+    private fun checkParentArgPurity(info: ClassInfo, args: List<Expr>, what: String) {
+        for (arg in args) checkParentArgExpr(info, arg, what)
+    }
+
+    private fun checkParentArgExpr(info: ClassInfo, expr: Expr, what: String) {
+        when (expr) {
+            is ThisExpr -> throw err(
+                "$what 里不能写 this：父类构造器跑完之前，子类那份状态还没有值（DESIGN-25 §6）。" +
+                    "要用值就从主构造的参数传进去",
+                expr.at,
+            )
+            is SuperExpr -> throw err("$what 里不能再写 super：父类的构造还没跑完", expr.at)
+            is VarExpr -> {
+                // 参数/局部变量**遮蔽**同名字段时是合法的（那时读的是参数，不是字段）
+                if (scope.lookup(expr.name) == null && lookupField(info, expr.name) != null) {
+                    throw err(
+                        "$what 里不能读自己的字段 '${expr.name}'：父类构造器先跑，" +
+                            "那时这个字段还没有值（DESIGN-25 §6）。" +
+                            "要用这个值就从主构造的参数传进来",
+                        expr.at,
+                    )
+                }
+            }
+            is MemberExpr -> {
+                if (expr.receiver is ThisExpr || expr.receiver is SuperExpr) {
+                    throw err(
+                        "$what 里不能读 this 的成员：父类构造器先跑，" +
+                            "那时子类那份状态还没有值（DESIGN-25 §6）",
+                        expr.at,
+                    )
+                }
+                checkParentArgExpr(info, expr.receiver, what)
+                expr.arguments?.forEach { checkParentArgExpr(info, it, what) }
+            }
+            is CallExpr -> expr.arguments.forEach { checkParentArgExpr(info, it, what) }
+            is UnaryExpr -> checkParentArgExpr(info, expr.operand, what)
+            is BinaryExpr -> {
+                checkParentArgExpr(info, expr.left, what)
+                checkParentArgExpr(info, expr.right, what)
+            }
+            is IfExpr -> {
+                checkParentArgExpr(info, expr.condition, what)
+                checkParentArgExpr(info, expr.whenTrue, what)
+                checkParentArgExpr(info, expr.whenFalse, what)
+            }
+            is ElvisExpr -> {
+                checkParentArgExpr(info, expr.left, what)
+                checkParentArgExpr(info, expr.right, what)
+            }
+            is ForceExpr -> checkParentArgExpr(info, expr.operand, what)
+            is NewExpr -> expr.arguments.forEach { checkParentArgExpr(info, it, what) }
+            is NewArrayExpr -> expr.dimensions.forEach { checkParentArgExpr(info, it, what) }
+            is IndexExpr -> {
+                checkParentArgExpr(info, expr.receiver, what)
+                checkParentArgExpr(info, expr.index, what)
+            }
+            // 字面量、Nothing 之类没有子表达式
+            else -> Unit
+        }
+    }
+
+    /**
+     * 主构造的父类调用（阶段 25 K1）：类头 `: Base(实参)` 就是它。
+     *
+     * 没有主构造时类头不许写实参（那时没有参数作用域可算）：要么给类写主构造，
+     * 要么在每个 `constructor(...)` 的第一句写 `super(实参)`——报错里两条路都给出。
+     */
+    private fun checkParentCalls(info: ClassInfo) {
+        val parent = parentRecord(info) ?: return
+        val primary = info.primary
+        if (primary != null) {
+            val headerArgs = info.decl.superArgs
+            val what = "父类 '${parent.name}' 的构造实参"
+            checkParentArgPurity(info, headerArgs, what)
+            val target = checkParentArguments(info, headerArgs, primary.at, what)
+            superDelegations[primary] = SuperDelegation(parent, target, headerArgs, null)
+            return
+        }
+        if (info.decl.superArgs.isNotEmpty()) {
+            // 一个构造器都没写的类，本来就会有一个**隐式的无参主构造**：类头上的实参
+            // 就是它转交给父类的那一份（DESIGN-25 §2：`: Base(实参)` 里的实参必须写）。
+            if (info.constructors.isEmpty()) {
+                val headerArgs = info.decl.superArgs
+                val what = "父类 '${parent.name}' 的构造实参"
+                checkParentArgPurity(info, headerArgs, what)
+                val target = checkParentArguments(info, headerArgs, info.decl.at, what)
+                implicitSuperDelegations[info.decl] = SuperDelegation(parent, target, headerArgs, null)
+                return
+            }
+            throw err(
+                "类 '${info.decl.name}' 没有主构造（类名后面那对括号），父类的构造实参没地方写：" +
+                    "要么给类写主构造（class ${info.decl.name}(参数) : ${parent.name}(实参)），" +
+                    "要么在每个 constructor(...) 的第一句写 super(实参)",
+                info.decl.superArgs.first().at,
+            )
+        }
+    }
+
+    /**
+     * 没有主构造（或一个构造器都没写）时，父类调用是隐式的 `super()`。
+     *
+     * 放在 [checkConstructorChain] 里跑：那时每个次构造体的第一句已经查过，
+     * 「有没有写 this(...) / super(...)」才答得准。
+     */
+    private fun checkImplicitParentCalls(info: ClassInfo) {
+        val parent = parentRecord(info) ?: return
+        if (info.primary != null) return
+        for (ctor in info.constructors) {
+            if (ctor.isPrimary) continue
+            if (ctorDelegations[ctor] != null || superDelegations[ctor] != null) continue
+            val target = checkParentArguments(
+                info, emptyList(), ctor.at, "父类 '${parent.name}' 的隐式 super()",
+            )
+            superDelegations[ctor] = SuperDelegation(parent, target, emptyList(), null)
+        }
+        if (info.constructors.isEmpty() && implicitSuperDelegations[info.decl] == null) {
+            val target = checkParentArguments(
+                info, emptyList(), info.decl.at, "父类 '${parent.name}' 的隐式 super()",
+            )
+            implicitSuperDelegations[info.decl] = SuperDelegation(parent, target, emptyList(), null)
+        }
+    }
+
+    /**
+     * `super(实参)`（阶段 25 K1）——次构造里的**父类**构造委托。
+     *
+     * 规矩与 [checkThisCall] 一一对应（只能在构造器里、必须是体第一句），
+     * 再加一条互斥：同一个构造器里 `this(...)` 与 `super(...)` 只能有一个
+     * （DESIGN-25 §6：它们都必须是第一句）。
+     */
+    private fun checkSuperCall(stmt: SuperCallStmt) {
+        val fn = currentFn
+        if (!fn.isConstructor) {
+            val where = if (methodOwner.containsKey(fn)) {
+                "方法 '${fn.name}'"
+            } else {
+                "顶层函数 '${fn.name}'"
+            }
+            throw err(
+                "'super(实参)' 是**父类构造委托**，只能写在构造器体里（当前在 $where 里）。" +
+                    "想调用父类的方法写 super.方法名(实参)",
+                stmt.at,
+            )
+        }
+        if (fn.body?.statements?.firstOrNull() !== stmt) {
+            throw err(
+                "'super(...)' 必须是构造器体的**第一句**：父类那份状态要在碰 this/字段之前建好。" +
+                    "写法是 constructor(参数) { super(父类实参) ...剩下的语句 }",
+                stmt.at,
+            )
+        }
+        val info = currentClass
+            ?: throw err("内部错误：构造器不在任何类里", stmt.at)
+        val parent = parentRecord(info)
+            ?: throw err(
+                "类 '${info.decl.name}' 没有父类，写不了 super(...)。" +
+                    "super(...) 是委托给父类构造器的（同一个类的另一个构造器要用 this(...)）",
+                stmt.at,
+            )
+        if (ctorDelegations[fn] != null) {
+            throw err(
+                "同一个构造器里 this(...) 和 super(...) 只能写一个：它们都是「先把对象建起来」的" +
+                    "第一句，写两句就说不清先跑谁",
+                stmt.at,
+            )
+        }
+        val target = checkParentArguments(info, stmt.arguments, stmt.at, "super(...) 的")
+        checkParentArgPurity(info, stmt.arguments, "super(...) 的实参")
+        superDelegations[fn] = SuperDelegation(parent, target, stmt.arguments, stmt)
+    }
+
+    /**
+     * `super.方法(...)` / `super(接口名).方法(...)`（阶段 25 K1）。
+     *
+     * 两支的分工（DESIGN-25 §2）：
+     * - 没有目标（`super.f()`）→ 沿**父类链**找（最近的祖先优先），目标记成
+     *   **声明它的那个类**——JVM 的 `INVOKESPECIAL` 用的就是这个 owner；
+     * - 有目标（`super(Greeter).f()`）→ 在指定接口的**默认方法**里找，
+     *   用于两个父接口有同签名默认方法时的消歧（Q1：不用 `super<A>`，因为 `<` 已被泛型实参表占用）。
+     */
+    private fun checkSuperMember(expr: MemberExpr, sup: SuperExpr): RsfType {
+        val info = currentClass
+        val inStatic = currentFn.isStatic
+        if (inStatic) {
+            throw err(
+                "'super' 不能用在静态方法里：静态方法没有当前对象，也就没有父类的那一份状态。" +
+                    "父类的静态成员要写 类名.成员（static 不继承，DESIGN-25 §3）",
+                expr.at,
+            )
+        }
+        if (info == null) {
+            throw err("'super' 只能用在类的方法里（这里不在任何类中）", expr.at)
+        }
+        val args = expr.arguments
+            ?: throw err(
+                "'super.${expr.name}' 只能是方法调用：rsf 不支持 super.字段" +
+                    "（字段本来也不许遮蔽，DESIGN-25 §5/§6）。写 super.${expr.name}(实参)",
+                expr.at,
+            )
+
+        val target = sup.target
+        if (target != null) {
+            return checkSuperInterfaceDefault(info, target, expr, args, sup)
+        }
+
+        val found = declaredMethodOnChain(info, expr.name, includeSelf = false) { !it.isConstructor }
+            ?: throw err(
+                "类 '${info.decl.name}' 的父类链上没有方法 '${expr.name}'：" +
+                    "super.${expr.name}(...) 走的是父类那一份实现" +
+                    if (info.methods[expr.name] != null) {
+                        "（'${expr.name}' 只在 '${info.decl.name}' 自己这里，直接写 ${expr.name}(...) 就行）"
+                    } else {
+                        ""
+                    },
+                expr.at,
+            )
+        val (owner, method) = found
+        // 阶段 25 K1（G4）：父类方法的签名要按**它的类型参数**代换成子类里的具体类型
+        // （`class IntHolder : Holder&<int>` 的 `super.get()` 给回 int）。
+        val subst = substitutionFromInside(info, owner)
+        val candidates = listOf(OverloadCandidate(method, memberParamTypes(method).map { it.substitute(subst) }))
+        val sameArity = candidates.filter { it.params.size == args.size }
+        if (sameArity.isEmpty()) {
+            throw err(
+                "调用父类 '${owner.decl.name}' 的 '${expr.name}' 参数个数不对：实际给了 ${args.size} 个，" +
+                    describeCandidates(candidates),
+                expr.at,
+            )
+        }
+        val argTypes = args.map { type(it) }
+        val chosen = resolveOverload(
+            what = "调用 '${expr.name}'", candidates = sameArity, args = args,
+            argTypes = argTypes, at = expr.at,
+        ) { c, i -> memberMismatch(expr.name, c, i, argTypes[i]) }
+
+        val picked = chosen.decl
+        if (picked.control == ControlType.PRIVATE) {
+            throw err(
+                "父类 '${owner.decl.name}' 的 '${expr.name}' 是 private 的，子类调不到它：" +
+                    "private 成员不参与继承（DESIGN-25 §3）",
+                expr.at,
+            )
+        }
+        superCalls[expr] = UserMember.Method(owner.decl.name, picked)
+        if (picked.ret.mayError) {
+            requireErrorHandled(picked.name, "!${picked.ret.type.display()}", expr, expr.at)
+        }
+        val ret = memberReturnType(picked)
+        return if (ret.isVoid) RsfType.VOID else ret.substitute(subst)
+    }
+
+    /**
+     * `super(接口名).方法(...)`：在指定接口（含它继承来的）里找**默认方法**。
+     *
+     * 只说「默认方法」：抽象方法没有实现可走，`super(I).f()` 若 f 是抽象的，
+     * 用户其实想表达的是「我要 I 那一份」——那份不存在，报错要他显式覆盖。
+     */
+    private fun checkSuperInterfaceDefault(
+        info: ClassInfo,
+        target: TypeRef,
+        expr: MemberExpr,
+        args: List<Expr>,
+        sup: SuperExpr,
+    ): RsfType {
+        val iface = interfaceTable[target.name]
+            ?: throw err(
+                "'${target.display()}' 不是这份程序里的接口——super(接口名) 里只能写**接口**" +
+                    "（要用父类那一份实现就写 super.${expr.name}(实参)，不要括号）",
+                target.at,
+            )
+        val declaredHere = classSuperRefs[info.decl].orEmpty().any {
+            it is SuperRef.Rsf && it.info === iface
+        }
+        if (!declaredHere) {
+            throw err(
+                "类 '${info.decl.name}' 没有实现接口 '${iface.decl.name}'，" +
+                    "super(${iface.decl.name}).${expr.name}(...) 说不清是哪一份实现",
+                target.at,
+            )
+        }
+        val args2 = target.typeArgs.map { resolveType(it) }
+        checkArity(iface.decl.name, iface.decl.typeParams.size, args2, target.at, iface.decl.typeParams)
+        val subst = substitutionFor(iface.decl.typeParams, args2)
+        val required = LinkedHashMap<String, MutableList<RequiredMethod>>()
+        collectRsfRequired(iface, args2, required, HashSet())
+        val defaults = required.values.flatten().filter {
+            it.decl != null && it.concrete && it.name == expr.name
+        }
+        if (defaults.isEmpty()) {
+            throw err(
+                "接口 '${iface.decl.name}' 里没有带实现（默认方法）的 '${expr.name}'：" +
+                    "super(${iface.decl.name}).${expr.name}(...) 只能用来指明「要哪个接口那一份默认实现」。" +
+                    "抽象方法必须由类自己实现，就在类里写一个 'override fun ${expr.name}(...)'",
+                expr.at,
+            )
+        }
+        val pickable = defaults.map {
+            it to OverloadCandidate(it.decl!!, it.params.map { p -> p.substitute(subst) })
+        }
+        val sameArity = pickable.filter { it.second.params.size == args.size }
+        if (sameArity.isEmpty()) {
+            throw err(
+                "调用接口 '${iface.decl.name}' 的 '${expr.name}' 参数个数不对：" +
+                    "实际给了 ${args.size} 个，" + describeCandidates(pickable.map { it.second }),
+                expr.at,
+            )
+        }
+        val argTypes = args.map { type(it) }
+        val chosen = resolveOverload(
+            what = "调用 '${expr.name}'", candidates = sameArity.map { it.second }, args = args,
+            argTypes = argTypes, at = expr.at,
+        ) { c, i -> memberMismatch(expr.name, c, i, argTypes[i]) }
+        val wanted = pickable.first { it.second === chosen }.first
+        val method = wanted.decl!!
+        superCalls[expr] = UserMember.Method(
+            className = interfaceOwnerTable[method]?.name ?: wanted.ownerName,
+            decl = method,
+            interfaceOwner = true,
+        )
+        if (method.ret.mayError) {
+            requireErrorHandled(method.name, "!${method.ret.type.display()}", expr, expr.at)
+        }
+        val ret = wanted.ret.substitute(subst)
+        return if (ret.isVoid) RsfType.VOID else ret
+    }
 
 
     // ------------------------------------------------------------------ 注解（阶段 21）
@@ -1335,7 +2183,9 @@ class Checker(
      * 四种结局，每一种都有明确报错，没有「静默忽略」这一支（D2）：
      * - 这份程序里声明的接口 → [SuperRef.Rsf]；
      * - classpath 上的接口（`Runnable`、`Comparator`）→ [SuperRef.Jvm]；
-     * - 类（rsf 的或 JVM 的）→ 「还不支持类继承」；
+     * - 类（rsf 的或 JVM 的）→ 报「父**类**要写在最前面并带实参表」
+     *   （阶段 25 起类继承是真支持的，只是父类走 [parseSuperClause] 单独那个槽位，
+     *   落到这里的说明用户写错了位置）；
      * - 认不出来的名字 → 未知父类型。
      *
      * 类型实参照收（`class C : Box&<int>`）：对 rsf 接口，实参要用来把方法签名里的
@@ -1382,10 +2232,18 @@ class Checker(
                     ref.at,
                 )
             }
-            val kind = if (enumTable.containsKey(ref.name)) "枚举" else "类"
+            if (enumTable.containsKey(ref.name)) {
+                throw err(
+                    "$where 不能继承 '$display'：'$display' 是个枚举。" +
+                        "枚举不能被继承，也不能继承别的类（DESIGN-25 §6）" +
+                        "——父类型列表里只能写接口名",
+                    ref.at,
+                )
+            }
             throw err(
-                "$where 想继承 '$display'，但 '$display' 是个${kind}——rsf 现在还不支持类继承（本阶段只做接口）。" +
-                    "把 '$display' 改成接口，或者把它的成员直接写进 $ownerKind '${ownerName}' 里",
+                "$where 想把 '$display' 当父类型，但 '$display' 是个类。" +
+                    "rsf 支持类继承，只是父**类**要写在父类型列表的**最前面**、" +
+                    "而且必须带实参表：'$ownerName' : $display(实参), 接口名…（DESIGN-25 §2）",
                 ref.at,
             )
         }
@@ -1404,8 +2262,9 @@ class Checker(
                 )
             }
             throw err(
-                "$where 想继承 '$display'，但它是 classpath 上的类（不是接口）——" +
-                    "rsf 现在还不支持类继承（本阶段只做接口）",
+                "$where 想把 '$display' 当父类型，但它是 classpath 上的类（不是接口）。" +
+                    "要继承它就得写在父类型列表**最前面**并带上实参表：" +
+                    "'$ownerName' : $display(实参), 接口名…（DESIGN-25 §2）",
                 ref.at,
             )
         }
@@ -1603,6 +2462,11 @@ class Checker(
             if (!seen.add(cur)) continue
             if (cur == sup) return true
             classTable[cur]?.let { info ->
+                // 阶段 25：**类继承也是子类型关系**（`class C : B()` ⇒ C is-a B）。
+                // 父类走独立槽位（classParents）而不是 classSuperRefs，所以这里
+                // 必须单独把它排进链里——漏了这一句，`var b : B = c` 就会被判成
+                // 「不能把 C 赋给 B」（G1 探针 p2/p5/p7 正是死在这里）。
+                parentRecord(info)?.let { queue.add(it.internalName) }
                 for (s in classSuperRefs[info.decl].orEmpty()) queue.add(s.display)
             }
             interfaceTable[cur]?.let { info ->
@@ -1686,6 +2550,10 @@ class Checker(
         val out = ArrayList<Pair<String, List<RsfType>>>()
         classTable[name]?.let { info ->
             val subst = substitutionFor(info.decl.typeParams, args)
+            // 阶段 25：父**类**那一跳（G1 的泛型版）：`class IntHolder : Holder&<int>`
+            // 要能从 IntHolder 走到 `Holder&<int>`，`Holder&<T>` 那侧的实参按本类
+            // 类型参数代换（`class D&<U> : Base&<U>`）。
+            parentRecord(info)?.let { p -> out.add(p.internalName to p.args.map { it.substitute(subst) }) }
             for (s in classSuperRefs[info.decl].orEmpty()) {
                 when (s) {
                     is SuperRef.Rsf -> out.add(s.info.decl.name to s.args.map { it.substitute(subst) })
@@ -1821,7 +2689,10 @@ class Checker(
     private fun checkImplementations() {
         checkInterfaceCycles()
         for (info in classTable.values) {
-            val supers = classSuperRefs[info.decl].orEmpty()
+            // 阶段 25：父类实现的接口**也继承下来**——父类没实现的抽象方法，具体子类
+            // 照样得实现（JVM 的规矩：`class C : Shape` 而 Shape 实现了 Greeter，
+            // C 也得把 greet 实现出来）。所以要求要从整条父类链上收集。
+            val supers = classSuperRefs[info.decl].orEmpty() + inheritedInterfaceRefs(info)
             if (supers.isEmpty()) continue
             currentSource = info.source
             val required = LinkedHashMap<String, MutableList<RequiredMethod>>()
@@ -1835,6 +2706,16 @@ class Checker(
             checkClassCovers(info, required)
         }
     }
+
+    /**
+     * 父类链上（不含自己）实现的全部接口（阶段 25）。
+     *
+     * 接口是**跟着类一起继承**的：`class C : Shape` 而 `abstract class Shape : Greeter`
+     * 时，C 也欠 Greeter 一个 `greet`——不把这份要求带下来的话，C 会「编得过但跑起来
+     * AbstractMethodError」，正是两端不许背离的那种情形。
+     */
+    private fun inheritedInterfaceRefs(info: ClassInfo): List<SuperRef> =
+        ancestorsOf(info).flatMap { classSuperRefs[it.decl].orEmpty() }
 
     /**
      * `override` 修饰词的检查（阶段 20 追加件）。
@@ -1856,15 +2737,19 @@ class Checker(
         for (info in classTable.values) {
             // 这里**不**跳过「一个接口都没实现」的类：rsf 看不见父类（D2），也看不见
             // java/lang/Object 的方法，所以这种类里的 override 一定落空，该报错而不是放行。
-            val supers = classSuperRefs[info.decl].orEmpty()
+            // 阶段 25：有父类的类里，能被覆盖的东西多了两处——父**类**里的 open 方法，
+            // 以及父类实现的接口（接口是跟着类一起继承的）。
+            val supers = classSuperRefs[info.decl].orEmpty() + inheritedInterfaceRefs(info)
             for (list in info.methods.values) {
                 for (m in list) {
                     if (!m.isOverride) continue
                     currentSource = info.source
                     if (supers.any { covers(it, m) }) continue
+                    if (inheritedMethodSameSignature(info, m) != null) continue
                     throw err(
                         "类 '${info.decl.name}' 的 '${m.name}' 写了 override，但父类型里没有可覆盖的方法：" +
-                            "接口里没有人要求 ${describeSignature(m)}",
+                            "接口里没有人要求 ${describeSignature(m)}，父类里也没有同签名的方法" +
+                            "（父类那个方法得写了 open 才能被覆盖，DESIGN-25 §4）",
                         m.at,
                     )
                 }
@@ -1948,7 +2833,9 @@ class Checker(
                 shapeOk(m) && !m.isStatic &&
                     (m.control == ControlType.PUBLIC || m.control == ControlType.DEFAULT)
             }
-            val own = info.methods[wanted.name].orEmpty().firstOrNull(shapeMatches)
+            // 阶段 25：沿**父类链**找实现——父类里已经实现好的方法，子类不用再写一遍
+            // （那正是继承的意义）。static 与 private 不继承，[methodOnChain] 已滤掉。
+            val own = methodOnChain(info, wanted.name, shapeMatches)
             if (own != null) {
                 // 返回类型：rsf 接口严格比；JVM 接口只在两边都不是擦除 Object/类型变量时比
                 val wantRet = reqs.firstOrNull { it.decl != null }?.ret
@@ -1995,6 +2882,10 @@ class Checker(
                     got.at,
                 )
             }
+            // 抽象类允许先欠着：这份义务顺着父类链传给具体子类（[checkImplementations]
+            // 已经把父类实现的接口也算到子类头上，[checkAbstractMembers] 负责盯具体子类），
+            // 所以抽象类这里不报「还缺」。
+            if (cls.isAbstract) continue
             val ab = reqs.first { !it.concrete }
             missing.add("${ab.display()}（来自 ${ab.ownerLabel}）")
         }
@@ -2165,23 +3056,30 @@ class Checker(
      */
     private var typeParams: Map<String, RsfType> = emptyMap()
 
-    /** 字段在对象字段数组里的下标 = 声明顺序。
-*/
-    private fun fieldIndexOf(info: ClassInfo, name: String): Int =
-        info.decl.fields.indexOfFirst { it.name == name }
-
     /**
      * 字段成员。[subst] 是泛型实参的替换表：`Box&<int>` 的 `value` 从 `T` 变成 `int`；
      * 在类体内部（`this.value` / 裸写 `value`）传空表，`T` 就还是占位。
+     *
+     * **阶段 25：字段布局是「父类字段在前」**（DESIGN-25 §5）。[info] 是**访问发生的类**，
+     * 字段可能声明在父类上，所以：
+     *
+     * - `owner` 取**声明这个字段的类**，下标 = `fieldBase(owner)`（那条父链上的字段总数）
+     *   + 它在 owner 自己声明序里的位置；
+     * - [UserMember.Field.className] 记的是**声明类**——JVM 的 `PUTFIELD`/`GETFIELD`
+     *   按「声明类」解析字段引用，两端（字节码 / 解释器）读的就是这一份 owner。
+     *
+     * 这份绝对下标是 K1 一次性算好的：后端不需要再自己拼父链（R1：只有一份布局来源）。
+     * 没有父类时 `fieldBase` 是 0，行为与阶段 24 逐字节相同。
      */
     private fun fieldMember(
         info: ClassInfo,
         field: FieldDecl,
         subst: Map<String, RsfType> = emptyMap(),
     ): UserMember.Field {
-        val index = fieldIndexOf(info, field.name)
-        val declared = classFieldTypes[info.decl]?.getOrNull(index) ?: resolveType(field.type)
-        return UserMember.Field(info.decl.name, index, declared.substitute(subst))
+        val owner = fieldOwnerOf(info, field.name) ?: info
+        val index = owner.decl.fields.indexOfFirst { it.name == field.name }
+        val declared = classFieldTypes[owner.decl]?.getOrNull(index) ?: resolveType(field.type)
+        return UserMember.Field(owner.decl.name, fieldBase(owner) + index, declared.substitute(subst))
     }
 
     /** 当前正在检查的类；不在类里的时候是 null。`this` 与「裸字段名」都靠它。
@@ -2454,6 +3352,11 @@ class Checker(
                 scope.declare(b.name, b)
             }
 
+            // 父类的构造实参（阶段 25）：就在主构造的参数作用域里求类型——类头那句
+            // `: Base(y)` 里的 y 就是主构造的参数。排在字段初值之前查，用户先看到
+            // 「父类那个构造器对不上」，再看到字段初值里的错。
+            checkParentCalls(info)
+
             val declaredFields = classFieldTypes[info.decl].orEmpty()
             for ((index, f) in info.decl.fields.withIndex()) {
                 val declared = declaredFields.getOrElse(index) { resolveType(f.type) }
@@ -2476,6 +3379,9 @@ class Checker(
             // 这一条是**保证字段初值里的主构造参数一定有值**的关键——所以有主构造时，
             // 次构造必须委托（和 Kotlin 同一条规矩）。
             checkConstructorChain(info)
+            // 父类的**隐式** super()（阶段 25）：没有主构造、又没写 super(...) 的
+            // 构造器由编译器补一句无参 super()。放在委托链检查之后：「有没有写」那时才答得准。
+            checkImplicitParentCalls(info)
         }
         currentClass = null
         typeParams = emptyMap()
@@ -2485,10 +3391,11 @@ class Checker(
      * 校验一个类的构造器委托链（阶段 18）。
      *
      * 三条规则：
-     * 1. **有主构造 ⇒ 每个次构造必须以 `this(...)` 开头**。这样链的根必然是主构造，
-     *    字段初值里引用的主构造参数一定绑好值了。（Java 允许不委托的"根"次构造，
+     * 1. **有主构造 ⇒ 每个次构造必须以 `this(...)` 或 `super(...)` 开头**。这样链的根必然是
+     *    主构造，字段初值里引用的主构造参数一定绑好值了。（Java 允许不委托的"根"次构造，
      *    但那样字段初值就可能读到不存在的主构造参数——Kotlin 用「必须委托」堵住了，
-     *    我们照抄。）
+     *    我们照抄。阶段 25 起 `super(...)` 也算「委托」：它把父类那份状态先建起来，
+     *    之后照样跑本类字段初值，所以主构造参数一样是有值的。）
      * 2. 委托**不能成环**（`A -> B -> A` 永远跑不完）。
      * 3. 目标必须是同一个类的另一个构造器（在 [checkThisCall] 里按实参选）。
      */
@@ -2496,10 +3403,13 @@ class Checker(
         val cls = info.decl.name
         val primary = info.primary
         for (ctor in info.constructors) {
-            if (!ctor.isPrimary && primary != null && ctorDelegations[ctor] == null) {
+            if (!ctor.isPrimary && primary != null && ctorDelegations[ctor] == null &&
+                superDelegations[ctor] == null
+            ) {
                 throw err(
                     "类 '$cls' 有主构造（写在类头括号里），所以次构造必须委托给它：" +
-                        "在 constructor(...) 体的**第一句**写 this(实参)。" +
+                        "在 constructor(...) 体的**第一句**写 this(实参)（阶段 25 起也可以写 " +
+                        "super(父类实参) 委托给父类）。" +
                         "否则字段初值里用到的主构造参数就没有值了",
                     ctor.at,
                 )
@@ -2639,6 +3549,21 @@ class Checker(
         }
         val info = classTable[className]
         if (info != null) {
+            // 抽象类不能 new（阶段 25，DESIGN-25 §6）：它有没实现的抽象成员，
+            // 造出来的对象连该跑哪个方法都不知道。
+            if (info.decl.isAbstract) {
+                val missing = unimplementedAbstractMembers(info, includeInterfaces = true)
+                throw err(
+                    "'$className' 是抽象类，不能 new——抽象类只能当父类，" +
+                        "要用一个把抽象成员都实现的子类（abstract class $className）" +
+                        if (missing.isEmpty()) {
+                            ""
+                        } else {
+                            "。它还没实现的有：${missing.joinToString("、")}"
+                        },
+                    key.at,
+                )
+            }
             // 泛型用户类：先查元数，再按实参替换 T 之后检查构造器实参
             checkArity(className, info.decl.typeParams.size, args, key.at, info.decl.typeParams)
             val subst = substitutionFor(info, args)
@@ -3057,6 +3982,49 @@ class Checker(
      * [subst] 是泛型实参替换表：`b.set(7)` 里 `b` 是 `Box&<int>`，所以方法签名里的
      * `T` 要换成 `int`——实参检查、返回类型都必须按换过之后的算。
      */
+    /**
+     * 用户类沿父类链找到的**第一个 JDK 父类**（阶段 25 K1，G5）。
+     *
+     * `class MyError(msg : string) : Exception(msg)` 的这条链是 MyError →（rsf 层没了）
+     * → `java/lang/Exception`；也可能隔着几层 rsf 父类才碰到 JDK 类。
+     */
+    private fun jvmParentOf(info: ClassInfo): JvmClass? {
+        var cur: ClassInfo? = info
+        while (cur != null) {
+            val here: ClassInfo = cur
+            classParentJvm[here.decl]?.let { return it }
+            cur = parentOf(here)
+        }
+        return null
+    }
+
+    /**
+     * 在**JDK 父类链**上找实例方法（阶段 25 K1，G5）。
+     *
+     * `class MyError : Exception` 里写 `getMessage()`：它声明在 `java/lang/Throwable`
+     * 上，rsf 的类型表里根本没有这个名字，只能交给 [MemberResolver]（它自己会沿
+     * JVM 的父类链走，`JvmMethod.owner` 就是声明它的那个类）。
+     *
+     * 找的是**实例方法**：JDK 的 static 方法一样不继承（DESIGN-25 §3，只能写
+     * `类名.方法(...)`）。
+     */
+    private fun inheritedJvmMethod(info: ClassInfo, name: String, argTypes: List<RsfType>): JvmMethod? {
+        val jvm = jvmParentOf(info) ?: return null
+        return resolver.findMethod(jvm.internalName, name, argTypes, wantStatic = false)
+            ?: if (argTypes.isNotEmpty()) {
+                // 和 `接收者.成员` 那条路一致：基本类型实参再按装箱形态试一次
+                resolver.findMethod(jvm.internalName, name, argTypes.map { boxForInterop(it) }, wantStatic = false)
+            } else {
+                null
+            }
+    }
+
+    /** JDK 父类链上的实例字段（G5）；没有就是 null。 */
+    private fun inheritedJvmField(info: ClassInfo, name: String): JvmField? {
+        val jvm = jvmParentOf(info) ?: return null
+        return resolver.findField(jvm.internalName, name, wantStatic = false)
+    }
+
     private fun checkUserMember(
         info: ClassInfo,
         expr: MemberExpr,
@@ -3066,27 +4034,61 @@ class Checker(
         val who = "类 '${info.decl.name}'"
 
         if (expr.arguments == null) {
-            val field = info.fields[expr.name]
-                ?: throw err(
-                    "$who 里没有字段 '${expr.name}'" +
-                        if (info.fields.isNotEmpty()) "（有：${info.fields.keys.joinToString(", ")}）" else "",
+            // 阶段 25：字段沿**父类链**找（字段是继承来的）。记的 owner 是**声明它的类**，
+            // 下标是烘好的绝对下标（见 fieldMember）——两端只认这一份布局。
+            val found = lookupField(info, expr.name)
+            if (found == null) {
+                // 阶段 25 K1（G5）：字段可能是**JDK 父类**继承来的
+                // （`class MyError : Exception` 里的 `detailMessage` 那类）。
+                val inherited = inheritedJvmField(info, expr.name)
+                if (inherited != null) {
+                    memberTargets[expr] = ResolvedField(inherited)
+                    return inherited.type
+                }
+                throw err(
+                    "$who 里没有字段 '${expr.name}'" + memberNamesHint(info, fields = true),
                     expr.at,
                 )
-            checkMemberVisible(info, expr.name, expr.at)
-            val member = fieldMember(info, field, subst)
+            }
+            val (owner, field) = found
+            checkMemberVisible(owner, expr.name, expr.at)
+            // 字段声明在祖先上时，要把接收者的实参一路代换到**声明类**那一层（G4）：
+            // `class IntHolder : Holder&<int>` 的 `h.v` 是 int，不是 Holder 的 T。
+            val member = fieldMember(info, field, substitutionAlongChain(info, subst, owner))
             userMembers[expr] = member
             return member.type
         }
 
-        val named = info.methods[expr.name]
-        if (named == null) {
-            // 类自己的方法表里没有这个名字，**不代表没有**：接口的默认方法是被实现类
+        // 阶段 25：方法也沿**父类链**找。合并同一个签名时**近的类优先**——那就是 JVM
+        // 虚分派的结果。父类的 static / private 方法**不继承**（DESIGN-25 §3：
+        // static 只能写「类名.成员」），所以在父类那一层先滤掉。
+        val chainNamed = LinkedHashMap<String, Pair<ClassInfo, FuncDecl>>()
+        info.methods[expr.name]?.forEach { m ->
+            chainNamed.putIfAbsent(signatureKey(m.name, paramTypesOfDecl(m)), info to m)
+        }
+        for (anc in ancestorsOf(info).reversed()) {
+            anc.methods[expr.name]?.forEach { m ->
+                if (m.isStatic || m.control == ControlType.PRIVATE) return@forEach
+                chainNamed.putIfAbsent(signatureKey(m.name, paramTypesOfDecl(m)), anc to m)
+            }
+        }
+        if (chainNamed.isEmpty()) {
+            // 阶段 25 K1（G5）：类链上没有这个名字，但**JDK 父类**上可能有
+            // （`class MyError : Exception` 里的 `getMessage()`）。JVM 的规矩是
+            // 父类的方法压过接口的默认方法，所以这一支排在默认方法前面。
+            if (!wantStatic) {
+                val jvm = inheritedJvmMethod(info, expr.name, expr.arguments.map { type(it) })
+                if (jvm != null) {
+                    memberTargets[expr] = ResolvedMethod(jvm, ClassPath.find(jvm.owner)?.isInterface == true)
+                    return jvm.returnType
+                }
+            }
+            // 类链上没有这个名字，**不代表没有**：接口的默认方法是被实现类
             // 继承的（`var d : Dog = new Dog(); d.shout()`，shout 写在 Greeter 里带体）。
             // 静态调用不走这条路——接口方法都是实例方法。
             if (!wantStatic) checkInheritedInterfaceDefault(info, expr, subst)?.let { return it }
             throw err(
-                "$who 里没有方法 '${expr.name}'" +
-                    if (info.methods.isNotEmpty()) "（有：${info.methods.keys.joinToString(", ")}）" else "",
+                "$who 里没有方法 '${expr.name}'" + memberNamesHint(info, fields = false),
                 expr.at,
             )
         }
@@ -3094,20 +4096,35 @@ class Checker(
         // 候选先按**可见性**过滤，再按 static/实例的一致性过滤，最后才打分。
         // 顺序是有意的：一个名字下既有 private 又有 public 重载时，外面调得动的
         // 只有 public 那个；全都调不动才报 private（沿用老文案）。
-        val visible = named.filter { isMemberVisible(info, it) }
-        if (visible.isEmpty()) checkMemberVisible(info, expr.name, expr.at)
-        val usable = visible.filter { it.isStatic == wantStatic }
+        val visible = chainNamed.values.filter { (owner, m) -> isMemberVisible(owner, m) }
+        if (visible.isEmpty()) {
+            // 走到这里只有一种情况：候选全是**父类**的 private 方法（自己的 private
+            // 方法在类内部是可见的，那是上一支）。沿用老文案，再点明「不继承」。
+            checkMemberVisible(info, expr.name, expr.at)
+            val owner = chainNamed.values.first { (_, m) -> m.control == ControlType.PRIVATE }.first
+            throw err(
+                "'${expr.name}' 是 '${owner.decl.name}' 的 private 方法，子类继承不到它" +
+                    "（private 不参与继承，DESIGN-25 §3）",
+                expr.at,
+            )
+        }
+        val usable = visible.filter { (_, m) -> m.isStatic == wantStatic }
         if (usable.isEmpty()) {
-            val first = visible[0]
+            val (owner, first) = visible[0]
             val fix = if (first.isStatic) {
-                "它是 static 的，要用类名调：${info.decl.name}.${expr.name}(...)"
+                "它是 static 的，要用类名调：${owner.decl.name}.${expr.name}(...)"
             } else {
                 "它不是 static 的，要先有对象：对象.${expr.name}(...)"
             }
             throw err("'${expr.name}' 的调用方式不对——$fix", expr.at)
         }
 
-        val candidates = usable.map { OverloadCandidate(it, memberParamTypes(it).map { t -> t.substitute(subst) }) }
+        // 形参类型也要按**声明它的那个类**那一层代换：继承来的 `get() -> T`
+        // 在 `class IntHolder : Holder&<int>` 上必须变成 `get() -> int`（G4）。
+        val candidates = usable.map { (owner, m) ->
+            val ownerSubst = substitutionAlongChain(info, subst, owner)
+            OverloadCandidate(m, memberParamTypes(m).map { t -> t.substitute(ownerSubst) })
+        }
         val sameArity = candidates.filter { it.params.size == expr.arguments.size }
         if (sameArity.isEmpty()) {
             throw err(
@@ -3123,12 +4140,15 @@ class Checker(
         ) { c, i -> memberMismatch(expr.name, c, i, argTypes[i]) }
 
         val method = chosen.decl
-        userMembers[expr] = UserMember.Method(info.decl.name, method)
+        // owner 取**声明它的类**：继承来的方法记父类名，后端据此发 invokevirtual
+        val declarer = usable.first { (_, m) -> m === method }.first
+        userMembers[expr] = UserMember.Method(declarer.decl.name, method)
         if (method.ret.mayError) {
             requireErrorHandled(method.name, "!${method.ret.type.display()}", expr, expr.at)
         }
         val ret = memberReturnType(method)
-        return if (ret.isVoid) RsfType.VOID else ret.substitute(subst)
+        // 返回类型同样要按声明类那一层代换（G4）。
+        return if (ret.isVoid) RsfType.VOID else ret.substitute(substitutionAlongChain(info, subst, declarer))
     }
 
     /**
@@ -3210,6 +4230,18 @@ class Checker(
     private fun isMemberVisible(info: ClassInfo, m: FuncDecl): Boolean =
         m.control != ControlType.PRIVATE || currentClass === info
 
+    /**
+     * 「（有：a, b, c）」这句提示（报错里列出现成的名字）。
+     *
+     * 阶段 25 起**把继承来的成员也算进去**：父类的字段/方法在子类里是能直接用的，
+     * 报「没有这个成员」时把它们藏起来只会让用户多猜一轮。自己声明的排在前面。
+     */
+    private fun memberNamesHint(info: ClassInfo, fields: Boolean): String {
+        val own = if (fields) info.fields.keys else info.methods.keys
+        val inherited = ancestorsOf(info).reversed().flatMap { if (fields) it.fields.keys else it.methods.keys }
+        val all = (own + inherited).distinct()
+        return if (all.isEmpty()) "" else "（有：${all.joinToString(", ")}）"
+    }
     /** 方法/构造器的形参类型：读在 [declareClasses] 里算好的那份（带类型参数占位）。
 */
     private fun memberParamTypes(m: FuncDecl): List<RsfType> = paramTypesOfDecl(m)
@@ -3415,16 +4447,15 @@ class Checker(
                 }
                 val info = userClassOf(receiverType)
                     ?: throw err("${receiverType.rsfName} 上没有字段 '${target.name}'", stmt.at)
-                val field = info.fields[target.name]
+                // 阶段 25 K1（G3）：字段**写**也要沿父类链找（读路径 checkUserMember 早已如此）。
+                // owner 是**声明它的类**——PUTFIELD 的 owner 必须是声明类（JVM 解析规则）。
+                val (owner, field) = lookupField(info, target.name)
                     ?: throw err(
                         "类 '${info.decl.name}' 里没有字段 '${target.name}'" +
-                            if (info.fields.isNotEmpty()) {
-                                "（有：${info.fields.keys.joinToString(", ")}）"
-                            } else {
-                                ""
-                            },
+                            memberNamesHint(info, fields = true),
                         stmt.at,
                     )
+                checkMemberVisible(owner, target.name, stmt.at)
                 if (!field.mutable) {
                     throw err(
                         "字段 '${target.name}' 是 imutvar（不可变），声明时就定了值，不能重新赋值",
@@ -3436,7 +4467,8 @@ class Checker(
                 // 以前这里直接 `resolveType(field.type)`：既丢掉了替换（拿 `T` 去比），
                 // 又是在类体之外解析 `T`——`typeParams` 早清空了，于是报「未知类型 'T'」。
                 // 读路径（checkUserMember）本来就是传 subst 的，这里跟它对齐。
-                val subst = substitutionFor(info, receiverType.typeArgs)
+                // 字段声明在祖先上时还要把实参一路代换到**声明类**那一层（G4/G3）。
+                val subst = substitutionAlongChain(info, substitutionFor(info, receiverType.typeArgs), owner)
                 val declared = fieldMember(info, field, subst).type
                 val valueType = type(stmt.value)
                 if (!acceptsValue(declared, stmt.value, valueType)) {
@@ -3452,11 +4484,17 @@ class Checker(
                 val binding = scope.lookup(stmt.name)
                 if (binding == null) {
                     // 不是局部变量 参数——在类的方法里就可能是在写字段（`v = v + 1`）
+                    // 阶段 25 K1（G3）：裸字段写同样沿父类链找；被写的 owner 是声明类，
+                    // 类型也要按**声明类**那一层代换（`class IntHolder : Holder&<int>` 里
+                    // 裸写 `v` 必须是 int，G4）。
                     val info = currentClass
-                    val field = info?.fields?.get(stmt.name)
-                    if (field != null) {
-                        checkFieldWrite(info, field, stmt.value, stmt.at)
-                        bareFieldWrites[stmt] = fieldMember(info, field)
+                    val found = info?.let { lookupField(it, stmt.name) }
+                    if (found != null && info != null) {
+                        val (owner, field) = found
+                        checkMemberVisible(owner, stmt.name, stmt.at)
+                        val subst = substitutionFromInside(info, owner)
+                        checkFieldWrite(owner, field, stmt.value, stmt.at, subst)
+                        bareFieldWrites[stmt] = fieldMember(info, field, subst)
                         return
                     }
                 }
@@ -3496,6 +4534,9 @@ class Checker(
             is IndexAssignStmt -> checkIndexAssign(stmt)
 
             is ThisCallStmt -> checkThisCall(stmt)
+
+            // 阶段 25：父类构造委托 `super(实参)`（只能当构造器体第一句）
+            is SuperCallStmt -> checkSuperCall(stmt)
 
             is ReturnStmt -> checkReturn(stmt)
 
@@ -4010,6 +5051,8 @@ class Checker(
         )
         // 构造器委托的实参也要走同一套变量读取分析
         is ICtorDelegate -> instr.stmt.arguments
+        // 父类构造委托（阶段 25）的实参同理
+        is ISuperDelegate -> instr.stmt.arguments
         is IExpr -> listOf(instr.stmt.expr)
         is IReturn -> listOfNotNull(instr.stmt.value)
         is IFail -> listOf(instr.stmt.message)
@@ -4079,6 +5122,25 @@ class Checker(
                 thisType
             }
 
+            // 阶段 25：`super` 不是能单独取值的表达式——它只能当方法调用的接收者
+            // （`super.f(...)` 那条在 checkMember 里走掉了，走到这里说明用户把它当值用了）
+            is SuperExpr -> {
+                val info = currentClass
+                val hint = if (info != null && parentRecord(info) != null) {
+                    "写法是 super.方法名(实参)，或者 super(接口名).方法名(实参)"
+                } else if (info != null) {
+                    "而且类 '${info.decl.name}' 也没有父类"
+                } else {
+                    ""
+                }
+                throw err(
+                    "'super' 只能当方法调用的接收者，不能当值用" +
+                        (if (hint.isNotEmpty()) "——$hint" else "") +
+                        "（DESIGN-25 §3：rsf 不支持 super.字段）",
+                    expr.at,
+                )
+            }
+
             // 阶段 13：数组的创建与下标读
             is NewArrayExpr -> checkNewArray(expr)
 
@@ -4090,18 +5152,34 @@ class Checker(
                     varRefs[expr] = binding
                     binding.type
                 } else {
-                    // 不是局部变量 参数——在类里就再看看字段（裸字段名写法：`rtn x`）
+                    // 不是局部变量 参数——在类里就再看看字段（裸字段名写法：`rtn x`）。
+                    // 阶段 25 K1：沿**父类链**找（继承来的字段也能裸写），并且
+                    // 类型要按**声明它的那个类**那一层代换（G4）。
                     val info = currentClass
-                    val field = info?.fields?.get(expr.name)
-                    if (field != null) {
-                        val member = fieldMember(info, field)
+                    val found = info?.let { lookupField(it, expr.name) }
+                    if (found != null && info != null) {
+                        val (owner, field) = found
+                        checkMemberVisible(owner, expr.name, expr.at)
+                        val member = fieldMember(info, field, substitutionFromInside(info, owner))
                         fieldReads[expr] = member
                         member.type
                     } else {
                         throw err(
                             "未声明的变量 '${expr.name}'" +
-                                if (info != null && info.fields.isNotEmpty()) {
-                                    "（${info.decl.name} 的字段有：${info.fields.keys.joinToString(", ")}）"
+                                if (info != null &&
+                                    info.primary?.params?.any { it.name == expr.name } == true
+                                ) {
+                                    // 主构造参数**不是字段**（阶段 18 起就是这样）：它只在类头的
+                                    // 父类实参表与字段初值里可见。这里点明怎么把它留住，
+                                    // 免得用户对着「未声明的变量」猜。
+                                    "。'${expr.name}' 是类 '${info.decl.name}' 的**主构造参数**，" +
+                                        "它不在方法的作用域里（主构造参数只在类头的父类实参表和字段初值里可见）" +
+                                        "——要让方法读得到它，就在类体里存一个字段：" +
+                                        "var ${expr.name} : 类型 = ${expr.name}"
+                                } else if (info != null && memberNamesHint(info, fields = true).isNotEmpty()) {
+                                    "（${info.decl.name} 的字段有：" +
+                                        (info.fields.keys + ancestorsOf(info).reversed().flatMap { it.fields.keys })
+                                            .distinct().joinToString(", ") + "）"
                                 } else if (currentInterface != null) {
                                     // 阶段 20：接口默认方法里没有字段可读（D3），
                                     // 说清楚这一点，用户才不会去翻「我是不是少写了个 var」
@@ -4240,6 +5318,11 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
 
     private fun checkMember(expr: MemberExpr): RsfType {
         val receiver = expr.receiver
+
+        // 阶段 25：`super.方法(...)` / `super(接口).方法(...)`。
+        // 必须排在情况 A/B **之前**：`super` 既不是一个变量、也不是能单独求值的表达式
+        // （走到 `type(receiver)` 会先撞上「'super' 只能当方法调用的接收者」）。
+        if (receiver is SuperExpr) return checkSuperMember(expr, receiver)
 
         // 情况 A：接收者是类名（而且不是一个变量）→ 静态成员
         if (receiver is VarExpr && scope.lookup(receiver.name) == null) {
@@ -4664,8 +5747,17 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
             // 类里可以直接按名字调本类方法：`shift(x, y)`（实例方法隐式带 this）
             // static 方法隐式带类名）。这在方法体里是最自然的写法，不能只认顶层函数。
             val info = currentClass
-            if (info != null && !info.methods[expr.name].isNullOrEmpty()) {
-                return checkImplicitCall(info, expr)
+            if (info != null) {
+                // 阶段 25 K1（G2）：**隐式 this 的成员查找也要沿父类链走**——
+                // `base()` 写在父类里、子类方法体里不带接收者照样调得到。
+                if (declaredMethodOnChain(info, expr.name) { !it.isConstructor } != null) {
+                    return checkImplicitCall(info, expr)
+                }
+                // 名字在父类链上、但那是个 static：static 不继承（DESIGN-25 §3），
+                // 给一句照着改就能过的报错，而不是「未定义的函数」。
+                inheritedStaticHint(info, expr.name)?.let { throw err(it, expr.at) }
+                // 阶段 25 K1（G5）：JDK 父类继承来的实例方法（`getMessage()`）。
+                checkImplicitJvmCall(info, expr)?.let { return it }
             }
             // 接口的默认方法体里同理：`shout` 里写 `greet(name)`（隐式带 this，阶段 20）
             val iface = currentInterface
@@ -4731,8 +5823,25 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
      * 类体内部 private 一律可见，static / 实例两种都能这么调，所以这里不做这两项过滤。
      */
     private fun checkImplicitCall(info: ClassInfo, expr: CallExpr): RsfType {
-        val named = info.methods[expr.name].orEmpty()
-        val candidates = named.map { OverloadCandidate(it, memberParamTypes(it)) }
+        // 阶段 25 K1（G2）：候选要沿**父类链**收集，父类那一层滤掉 static / private
+        // （它们不继承，DESIGN-25 §3）；同一个签名「近的类优先」——那就是虚分派的结果。
+        val chain = LinkedHashMap<String, Pair<ClassInfo, FuncDecl>>()
+        info.methods[expr.name]?.forEach { m ->
+            if (m.isConstructor) return@forEach
+            chain.putIfAbsent(signatureKey(m.name, paramTypesOfDecl(m)), info to m)
+        }
+        for (anc in ancestorsOf(info).reversed()) {
+            anc.methods[expr.name]?.forEach { m ->
+                if (m.isConstructor || m.isStatic || m.control == ControlType.PRIVATE) return@forEach
+                chain.putIfAbsent(signatureKey(m.name, paramTypesOfDecl(m)), anc to m)
+            }
+        }
+        val named = chain.values.toList()
+        // 形参按**声明它的那个类**那一层代换（G4：`get() -> T` 在
+        // `class IntHolder : Holder&<int>` 上要变成 `get() -> int`）。
+        val candidates = named.map { (owner, m) ->
+            OverloadCandidate(m, memberParamTypes(m).map { t -> t.substitute(substitutionFromInside(info, owner)) })
+        }
         val sameArity = candidates.filter { it.params.size == expr.arguments.size }
         if (sameArity.isEmpty()) {
             throw err(
@@ -4748,11 +5857,43 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
         ) { c, i -> memberMismatch(expr.name, c, i, argTypes[i]) }
 
         val method = chosen.decl
-        implicitCalls[expr] = UserMember.Method(info.decl.name, method)
+        // owner 取**声明它的类**：继承来的方法记父类名，后端据此发 invokevirtual
+        val declarer = named.first { (_, m) -> m === method }.first
+        implicitCalls[expr] = UserMember.Method(declarer.decl.name, method)
         if (method.ret.mayError) {
             requireErrorHandled(method.name, "!${method.ret.type.display()}", expr, expr.at)
         }
-        return memberReturnType(method)
+        val ret = memberReturnType(method)
+        return if (ret.isVoid) RsfType.VOID else ret.substitute(substitutionFromInside(info, declarer))
+    }
+
+    /**
+     * 名字在父类链上、但只有 **static** 版本时给的可操作报错（阶段 25 K1，G2）。
+     *
+     * static 不继承（DESIGN-25 §3）：只能写 `父类名.方法(...)`。没这一支的话，
+     * 用户看到的是「未定义的函数 'make'」，而真正的问题是他把 static 方法当实例方法用了。
+     */
+    private fun inheritedStaticHint(info: ClassInfo, name: String): String? {
+        val owner = declaredMethodOnChain(info, name) { it.isStatic }?.first ?: return null
+        return "'$name' 是 '${owner.decl.name}' 的 static 方法，不继承：" +
+            "静态方法只能写「类名.方法(...)」——写成 ${owner.decl.name}.$name(...)（DESIGN-25 §3）"
+    }
+
+    /**
+     * 隐式 this 调用 **JDK 父类继承来**的方法（阶段 25 K1，G5）。
+     *
+     * `class MyError(msg : string) : Exception(msg) { fun describe() -> string { rtn
+     * getMessage() } }`：`getMessage` 不在任何 rsf 类型上，只有 JDK 的类层次知道它。
+     * 解析结果记进 [implicitJvmCalls]（那里的值是 [ResolvedMethod]，rsf 的
+     * [FuncDecl] 表达不了 JDK 方法）；找不到就返回 null，让 [checkCall] 照旧报
+     * 「未定义的函数」。
+     */
+    private fun checkImplicitJvmCall(info: ClassInfo, expr: CallExpr): RsfType? {
+        if (jvmParentOf(info) == null) return null
+        val argTypes = expr.arguments.map { type(it) }
+        val method = inheritedJvmMethod(info, expr.name, argTypes) ?: return null
+        implicitJvmCalls[expr] = ResolvedMethod(method, ClassPath.find(method.owner)?.isInterface == true)
+        return if (method.returnType.isVoid) RsfType.VOID else method.returnType
     }
 
     /**

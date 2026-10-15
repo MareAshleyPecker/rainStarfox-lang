@@ -330,7 +330,11 @@ class Completer(
             // pkg（阶段 6a）一直漏在补全表外：关键字表要同步——
             // 这里和 idea 插件的 RsfKeywords 一起改（由 EditorKeywordParityTest 守着）。
             "import", "module", "pkg", "public", "protected", "private", "static",
+            // 阶段 25：类继承的声明级修饰词（类与方法都能写）
+            "open", "final", "abstract",
             "class", "new", "this",
+            // 阶段 25：`super` 不是修饰词（它在表达式位置上），和 `this` 摆一起
+            "super",
             // 阶段 14 的错误处理关键字也漏过一阵
             "fail", "try", "catch",
             // 阶段 18：次构造

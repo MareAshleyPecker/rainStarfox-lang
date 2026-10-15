@@ -17,6 +17,7 @@ import org.example.complie.ast.LabelStmt
 import org.example.complie.ast.MemberAssignStmt
 import org.example.complie.ast.ReturnStmt
 import org.example.complie.ast.Stmt
+import org.example.complie.ast.SuperCallStmt
 import org.example.complie.ast.SwitchStmt
 import org.example.complie.ast.ThisCallStmt
 import org.example.complie.ast.TryStmt
@@ -83,6 +84,25 @@ class IIndexAssign(val stmt: IndexAssignStmt) : Instr {
  * 两端读同一份，不可能走偏。
  */
 class ICtorDelegate(val stmt: ThisCallStmt) : Instr {
+    override val at get() = stmt.at
+}
+
+/**
+ * `super(实参)` —— **父类构造委托**（阶段 25 K1）。
+ *
+ * 和 [ICtorDelegate] 是两条不同的边，不能合并：
+ *
+ * - `this(实参)` 是「同一个类的另一个构造器接着跑」，这条边**不new 两个对象**，
+ *   链根那次构造负责跑字段初值；
+ * - `super(实参)` 是「先把父类那份对象状态建起来」，父类构造器跑完之后，
+ *   才轮到**本类**的字段初值与构造体（DESIGN-25 §3 的构造顺序）。
+ *
+ * K1（前端 + 语义）只负责把这条边**显式**降到 IR 里：降级本身不猜语义，
+ * 目标父类由语义模型的 `superDelegations[当前构造器]` 提供（Checker 解析过、
+ * 两端读同一份）。真正的字节码 / 解释器实现是 K2 / K3 的活——那两端现在
+ * 遇到这条指令**显式报未实现**，绝不静默按 `this(...)` 或空操作处理。
+ */
+class ISuperDelegate(val stmt: SuperCallStmt) : Instr {
     override val at get() = stmt.at
 }
 
@@ -301,6 +321,8 @@ class Lowering(
             is MemberAssignStmt -> out.add(IFieldAssign(stmt))
             is IndexAssignStmt -> out.add(IIndexAssign(stmt))
             is ThisCallStmt -> out.add(ICtorDelegate(stmt))
+            // 阶段 25：`super(实参)` 也是一条委托边，但它是**父类**那条（见 [ISuperDelegate]）
+            is SuperCallStmt -> out.add(ISuperDelegate(stmt))
             is ExprStmt -> out.add(IExpr(stmt))
             is ReturnStmt -> out.add(IReturn(stmt))
             is FailStmt -> out.add(IFail(stmt))

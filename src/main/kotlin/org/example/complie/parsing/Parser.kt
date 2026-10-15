@@ -667,6 +667,7 @@ class Parser(
      * 全都不用为它分家。主构造的「体」就是字段初值（不需要 init 块）。
      */
     private fun parseClassDecl(annotations: List<AnnotationUse> = emptyList()): ClassDecl {
+        val mods = parseInheritModifiers(kindWord = "类")
         var control = ControlType.DEFAULT
         if (peek().kind.isControlKeyword) {
             control = ControlType.of(advance().kind)
@@ -700,9 +701,11 @@ class Parser(
             null
         }
 
-        // 父接口子句（阶段 20）：`class Dog(n : string) : Greeter, Runnable { ... }`。
+        // 父类 / 父接口子句（阶段 20 起是父接口，阶段 25 起最前面可以有一个父类）：
+        // `class Dog(n : string) : Greeter, Runnable { ... }`、
+        // `class D(y : int) : Base(y), Greeter { ... }`。
         // 顺序固定为「主构造括号 → ':' 子句 → '{'」（DESIGN-20 §2）。
-        val supertypes = parseSupertypeList("类 '${nameTok.lexeme}'")
+        val sup = parseSuperClause(nameTok.lexeme)
 
         expect(TokenKind.LBRACE, "类 '${nameTok.lexeme}' 缺少 '{'")
 
@@ -713,26 +716,44 @@ class Parser(
             // 注解可以和修饰词混写（`@M public fun f()` / `public @M fun f()`），
             // 所以先收注解再分派；字段/方法各自带走自己的那份表。
             val memberAnnotations = parseAnnotations()
+            // 继承修饰词也可以排在这一串里（`open fun f()` / `public open fun f()`）：
+            // 先原样数出来，等看清后面是字段还是方法再决定谁去消费它们。
+            val memberStart = peek(modifierRun()).kind
             when {
                 isFieldDeclAhead() -> fields.add(parseFieldDecl(memberAnnotations))
+                // 字段不吃继承修饰词（阶段 25 禁止字段遮蔽，DESIGN-25 §5）：给了准确报错，
+                // 而不是让人掉进 parseFuncDecl 撞一句「这里需要一个函数声明」。
+                // 只认 open/final/abstract 这三个词——`override var x` 照旧往下走到
+                // parseFuncDecl 去撞那句专为它写的「override 只能写在方法前面」（见
+                // [isFieldDeclAhead] 的说明）。
+                isFieldDeclAheadAfterInherit() -> throw error(
+                    peek(),
+                    "字段不能写 'open' / 'final' / 'abstract'：子类不能重复声明父类已有的字段" +
+                        "（阶段 25 禁止字段遮蔽，DESIGN-25 §5），所以字段没有「可被覆盖」这一说，" +
+                        "把修饰词删掉",
+                )
                 // `constructor` 以及「修饰词 + constructor」（后者交给 parseConstructor
                 // 报「不能写权限修饰词 / 不能写 override」，别掉进 parseFuncDecl
                 // 变成一句看不懂的通用错误）。修饰词可以排好几个，所以先把这一串数出来。
-                peek(modifierRun()).kind == TokenKind.KW_CONSTRUCTOR -> {
+                memberStart == TokenKind.KW_CONSTRUCTOR -> {
                     if (memberAnnotations.isNotEmpty()) {
                         throw error(
                             peek(),
                             "构造器上不能写注解（'@'）：v1 的注解只标在类/接口/注解声明/方法/字段上",
                         )
                     }
+                    if (peek().kind.isInheritKeyword) parseInheritModifiers(kindWord = "构造器")
                     methods.add(parseConstructor(nameTok.lexeme))
                 }
-                // 类里的方法：`override` 在这里是合法的（接口里的方法也能写，见 parseInterfaceDecl）
+                // 类里的方法：`override` / `open` / `final` / `abstract` 都在这里合法
+                // （接口里的方法也能写 override、但 open/final/abstract 有各自的规矩，
+                // 见 parseInterfaceDecl 与 parseFuncDecl 的 allowInheritModifiers）
                 else -> methods.add(
                     parseFuncDecl(
                         annotations = memberAnnotations,
                         allowOverride = true,
                         allowLeadingAnnotations = true,
+                        allowInheritModifiers = true,
                     ),
                 )
             }
@@ -745,10 +766,194 @@ class Parser(
             methods = methods,
             at = classTok.at,
             typeParams = typeParams,
-            supertypes = supertypes,
+            supertypes = sup.interfaces,
             annotations = annotations,
+            superClass = sup.base,
+            superArgs = sup.baseArgs,
+            isOpen = mods.isOpen,
+            isFinal = mods.isFinal,
+            isAbstract = mods.isAbstract,
         )
     }
+
+    /**
+     * 类声明里的继承修饰词（阶段 25）：`open` / `final` / `abstract`。
+     *
+     * 三个词的**顺序不限**（`abstract open class` 写得出来），但同一个词不能写两遍。
+     * 判定放在 Parser 而不是 Checker，是因为这三个词只影响「能不能继承/覆盖」这一件事，
+     * 语法上是纯修饰词；能在这里说清就不留到语义阶段兜一圈再报（报错位置也更准：
+     * 指到写重了的那个词）。
+     *
+     * `open` 与 `final` 互斥、`abstract` 与另外两个都不能同时写（DESIGN-25 §4/§6）：
+     * 抽象类本来就是要被继承的，再写 `open` 是废话、写 `final` 是自相矛盾。
+     */
+    private fun parseInheritModifiers(kindWord: String): InheritModifiers {
+        var open: Token? = null
+        var final: Token? = null
+        var abstract: Token? = null
+        while (peek().kind.isInheritKeyword) {
+            val tok = advance()
+            when (tok.kind) {
+                TokenKind.KW_OPEN -> if (open != null) {
+                    throw error(tok, "$kindWord 上 'open' 写了两遍——写一次就够了")
+                } else {
+                    open = tok
+                }
+
+                TokenKind.KW_FINAL -> if (final != null) {
+                    throw error(tok, "$kindWord 上 'final' 写了两遍——写一次就够了")
+                } else {
+                    final = tok
+                }
+
+                TokenKind.KW_ABSTRACT -> if (abstract != null) {
+                    throw error(tok, "$kindWord 上 'abstract' 写了两遍——写一次就够了")
+                } else {
+                    abstract = tok
+                }
+
+                else -> throw IllegalStateException("不是继承修饰词: ${tok.kind}")
+            }
+        }
+        if (open != null && final != null) {
+            throw error(
+                final,
+                "$kindWord 上 'open' 与 'final' 不能同时写：'open' 是允许被继承/覆盖，'final' 是禁止，" +
+                    "两者互斥（DESIGN-25 §4），删掉其中一个",
+            )
+        }
+        if (abstract != null && (open != null || final != null)) {
+            throw error(
+                abstract,
+                "$kindWord 上 'abstract' 不能和 'open' / 'final' 写在一起：" +
+                    (if (kindWord == "类") "抽象类本来就是要被继承的" else "抽象成员本来就是要被子类实现的") +
+                    "（DESIGN-25 §6），写 'abstract' 一个就够了",
+            )
+        }
+        return InheritModifiers(isOpen = open != null, isFinal = final != null, isAbstract = abstract != null)
+    }
+
+    /**
+     * 类头 `:` 子句（阶段 25）：`[父类(实参) [, 接口]*]`。
+     *
+     * 三条规则在这里就定死，全部按 DESIGN-25 §2/§3：
+     * - **父类必须写实参表**：`class D : Base` 报错，要求写成 `class D : Base(实参)`。
+     *   父类可能没有无参构造器，允许省略就得在语义层猜，猜错就是错的字节码；
+     * - **父类必须排最前**：`: Greeter, Base(x)` 报错。写在最前面这一条让
+     *   「哪一项是父类」一眼可判；
+     * - **父类只能有一个**：`: A(x), B(y)` 报错（不做多继承，DESIGN-25 §6）。
+     *
+     * 判据是**语法**的（「类型引用后面紧跟着 `(`」），最终「这个名字到底是不是一份可以
+     * 继承的类」留给语义层（[parseSupertypeList] 与 Checker 会给出准确报错）。
+     * 这样父类槽位不必反过来去查符号表。
+     */
+    private fun parseSuperClause(className: String): SuperClause {
+        if (!check(TokenKind.COLON)) return SuperClause(null, emptyList(), emptyList())
+        advance() // ':'
+
+        // 第一个名字后面紧跟 '(' → 这是父类（实参表必须写，所以它一定是这个形状）
+        val firstIsBase = isBaseAhead()
+        if (firstIsBase) {
+            val base = parseTypeRef()
+            val args = parseSuperArgs(className)
+            if (!check(TokenKind.COMMA)) return SuperClause(base, emptyList(), args)
+            advance() // ','
+            if (isBaseAhead()) {
+                throw error(
+                    peek(),
+                    "类 '$className' 只能有一个父类：'${base.display()}(...)' 后面又出现了带实参表的 " +
+                        "'${peek().lexeme}'。父类型列表里**最多一个**带实参的父类，其余都是接口" +
+                        "（写法是 ': 父类名(实参), 接口名'），rsf 不做多继承（DESIGN-25 §6）",
+                )
+            }
+            return SuperClause(base, parseSupertypeItems("类 '$className'"), args)
+        }
+
+        val interfaces = parseSupertypeItems("类 '$className'", stopAtBase = true)
+        if (isBaseAhead()) {
+            val baseStart = peek()
+            val base = parseTypeRef()
+            val args = parseSuperArgs(className)
+            throw error(
+                baseStart,
+                "类 '$className' 的父类 '${base.display()}' 必须排在父类型列表的最前面：写法是 " +
+                    "': 父类名(实参), 接口名'，把 '${base.display()}(...)' 挪到最前面",
+            )
+        }
+        return SuperClause(null, interfaces, emptyList())
+    }
+
+    /**
+     * 下一个记号开始的是不是一个**带了实参表的父类**（`: X(...)`）。
+     *
+     * 只看两项：IDENT 加上紧跟的 `(`——因为父类的实参表是**必须写的**（DESIGN-25 §2），
+     * 「带括号的类型名」在 `:` 子句里只可能是父类。用来做两个判断：它是不是排在第一位，
+     * 以及它有没有跑到接口后面去了。
+     */
+    private fun isBaseAhead(): Boolean {
+        if (!check(TokenKind.IDENT)) return false
+        var n = 1
+        // 泛型父类：实参表写在 `&<类型实参>` **之后**（DESIGN-25 §2）——
+        // `class IntBox : Box&<int>(1) { ... }`。所以带 `&<...>` 时要把尖括号对跳过去，
+        // 再看后面是不是构造实参表的 '('。
+        if (peek(n).kind == TokenKind.AMP) {
+            n++
+            if (peek(n).kind != TokenKind.LT) return false
+            var depth = 0
+            while (true) {
+                when (peek(n).kind) {
+                    TokenKind.EOF -> return false
+                    TokenKind.LT -> depth++
+                    TokenKind.GT -> {
+                        depth--
+                        if (depth == 0) {
+                            n++
+                            break
+                        }
+                    }
+                    else -> {}
+                }
+                n++
+            }
+        }
+        return peek(n).kind == TokenKind.LPAREN
+    }
+
+    /**
+     * 父类构造实参表：`Base(实参)`。**必须写**——没有括号直接报错（DESIGN-25 §2）。
+     */
+    private fun parseSuperArgs(className: String): List<Expr> {
+        if (!check(TokenKind.LPAREN)) {
+            throw error(
+                peek(),
+                "类 '$className' 的父类后面必须写出构造实参：写法是 `: 父类名(实参)` 或 `: 父类名()`" +
+                    "（父类可能没有无参构造器，所以这一对括号不能省），实际读到 ${peek().describe()}",
+            )
+        }
+        advance() // '('
+        val args = ArrayList<Expr>()
+        if (!check(TokenKind.RPAREN)) {
+            do {
+                args.add(parseExpr())
+            } while (match(TokenKind.COMMA))
+        }
+        expect(TokenKind.RPAREN, "类 '$className' 的父类构造实参表没有闭合，缺少 ')'")
+        return args
+    }
+
+    /** 类头 `:` 子句的解析结果：父类、父类实参、父接口。 */
+    private class SuperClause(
+        val base: TypeRef?,
+        val interfaces: List<TypeRef>,
+        val baseArgs: List<Expr>,
+    )
+
+    /** 继承修饰词的解析结果（[parseInheritModifiers] 的返回值）。 */
+    private class InheritModifiers(
+        val isOpen: Boolean,
+        val isFinal: Boolean,
+        val isAbstract: Boolean,
+    )
 
     /**
      * 类型参数子句：`class Box&<T>` / `interface Box&<T>`（阶段 20 起两处共用）。
@@ -793,8 +998,23 @@ class Parser(
      */
     private fun parseSupertypeList(owner: String): List<TypeRef> {
         if (!match(TokenKind.COLON)) return emptyList()
+        return parseSupertypeItems(owner)
+    }
+
+    /**
+     * `:` 后面那一串名字本体（至少一个、逗号分隔）。
+     *
+     * 和 [parseSupertypeList] 拆开是为了 [parseSuperClause] 复用：类头那个函数自己吃掉了
+     * `:`，剩下的一串（父类之后可能还有接口）要按同一套规矩解析——两处各写一遍的话，
+     * 「不许内置类型」「不许数组」「不许可空」这几条迟早会走岔。
+     */
+    private fun parseSupertypeItems(owner: String, stopAtBase: Boolean = false): List<TypeRef> {
         val supertypes = ArrayList<TypeRef>()
         do {
+            // 类继承（阶段 25）：父类后面**一定**跟着实参表 `(`，所以在接口列表里
+            // 「IDENT 后面紧跟 '('」就是跑到接口后面去的父类——这里先停手，
+            // 由 [parseSuperClause] 给出「父类必须排最前面」那句报错。
+            if (stopAtBase && isBaseAhead()) break
             val t = peek()
             if (t.kind == TokenKind.QUESTION) {
                 throw error(t, "$owner 的父类型不能可空：'?' 只写在变量/参数/返回的类型上")
@@ -895,6 +1115,16 @@ class Parser(
                         m,
                         "接口里的方法只能是 public：接口就是『给外面看的约定』，" +
                             "'${m.lexeme}' 会让实现类没法实现它（不写修饰词就是 public）",
+                    )
+                }
+                // 阶段 25：接口方法不写 open/final/abstract——接口的方法本来就是
+                // 「实现类必须实现」或者「默认实现」两种，没有「能不能被覆盖」这一层。
+                if (m.kind.isInheritKeyword) {
+                    throw error(
+                        m,
+                        "接口的方法不能写 '${m.lexeme}'：'open' / 'final' / 'abstract' 是**类**的规矩" +
+                            "（类与方法默认 final，DESIGN-25 §4）。接口的方法只写签名就是抽象方法、" +
+                            "写了体就是默认实现，把 '${m.lexeme}' 删掉",
                     )
                 }
                 offset++
@@ -1081,6 +1311,17 @@ class Parser(
         if (peek().kind.isStaticKeyword) {
             throw error(peek(), "constructor 不能是 static：构造器一定要有当前对象（this）")
         }
+        // 阶段 25：构造器也不写 open/final/abstract——构造器不参与继承，
+        // 「能不能被覆盖」对构造器没有意义（调用方永远写 new 类名(...)）。
+        if (peek().kind.isInheritKeyword) {
+            val m = peek()
+            throw error(
+                m,
+                "constructor 不能写 '${m.lexeme}'：'open' / 'final' / 'abstract' 说的是" +
+                    "「能不能被继承/覆盖」，而构造器只能通过 new 类名(...) 调用、不参与覆盖。" +
+                    "直接写 constructor(参数) { ... }",
+            )
+        }
 
         val tok = advance() // constructor
 
@@ -1177,6 +1418,13 @@ class Parser(
      */
     private fun isFieldDeclAhead(): Boolean = peek().kind.isVarKeyword
 
+    /** [isFieldDeclAhead] 的带继承修饰词版本：`open var x` / `final var x`。 */
+    private fun isFieldDeclAheadAfterInherit(): Boolean = peek().kind.isInheritKeyword && run {
+        var n = 0
+        while (peek(n).kind.isInheritKeyword) n++
+        peek(n).kind.isVarKeyword
+    }
+
     // ------------------------------------------------------------------ import
 
     /**
@@ -1230,28 +1478,41 @@ class Parser(
      *
      * [allowAbstractBody] 只有**接口体**里传 true（阶段 20）：那时「没有 `{`」不再算错，
      * 而是解析成一个 [FuncDecl.body] == null 的抽象方法（只声明签名）。
-     * 类和顶层函数一律要求写出方法体——所以「没有体」这件事在下游是接口专属信号，
-     * 不用担心某个类方法偷偷变成抽象的。
      *
      * [allowOverride] 只有**类体/接口体**里传 true（阶段 20 追加）：`override` 的意思是
      * 「这个函数必须真的覆盖到父类型里的方法」，顶层函数没有父类型，所以在顶层直接报错。
-     * `override` 与访问控制修饰词可以按**任意顺序**写（`override public fun` 与
-     * `public override fun` 等价），所以这两个先一起收掉；`static` 照旧排在这一串之后。
+     * 修饰词可以按**任意顺序**写（`override public fun` 与 `public override fun` 等价），
+     * 所以这一串是一起收的。
+     *
+     * [allowInheritModifiers] 只有**类体**里传 true（阶段 25 追加）：那里才允许写
+     * `open` / `final` / `abstract`（`open fun f()` 可以被覆盖、`final fun f()` 收窄
+     * 一个本来是 open 的覆盖、`abstract fun f()` 只写签名）。
+     *
+     * 顶层与接口体都不传它，于是那三处的 `open` 会掉进下面 `!isFunKeyword` 那一支，
+     * 由专门为「继承修饰词」写的那句提示说清「它只能写在类 / 类方法前面」。
+     *
+     * 抽象方法（[FuncDecl.isAbstract]）在这里有两处硬规则：
+     * - 只有**抽象类**或接口能给「没有体」的方法：写了体就是普通方法，写了 `abstract` 又写体
+     *   当场报错（`abstract fun f() { ... }` 自相矛盾，DESIGN-25 §7）；
+     * - `abstract` 的签名照样要求写出**返回子句**（`-> void`）——「省略返回子句等于 void」
+     *   只对接口默认方法与普通方法成立，抽象方法省了会分不清是哪种（见 body 前面那段）。
      */
     private fun parseFuncDecl(
         allowAbstractBody: Boolean = false,
         allowOverride: Boolean = false,
         annotations: List<AnnotationUse> = emptyList(),
         allowLeadingAnnotations: Boolean = false,
+        allowInheritModifiers: Boolean = false,
     ): FuncDecl {
         val leading = ArrayList(annotations)
-        // <注解> 与 <ControlType> 与 <override> 与 <static>：都排在 fun 前面，顺序随意，一起收。
-        // 注解与修饰词可以混着出现（`@M public fun` / `public @M fun` / `@A @B fun`
-        // / `public static @M fun`），所以每收完一段修饰词都要再看一眼有没有注解，
-        // 而不是只在一个固定的位置收一轮。
+        // <注解> 与 <ControlType> 与 <override> 与 <static> 与 <open/final/abstract>：
+        // 都排在 fun 前面，顺序随意，一起收。注解与修饰词可以混着出现
+        // （`@M public fun` / `public @M fun` / `@A @B fun` / `public static @M fun`），
+        // 所以每收完一段修饰词都要再看一眼有没有注解，而不是只在一个固定的位置收一轮。
         collectLeadingAnnotations(leading, allowLeadingAnnotations)
         var control = ControlType.DEFAULT
         var isOverride = false
+        var inherit: InheritModifiers? = null
         while (true) {
             val m = peek()
             if (m.kind.isControlKeyword) {
@@ -1260,6 +1521,10 @@ class Parser(
             }
             if (consumeOverride(allowOverride)) {
                 isOverride = true
+                continue
+            }
+            if (peek().kind.isInheritKeyword && allowInheritModifiers) {
+                inherit = mergeInherit(inherit, kindWord = "方法")
                 continue
             }
             // 修饰词后面又能接注解（`public @M fun`），所以这里再收一轮
@@ -1284,11 +1549,22 @@ class Parser(
                 isOverride = true
                 continue
             }
+            if (peek().kind.isInheritKeyword && allowInheritModifiers) {
+                inherit = mergeInherit(inherit, kindWord = "方法")
+                continue
+            }
             if (check(TokenKind.AT)) {
                 collectLeadingAnnotations(leading, allowLeadingAnnotations)
                 continue
             }
             break
+        }
+        if (inherit != null && isStatic) {
+            throw error(
+                peek(),
+                "静态方法不能是 'open' / 'final' / 'abstract'：静态方法只能写成 '类名.方法名' 调用" +
+                    "（static 不参与继承，DESIGN-25 §3），把它上面的继承修饰词删掉",
+            )
         }
 
         if (!peek().kind.isFunKeyword) {
@@ -1317,10 +1593,28 @@ class Parser(
             } else {
                 ""
             }
+            // 阶段 25：`open` / `final` / `abstract` 写在这里只有两种可能——
+            // 顶层函数，或者接口体里的方法。两处的规矩与报错都不同，分开说。
+            val inheritHint = if (inherit != null || peek().kind.isInheritKeyword) {
+                val word = if (inherit != null) {
+                    when {
+                        inherit.isOpen -> "open"
+                        inherit.isFinal -> "final"
+                        else -> "abstract"
+                    }
+                } else {
+                    peek().lexeme
+                }
+                "；'$word' 只能写在**类**或者**类里的方法**前面（顶层函数没法被继承，" +
+                    "接口的方法本来就是公开的默认实现，DESIGN-25 §4）：把 '$word' 删掉，" +
+                    "或者把这段搬到类体里"
+            } else {
+                ""
+            }
             throw error(
                 t,
                 "顶层只能写函数声明，格式是 '[public|protected|private] [static] fun [类型] 名字() 返回子句 函数体'，" +
-                    "实际读到 ${t.describe()}$hint$overrideHint",
+                    "实际读到 ${t.describe()}$hint$overrideHint$inheritHint",
             )
         }
         val funTok = advance()
@@ -1381,14 +1675,84 @@ class Parser(
             else -> ReturnSpec(TypeRef("void", funTok.at), ReturnStyle.OMITTED, false, funTok.at)
         }
 
-        // 接口里的抽象方法：只写签名，下一个记号不是 '{' 就直接收工（体是 null）。
-        // 其余任何地方都要求有体，所以这里必须显式传 allowAbstractBody。
-        val body: Block? = if (allowAbstractBody && !check(TokenKind.LBRACE)) null else parseBlock()
+        // 方法体：三种情况
+        // - 接口（allowAbstractBody）：下一个记号不是 '{' 就直接收工，体是 null（阶段 20）；
+        // - 类里的 `abstract fun`（阶段 25）：同理，只写签名。**但返回子句必须写出来**，
+        //   否则「省略返回子句 = void」这条规则与抽象方法撞在一起就分不清是不是漏写了体；
+        // - 其余任何地方都要求有体。
+        val body: Block? = if (allowAbstractBody && !check(TokenKind.LBRACE)) {
+            null
+        } else if (inherit?.isAbstract == true) {
+            if (check(TokenKind.LBRACE)) {
+                val brace = peek()
+                throw error(
+                    brace,
+                    "抽象方法不能写函数体：'abstract fun ${nameTok.lexeme}(...)' 只写签名，没有 '{ ... }'。" +
+                        "要么把 'abstract' 删掉、把体留下，要么把体删掉",
+                )
+            }
+            if (ret.style == ReturnStyle.OMITTED) {
+                val t = peek()
+                throw error(
+                    t,
+                    "抽象方法要写出返回子句：'abstract fun ${nameTok.lexeme}(...) -> 返回类型'。" +
+                        "（普通方法省略返回子句等于 void，抽象方法省了就分不清「返回 void」" +
+                        "与「忘了写体」）实际读到 ${t.describe()}",
+                )
+            }
+            null
+        } else {
+            parseBlock()
+        }
         return FuncDecl(
             control, mainType, nameTok.lexeme, params, ret, body, funTok.at, isStatic,
             isOverride = isOverride,
+            isOpen = inherit?.isOpen == true,
+            isFinal = inherit?.isFinal == true,
             annotations = leading,
         )
+    }
+
+    /**
+     * 把紧接着的一段继承修饰词收进已有的 [current]（阶段 25）。
+     *
+     * `fun` 前面允许「修饰词 / 注解 / 修饰词」这么夹着写（`open @M final fun f()`），
+     * 所以 [parseFuncDecl] 里的两个收集循环可能会各收一段。两段都合法、但要合起来看：
+     * 同一个词出现两次、或者 `open` + `final` 这种组合，都必须在**这里**当场报错——
+     * 报错位置指到第二个词，比指到整段修饰词有用。
+     */
+    private fun mergeInherit(current: InheritModifiers?, kindWord: String): InheritModifiers {
+        val next = parseInheritModifiers(kindWord)
+        if (current == null) return next
+        if (current.isOpen && next.isOpen) {
+            throw error(peek(), "$kindWord 上 'open' 写了两遍——写一次就够了")
+        }
+        if (current.isFinal && next.isFinal) {
+            throw error(peek(), "$kindWord 上 'final' 写了两遍——写一次就够了")
+        }
+        if (current.isAbstract && next.isAbstract) {
+            throw error(peek(), "$kindWord 上 'abstract' 写了两遍——写一次就够了")
+        }
+        val isOpen = current.isOpen || next.isOpen
+        val isFinal = current.isFinal || next.isFinal
+        if (isOpen && isFinal) {
+            throw error(
+                peek(),
+                "$kindWord 上 'open' 与 'final' 不能同时写：'open' 是允许被继承/覆盖，" +
+                    "'final' 是禁止（DESIGN-25 §4），删掉其中一个",
+            )
+        }
+        if (current.isAbstract || next.isAbstract) {
+            if (isOpen || isFinal) {
+                throw error(
+                    peek(),
+                    "$kindWord 上 'abstract' 不能和 'open' / 'final' 写在一起（DESIGN-25 §6），" +
+                        "写 'abstract' 一个就够了",
+                )
+            }
+            return InheritModifiers(isOpen = false, isFinal = false, isAbstract = true)
+        }
+        return InheritModifiers(isOpen = isOpen, isFinal = isFinal, isAbstract = false)
     }
 
     /**
@@ -1728,6 +2092,11 @@ class Parser(
             // `this(...)` 和 `this.字段` 都从 this 开头，靠后面跟的是 '(' 还是 '.' 区分。
             t.kind == TokenKind.KW_THIS && peek(1).kind == TokenKind.LPAREN -> parseThisCall()
 
+            // `super(实参)`（阶段 25）：**父类构造器委托**，和 this(...) 是一对，
+            // 也只能当构造器体的第一句（Checker 校验）。靠后面跟的是 '(' 而不是 '.'
+            // 来区分它和 `super.方法()`——后者是表达式语句，走下面那一支。
+            t.kind == TokenKind.KW_SUPER && peek(1).kind == TokenKind.LPAREN -> parseSuperCall()
+
             t.kind == TokenKind.KW_CONSTRUCTOR -> throw error(
                 t,
                 "'constructor' 只能写在类体里（它是次构造：constructor(参数) { ... }）",
@@ -1803,6 +2172,26 @@ class Parser(
         }
         expect(TokenKind.RPAREN, "this(...) 的参数表没有闭合，缺少 ')'")
         return ThisCallStmt(args, tok.at)
+    }
+
+    /**
+     * `super(实参)` —— **父类构造器委托**（阶段 25）。
+     *
+     * 和 [parseThisCall] 同形、同规矩：只能当构造器体的**第一句**，而且与 `this(...)`
+     * 互斥（两个都由 Checker 校验，报错位置在那边才看得到「这是第几句」）。
+     * 语法上只做一件事：把实参表收成一个 [SuperCallStmt]。
+     */
+    private fun parseSuperCall(): Stmt {
+        val tok = advance() // super
+        expect(TokenKind.LPAREN, "'super' 后面需要 '('（父类构造器委托写成 super(实参)）")
+        val args = ArrayList<Expr>()
+        if (!check(TokenKind.RPAREN)) {
+            do {
+                args.add(parseExpr())
+            } while (match(TokenKind.COMMA))
+        }
+        expect(TokenKind.RPAREN, "super(...) 的参数表没有闭合，缺少 ')'")
+        return SuperCallStmt(args, tok.at)
     }
 
     /**
@@ -2408,6 +2797,75 @@ class Parser(
         return expr
     }
 
+    /**
+     * `super` 的两种写法（阶段 25）：`super` 与 `super(接口名)`。
+     *
+     * 两者都只允许**紧接着一个 `.成员`**：`super.tag()` 调直接父类被自己覆盖的那个实现，
+     * `super(Greeter).tag()` 指定父接口的默认实现（消歧用）。语法在这里就把形状定死，
+     * 是为了让下游（Checker / 解释器 / 字节码）只要看到 [SuperExpr] 就知道
+     * 「它后面一定跟着成员访问」，不用各自再防一手「单独一个 super 怎么办」。
+     */
+    private fun parseSuperExpr(): Expr {
+        val tok = advance() // super
+        if (check(TokenKind.LPAREN)) {
+            advance() // '('
+            val ifaceTok = peek()
+            val hint = "super(接口名).方法名() 里的括号中要写一个**接口名**"
+            if (ifaceTok.kind != TokenKind.IDENT) {
+                throw error(
+                    ifaceTok,
+                    "$hint，例如 super(Greeter).tag()（这一步是消歧两个父接口的默认方法），" +
+                        "实际读到 ${ifaceTok.describe()}",
+                )
+            }
+            advance() // 接口名
+            val typeArgs = if (check(TokenKind.AMP)) parseTypeArgs() else emptyList()
+            val name = TypeRef(ifaceTok.lexeme, ifaceTok.at, typeArgs = typeArgs)
+            expect(TokenKind.RPAREN, "$hint，缺一个 ')'")
+            val sup = SuperExpr(name, tok.at)
+            return parseSuperMember(sup, "super(${ifaceTok.lexeme})")
+        }
+        val sup = SuperExpr(null, tok.at)
+        if (!check(TokenKind.DOT)) {
+            throw error(
+                peek(),
+                "'super' 只能当方法调用的接收者：写法是 super.方法名(实参)，" +
+                    "或者 super(接口名).方法名(实参)。单独一个 'super' 没有值可取，" +
+                    "要访问父类的方法就写清楚方法名，实际读到 ${peek().describe()}",
+            )
+        }
+        return parseSuperMember(sup, "super")
+    }
+
+    /**
+     * `super` 后面那个 `.成员`（阶段 25）。
+     *
+     * 只收**方法调用**（`super.f(实参)`），不收字段：DESIGN-25 §6 明确不做
+     * `super.字段`，而且字段本来也不许遮蔽，写 `super.x` 一定是有别的误解——
+     * 这里直接说清，比让它掉进语义层报一句「父类没有成员 x」有用得多。
+     */
+    private fun parseSuperMember(sup: SuperExpr, who: String): Expr {
+        val dot = expect(TokenKind.DOT, "'$who' 后面需要 '.'：写法是 $who.方法名(实参)")
+        val nameTok = expect(TokenKind.IDENT, "'$who.' 后面需要成员名")
+        if (!check(TokenKind.LPAREN)) {
+            throw error(
+                peek(),
+                "'$who.${nameTok.lexeme}' 只能是方法调用：要写出实参表（$who.${nameTok.lexeme}(...)）。" +
+                    "rsf 不支持 super.字段（字段本来也不许遮蔽，DESIGN-25 §5/§6），" +
+                    "实际读到 ${peek().describe()}",
+            )
+        }
+        advance() // '('
+        val args = ArrayList<Expr>()
+        if (!check(TokenKind.RPAREN)) {
+            do {
+                args.add(parseExpr())
+            } while (match(TokenKind.COMMA))
+        }
+        expect(TokenKind.RPAREN, "'$who.${nameTok.lexeme}(...)' 的参数表没有闭合，缺少 ')'")
+        return MemberExpr(sup, nameTok.lexeme, args, dot.at)
+    }
+
     private fun parsePrimary(): Expr {
         val t = peek()
         return when (t.kind) {
@@ -2428,6 +2886,12 @@ class Parser(
             }
 
             TokenKind.KW_THIS -> { advance(); ThisExpr(t.at) }
+
+            // `super`（阶段 25）：只允许当方法调用的接收者——
+            // `super.f()` 走直接父类那一层的实现，`super(接口名).f()` 消歧两个父接口的
+            // 默认方法（DESIGN-25 §3 的 Q1）。单独一个 `super` 没有值可取，所以这里
+            // 只认这两种形状，别的写法当场报错说清它该长什么样。
+            TokenKind.KW_SUPER -> parseSuperExpr()
 
             TokenKind.KW_NEW -> {
                 advance()

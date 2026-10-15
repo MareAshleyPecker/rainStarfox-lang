@@ -16,6 +16,7 @@ import org.example.complie.ast.InterfaceDecl
 import org.example.complie.ast.MemberAssignStmt
 import org.example.complie.ast.MemberExpr
 import org.example.complie.ast.NewExpr
+import org.example.complie.ast.SuperCallStmt
 import org.example.complie.ast.ThisCallStmt
 import org.example.complie.ast.VarDeclStmt
 import org.example.complie.ast.VarExpr
@@ -88,6 +89,68 @@ data class CtorDelegation(
 )
 
 /**
+ * 一个类的**已解析父类**（阶段 25 K1）。
+ *
+ * 和 [SuperInterface] 分开一张表、分开一个类型，而不是把父类塞进 `supertypes` 列表：
+ * 两者的规矩不一样——父类**必须有且只有一个**、必须写构造实参、必须排在父类型列表最前面；
+ * 接口可以有很多个、不许写实参。合在一个列表里，每个读它的地方都要再问一遍
+ * 「这一项是类还是接口」，那正是 D2 想避免的含糊。
+ *
+ * 后端（K2/K3）拼 `extends` 时只该抄这里，不要自己拿 AST 上的名字再解析一遍。
+ */
+data class SuperClass(
+    /** 源码里写的名字（rsf 类就是它的名字，JDK 类是简名如 `Thread`）。报错用。 */
+    val name: String,
+    /**
+     * JVM 内部名：rsf 类就是名字本身（rsf 的类都在默认包），JDK 类是
+     * `java/lang/Object` 这种全名。字节码要的是这个。
+     */
+    val internalName: String,
+    /**
+     * 父类的**类型实参**（`class D : Box&<int>(1)` 里的 `int`；没写泛型就是空表）。
+     *
+     * 和 [SuperInterface.args] 一个意思：继承来的成员里出现 `T` 时要拿它替换
+     * （[SuperDelegation.arguments] 才是**构造实参**，那是求值用的表达式，不是类型）。
+     */
+    val args: List<RsfType> = emptyList(),
+    /** true = classpath 上的类（JDK）；false = 这份程序里声明的类。 */
+    val fromClassPath: Boolean = false,
+    /** rsf 类的声明；JDK 父类为 null（那时看 [fromClassPath]）。 */
+    val declaration: ClassDecl? = null,
+) {
+    /** 报错文案里的说法。 */
+    val display: String get() = if (fromClassPath) "classpath 上的类 '$name'" else "类 '$name'"
+}
+
+/**
+ * 一条**父类构造委托**边（阶段 25 K1）：`constructor(...) { super(实参) ... }` 里那句。
+ *
+ * 和 [CtorDelegation]（`this(...)`）是一对，但语义不同：`this(...)` 是同类另一个构造器
+ * 接着跑，`super(...)` 是先把父类那份状态建起来。两端读的必须是**同一条已经校验过的边**
+ * （实参挂在 [stmt] 上，在委托方自己的帧里求值）。
+ *
+ * [target] 为 null 只在一种情况下出现：父类来自 classpath（JDK 类）——它的构造器
+ * 没有 rsf 的 `FuncDecl` 可指，K2/K3 那时按 [superClass] 的内部名 + 实参类型自己发
+ * `INVOKESPECIAL <init>`。rsf 父类的构造器**永远非 null**。
+ */
+data class SuperDelegation(
+    /** 解析出来的父类。 */
+    val superClass: SuperClass,
+    /** 父类那个被选中的构造器；JDK 父类为 null。 */
+    val target: FuncDecl?,
+    /**
+     * 实参表达式，**在委托方自己的帧里求值**。
+     *
+     * 两个来源都能落到这里：[stmt] 非空就是次构造里写的 `super(实参)`；
+     * [stmt] 为空就是主构造——实参来自类头的 `class D(y : int) : Base(y)`，
+     * 那条没有对应的语句节点，但语义完全一样。
+     */
+    val arguments: List<Expr>,
+    /** 写 `super(...)` 的那条语句；主构造（类头实参）与隐式 `super()` 时为 null。 */
+    val stmt: SuperCallStmt?,
+)
+
+/**
  * 阶段 12 的类解析产物。
  *
  * 为什么要单独一张表：顶层函数与方法**各是一套表**。两边的表都按 [FuncDecl] 索引
@@ -151,6 +214,37 @@ class ClassModel(
      * 的后端代码（解释器取 `this` 的类）一行都不用动。
      */
     val interfaceOwner: Map<FuncDecl, InterfaceDecl> = emptyMap(),
+    /**
+     * `super.方法(...)` / `super(接口).方法(...)` → 解析结果（阶段 25 K1）。
+     *
+     * **单独一张表**，而不是复用 [members]：`super.f()` 的调用目标与 `this.f()` 不是
+     * 一回事（`super.` 走父类那一份实现、跳过本类的覆盖），而且它的接收者不是一个
+     * 能单独求值的表达式。后端只要从这张表里拿「哪个类/接口的哪个方法」就够，
+     * 不必再看 AST 上的 `SuperExpr`。
+     */
+    val superCalls: IdentityHashMap<MemberExpr, UserMember.Method> = IdentityHashMap(),
+    /** 构造器 → 它的**父类构造委托**边（`super(...)`）；不写的构造器不在表里。 */
+    val superDelegations: IdentityHashMap<FuncDecl, SuperDelegation> = IdentityHashMap(),
+    /**
+     * 类 → **隐式** `super()` 那条父类委托（阶段 25 K1）。
+     *
+     * 只在两种情况下有：类没有主构造、并且一个 `constructor` 都没写（那是编译器合成的
+     * 无参构造器，没有 [FuncDecl] 可以当键）；或者某个次构造没写 `this(...)`/`super(...)`，
+     * 编译器替它补一句无参 `super()`。所有构造器都在 [superDelegations] 里时这张表是空的。
+     */
+    val implicitSuperDelegations: IdentityHashMap<ClassDecl, SuperDelegation> = IdentityHashMap(),
+    /**
+     * 类里「按名字直接调**父类继承来的 JDK 方法**」的调用（阶段 25 K1，G5）。
+     *
+     * `class MyError(msg : string) : Exception(msg) { fun describe() -> string { rtn
+     * getMessage() } }`：`getMessage` 声明在 `java/lang/Throwable` 上、接收者是隐式的
+     * this，所以它既不是 [implicitCalls]（那里的值是 rsf 的 [FuncDecl]）、也不是
+     * [memberTargets]（那里挂的是 `接收者.成员` 这种 [MemberExpr]）。
+     *
+     * 单独一张表把「隐式 this + JDK 继承来的成员」这条边记下来，后端（K2/K3）问
+     * [implicitJvmCallOf] 就能拿到「哪个 JDK 类上的哪个方法」。
+     */
+    val implicitJvmCalls: IdentityHashMap<CallExpr, ResolvedMethod> = IdentityHashMap(),
 ) {
     val isEmpty: Boolean get() = classes.isEmpty()
 
@@ -167,6 +261,18 @@ class ClassModel(
 
     /** 构造器 [ctor] 的委托边；不委托就是 null。 */
     fun delegationOf(ctor: FuncDecl): CtorDelegation? = ctorDelegations[ctor]
+
+    /** 构造器 [ctor] 的**父类**委托边（`super(...)`）；没写就是 null。 */
+    fun superDelegationOf(ctor: FuncDecl): SuperDelegation? = superDelegations[ctor]
+
+    /** 类 [decl] 的**隐式**父类委托（合成的无参 `super()`）；没有就是 null。 */
+    fun implicitSuperDelegationOf(decl: ClassDecl): SuperDelegation? = implicitSuperDelegations[decl]
+
+    /** `super.f()` 这条调用解析到的目标；不是 super 接收者就是 null。 */
+    fun superCallOf(expr: MemberExpr): UserMember.Method? = superCalls[expr]
+
+    /** 类里隐式 this 调用**JDK 父类继承来的方法**的解析结果；不是那种调用就是 null。 */
+    fun implicitJvmCallOf(expr: CallExpr): ResolvedMethod? = implicitJvmCalls[expr]
 
     /**
      * 这个方法是不是**实例**方法（要 `this`）。
@@ -478,6 +584,20 @@ class SemanticModel(
     val superInterfaces: Map<String, List<SuperInterface>> = emptyMap(),
 
     /**
+     * 阶段 25：**类名 → 它的父类**（已解析：JVM 内部名 + 已校验的构造实参）。
+     *
+     * 没写父类的类不在表里。这张表同时是两件事的**唯一判据**：
+     *
+     * - 后端填 `ClassWriter.visit` 的 `superName`（K2/K3）；
+     * - 「这份程序里有没有类继承」——两个后端（字节码 / 解释器）在 K1 阶段靠
+     *   `superClasses.isEmpty()` 判断要不要**显式报未实现**，绝不静默产出错产物。
+     *
+     * 注意它和 [superInterfaces] 是两张表：父类只有一个、要写实参，接口可以有很多个、
+     * 不许写实参（DESIGN-25 §2/§3），合在一起只会让每个读它的地方都要再判一次类型。
+     */
+    val superClasses: Map<String, SuperClass> = emptyMap(),
+
+    /**
      * 阶段 21：注解声明，按**名字**索引。
      *
      * 注解的类型在检查器里和用户类/接口是**同一个形状**（`RsfType.external(注解名)`，
@@ -666,6 +786,14 @@ class SemanticModel(
      * 参数写类名或接口名都行——两者共用命名空间，键也就是同一个。
      */
     fun superInterfacesOf(name: String): List<SuperInterface> = superInterfaces[name].orEmpty()
+
+    // ------------------------------------------------------------------ 类继承（阶段 25）
+
+    /** 这个类的父类（已解析）；没写父类就是 null。 */
+    fun superClassOf(name: String): SuperClass? = superClasses[name]
+
+    /** 这份程序里有没有类写了父类——两个后端的「阶段 25 后端未实现」守卫读它。 */
+    val hasClassInheritance: Boolean get() = superClasses.isNotEmpty()
 
     // ------------------------------------------------------------------ 注解（阶段 21）
 
