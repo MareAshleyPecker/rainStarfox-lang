@@ -1173,6 +1173,8 @@ IDEA 插件那张表漏了 `enum`/`switch`/`case`——那边还有一条「与 
 
 **阶段 25 K5（自举同步）收口（2026-10-17）**：K5a 把 `open` / `final` / `abstract` / `super` 四个关键字与类头、`super(...)` / `super.f()` 收进 `Lexer.rsf` / `Parser.rsf`；K5a-fix 把类头修饰词的顺序对齐 Kotlin；K5b 在 `Backend.rsf` 收字段布局、构造链与 `INVOKESPECIAL`；K5c 在 `Interp.rsf` 收父链字段、虚分派与构造顺序；K5d 用 `rsfSrc/lang/inherit.rsf` 把它钉成九示例锚点。**限制**：自举后端在有类继承的程序上会把类头骨架写进产物目录，跑产物时要把该目录挂上 `-cp`；无继承程序逐字节与旧版一致。
 
+**第 26 刀：`LocalVariableTable`（2026-10-17）**：Kotlin 版与自举版后端现在都在**每个有 `Code` 的方法**上发方法级 `LocalVariableTable`（`javap -l` 与 IDEA 调试器可见参数名/局部变量名）。两端同一口径：`visitCode()` 后立刻发起点标签、实例方法登记 0 号槽的 `this`；条目只来自 rsf 符号表——形参按声明序、局部变量按槽位升序（含 `catch` 绑定），`signature` 一律 `null`（不发 `LocalVariableTypeTable`）；`visitMaxs(0, 0)` 前发结束标签再逐条 `visitLocalVariable(...)`，起止都是**整个方法**。编译器自己造的槽（入口 `main` 的 `args`、异常处理槽、注解访问器合成槽、枚举 `<clinit>` 的合成变量）不进表；桥方法 / `toString` / 枚举 `<init>`·`toString` / 隐式无参构造器 / 注解元素访问器只有 `this` 一条。指令、常量池顺序、行号表一个字节都没动（`LocalVariableTable` 是追加的调试属性），旧语料 stdout 不变；`Backend.rsf` 的 `asmRow` 表补第 31 条 `MethodVisitor.visitLocalVariable`。
+
 ## 阶段 20 / 21：`interface` 与 `@interface`（排在自举闭环之后）
 
 这两样此前不在计划里，2026-10-08 定位如下。

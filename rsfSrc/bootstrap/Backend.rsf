@@ -797,6 +797,16 @@ public class Gen(owner : string) {
     var returnType : BType = new BType("void")
     var labelSeq : int = 0
 
+    // ---- 第 26 刀（LVT）：当前方法要写的 LocalVariableTable 条目 ----
+    // 一个方法体开始时 `lvtBegin`（清表 + 发起点标签 + 登记 this），发射过程中
+    // 形参 / 局部变量 / catch 变量各 `lvtAdd` 一次，最后 `lvtEnd` 按槽位升序写表。
+    // 字段用法同 `bindNodes` 那几组侧表：定长数组 + count + 满时 2 倍扩容。
+    var lvtNames : string[] = new string[8]
+    var lvtTypes : BType[] = new BType[8]
+    var lvtSlots : int[] = new int[8]
+    var lvtCount : int = 0
+    var lvtStart : Label = new Label()
+
     // 换一个新的 ClassWriter（每个类一个；同时登记输出名，供 BackendCli 落盘）
     public fun newWriter(name : string) -> ClassWriter {
         var c = new ClassWriter(computeAll())
@@ -2583,9 +2593,10 @@ fun asmRow(t : AsmMem[], i : int, owner : string, nm : string, argc : int, desc 
 fun asmLabel() -> BType { rtn tExternal("org/objectweb/asm/Label") }
 
 // 表的内容严格对齐 `org.objectweb.asm` 的真实签名（阶段 21 起 33 条里的 30 条成员；
-// 三条构造器 <init>(I)V / Label.<init>()V / Handle.<init>(...) 在 jdkNewRef 里）。
+// 三条构造器 <init>(I)V / Label.<init>()V / Handle.<init>(...) 在 jdkNewRef 里；
+// 第 26 刀补第 31 条 `MethodVisitor.visitLocalVariable`）。
 fun asmTable() -> AsmMem[] {
-    var t : AsmMem[] = new AsmMem[30]
+    var t : AsmMem[] = new AsmMem[31]
     var i = 0
 
     // --- ClassWriter（6 条成员）---
@@ -2640,6 +2651,10 @@ fun asmTable() -> AsmMem[] {
         "(Ljava/lang/Object;)V", tVoid(), memP1(tObject()))
     i = asmRow(t, i, "org/objectweb/asm/MethodVisitor", "visitLineNumber", 2,
         "(ILorg/objectweb/asm/Label;)V", tVoid(), memP2(tInt(), asmLabel()))
+    // 第 26 刀：LocalVariableTable 的条目（名字 / 描述符 / 泛型签名(null) / 起 / 止 / 槽位）
+    i = asmRow(t, i, "org/objectweb/asm/MethodVisitor", "visitLocalVariable", 6,
+        "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Lorg/objectweb/asm/Label;Lorg/objectweb/asm/Label;I)V",
+        tVoid(), memP6(tString(), tString(), tString(), asmLabel(), asmLabel(), tInt()))
     i = asmRow(t, i, "org/objectweb/asm/MethodVisitor", "visitMaxs", 2,
         "(II)V", tVoid(), memP2(tInt(), tInt()))
     i = asmRow(t, i, "org/objectweb/asm/MethodVisitor", "visitMethodInsn", 5,
@@ -2985,6 +3000,8 @@ public class Walker(g : Gen) {
                 g.slotCount = g.slotCount + declared.slots()
                 g.putBind(st, declared, slot0)
                 sc.add(name, declared, slot0)
+                // 局部变量进 LVT（Kotlin 侧取的是**全部** IVarDecl，不看可达性；这里同理）
+                lvtAdd(g, name, declared, slot0)
                 var it0 = walkExpr(init, sc)
                 if (!acceptsValue(g, declared, init, it0)) {
                     g.bad("把 " + it0.desc() + " 赋给 " + declared.desc())
@@ -2996,6 +3013,7 @@ public class Walker(g : Gen) {
                 g.slotCount = g.slotCount + declared.slots()
                 g.putBind(st, declared, slot1)
                 sc.add(name, declared, slot1)
+                lvtAdd(g, name, declared, slot1)
             }
             var ins = new Ins("vardecl")
             ins.node = st
@@ -3309,6 +3327,8 @@ public class Walker(g : Gen) {
             g.slotCount = g.slotCount + ct.slots()
             sc.add(catchName, ct, slot)
             g.putBind(st, ct, slot)
+            // catch 绑定也是用户可见的局部变量（Kotlin 侧同名同槽）
+            lvtAdd(g, catchName, ct, slot)
 
             var ls = new Ins("label")
             ls.lbl = lStart
@@ -4509,9 +4529,12 @@ fun findSigNode(g : Gen, n : Node) -> ?Sig {
 fun emitDefaultCtor(g : Gen) -> void {
     var mv = g.cw.visitMethod(accPublic(), "<init>", "()V", null, null)
     mv.visitCode()
+    // 程序类的隐式无参构造器：LVT 只有 0 号槽的 this
+    lvtBegin(g, mv, g.owner)
     mv.visitVarInsn(25, 0)
     mv.visitMethodInsn(183, "java/lang/Object", "<init>", "()V", false)
     mv.visitInsn(177)
+    lvtEnd(g, mv, 0)
     mv.visitMaxs(0, 0)
     mv.visitEnd()
 }
@@ -5702,6 +5725,84 @@ fun emitIns(g : Gen, w : Walker, mv : MethodVisitor, i : int, off : int) -> void
 
 // ------------------------------------------------------------ 函数 / 程序类
 
+// ------------------------------------------------------------ 调试信息（第 26 刀：LVT）
+//
+// 口径与 Kotlin 侧 `BytecodeCompiler.beginLvt` / `endLvt` / `bodyLvtEntries`
+// （`src/main/kotlin/org/example/complie/codegen/BytecodeCompiler.kt`）逐字对齐 ——
+// J3 判据是两端产物逐字节一致，规则只能有一份：
+//   * 起止**一律方法级**：`visitCode()` 之后立刻发起点标签，体发完（`visitMaxs` 之前）
+//     发结束标签，中间整个 Code 都是条目的有效范围；
+//   * 条目 = this（实例方法，槽 0，描述符 `L本类内部名;`）→ 形参（声明序）→ 局部变量
+//     （含 catch 绑定，槽位升序）。写表时按**槽位升序**排，等价于这三段的顺序
+//     （槽位单调分配：this 0 → 形参 → 局部变量），两端因此不依赖插入顺序；
+//   * `signature` 一律 null：不发明 `LocalVariableTypeTable`；
+//   * 后端内部的临时槽（`__rsf_orelse$N` 的形参、handler 槽、注解访问器的缓存槽）
+//     一条都不登记 —— 它们不经 `Scope`，本来也进不了这张表。
+//
+// 起点标签存进 `g.lvtStart`：`lvtEnd` 发完结束标签后，两条标签一起交给
+// `visitLocalVariable`。`off` 是入口 main 的槽位偏移（前面那个 `String[]`），
+// 只有 `emitFunction` 会传非 0。
+fun lvtBegin(g : Gen, mv : MethodVisitor, thisInternal : string) -> void {
+    g.lvtCount = 0
+    g.lvtStart = new Label()
+    mv.visitLabel(g.lvtStart)
+    // 实例方法：0 号槽是 this（描述符用本类内部名，不自己拼字符串）
+    if (thisInternal.length() > 0) { lvtAdd(g, "this", tExternal(thisInternal), 0) }
+}
+
+fun lvtAdd(g : Gen, name : string, t : BType, slot : int) -> void {
+    if (g.lvtCount >= g.lvtNames.length) {
+        var nn : string[] = new string[g.lvtNames.length * 2]
+        var tt : BType[] = new BType[g.lvtTypes.length * 2]
+        var ss : int[] = new int[g.lvtSlots.length * 2]
+        var i = 0
+        while (i < g.lvtCount) {
+            nn[i] = g.lvtNames[i]
+            tt[i] = g.lvtTypes[i]
+            ss[i] = g.lvtSlots[i]
+            i = i + 1
+        }
+        g.lvtNames = nn
+        g.lvtTypes = tt
+        g.lvtSlots = ss
+    }
+    g.lvtNames[g.lvtCount] = name
+    g.lvtTypes[g.lvtCount] = t
+    g.lvtSlots[g.lvtCount] = slot
+    g.lvtCount = g.lvtCount + 1
+}
+
+fun lvtEnd(g : Gen, mv : MethodVisitor, off : int) -> void {
+    var end = new Label()
+    mv.visitLabel(end)
+    var ord : int[] = new int[g.lvtCount]
+    var i = 0
+    while (i < g.lvtCount) {
+        ord[i] = i
+        i = i + 1
+    }
+    // 按槽位升序（插入排序；稳定，所以同槽的两条也不会换位——正常也不会有）
+    var a = 1
+    while (a < g.lvtCount) {
+        var key = ord[a]
+        var b = a - 1
+        while (b >= 0 && g.lvtSlots[ord[b]] > g.lvtSlots[key]) {
+            ord[b + 1] = ord[b]
+            b = b - 1
+        }
+        ord[b + 1] = key
+        a = a + 1
+    }
+    var k = 0
+    while (k < g.lvtCount) {
+        var idx = ord[k]
+        mv.visitLocalVariable(
+            g.lvtNames[idx], g.lvtTypes[idx].desc(), null, g.lvtStart, end, g.lvtSlots[idx] + off
+        )
+        k = k + 1
+    }
+}
+
 fun registerFunc(g : Gen, fn : Node) -> void {
     var params = fn.children[0]
     var name = prop(fn, "name")
@@ -5741,12 +5842,16 @@ fun emitFunction(g : Gen, fn : Node) -> void {
 
     g.slotCount = 0
     g.returnType = sg.ret
+    // 顶层函数一律 static：LVT 里没有 this。入口 main 的 `String[]` 不是形参表里的
+    // 一项（Kotlin 那边也一样），所以它不进 LVT —— 那个位置由 flushBody 的 `off` 让开。
+    lvtBegin(g, mv, "")
     var root = new Scope(null)
     var params = fn.children[0]
     var i = 0
     while (i < params.childCount) {
         var pt = g.paramOf(sg, i)
         root.add(prop(params.children[i], "name"), pt, g.slotCount)
+        lvtAdd(g, prop(params.children[i], "name"), pt, g.slotCount)
         g.slotCount = g.slotCount + pt.slots()
         i = i + 1
     }
@@ -5911,6 +6016,8 @@ fun prepBody(g : Gen, body : Node, firstSlot : int, pTypes : BType[], pNames : s
     var i = 0
     while (i < pTypes.length) {
         root.add(pNames[i], pTypes[i], g.slotCount)
+        // 形参进 LVT（声明序；槽位与 storeSlot/emitIns 用的完全同一个）
+        lvtAdd(g, pNames[i], pTypes[i], g.slotCount)
         g.slotCount = g.slotCount + pTypes[i].slots()
         i = i + 1
     }
@@ -5971,6 +6078,8 @@ fun flushBody(g : Gen, mv : MethodVisitor, p : Prep, off : int, ret : BType, tai
             mv.visitInsn(191)
         }
     }
+    // 体发完、visitMaxs 之前：发 LVT 的结束标签，再按槽位升序写表（见 lvtBegin）
+    lvtEnd(g, mv, off)
     mv.visitMaxs(0, 0)
     mv.visitEnd()
 }
@@ -6021,6 +6130,8 @@ fun emitUserCtor(g : Gen, ci : CInfo, m : ?CMeth) -> void {
     var mv = g.cw.visitMethod(accPublic(), "<init>", desc, null, null)
     g.curLabel = ci.name + ".<init>"
     mv.visitCode()
+    // LVT 的起点在**序言之前**：起止一律方法级，字段初值/父类那一跳也在覆盖范围里
+    lvtBegin(g, mv, ci.internal)
     var p : ?Prep = null
     if (hasBody) {
         p = prepBody(g, body, 1, params, pnames, tVoid())
@@ -6035,6 +6146,16 @@ fun emitUserCtor(g : Gen, ci : CInfo, m : ?CMeth) -> void {
         pcTarget = m!!.parentCallTarget
     } else {
         g.slotCount = 1
+        // 没有函数体但有形参表的只剩合成伴生主构造器（m.synth，形参 = 注解元素表）：
+        // Kotlin 那边它是普通的 `emitUserConstructor(ctor != null)`，LVT 里带这些形参名，
+        // 这里必须补齐（槽位与 emitFieldInits 从形参搬字段用的是同一套）。
+        var si = 0
+        var sslot = 1
+        while (si < params.length) {
+            lvtAdd(g, pnames[si], params[si], sslot)
+            sslot = sslot + params[si].slots()
+            si = si + 1
+        }
     }
     if (dg != null) {
         var target = dg!!
@@ -6081,6 +6202,8 @@ fun emitUserCtor(g : Gen, ci : CInfo, m : ?CMeth) -> void {
         flushBody(g, mv, p!!, 0, tVoid(), "<init>")
     } else {
         mv.visitInsn(177)
+        // 没有函数体：LVT 里只有 this（合成伴生构造器的形参已在上面登记）
+        lvtEnd(g, mv, 0)
         mv.visitMaxs(0, 0)
         mv.visitEnd()
     }
@@ -6107,6 +6230,12 @@ fun emitUserMethod(g : Gen, ci : CInfo, m : CMeth) -> void {
     emitAnnSitesM(g, annUsesOf(m.node), mv)
     if (g.failed) { rtn }
     mv.visitCode()
+    // 实例方法的 0 号槽是 this；static 方法没有（Kotlin 侧同一句话判断）
+    if (m.isStatic) {
+        lvtBegin(g, mv, "")
+    } else {
+        lvtBegin(g, mv, ci.internal)
+    }
     var first = 0
     if (!m.isStatic) { first = 1 }
     var p = prepBody(g, bodyOf(m.node), first, m.params, m.paramNames, m.ret)
@@ -6145,6 +6274,8 @@ fun sbAppendText(mv : MethodVisitor, text : string) -> void {
 fun emitUserToString(g : Gen, ci : CInfo) -> void {
     var mv = g.cw.visitMethod(accPublic(), "toString", "()Ljava/lang/String;", null, null)
     mv.visitCode()
+    // 生成出来的 toString 是实例方法：LVT 只有 this（体里没有 rsf 变量）
+    lvtBegin(g, mv, ci.internal)
     mv.visitTypeInsn(187, "java/lang/StringBuilder")
     mv.visitInsn(89)
     mv.visitMethodInsn(183, "java/lang/StringBuilder", "<init>", "()V", false)
@@ -6195,6 +6326,7 @@ fun emitUserToString(g : Gen, ci : CInfo) -> void {
     sbAppendText(mv, ")")
     mv.visitMethodInsn(182, "java/lang/StringBuilder", "toString", "()Ljava/lang/String;", false)
     mv.visitInsn(176)
+    lvtEnd(g, mv, 0)
     mv.visitMaxs(0, 0)
     mv.visitEnd()
 }
@@ -6420,23 +6552,28 @@ fun emitEnumClass(g : Gen, ei : EInfo) -> void {
     // private <init>(Ljava/lang/String;)V
     var mv = g.cw.visitMethod(accPrivate(), "<init>", "(Ljava/lang/String;)V", null, null)
     mv.visitCode()
+    // 生成的构造器：LVT 只有 this（那个 String 形参是合成的，不发）
+    lvtBegin(g, mv, ei.internal)
     mv.visitVarInsn(25, 0)
     mv.visitMethodInsn(183, "java/lang/Object", "<init>", "()V", false)
     mv.visitVarInsn(25, 0)
     mv.visitVarInsn(25, 1)
     mv.visitFieldInsn(181, ei.internal, "$name", "Ljava/lang/String;")
     mv.visitInsn(177)
+    lvtEnd(g, mv, 0)
     mv.visitMaxs(0, 0)
     mv.visitEnd()
     // public toString()
     var mv2 = g.cw.visitMethod(accPublic(), "toString", "()Ljava/lang/String;", null, null)
     mv2.visitCode()
+    lvtBegin(g, mv2, ei.internal)
     mv2.visitVarInsn(25, 0)
     mv2.visitFieldInsn(180, ei.internal, "$name", "Ljava/lang/String;")
     mv2.visitInsn(176)
+    lvtEnd(g, mv2, 0)
     mv2.visitMaxs(0, 0)
     mv2.visitEnd()
-    // <clinit>
+    // <clinit>（static，且合成变量不进 LVT：这条不 lvtBegin）
     var mv3 = g.cw.visitMethod(accStatic(), "<clinit>", "()V", null, null)
     mv3.visitCode()
     var k = 0
@@ -7413,6 +7550,8 @@ fun emitAnnElemAccessors(g : Gen, ci : CInfo) -> void {
         var f = ci.fields[i]
         var mv = g.cw.visitMethod(accPublic(), f.name, "()" + f.type.desc(), null, null)
         mv.visitCode()
+        // 伴生类的元素访问器是**实例方法**：LVT 只有 this（体里没有 rsf 变量）
+        lvtBegin(g, mv, ci.internal)
         // Kotlin 的元素访问器带 `LineNumberTable: line <元素行> : 0`（见 §7 的 javap）。
         // 行号来自 AST 的 ANNOTATION_ELEMENT.line；自举语法器还没记（恒 0）时按
         // Kotlin `at == NONE` 的口径跳过 —— 只差这一处字节。
@@ -7424,6 +7563,7 @@ fun emitAnnElemAccessors(g : Gen, ci : CInfo) -> void {
         mv.visitVarInsn(25, 0)
         mv.visitFieldInsn(180, ci.internal, f.name, f.type.desc())
         eReturnInsn(mv, f.type)
+        lvtEnd(g, mv, 0)
         mv.visitMaxs(0, 0)
         mv.visitEnd()
         i = i + 1
@@ -7447,8 +7587,11 @@ fun emitAnnCaches(g : Gen, ci : CInfo) -> void {
 fun emitAnnType(g : Gen, ci : CInfo) -> void {
     var mv = g.cw.visitMethod(accPublic(), "annotationType", "()Ljava/lang/Class;", null, null)
     mv.visitCode()
+    // 伴生类的实例方法：LVT 只有 this
+    lvtBegin(g, mv, ci.internal)
     mv.visitLdcInsn(Type.getObjectType(ci.annComp))
     mv.visitInsn(176)
+    lvtEnd(g, mv, 0)
     mv.visitMaxs(0, 0)
     mv.visitEnd()
 }

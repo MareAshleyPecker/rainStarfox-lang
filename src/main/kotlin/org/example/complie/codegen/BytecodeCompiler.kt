@@ -2,6 +2,7 @@ package org.example.complie.codegen
 
 import org.example.complie.ast.AnnotationDecl
 import org.example.complie.ast.BinaryExpr
+import org.example.complie.ast.Block
 import org.example.complie.ast.BoolLit
 import org.example.complie.ast.CallExpr
 import org.example.complie.ast.CharLit
@@ -14,8 +15,10 @@ import org.example.complie.ast.Expr
 import org.example.complie.ast.FieldDecl
 import org.example.complie.ast.FloatLit
 import org.example.complie.ast.ForceExpr
+import org.example.complie.ast.ForStmt
 import org.example.complie.ast.FuncDecl
 import org.example.complie.ast.IfExpr
+import org.example.complie.ast.IfStmt
 import org.example.complie.ast.IndexExpr
 import org.example.complie.ast.IntLit
 import org.example.complie.ast.InterfaceDecl
@@ -28,10 +31,14 @@ import org.example.complie.ast.Node
 import org.example.complie.ast.NullLit
 import org.example.complie.ast.PositionalAnnotationArg
 import org.example.complie.ast.StringLit
+import org.example.complie.ast.Stmt
 import org.example.complie.ast.SuperExpr
+import org.example.complie.ast.SwitchStmt
 import org.example.complie.ast.ThisExpr
+import org.example.complie.ast.TryStmt
 import org.example.complie.ast.UnaryExpr
 import org.example.complie.ast.VarExpr
+import org.example.complie.ast.WhileStmt
 import org.example.complie.diag.RsfError
 import org.example.complie.ir.ControlFlow
 import org.example.complie.ir.IAssign
@@ -335,7 +342,7 @@ class BytecodeCompiler(
             null,
         )
         cw.visitSource(sourceName, null)
-        emitDefaultConstructor(cw)
+        emitDefaultConstructor(cw, className)
 
         for (fn in model.functions) {
             emitFunction(cw, className, fn)
@@ -806,7 +813,7 @@ class BytecodeCompiler(
         // 3) 它自己（以及它的成员）身上的注解使用点。
         if (model.isCompanionClass(decl.name)) {
             emitAnnotationCaches(cw, decl.name)
-            model.companionAnnotationOf(decl.name)?.let { emitAnnotationType(cw, it.name) }
+            model.companionAnnotationOf(decl.name)?.let { emitAnnotationType(cw, it.name, internalName) }
         }
         emitAnnotationAccessors(cw, decl.name, sync = true)
         cw.visitEnd()
@@ -967,6 +974,8 @@ class BytecodeCompiler(
             ACC_PUBLIC or ACC_BRIDGE or ACC_SYNTHETIC, req.name, req.descriptor, null, null,
         )
         mv.visitCode()
+        // 桥方法是**实例方法**：LVT 只有 0 号槽的 this（形参是合成出来的，没有 rsf 名字）
+        val lvt = beginLvt(mv, owner)
         mv.visitVarInsn(ALOAD, 0)
         val ownParams = model.paramTypesOf(impl)
         var slot = 1
@@ -981,6 +990,7 @@ class BytecodeCompiler(
         val ownReturn = model.returnTypeOf(impl)
         if (isJvmPrimitive(ownReturn) && !isJvmPrimitive(req.returnType)) boxValue(mv, ownReturn.base)
         mv.visitInsn(returnInsn(req.returnType))
+        endLvt(mv, lvt)
         mv.visitMaxs(0, 0)
         mv.visitEnd()
     }
@@ -1434,11 +1444,14 @@ class BytecodeCompiler(
      * **完整**的注解实现；写成 `()LMarker;` 就只是同名的另一个方法，
      * 接口那条抽象方法仍然没人实现，通过接口调它会在运行期 AbstractMethodError。
      */
-    private fun emitAnnotationType(cw: ClassWriter, annotationName: String) {
+    private fun emitAnnotationType(cw: ClassWriter, annotationName: String, self: String) {
         val mv = cw.visitMethod(ACC_PUBLIC, "annotationType", "()Ljava/lang/Class;", null, null)
         mv.visitCode()
+        // 伴生类的实例方法：LVT 只有 this
+        val lvt = beginLvt(mv, self)
         mv.visitLdcInsn(Type.getObjectType(classInternalName(annotationName)))
         mv.visitInsn(ARETURN)
+        endLvt(mv, lvt)
         mv.visitMaxs(0, 0)
         mv.visitEnd()
     }
@@ -1476,6 +1489,8 @@ class BytecodeCompiler(
         val sb = "java/lang/StringBuilder"
         val mv = cw.visitMethod(ACC_PUBLIC, "toString", "()Ljava/lang/String;", null, null)
         mv.visitCode()
+        // 生成出来的 toString 是实例方法：LVT 只有 this（体里没有 rsf 变量）
+        val lvt = beginLvt(mv, classInternalName(decl.name))
         mv.visitTypeInsn(NEW, sb)
         mv.visitInsn(DUP)
         mv.visitMethodInsn(INVOKESPECIAL, sb, "<init>", "()V", false)
@@ -1519,6 +1534,7 @@ class BytecodeCompiler(
         appendText(ObjectFormat.CLOSE)
         mv.visitMethodInsn(INVOKEVIRTUAL, sb, "toString", "()Ljava/lang/String;", false)
         mv.visitInsn(ARETURN)
+        endLvt(mv, lvt)
         mv.visitMaxs(0, 0)
         mv.visitEnd()
     }
@@ -1552,6 +1568,8 @@ class BytecodeCompiler(
 
         val mv = cw.visitMethod(ACC_PUBLIC, "<init>", descriptor, null, null)
         mv.visitCode()
+        // LVT 的起点在**序言之前**：起止一律方法级，字段初值/父类那一跳也在覆盖范围里
+        val lvt = beginLvt(mv, owner)
 
         val delegation = ctor?.let { model.classModel.delegationOf(it) }
         if (delegation != null && ctor != null) {
@@ -1603,9 +1621,11 @@ class BytecodeCompiler(
         if (ctor != null) {
             // 构造器体和普通方法体走同一条生成路径（实例方法，localOffset = 0）；
             // 体里那句 this(...) 已经在上面发过了，emitBody 会跳过它
-            emitBody(mv, owner, ctor, localOffset = 0, returnType = RsfType.VOID)
+            emitBody(mv, owner, ctor, localOffset = 0, returnType = RsfType.VOID, lvt = lvt)
         } else {
+            // 隐式无参构造器：没有形参也没有局部变量，LVT 只有 0 号槽的 this
             mv.visitInsn(RETURN)
+            endLvt(mv, lvt)
         }
         mv.visitMaxs(0, 0)
         mv.visitEnd()
@@ -1706,7 +1726,9 @@ class BytecodeCompiler(
         // 方法级注解使用点（阶段 21 M3）：写在 mv.visitEnd() 之前
         emitUseSites({ descriptor, visible -> mv.visitAnnotation(descriptor, visible) }, fn)
         mv.visitCode()
-        emitBody(mv, owner, fn, localOffset = 0, returnType = model.returnTypeOf(fn))
+        // 实例方法的 0 号槽是 this；static 方法没有
+        val lvt = beginLvt(mv, if (fn.isStatic) null else owner)
+        emitBody(mv, owner, fn, localOffset = 0, returnType = model.returnTypeOf(fn), lvt = lvt)
         mv.visitMaxs(0, 0)
         mv.visitEnd()
     }
@@ -1812,12 +1834,15 @@ class BytecodeCompiler(
         run {
             val mv = cw.visitMethod(ACC_PRIVATE, "<init>", "(Ljava/lang/String;)V", null, null)
             mv.visitCode()
+            // 生成的构造器：LVT 只有 this（那个 String 形参是合成的，不发）
+            val lvt = beginLvt(mv, internalName)
             mv.visitVarInsn(ALOAD, 0)
             mv.visitMethodInsn(INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false)
             mv.visitVarInsn(ALOAD, 0)
             mv.visitVarInsn(ALOAD, 1)
             mv.visitFieldInsn(PUTFIELD, internalName, ENUM_NAME_FIELD, "Ljava/lang/String;")
             mv.visitInsn(RETURN)
+            endLvt(mv, lvt)
             mv.visitMaxs(0, 0)
             mv.visitEnd()
         }
@@ -1826,9 +1851,11 @@ class BytecodeCompiler(
         run {
             val mv = cw.visitMethod(ACC_PUBLIC, "toString", "()Ljava/lang/String;", null, null)
             mv.visitCode()
+            val lvt = beginLvt(mv, internalName)
             mv.visitVarInsn(ALOAD, 0)
             mv.visitFieldInsn(GETFIELD, internalName, ENUM_NAME_FIELD, "Ljava/lang/String;")
             mv.visitInsn(ARETURN)
+            endLvt(mv, lvt)
             mv.visitMaxs(0, 0)
             mv.visitEnd()
         }
@@ -1855,12 +1882,15 @@ class BytecodeCompiler(
 
     // ------------------------------------------------------------------ 类骨架
 
-    private fun emitDefaultConstructor(cw: ClassWriter) {
+    private fun emitDefaultConstructor(cw: ClassWriter, owner: String) {
         val mv = cw.visitMethod(ACC_PUBLIC, "<init>", "()V", null, null)
         mv.visitCode()
+        // 程序类的隐式无参构造器：LVT 只有 0 号槽的 this
+        val lvt = beginLvt(mv, owner)
         mv.visitVarInsn(ALOAD, 0)
         mv.visitMethodInsn(INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false)
         mv.visitInsn(RETURN)
+        endLvt(mv, lvt)
         mv.visitMaxs(0, 0)
         mv.visitEnd()
     }
@@ -1901,9 +1931,114 @@ class BytecodeCompiler(
         // 访问器，带 companion 的注解 M2 已经拦掉了），但标注本身照样要写出来。
         emitUseSites({ descriptor, visible -> mv.visitAnnotation(descriptor, visible) }, fn)
         mv.visitCode()
-        emitBody(mv, owner, fn, localOffset = if (isEntry(fn)) 1 else 0, returnType = returnType)
+        // 顶层函数一律 static：LVT 里没有 this，只有形参与局部变量
+        val lvt = beginLvt(mv, null)
+        emitBody(mv, owner, fn, localOffset = if (isEntry(fn)) 1 else 0, returnType = returnType, lvt = lvt)
         mv.visitMaxs(0, 0)
         mv.visitEnd()
+    }
+
+    // ------------------------------------------------------------------ 调试信息（第 26 刀：LVT）
+
+    /** 一条 `LocalVariableTable` 条目：名字、字段描述符、JVM 帧里的**绝对**槽号。 */
+    private class LvtEntry(val name: String, val desc: String, val slot: Int)
+
+    /**
+     * 一个方法体的 LVT 把手：[start] 是 `visitCode()` 之后立刻发的标签，[entries] 在
+     * 发射过程中累积（`this` / 形参 / 局部变量 / catch 变量），最后交给 [endLvt] 写表。
+     */
+    private class LvtScope(val start: Label, val entries: MutableList<LvtEntry>)
+
+    /**
+     * 开一个方法级 LVT：`visitCode()` 之后**立刻**调用。
+     *
+     * 起止一律方法级（工单口径）：标签对 `[start, end)` 覆盖整个 Code，所以调试器里每条
+     * 条目在方法全程都「活着」。`signature` 一律 `null` —— 不发明 `LocalVariableTypeTable`
+     * （泛型签名表是另一件事，这一刀不发）。
+     *
+     * [thisOwner] 是实例方法的类内部名（槽 0 的 `this` 用它拼 `L…;`）；静态方法传 null。
+     */
+    private fun beginLvt(mv: MethodVisitor, thisOwner: String?): LvtScope {
+        val entries = ArrayList<LvtEntry>()
+        if (thisOwner != null) entries.add(LvtEntry("this", "L$thisOwner;", 0))
+        val start = Label()
+        mv.visitLabel(start)
+        return LvtScope(start, entries)
+    }
+
+    /** 体发完后、`visitMaxs` 之前调用：发结束标签，再按**槽位升序**逐条写表。 */
+    private fun endLvt(mv: MethodVisitor, scope: LvtScope) {
+        val end = Label()
+        mv.visitLabel(end)
+        // 槽位是单调分配的（this 0 → 形参 → 局部变量），按槽位排正好是工单要的顺序：
+        // this → 形参（声明序）→ 局部变量（含 catch 绑定，槽位升序）。
+        for (e in scope.entries.sortedBy { it.slot }) {
+            mv.visitLocalVariable(e.name, e.desc, null, scope.start, end, e.slot)
+        }
+    }
+
+    /**
+     * 把一个 rsf 函数/方法/构造器的符号表搬进 LVT：**全部**形参（声明序）+ **全部**
+     * `IVarDecl` 的局部变量 + catch 变量。
+     *
+     * 槽位口径与 [emitBody] 里的 `storeSlot(…, binding.slot + localOffset)` 完全一致。
+     * 局部变量**不看可达性**：[Lowering] 给所有语句都分配槽位并生成 `IVarDecl`，而自举
+     * 后端的 Walker 也是全量走一遍 —— 两边条目必须一样多、一样排，否则 J3 会差字节。
+     *
+     * 后端内部的临时槽（`__rsf_orelse$N` 的形参、注解访问器的缓存槽之类）一个都不进来：
+     * 它们不经 [model] 的符号表，本来也不在这个循环的范围内。
+     */
+    private fun bodyLvtEntries(fn: FuncDecl, body: LoweredFunction, localOffset: Int, scope: LvtScope) {
+        for (p in model.paramsOf(fn)) {
+            scope.entries.add(LvtEntry(p.name, descriptorOfType(p.type), p.slot + localOffset))
+        }
+        for (instr in body.instructions) {
+            if (instr !is IVarDecl) continue
+            val binding = model.bindingOf(instr.stmt)
+            scope.entries.add(
+                LvtEntry(binding.name, descriptorOfType(binding.type), binding.slot + localOffset),
+            )
+        }
+        // catch 变量：Binding 只活在 Lowering 的 `catchBindings` 里（SemanticModel 没暴露），
+        // 名字从 AST 的 TryStmt 取，槽位用异常表那条记录的 catchSlot。配对靠**顺序**：
+        // Lowering 是「先保护体、再处理体、最后登记自己」的后序，和 [collectTryStmts] 一致。
+        val tries = ArrayList<TryStmt>()
+        collectTryStmts(fn.body, tries)
+        if (tries.size == body.handlers.size) {
+            for ((i, h) in body.handlers.withIndex()) {
+                scope.entries.add(
+                    LvtEntry(tries[i].catchName, "Ljava/lang/String;", h.catchSlot + localOffset),
+                )
+            }
+        }
+    }
+
+    /** 后序收集全部 [TryStmt]（顺序 = `Lowering` 的 `handlerSpecs`；见 [bodyLvtEntries]）。 */
+    private fun collectTryStmts(stmt: Stmt?, out: MutableList<TryStmt>) {
+        when (stmt) {
+            null -> return
+            is Block -> for (s in stmt.statements) collectTryStmts(s, out)
+            is IfStmt -> {
+                collectTryStmts(stmt.body, out)
+                collectTryStmts(stmt.elseBody, out)
+            }
+            is WhileStmt -> collectTryStmts(stmt.body, out)
+            // for 的更新语句在 Lowering 里排在循环体**之后**（continue 落到它上面），照抄
+            is ForStmt -> {
+                collectTryStmts(stmt.body, out)
+                collectTryStmts(stmt.step, out)
+            }
+            is SwitchStmt -> {
+                for (c in stmt.cases) collectTryStmts(c.body, out)
+                collectTryStmts(stmt.elseBody, out)
+            }
+            is TryStmt -> {
+                collectTryStmts(stmt.body, out)
+                collectTryStmts(stmt.catchBody, out)
+                out.add(stmt)
+            }
+            else -> {}
+        }
     }
 
     /**
@@ -1920,8 +2055,10 @@ class BytecodeCompiler(
         fn: FuncDecl,
         localOffset: Int,
         returnType: RsfType,
+        lvt: LvtScope,
     ) {
         val body = model.loweredOf(fn)
+        bodyLvtEntries(fn, body, localOffset, lvt)
         val cf = ControlFlow(body.instructions, body.labelIndex, body.handlers)
         val reach = cf.reachable()
         val ctx = ExprCtx(mv, owner, body, localOffset)
@@ -2187,6 +2324,9 @@ class BytecodeCompiler(
                 mv.visitInsn(ATHROW)
             }
         }
+
+        // 体发完、visitMaxs 之前：发 LVT 的结束标签，再逐条写表（见 beginLvt）
+        endLvt(mv, lvt)
     }
 
     // ------------------------------------------------------------------ 表达式

@@ -1355,6 +1355,9 @@ src/test/kotlin/org/example/        测试（359 个：两端一致性、rsf 版
 「类型 + 能不能赋值 + 在局部变量表里占哪一格」。这样解释器和字节码后端就不必到处
 分情况判断「这是参数还是局部变量」，槽位分配（`Lowering`）也只需要一套逻辑。
 
+同一套名字与槽位还会写进 `.class` 的 `LocalVariableTable`（第 26 刀），所以
+`javap -l` 和 IDEA 调试器里看得到参数名、局部变量名，而不是 `slot#2`。
+
 ### IntelliJ IDEA 插件
 
 `idea-rainstarfox/` 是给 IntelliJ 平台写的插件（文件类型、语法高亮、实时诊断、
