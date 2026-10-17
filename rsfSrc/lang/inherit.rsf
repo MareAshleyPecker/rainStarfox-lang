@@ -1,33 +1,35 @@
-// rainStarfox 阶段 25 示例：类继承（open / override / super / abstract / 构造顺序 / toString）
+// rainStarfox 阶段 25 示例：类继承（override / super / abstract / 构造顺序 / toString）
+// 阶段 27 起类与方法**默认**可以继承/覆盖，只有写 `final` 才封住。
 //
 // 跑：rsf run rsfSrc/lang/inherit.rsf        （解释器）
 //     rsf build rsfSrc/lang/inherit.rsf      （字节码：每个类生成一个 .class）
 // 查：rsf check rsfSrc/lang/inherit.rsf
 
-// ---------------------------------------------------------------- open 类 + override + super.f()
+// ---------------------------------------------------------------- 默认可继承 + override + super.f()
 
-open class Animal(nm : string, legs0 : int) {
+class Animal(nm : string, legs0 : int) {
     var name : string = nm
     var legs : int = legs0
 
-    open fun sound() -> string {
+    fun sound() -> string {
         rtn "..."
     }
 
-    // 非 open 的方法子类照样继承；里面调 sound() 按运行期类型虚分派
+    // 没写 final 的方法子类可以覆盖；describe() 里调 sound() 按运行期类型虚分派
     fun describe() -> string {
         rtn name + " 叫 " + sound() + "，有 " + intToString(legs) + " 条腿"
     }
 }
 
-open class Dog(nm : string) : Animal(nm, 4) {
+class Dog(nm : string) : Animal(nm, 4) {
     override fun sound() -> string {
         rtn "woof"
     }
 }
 
 // super.f()：先拿父类那一份结果，再补一截
-class Puppy(nm : string) : Dog(nm) {
+// final：这个类就此封口，再有人写 `class X : Puppy` 会被 Checker 拒掉
+final class Puppy(nm : string) : Dog(nm) {
     override fun sound() -> string {
         rtn super.sound() + "(小奶音)"
     }
@@ -64,7 +66,7 @@ class Square(s0 : int) : Shape("square") {
 
 // ---------------------------------------------------------------- 构造顺序：父类构造器 → 自己字段初值 → 构造体
 
-open class Base {
+class Base {
     var id : int = 0
 
     constructor(n : int) {

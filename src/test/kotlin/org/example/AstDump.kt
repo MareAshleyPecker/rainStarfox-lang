@@ -162,10 +162,10 @@ object AstDump {
             "primary" to bool(f.isPrimary),
             "override" to bool(f.isOverride),
         )
-        // 阶段 25：open / final **只在写了的时候**才打一行——没写的成员一个字都不多打。
+        // 阶段 25：final **只在写了的时候**才打一行——没写的成员一个字都不多打。
         // 理由很实在：这份 dump 在 RsfTest 里要和 rsfSrc/bootstrap 的解析器逐字对拍，
-        // 而自举那一侧还不认识这两个修饰词（K5 才同步）。默认形态保持原样是硬约束。
-        if (f.isOpen) line(out, depth + 1, "OPEN")
+        // 而自举那一侧还不认识这个修饰词（27b 才同步）。默认形态保持原样是硬约束。
+        // 阶段 27 删掉了 `open`：默认可覆盖，所以这里只剩 FINAL 一行。
         if (f.isFinal) line(out, depth + 1, "FINAL")
         line(out, depth + 1, "PARAMS", "count" to f.params.size.toString())
         for (p in f.params) {
@@ -190,7 +190,6 @@ object AstDump {
             line(out, depth + 1, "SUPER_CLASS", "name" to esc(c.superClass.name), "display" to typeText(c.superClass))
             args(out, depth + 2, c.superArgs)
         }
-        if (c.isOpen) line(out, depth + 1, "OPEN")
         if (c.isFinal) line(out, depth + 1, "FINAL")
         if (c.isAbstract) line(out, depth + 1, "ABSTRACT")
 

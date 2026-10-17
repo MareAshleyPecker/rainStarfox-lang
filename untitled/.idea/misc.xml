@@ -1,7 +1,0 @@
-<project version="4">
-  <component name="KubernetesApiProvider">{}</component>
-  <component name="ProjectRootManager" version="2">
-    <output url="file://$PROJECT_DIR$/out" />
-  </component>
-  <component name="ZigToolchain" toolchain="ab5ea06e-a97a-49f4-bec4-dffa0b11c7c8" />
-</project>

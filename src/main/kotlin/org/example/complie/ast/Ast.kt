@@ -353,23 +353,10 @@ data class FuncDecl(
      */
     val isOverride: Boolean = false,
     /**
-     * 显式写了 `open`（阶段 25）。
+     * 显式写了 `final`（阶段 25；阶段 27 起它是**唯一**的收窄手段）：禁止被子类覆盖。
      *
-     * 类的方法**默认 final**（DESIGN-25 §4，与 Java 相反、与 Kotlin 一致）：不写 `open`
-     * 的方法不允许被子类覆盖。写了 `open` 才可以；写了 [isOverride] 的成员**默认也是 open**
-     * （Kotlin 的规矩：`override` 之后可以继续被覆盖），要收窄就显式写 `final`（[isFinal]）。
-     *
-     * 接口方法不适用（接口的方法继承规则是另一套），两个后端与 Checker 的判据都只在
-     * 类继承链上看这三个标记。
-     */
-    val isOpen: Boolean = false,
-    /**
-     * 显式写了 `final`（阶段 25）：**禁止**被子类覆盖；写它也顺带表达「这里就是终点」。
-     *
-     * 缺省 `false` 表示「用户没写」——「默认 final」这件事由
-     * `isOpen || (isOverride && !isFinal)` 统一算出来（见 [isOverridable]），
-     * 而不是把缺省值塞成 `true`：那样就分不清「用户写的 final」与「默认」，
-     * `final` + `open` 同时写时的报错也就没了判据。
+     * 阶段 27 反转了旧法：方法**默认可覆盖**，只有写了 `final` 才封（DESIGN-27）。
+     * 旧法那个 `open` 字段已删除，缺省值就是「可覆盖」，见 [isOverridable]。
      */
     val isFinal: Boolean = false,
     /**
@@ -391,15 +378,14 @@ data class FuncDecl(
     val isAbstract: Boolean get() = body == null
 
     /**
-     * 这个方法能不能被子类覆盖（阶段 25）。
+     * 这个方法能不能被子类覆盖（阶段 25；阶段 27 反转了默认值）。
      *
-     * 「默认 final」由这里统一算：显式 `open` 一定可以；`override` 来的成员默认也可以
-     * （Kotlin 的规矩，不然「覆盖了父类之后又被孙子类覆盖」就得每一层都补 `open`）；
-     * 显式 `final` 一律不行。抽象方法没有体，**不算**可覆盖节点——它只有声明，
-     * 子类的义务是「实现」而不是「覆盖」。
+     * 方法**默认可覆盖**（DESIGN-27）：不再需要 `open`；只有显式 `final` 封住，
+     * 而 `static` / `private` / 构造器本来就没有「覆盖」这回事。抽象方法没有体，
+     * **不算**可覆盖节点——它只有声明，子类的义务是「实现」而不是「覆盖」。
      */
     val isOverridable: Boolean
-        get() = !isConstructor && !isStatic && !isAbstract && (isOpen || (isOverride && !isFinal))
+        get() = !isConstructor && !isStatic && !isAbstract && !isFinal && control != ControlType.PRIVATE
 }
 
 /**
@@ -624,13 +610,10 @@ data class ClassDecl(
      */
     val superArgs: List<Expr> = emptyList(),
     /**
-     * 显式 `open`（阶段 25）：这个类可以被继承。
+     * 显式 `final`（阶段 25；阶段 27 起是唯一的收窄手段）：这个类不能被继承。
      *
-     * 类**默认 final**（DESIGN-25 §4）：不写 `open` 的类不能当父类，
-     * 报错时指向「加 open」。
+     * 类**默认可继承**（DESIGN-27）；`final class` 的方法也隐含 final。
      */
-    val isOpen: Boolean = false,
-    /** 显式 `final`：明确表达这个类不能被继承（与 `open` 互斥）。 */
     val isFinal: Boolean = false,
     /**
      * 抽象类（阶段 25）：`public abstract class Shape(x : int) { public abstract fun area() -> double }`。

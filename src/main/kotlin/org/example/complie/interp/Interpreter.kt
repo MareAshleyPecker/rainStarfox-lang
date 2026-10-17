@@ -1124,7 +1124,7 @@ class Interpreter(
         wanted: List<RsfType>,
     ): FuncDecl? {
         // 阶段 25 K3：第一条路要沿**类链**走，不能只看运行期类自己。接口实现在父类里写、
-        // 子类不重复写是常规做法（`open class Base : Greeter { override fun greet() … }`
+        // 子类不重复写是常规做法（`class Base : Greeter { override fun greet() … }`
         // 配 `class D : Base()`），只看自己会找不到实现。顺序是最近的类优先——和 JVM 的
         // `INVOKEINTERFACE` / `INVOKEVIRTUAL` 解析同一套。
         for (cls in model.classChainOf(runtimeClass)) {

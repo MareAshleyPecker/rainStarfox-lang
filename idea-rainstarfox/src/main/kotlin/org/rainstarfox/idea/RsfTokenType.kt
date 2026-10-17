@@ -79,11 +79,12 @@ object RsfKeywords {
     // 阶段 20：`override` 是可选的校验修饰词（和 ControlType/static 同族，只写在 fun 前，
     // 两种顺序都收：`override public fun` / `public override fun`）
     //
-    // 阶段 25：类继承带来的 `open` / `final` / `abstract` 是同一族的声明级修饰词
+    // 阶段 25：类继承带来的 `final` / `abstract` 是同一族的声明级修饰词
     // （类与方法都能写），照样和 ControlType/static 一样只有高亮与补全的份。
+    // 阶段 27 删掉了 `open`：类与方法默认可继承/可覆盖，`final` 反而成了收窄手段。
     val MODIFIERS = setOf(
         "public", "protected", "private", "static", "override",
-        "open", "final", "abstract",
+        "final", "abstract",
     )
 
     val CONTROL = setOf(

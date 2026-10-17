@@ -39,16 +39,10 @@ enum class TokenKind(val text: String) {
      */
     KW_OVERRIDE("override"),
     /**
-     * `open` 修饰词（阶段 25）：**类与方法默认 final**，写了 `open` 才能被继承/覆盖。
+     * `final` 修饰词（阶段 25，语义在阶段 27 反转）：**收窄**默认开放的类或方法——
+     * `final class` 不可被继承，`final fun` 不可被覆盖。
      *
-     * 注意这是与 Java 的**故意偏离**（Java 的类与方法默认可以被继承，要禁才写 `final`）：
-     * rsf 跟 Kotlin 走。理由与 DESIGN-25 §4 一致——这份语言的两端（解释器与字节码）
-     * 要逐字节对拍，默认开放意味着「悄悄多了一层虚分派」这种差异不会有任何编译期信号。
-     */
-    KW_OPEN("open"),
-    /**
-     * `final` 修饰词（阶段 25）：显式收窄一个本来可以覆盖的成员
-     * （典型是 `override final fun f()`，或者给 `open class` 里的方法盖章）。
+     * 阶段 27 删掉了 `open`（旧法「默认 final」的记录见 DESIGN-25 §4 与 DESIGN-27）。
      */
     KW_FINAL("final"),
     /**
@@ -284,17 +278,17 @@ enum class TokenKind(val text: String) {
         get() = this == KW_STATIC
 
     /**
-     * 继承修饰词（阶段 25）：`open` / `final` / `abstract`。
+     * 继承修饰词（阶段 25；阶段 27 起只剩 `final` / `abstract`）。
      *
-     * 三者都是**声明级**的修饰词（写在 `class` / `fun` / 字段前面），
-     * 语义见 [KW_OPEN] / [KW_FINAL] / [KW_ABSTRACT]。
+     * 两者都是**声明级**的修饰词（写在 `class` / `fun` / 字段前面），
+     * 语义见 [KW_FINAL] / [KW_ABSTRACT]。
      */
     val isInheritKeyword: Boolean
-        get() = this == KW_OPEN || this == KW_FINAL || this == KW_ABSTRACT
+        get() = this == KW_FINAL || this == KW_ABSTRACT
 
     /**
      * 方法修饰词：`fun` 前面那串能按**任意顺序**写的词
-     * （`public` / `private` / `protected` / `static` / `override` / `open` / `final` / `abstract`）。
+     * （`public` / `private` / `protected` / `static` / `override` / `final` / `abstract`）。
      *
      * 拿来「数一数 fun 前面到底排了几个修饰词」，好让 Parser 在
      * `override public fun` 和 `public override fun` 两种写法上看到同一个 `fun`。

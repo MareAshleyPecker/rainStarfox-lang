@@ -397,17 +397,17 @@ class InterfaceTest {
     }
 
     @Test
-    fun `继承没写 open 的类要报错`() {
+    fun `继承 final 类要报错`() {
         val e = assertFailsWith<RsfError> {
             Rsf.analyze(
                 source(
-                    "class Base {\n    var x : int = 0\n}\n" +
+                    "final class Base {\n    var x : int = 0\n}\n" +
                         "class Sub : Base() {\n}\n",
                 ),
             )
         }
         assertEquals("checker", e.phase)
-        assertTrue(e.detail.contains("没有写 'open'"), e.detail)
+        assertTrue(e.detail.contains("是 final 的"), e.detail)
     }
 
     @Test

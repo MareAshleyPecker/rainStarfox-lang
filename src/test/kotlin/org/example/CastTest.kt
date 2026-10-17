@@ -33,7 +33,7 @@ class CastTest {
     fun `is 与 !is 判类、父类和接口`() {
         val out = bothEnds(
             """
-            open class A { }
+            class A { }
             class B : A() { }
             interface Named { fun name() -> string }
             class N : A(), Named { override fun name() -> string { rtn "n" } }
@@ -64,7 +64,7 @@ class CastTest {
     fun `is 的结果就是 bool`() {
         val out = bothEnds(
             """
-            open class A { }
+            class A { }
             class B : A() { }
 
             fun main() -> void {
@@ -89,7 +89,7 @@ class CastTest {
     fun `as 上转型是空操作`() {
         val out = bothEnds(
             """
-            open class A { fun who() -> string { rtn "A" } }
+            class A { fun who() -> string { rtn "A" } }
             class B : A() { }
 
             fun main() -> void {
@@ -110,7 +110,7 @@ class CastTest {
     fun `as 下转型之后能调子类成员`() {
         val out = bothEnds(
             """
-            open class A { open fun who() -> string { rtn "A" } }
+            class A { fun who() -> string { rtn "A" } }
             class B : A() {
                 fun only() -> string { rtn "only-B" }
                 override fun who() -> string { rtn "B" }
@@ -134,7 +134,7 @@ class CastTest {
     fun `as 失败时抛出运行期全名文案`() {
         val out = bothEnds(
             """
-            open class A { }
+            class A { }
             class B : A() { }
             class C : A() { }
 
@@ -161,7 +161,7 @@ class CastTest {
         // 运行期按 `Class.getName()` 打 `java.lang.String`。
         val out = bothEnds(
             """
-            open class A { }
+            class A { }
 
             fun main() -> void {
                 try {
@@ -182,7 +182,7 @@ class CastTest {
     fun `null 的三种行为`() {
         val out = bothEnds(
             """
-            open class A { }
+            class A { }
 
             fun main() -> void {
                 var a : ?A = null
@@ -211,7 +211,7 @@ class CastTest {
     fun `安全转换 as 的三种情形`() {
         val out = bothEnds(
             """
-            open class A { }
+            class A { }
             class B : A() { }
             class C : A() { }
 
@@ -246,7 +246,7 @@ class CastTest {
                 fun greet() -> string { rtn "hi" }
             }
             class Impl : Greeter { }
-            open class Base { }
+            class Base { }
             class Both : Base(), Greeter { }
 
             fun main() -> void {
@@ -273,7 +273,7 @@ class CastTest {
     fun `数组按协变判型`() {
         val out = bothEnds(
             """
-            open class A { }
+            class A { }
             class B : A() { }
             class C : A() { }
 
@@ -299,7 +299,7 @@ class CastTest {
     fun `数组转型失败文案印数组描述符`() {
         val out = bothEnds(
             """
-            open class A { }
+            class A { }
             class B : A() { }
             class C : A() { }
 
@@ -324,7 +324,7 @@ class CastTest {
     @Test
     fun `泛型实参允许写但按擦除判并发警告`() {
         val program = """
-            open class Box&<T>(v : T) {
+            class Box&<T>(v : T) {
                 var value : T = v
                 fun get() -> T { rtn value }
             }
@@ -358,7 +358,7 @@ class CastTest {
         // 泛型类的类型实参在 rsf 里是必写的（`Box` 单独写会报「类型实参个数不对」），
         // 所以「不写实参」这条只能拿非泛型目标来验：非泛型目标不该冒擦除警告。
         val program = """
-            open class A { }
+            class A { }
             class B : A() { }
 
             fun main() -> void {
@@ -384,7 +384,7 @@ class CastTest {
             Rsf.analyze(
                 source(
                     """
-                    open class A { }
+                    class A { }
                     fun main() -> void {
                         var a : A = new A()
                         var b : A = a as ?A
@@ -435,7 +435,7 @@ class CastTest {
             Rsf.analyze(
                 source(
                     """
-                    open class A { }
+                    class A { }
                     fun main() -> void {
                         var a : A = new A()
                         var x : A = a as int
@@ -454,7 +454,7 @@ class CastTest {
             Rsf.analyze(
                 source(
                     """
-                    open class A { }
+                    class A { }
                     fun main() -> void {
                         var a : A = new A()
                         var b : A = a as A as A
@@ -471,7 +471,7 @@ class CastTest {
             Rsf.analyze(
                 source(
                     """
-                    open class A { }
+                    class A { }
                     fun main() -> void {
                         var a : A = new A()
                         println("" + (a is A is A))
@@ -491,7 +491,7 @@ class CastTest {
             Rsf.analyze(
                 source(
                     """
-                    open class A { }
+                    class A { }
                     fun main() -> void {
                         var a : ?A = new A()
                         var b : A = a ?as A
@@ -511,7 +511,7 @@ class CastTest {
             Rsf.analyze(
                 source(
                     """
-                    open class A { }
+                    class A { }
                     fun main() -> void {
                         var a : A = new A()
                         var b : A = a as Nope
@@ -531,7 +531,7 @@ class CastTest {
             Rsf.analyze(
                 source(
                     """
-                    open class A { }
+                    class A { }
                     fun main() -> void {
                         var a : A = new A()
                         var b : A = a as A&<int>
@@ -553,7 +553,7 @@ class CastTest {
             Rsf.parse(
                 source(
                     """
-                    open class A { }
+                    class A { }
                     fun main() -> void {
                         var a : A = new A()
                         var b : A = a as A
@@ -579,10 +579,10 @@ class CastTest {
             Rsf.parse(
                 source(
                     """
-                    open class Box&<T>(v : T) {
+                    class Box&<T>(v : T) {
                         var value : T = v
                     }
-                    open class A { }
+                    class A { }
                     fun main() -> void {
                         var b : Box&<int> = new Box&<int>(1)
                         println("" + (b is Box&<int>))

@@ -609,7 +609,7 @@ class Checker(
     /**
      * 把接收者的类型实参**一路上溯代换**到 [owner] 那一层（阶段 25 K1，G4）。
      *
-     * `open class Holder&<T>(v0 : T) { fun get() -> T }` 配 `class IntHolder(v0 : int) :
+     * `class Holder&<T>(v0 : T) { fun get() -> T }` 配 `class IntHolder(v0 : int) :
      * Holder&<int>(v0)` 时，`h.get()` 拿到的声明在 Holder 上、返回类型写的是 `T`：
      * 只看 IntHolder 自己的类型实参（一个都没有）永远代不出 int，必须在每一跳
      * 把父类实参按当前代换算出来，一层层传到**声明它的那个类**。
@@ -645,7 +645,7 @@ class Checker(
      * 解析类头 `: Base(实参)` 里的**父类名字**（阶段 25 K1），在 [declareClassBody] 里调用。
      *
      * 这一趟只认名字：实参表达式要等主构造的参数进作用域之后才算类型（[checkParentCalls]），
-     * 声明级的规矩（open / 遮蔽 / override / abstract）留给 [checkClassParents]
+     * 声明级的规矩（final / 遮蔽 / override / abstract）留给 [checkClassParents]
      * ——因为那时所有类的签名才都看得见（`class D : Base` 写在 Base 前面也要能查）。
      */
     private fun registerParentClass(cls: ClassDecl, ref: TypeRef) {
@@ -774,15 +774,15 @@ class Checker(
         }
     }
 
-    /** 父类必须是 `open`（或 `abstract`）的类：rsf 的类默认 final（DESIGN-25 §4）。 */
+    /** 父类不能是 `final`：rsf 的类默认开放，只有写了 `final` 才封（DESIGN-27）。 */
     private fun checkParentModifiers(info: ClassInfo) {
         val parent = parentRecord(info) ?: return
         val decl = parent.declaration ?: return
-        if (decl.isOpen || decl.isAbstract) return
+        if (!decl.isFinal) return
         throw err(
-            "类 '${info.decl.name}' 不能继承 '${decl.name}'：它没有写 'open'。" +
-                "rsf 的类默认是 final 的（不许被继承）——给父类加上 open：" +
-                "open class ${decl.name}(...) { ... }（DESIGN-25 §4）",
+            "类 '${info.decl.name}' 不能继承 '${decl.name}'：'${decl.name}' 是 final 的（DESIGN-27）。" +
+                "rsf 的类默认可以被继承，只有写了 'final' 才禁止——把父类那行的 'final' 去掉才能继承：\n" +
+                "  class ${decl.name}(...) { ... }",
             info.decl.at,
         )
     }
@@ -801,11 +801,12 @@ class Checker(
     }
 
     /**
-     * 子类方法与父类同名同签名时的两条规矩（DESIGN-25 §4/§5）：
+     * 子类方法与父类同名同签名时的两条规矩（DESIGN-25 §4/§5，阶段 27 反转了第二条）：
      *
      * 1. **必须写 `override`**：不写的同名方法一律报错（rsf 与 Kotlin 的故意偏离——
      *    静默覆盖会让两端对拍失去意义）；
-     * 2. 父类那个方法必须 **open**（或本来就是 abstract / override 来的）才能被覆盖。
+     * 2. 父类那个方法**默认可覆盖**（DESIGN-27）：只有写了 `final` 才不允许；
+     *    抽象方法不算「可覆盖节点」，但子类的义务是实现它，所以照样放行。
      *
      * 「写了 override 却覆盖不到任何东西」不在这里报——那是 [checkOverrides] 的活，
      * 它同时还要看接口，两处报同一件事只会让用户改两遍。
@@ -828,8 +829,8 @@ class Checker(
                 if (parentMethod.isOverridable || parentMethod.isAbstract) continue
                 throw err(
                     "类 '${info.decl.name}' 的 '${m.name}' 不能覆盖父类 '${owner.decl.name}' 的 " +
-                        "${describeSignature(parentMethod)}：它没有写 'open'（rsf 的方法默认 final，" +
-                        "DESIGN-25 §4）。给父类那个方法加上 open，或者换个名字写一个新方法",
+                        "${describeSignature(parentMethod)}：父方法写了 'final'（DESIGN-27）。" +
+                        "rsf 的方法默认可覆盖，'final' 是端点——去掉父方法上的 'final'，或者换个名字写一个新方法",
                     m.at,
                 )
             }
@@ -2876,8 +2877,8 @@ class Checker(
         for (info in classTable.values) {
             // 这里**不**跳过「一个接口都没实现」的类：rsf 看不见父类（D2），也看不见
             // java/lang/Object 的方法，所以这种类里的 override 一定落空，该报错而不是放行。
-            // 阶段 25：有父类的类里，能被覆盖的东西多了两处——父**类**里的 open 方法，
-            // 以及父类实现的接口（接口是跟着类一起继承的）。
+            // 阶段 27：类默认可以被继承，只有父类写了 'final' 才禁止；方法默认可以被覆盖，
+            // 只有父方法写了 'final' 才封住（DESIGN-27）。
             val supers = classSuperRefs[info.decl].orEmpty() + inheritedInterfaceRefs(info)
             for (list in info.methods.values) {
                 for (m in list) {
@@ -2888,7 +2889,7 @@ class Checker(
                     throw err(
                         "类 '${info.decl.name}' 的 '${m.name}' 写了 override，但父类型里没有可覆盖的方法：" +
                             "接口里没有人要求 ${describeSignature(m)}，父类里也没有同签名的方法" +
-                            "（父类那个方法得写了 open 才能被覆盖，DESIGN-25 §4）",
+                            "（父类里若写了 'final' 也不能覆盖，DESIGN-27）",
                         m.at,
                     )
                 }

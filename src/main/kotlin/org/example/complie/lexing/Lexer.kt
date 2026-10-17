@@ -32,12 +32,9 @@ private val KEYWORDS: Map<String, TokenKind> = buildMap {
     put("static", TokenKind.KW_STATIC)
     // 阶段 20 追加：可选的 override（语义照 Java 的 @Override）
     put("override", TokenKind.KW_OVERRIDE)
-    // 阶段 25：类继承。open / final / abstract 是声明级修饰词（类与方法默认 final），
-    // super 是父类接收者（`super.f()` / `super(接口).f()` / `super(实参)`）。
-    // 这四项此刻**只有 Kotlin 版认**——rsf 版自举（rsfSrc/bootstrap）的关键字表要等
-    // K5 那一刀才跟上，在那之前这两侧的关键字数（51 → 55）是不对齐的，这是已知且
-    // 计划内的差异；RsfTest 里逐条对拍用的语料里没有这四个词，所以对拍不会红。
-    put("open", TokenKind.KW_OPEN)
+    // 阶段 25：类继承。final / abstract 是声明级修饰词（阶段 27 起类与方法**默认开放**，
+    // 写 final 才封）；super 是父类接收者（`super.f()` / `super(接口).f()` / `super(实参)`）。
+    // 阶段 27 删掉了 `open`：它退化成普通标识符，`open class X` 是语法错误。
     put("final", TokenKind.KW_FINAL)
     put("abstract", TokenKind.KW_ABSTRACT)
     put("super", TokenKind.KW_SUPER)

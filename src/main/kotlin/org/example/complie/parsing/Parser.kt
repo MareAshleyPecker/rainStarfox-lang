@@ -667,8 +667,8 @@ class Parser(
      * 全都不用为它分家。主构造的「体」就是字段初值（不需要 init 块）。
      */
     private fun parseClassDecl(annotations: List<AnnotationUse> = emptyList()): ClassDecl {
-        // 阶段 25 K5a-fix：类头的「权限修饰词」与「继承修饰词」**任意穿插**——`public open class`
-        // 与 `open public class` 等价（与 [parseFuncDecl] 的同一条口径，Kotlin 也这么收）。
+        // 阶段 25 K5a-fix：类头的「权限修饰词」与「继承修饰词」**任意穿插**——`public final class`
+        // 与 `final public class` 等价（与 [parseFuncDecl] 的同一条口径，Kotlin 也这么收）。
         // 权限修饰词仍然只收一个：第二个（`public private class`）落到下面的 expect(KW_CLASS) 上，
         // 报错文案与修正前逐字一致，不在这里放松。
         var control = ControlType.DEFAULT
@@ -680,14 +680,14 @@ class Parser(
                 control = ControlType.of(advance().kind)
                 sawControl = true
             } else if (peek().kind.isInheritKeyword) {
-                // 被权限修饰词隔开的几段继承修饰词要**合起来**判重与互斥（`open public final class`），
+                // 被权限修饰词隔开的几段继承修饰词要**合起来**判重与互斥（`final public abstract`），
                 // 和 [parseFuncDecl] 前后收到两段时走的是同一个 [mergeInherit]。
                 inherit = mergeInherit(inherit, kindWord = "类")
             } else {
                 going = false
             }
         }
-        val mods = inherit ?: InheritModifiers(isOpen = false, isFinal = false, isAbstract = false)
+        val mods = inherit ?: InheritModifiers(isFinal = false, isAbstract = false)
         val classTok = expect(TokenKind.KW_CLASS, "class 声明缺少 'class'")
         val nameTok = expect(TokenKind.IDENT, "'class' 后面缺少类名")
 
@@ -732,7 +732,7 @@ class Parser(
             // 注解可以和修饰词混写（`@M public fun f()` / `public @M fun f()`），
             // 所以先收注解再分派；字段/方法各自带走自己的那份表。
             val memberAnnotations = parseAnnotations()
-            // 继承修饰词也可以排在这一串里（`open fun f()` / `public open fun f()`）：
+            // 继承修饰词也可以排在这一串里（`final fun f()` / `public final fun f()`）：
             // 先原样数出来，等看清后面是字段还是方法再决定谁去消费它们。
             val memberStart = peek(modifierRun()).kind
             when {
@@ -744,7 +744,7 @@ class Parser(
                 // [isFieldDeclAhead] 的说明）。
                 isFieldDeclAheadAfterInherit() -> throw error(
                     peek(),
-                    "字段不能写 'open' / 'final' / 'abstract'：子类不能重复声明父类已有的字段" +
+                    "字段不能写 'final' / 'abstract'：子类不能重复声明父类已有的字段" +
                         "（阶段 25 禁止字段遮蔽，DESIGN-25 §5），所以字段没有「可被覆盖」这一说，" +
                         "把修饰词删掉",
                 )
@@ -786,36 +786,28 @@ class Parser(
             annotations = annotations,
             superClass = sup.base,
             superArgs = sup.baseArgs,
-            isOpen = mods.isOpen,
             isFinal = mods.isFinal,
             isAbstract = mods.isAbstract,
         )
     }
 
     /**
-     * 类声明里的继承修饰词（阶段 25）：`open` / `final` / `abstract`。
+     * 类声明里的继承修饰词（阶段 25；阶段 27 起只剩 `final` / `abstract`）。
      *
-     * 三个词的**顺序不限**（`abstract open class` 写得出来），但同一个词不能写两遍。
+     * 两个词的**顺序不限**（`abstract final class` 写得出来，随后由互斥规则拒掉），但同一个词不能写两遍。
      * 判定放在 Parser 而不是 Checker，是因为这三个词只影响「能不能继承/覆盖」这一件事，
      * 语法上是纯修饰词；能在这里说清就不留到语义阶段兜一圈再报（报错位置也更准：
      * 指到写重了的那个词）。
      *
-     * `open` 与 `final` 互斥、`abstract` 与另外两个都不能同时写（DESIGN-25 §4/§6）：
-     * 抽象类本来就是要被继承的，再写 `open` 是废话、写 `final` 是自相矛盾。
+     * `final` 与 `abstract` 不能同时写（DESIGN-25 §6 / DESIGN-27）：
+     * 抽象类本来就是要被继承的，写 `final` 是自相矛盾。
      */
     private fun parseInheritModifiers(kindWord: String): InheritModifiers {
-        var open: Token? = null
         var final: Token? = null
         var abstract: Token? = null
         while (peek().kind.isInheritKeyword) {
             val tok = advance()
             when (tok.kind) {
-                TokenKind.KW_OPEN -> if (open != null) {
-                    throw error(tok, "$kindWord 上 'open' 写了两遍——写一次就够了")
-                } else {
-                    open = tok
-                }
-
                 TokenKind.KW_FINAL -> if (final != null) {
                     throw error(tok, "$kindWord 上 'final' 写了两遍——写一次就够了")
                 } else {
@@ -831,22 +823,15 @@ class Parser(
                 else -> throw IllegalStateException("不是继承修饰词: ${tok.kind}")
             }
         }
-        if (open != null && final != null) {
-            throw error(
-                final,
-                "$kindWord 上 'open' 与 'final' 不能同时写：'open' 是允许被继承/覆盖，'final' 是禁止，" +
-                    "两者互斥（DESIGN-25 §4），删掉其中一个",
-            )
-        }
-        if (abstract != null && (open != null || final != null)) {
+        if (abstract != null && final != null) {
             throw error(
                 abstract,
-                "$kindWord 上 'abstract' 不能和 'open' / 'final' 写在一起：" +
+                "$kindWord 上 'abstract' 不能和 'final' 写在一起：" +
                     (if (kindWord == "类") "抽象类本来就是要被继承的" else "抽象成员本来就是要被子类实现的") +
                     "（DESIGN-25 §6），写 'abstract' 一个就够了",
             )
         }
-        return InheritModifiers(isOpen = open != null, isFinal = final != null, isAbstract = abstract != null)
+        return InheritModifiers(isFinal = final != null, isAbstract = abstract != null)
     }
 
     /**
@@ -966,7 +951,6 @@ class Parser(
 
     /** 继承修饰词的解析结果（[parseInheritModifiers] 的返回值）。 */
     private class InheritModifiers(
-        val isOpen: Boolean,
         val isFinal: Boolean,
         val isAbstract: Boolean,
     )
@@ -1138,7 +1122,7 @@ class Parser(
                 if (m.kind.isInheritKeyword) {
                     throw error(
                         m,
-                        "接口的方法不能写 '${m.lexeme}'：'open' / 'final' / 'abstract' 是**类**的规矩" +
+                        "接口的方法不能写 '${m.lexeme}'：'final' / 'abstract' 是**类**的规矩" +
                             "（类与方法默认 final，DESIGN-25 §4）。接口的方法只写签名就是抽象方法、" +
                             "写了体就是默认实现，把 '${m.lexeme}' 删掉",
                     )
@@ -1333,7 +1317,7 @@ class Parser(
             val m = peek()
             throw error(
                 m,
-                "constructor 不能写 '${m.lexeme}'：'open' / 'final' / 'abstract' 说的是" +
+                "constructor 不能写 '${m.lexeme}'：'final' / 'abstract' 说的是" +
                     "「能不能被继承/覆盖」，而构造器只能通过 new 类名(...) 调用、不参与覆盖。" +
                     "直接写 constructor(参数) { ... }",
             )
@@ -1434,7 +1418,7 @@ class Parser(
      */
     private fun isFieldDeclAhead(): Boolean = peek().kind.isVarKeyword
 
-    /** [isFieldDeclAhead] 的带继承修饰词版本：`open var x` / `final var x`。 */
+    /** [isFieldDeclAhead] 的带继承修饰词版本：`final var x`（阶段 27 后只剩它会走到这里）。 */
     private fun isFieldDeclAheadAfterInherit(): Boolean = peek().kind.isInheritKeyword && run {
         var n = 0
         while (peek(n).kind.isInheritKeyword) n++
@@ -1500,11 +1484,10 @@ class Parser(
      * 修饰词可以按**任意顺序**写（`override public fun` 与 `public override fun` 等价），
      * 所以这一串是一起收的。
      *
-     * [allowInheritModifiers] 只有**类体**里传 true（阶段 25 追加）：那里才允许写
-     * `open` / `final` / `abstract`（`open fun f()` 可以被覆盖、`final fun f()` 收窄
-     * 一个本来是 open 的覆盖、`abstract fun f()` 只写签名）。
+     * [allowInheritModifiers] 只有**类体**里传 true（阶段 25 追加，阶段 27 收窄）：那里才允许写
+     * `final` / `abstract`（`final fun f()` 封住一个本来可以被覆盖的方法、`abstract fun f()` 只写签名）。
      *
-     * 顶层与接口体都不传它，于是那三处的 `open` 会掉进下面 `!isFunKeyword` 那一支，
+     * 顶层与接口体都不传它，于是那两处的 `final` 会掉进下面 `!isFunKeyword` 那一支，
      * 由专门为「继承修饰词」写的那句提示说清「它只能写在类 / 类方法前面」。
      *
      * 抽象方法（[FuncDecl.isAbstract]）在这里有两处硬规则：
@@ -1578,7 +1561,7 @@ class Parser(
         if (inherit != null && isStatic) {
             throw error(
                 peek(),
-                "静态方法不能是 'open' / 'final' / 'abstract'：静态方法只能写成 '类名.方法名' 调用" +
+                "静态方法不能是 'final' / 'abstract'：静态方法只能写成 '类名.方法名' 调用" +
                     "（static 不参与继承，DESIGN-25 §3），把它上面的继承修饰词删掉",
             )
         }
@@ -1614,7 +1597,6 @@ class Parser(
             val inheritHint = if (inherit != null || peek().kind.isInheritKeyword) {
                 val word = if (inherit != null) {
                     when {
-                        inherit.isOpen -> "open"
                         inherit.isFinal -> "final"
                         else -> "abstract"
                     }
@@ -1723,52 +1705,38 @@ class Parser(
         return FuncDecl(
             control, mainType, nameTok.lexeme, params, ret, body, funTok.at, isStatic,
             isOverride = isOverride,
-            isOpen = inherit?.isOpen == true,
             isFinal = inherit?.isFinal == true,
             annotations = leading,
         )
     }
 
     /**
-     * 把紧接着的一段继承修饰词收进已有的 [current]（阶段 25）。
+     * 把紧接着的一段继承修饰词收进已有的 [current]（阶段 25；阶段 27 起只剩 `final` / `abstract`）。
      *
-     * `fun` 前面允许「修饰词 / 注解 / 修饰词」这么夹着写（`open @M final fun f()`），
+     * `fun` 前面允许「修饰词 / 注解 / 修饰词」这么夹着写（`final @M final fun f()`），
      * 所以 [parseFuncDecl] 里的两个收集循环可能会各收一段。两段都合法、但要合起来看：
-     * 同一个词出现两次、或者 `open` + `final` 这种组合，都必须在**这里**当场报错——
+     * 同一个词出现两次、或者 `final` + `abstract` 这种组合，都必须在**这里**当场报错——
      * 报错位置指到第二个词，比指到整段修饰词有用。
      */
     private fun mergeInherit(current: InheritModifiers?, kindWord: String): InheritModifiers {
         val next = parseInheritModifiers(kindWord)
         if (current == null) return next
-        if (current.isOpen && next.isOpen) {
-            throw error(peek(), "$kindWord 上 'open' 写了两遍——写一次就够了")
-        }
         if (current.isFinal && next.isFinal) {
             throw error(peek(), "$kindWord 上 'final' 写了两遍——写一次就够了")
         }
         if (current.isAbstract && next.isAbstract) {
             throw error(peek(), "$kindWord 上 'abstract' 写了两遍——写一次就够了")
         }
-        val isOpen = current.isOpen || next.isOpen
         val isFinal = current.isFinal || next.isFinal
-        if (isOpen && isFinal) {
+        val isAbstract = current.isAbstract || next.isAbstract
+        if (isAbstract && isFinal) {
             throw error(
                 peek(),
-                "$kindWord 上 'open' 与 'final' 不能同时写：'open' 是允许被继承/覆盖，" +
-                    "'final' 是禁止（DESIGN-25 §4），删掉其中一个",
+                "$kindWord 上 'abstract' 不能和 'final' 写在一起（DESIGN-25 §6 / DESIGN-27），" +
+                    "写 'abstract' 一个就够了",
             )
         }
-        if (current.isAbstract || next.isAbstract) {
-            if (isOpen || isFinal) {
-                throw error(
-                    peek(),
-                    "$kindWord 上 'abstract' 不能和 'open' / 'final' 写在一起（DESIGN-25 §6），" +
-                        "写 'abstract' 一个就够了",
-                )
-            }
-            return InheritModifiers(isOpen = false, isFinal = false, isAbstract = true)
-        }
-        return InheritModifiers(isOpen = isOpen, isFinal = isFinal, isAbstract = false)
+        return InheritModifiers(isFinal = isFinal, isAbstract = isAbstract)
     }
 
     /**

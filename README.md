@@ -946,7 +946,7 @@ fun main() -> void {
 - **接口可以继承接口**（D4）：`public interface Loud : Greeter { }`；继承成环会报错。
 - **类继承**（阶段 25 起支持）：`class A : SomeClass` 里的父类唯一、排最前，后面跟接口
   （`class D : Base, Greeter`）；父类在阶段 20 那会儿是**明确不做**的（D2），现在按 Kotlin 的写法做完了，
-  见下面的「`open` / `override` / `abstract`：类继承（阶段 25）」。
+  见下面的「继承与封口：`final` / `override` / `abstract`（阶段 25，阶段 27 反转默认值）」。
 - **实现配对**：rsf 接口按签名严格配（参数类型 + 返回类型都对得上），**JVM 接口按名字 + 参数个数配**
   （擦除后的签名 rsf 侧写不出来）；漏实现会列出缺哪些方法，签名/返回类型对不上会说明差在哪。
   **`private` / `protected` / `static` 方法不算实现**（`check` 会拦；不拦的话 JVM 一调就 `AbstractMethodError`）。
@@ -972,12 +972,12 @@ fun main() -> void {
 元素**读**发 `getfield Marker$Impl.value`、元素**调用**发 `invokeinterface Marker.value()`。
 探针台 12 个正例（`p1`–`p7` / `a1`–`a6`）四列 stdout 一致且类字节差异 0，见 `BOOTSTRAP.md`。
 
-### `open` / `override` / `abstract`：类继承（阶段 25）
+### 继承与封口：`final` / `override` / `abstract`（阶段 25，阶段 27 反转默认值）
 
 ```rsf
-public open class Base(x : int) {
-    public open fun tag() -> string { rtn "base" }       // open：子类可以覆盖
-    public fun only() -> string { rtn "only" }           // 默认 final，子类不能再定义同名的
+public class Base(x : int) {                             // 类默认可被继承
+    public fun tag() -> string { rtn "base" }            // 方法默认可被覆盖
+    public final fun id() -> int { rtn x }               // final：到此为止，子类不能再覆盖
 }
 
 public abstract class Shape(size : int) {
@@ -985,6 +985,8 @@ public abstract class Shape(size : int) {
 }
 
 public class Box&<T>(v : T) : Base(1) { }                // 泛型类也能当父类
+
+public final class Sealed(x : int) : Base(x) { }         // final class：别人不能再继承它
 
 public class D(y : int) : Base(y * 2), Greeter {         // 父类唯一且排最前，后面只跟接口
     public override fun tag() -> string { rtn "derived" }
@@ -998,21 +1000,22 @@ public class D2(v : int) : Base(v) {
 fun main() -> void {
     var base : Base = new D(3)
     println(base.tag())        // derived（虚分派）
-    println(base.only())       // only
+    println(base.id())         // 继承来的 final 方法照常调用
     rtn
 }
 ```
 
-几条定死的规矩（设计见 `DESIGN-25.md`，Q1–Q5 是用户批准过的口径）：
+几条定死的规矩（设计见 `DESIGN-25.md`，默认值在阶段 27 按 `DESIGN-27.md` 反转）：
 
-- **默认 final**：不写 `open` 的类不能当父类（报「它没有写 'open'」），不写 `open` 的方法不能覆盖；
-  `override` 成员默认是 open 的，`final` 可以再收回去。禁止字段遮蔽（与 Kotlin 的故意偏离，
-  理由同样是「两端逐字节对拍」）。
+- **默认开放，`final` 封口**：类不写 `final` 就能当父类，方法不写 `final` 就能被子类覆盖；
+  `final class` 不能再被继承、`final fun` 不能再被覆盖（`override final fun` 把一条覆盖链就地封住）。
+  旧法（阶段 25–26）要求写 `open` 才有这些自由，阶段 27 删掉了 `open` 关键字。
+- **禁止字段遮蔽**（与 Kotlin 的故意偏离，理由同样是「两端逐字节对拍」）。
 - **构造顺序**：父 `<init>(实参)` → 自己的字段初值 → 构造体；`super(...)` 与 `this(...)` 互斥且只能第一句。
 - **`super` 两种形态**：`super.f()` 走直接父类那一份实现，`super(Greeter).f()` 走指定接口的默认实现
   （Q1 选了圆括号写法，因为 `<`/`&<` 已经占满了尖括号）。
 - **`abstract`**：`abstract class` 不能 `new`；它的抽象成员由具体子类实现，漏一个就报错并列出缺哪些；
-  抽象成员不能带函数体、不能是 `private`/`static`。
+  抽象成员不能带函数体、不能是 `private`/`static`，也不能和 `final` 写在一起。
 - **`static` 不继承**：只能写 `类名.成员`；子类里写 `Base.make(...)` 是唯一写法，报错会点明这一点。
 - **可以继承 JDK 类**（Q3）：`class MyError(msg : string) : Exception(msg)` 能直接用，
   `getMessage()` 这类继承来的方法照常调用、`super.getMessage()` 打到声明类（`java.lang.Throwable`）那一份。
@@ -1494,9 +1497,10 @@ gradlew.bat verifyPlugin          :: 官方校验器静态检查
 | 19d | **函数/方法重载**：顶层函数与类方法共用一套解析（个数 → 类型打分 → 同分报错）、擦除冲突编译期拒绝、`main` 唯一入口 | ✅ 2026-10-11 |
 | 20 | `interface`（抽象/默认方法、接口继承接口、`class X : A, B` 多接口实现、`override`、JVM 接口互操作与桥方法） | ✅ 2026-10-15 |
 | 21 | 注解 `annotation`：元素 + 默认值 + `companion entity` 行为、`@` 使用点、`Marker::Impl` 嵌套类型、字节码与解释器两端逐字节一致 | ✅ 2026-10-15 |
-| 25 | **类继承**（Kotlin 式单继承：`open` / `override` / `abstract` / `final`、`super.f()` 与 `super(接口).f()`、`static` 不继承、允许继承 JDK 类） | ✅ 2026-10-16（K1 前端+语义 / K3 解释器 / K2 字节码 / K4 收口；K5 自举同步 ⏳） |
+| 25 | **类继承**（Kotlin 式单继承：`override` / `abstract` / `final`、`super.f()` 与 `super(接口).f()`、`static` 不继承、允许继承 JDK 类） | ✅ 2026-10-16（K1 前端+语义 / K3 解释器 / K2 字节码 / K4 收口；自举同步已含于阶段 27） |
+| 27 | **默认开放**：删掉 `open` 关键字，类默认可继承、方法默认可覆盖，`final` 成为唯一收窄手段（推翻阶段 25 的「默认 final」） | 🔄 2026-10-17 开工（`DESIGN-27.md`；27a Kotlin 侧 / 27b 自举同步 / 27c 收口） |
 | 23 | 显式指针（`&` 取地址 / `*` 解引用，C 风格） | ⏳ 计划（2026-10-15，`DESIGN-23.md`，等预案） |
-| 24 | 类型转换与类型判断（`as` / `?as` / `is` / `!is`） | ⏳ 计划（2026-10-15，`DESIGN-24.md`） |
+| 24 | 类型转换与类型判断（`as` / `?as` / `is` / `!is`） | 🔄 2026-10-17：24a 前端+语义、24b 自举词法/解析已提交（`076aeee` / `5b5d7aa`）；24c–24e 待做（`DESIGN-24.md`） |
 
 ### 19c：为 17b 补的三样（enum / switch / `&&` `||`）
 
