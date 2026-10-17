@@ -1066,6 +1066,44 @@ data class ForceExpr(
 ) : Expr
 
 /**
+ * 类型转换（阶段 24）：`操作数 as 目标类型` / `操作数 ?as 目标类型`。
+ *
+ * [safe] 为 true 就是 `?as`：判型失败取 `null` 而不是抛。
+ * 两种写法的结果类型都由 [type] 决定——`as` 得非空的目标类型，`?as` 得 `?目标类型`。
+ *
+ * **只能写一层**（DESIGN-24 §3 的 Q4 拍板）：`a as A as A` 在语法层就被拒，
+ * 所以 [operand] 里不会再嵌一个 [AsExpr]——链条动不了 JVM 的判型结论，
+ * 只让人误会「中间那层能改变结果」。
+ *
+ * 目标类型用 [TypeRef] 而不是 [RsfType]：Parser 不认识符号表，
+ * 解析交给 Checker 的 `resolveType`（跟 `new` / 变量声明的类型走同一条路）。
+ */
+data class AsExpr(
+    val operand: Expr,
+    /** 目标类型；[TypeRef.name] 带 `?` 前缀的形式在这里被 Checker 拒掉。 */
+    val type: TypeRef,
+    /** `?as` 为 true（判型失败得 null），`as` 为 false（失败抛）。 */
+    val safe: Boolean,
+    override val at: SourceLine,
+) : Expr
+
+/**
+ * 类型判断（阶段 24）：`操作数 is 目标类型` / `操作数 !is 目标类型`，结果是 `bool`。
+ *
+ * [negated] 为 true 就是 `!is`。v1 **不做**智能转换（DESIGN-24 §3 的 Q5 拍板）：
+ * `if (x is A)` 之后 `x` 的静态类型仍然是原来的那个，用户要自己 `as` 一次。
+ *
+ * 同样只允许写一层。
+ */
+data class IsExpr(
+    val operand: Expr,
+    val type: TypeRef,
+    /** `!is` 为 true。 */
+    val negated: Boolean,
+    override val at: SourceLine,
+) : Expr
+
+/**
  * 成员访问：`接收者.名字` 或 `接收者.名字(实参)`。
  *
  * [arguments] 为 null 表示字段访问，非 null 表示方法调用。接收者可以是

@@ -4,6 +4,7 @@ import org.example.complie.ast.AnnotationArg
 import org.example.complie.ast.AnnotationDecl
 import org.example.complie.ast.AnnotationElement
 import org.example.complie.ast.AnnotationUse
+import org.example.complie.ast.AsExpr
 import org.example.complie.ast.AssignStmt
 import org.example.complie.ast.BinaryExpr
 import org.example.complie.ast.Block
@@ -34,6 +35,7 @@ import org.example.complie.ast.IfStmt
 import org.example.complie.ast.IndexAssignStmt
 import org.example.complie.ast.IndexExpr
 import org.example.complie.ast.IntLit
+import org.example.complie.ast.IsExpr
 import org.example.complie.ast.InterfaceDecl
 import org.example.complie.ast.LabelStmt
 import org.example.complie.ast.LongLit
@@ -138,6 +140,9 @@ class Checker(
      */
     private val functionTable = LinkedHashMap<String, MutableList<FuncDecl>>()
     private val exprTypes = IdentityHashMap<Expr, RsfType>()
+
+    /** `as` / `is` 的目标类型（阶段 24），两个后端都从这里读，不各自再解析一遍。 */
+    private val castTargets = IdentityHashMap<Expr, RsfType>()
     private val varRefs = IdentityHashMap<VarExpr, Binding>()
     private val assignRefs = IdentityHashMap<AssignStmt, Binding>()
     private val declBindings = IdentityHashMap<VarDeclStmt, Binding>()
@@ -227,6 +232,7 @@ class Checker(
             functions = program.functions.toList(),
             functionTable = functionTable,
             exprTypes = exprTypes,
+            castTargets = castTargets,
             varRefs = varRefs,
             assignRefs = assignRefs,
             declBindings = declBindings,
@@ -2594,6 +2600,10 @@ class Checker(
      * 放一个错类型进后端比报错糟得多。
      */
     private fun isSourceSubtype(want: RsfType, valueType: RsfType): Boolean {
+        // 阶段 24：数组是**协变**的（`B[]` 能当 `A[]` 用），和 JVM 的
+        // `CHECKCAST`/`INSTANCEOF` 一致——`var as1 : A[] = bs` 这种写法必须能过，
+        // 否则 `as B[]` 那类探针连第一行都写不出来。基本类型数组不协变。
+        if (want.isArray || valueType.isArray) return isArraySubtype(want, valueType)
         if (!want.isExternal || !valueType.isExternal) return false
         // 可空只能往更宽的地方走：`I x = 可空Dog` 照引用类型的老规矩报错
         if (valueType.nullable && !want.nullable) return false
@@ -2602,6 +2612,33 @@ class Checker(
         // 目标不带实参（`I x`）：只看名字链，够用也最省事
         if (want.typeArgs.isEmpty()) return isSubtypeName(sub, sup)
         return isSubtypeWithArgs(sub, valueType.typeArgs, sup, want.typeArgs)
+    }
+
+    /**
+     * 数组之间的赋值兼容（阶段 24）：JVM 的数组是**协变**的，`B[]` 能当 `A[]` 用。
+     *
+     * 逐层拆 `[]` 比元素类型，规则就和运行期那条 `INSTANCEOF` 完全一致：
+     * - 基本类型数组**不**协变：`int[]` 不是 `long[]`（JVM 也不让）；
+     * - 引用元素按 [isSourceSubtype] 走类链/接口链（`C[]` 不是 `B[]`）；
+     * - 类型参数擦除到 Object：`T[]` 与 `Object[]` 互相放得下。
+     *
+     * 二维以上（`int[][]`、`B[][]`）递归处理，维度不同直接不兼容。
+     */
+    private fun isArraySubtype(want: RsfType, valueType: RsfType): Boolean {
+        if (!want.isArray || !valueType.isArray) return false
+        if (want.arrayDepth != valueType.arrayDepth) return false
+        // 可空只能往更宽的地方走，和引用类型的老规矩一致
+        if (valueType.nullable && !want.nullable) return false
+        val wantElement = want.elementType
+        val valueElement = valueType.elementType
+        if (wantElement == valueElement) return true
+        if (wantElement.isArray && valueElement.isArray) return isArraySubtype(wantElement, valueElement)
+        if (wantElement.isPrimitive || valueElement.isPrimitive) return false
+        if (valueElement.isTypeParam || wantElement.isTypeParam) {
+            // 擦除后都是 Object[]：只在两边都擦除到 Object 时才互通
+            return valueElement.isTypeParam && wantElement.isTypeParam
+        }
+        return isSourceSubtype(wantElement, valueElement)
     }
 
     /**
@@ -5449,8 +5486,151 @@ class Checker(
                 }
             }
 
+            is AsExpr -> checkAs(expr)
+
+            is IsExpr -> checkIs(expr)
+
             is MemberExpr -> checkMember(expr)
         }
+
+    // ------------------------------------------------------- 类型转换 / 类型判断（阶段 24）
+
+    /**
+     * `操作数 as 目标` / `操作数 ?as 目标`（阶段 24）。
+     *
+     * 结果类型：`as` → 目标的非空版，`?as` → 目标的可空版（判型失败取 null）。
+     */
+    private fun checkAs(expr: AsExpr): RsfType {
+        val opText = if (expr.safe) "?as" else "as"
+        castOperand(expr.operand, opText, expr.at)
+        val target = castTarget(expr.type, opText, expr, expr.at)
+        return if (expr.safe) target.asNullable() else target.asNonNull()
+    }
+
+    /** `操作数 is 目标` / `操作数 !is 目标`（阶段 24）：结果恒为 `bool`，v1 不做智能转换。 */
+    private fun checkIs(expr: IsExpr): RsfType {
+        val opText = if (expr.negated) "!is" else "is"
+        castOperand(expr.operand, opText, expr.at)
+        castTarget(expr.type, opText, expr, expr.at)
+        return RsfType.BOOL
+    }
+
+    /**
+     * `as` / `is` 的操作数：必须是**引用类型或数组**。
+     *
+     * 数值参与不了 JVM 的 `instanceof` / `checkcast`（它们只认引用），rsf 也不打算
+     * 在判型里偷偷装箱——要数值转换就走那套显式的函数，见 [castTarget] 的说明。
+     * `null` 字面量放行：`null is A` / `null as A` / `null ?as A` 的三种行为已经拍定
+     * （DESIGN-24 §3 的 Q2），它们是运行期的事，静态不拦。
+     */
+    private fun castOperand(operand: Expr, opText: String, at: SourceLine): RsfType {
+        val operandType = type(operand)
+        if (operandType.isNullLiteral) return operandType
+        if (operandType.isVoid) {
+            throw err(
+                "'$opText' 的操作数必须有值：这里是一个 void 调用，没有东西可以转型 / 判型；" +
+                    "先把它改成有返回值的函数",
+                at,
+            )
+        }
+        if (operandType.isPrimitive) {
+            throw err(
+                if (opText.endsWith("is")) {
+                    "'$opText' 只用于引用类型和数组，${operandType.rsfName} 是数值类型、" +
+                        "不可能是某个类的实例；比较数值直接用 == / < / >"
+                } else {
+                    "'$opText' 只用于引用类型和数组，${operandType.rsfName} 是数值类型；" +
+                        "数值转换用 toByte / toChar / charToInt / intToString / parseInt"
+                },
+                at,
+            )
+        }
+        return operandType
+    }
+
+    /**
+     * `as` / `is` 的目标类型（阶段 24）。
+     *
+     * 四条静态检查里跟目标有关的三条都在这里：
+     * - 目标必须是**引用类型或数组**（数值转换有专门函数，不走 `as`）；
+     * - 目标**不许可空**（`?A` 由 Parser 拒，这里再兜一层——null 的三种行为由
+     *   「写的是 as 还是 ?as」决定，跟目标带不带 `?` 无关）；
+     * - **非泛型类型不许写类型实参**（`A&<int>` 里 A 没有类型参数）。
+     *
+     * 泛型实参写了就是**允许但按擦除判**：目标类型本身照 [resolveType] 解析
+     * （所以能查出未知类型、实参个数不对），运行期只看擦除后的那个类。
+     * 每次写都发一条 stderr 警告，免得用户以为 `Box&<int>` 和 `Box&<string>` 判得不一样。
+     */
+    private fun castTarget(ref: TypeRef, opText: String, expr: Expr, at: SourceLine): RsfType {
+        // 先查「非泛型不许写实参」：解析阶段那条 checkArity 的报错说的是
+        // 「类型实参个数不对」，这里的口径要直白一点，先拦下来说清楚。
+        if (ref.typeArgs.isNotEmpty()) {
+            val declared = declaredTypeParams(ref.name)
+            if (declared != null && declared.isEmpty()) {
+                throw err(
+                    "非泛型类型不许写类型实参：'${ref.display()}' 里的 '${ref.name}' " +
+                        "没有类型参数，去掉 '&<...>' 写成 '${ref.name}'",
+                    at,
+                )
+            }
+        }
+        val target = resolveType(ref)
+        if (target.isNullable) {
+            throw err(
+                "目标类型不许写可空：'... $opText ${ref.display()}' 不合法——" +
+                    "'null is A' 恒为 false、'null as A' 抛、'null ?as A' 得 null，" +
+                    "行为由「写的是 as 还是 ?as」决定，跟目标带不带 '?' 无关；" +
+                    "去掉 '?' 写成 '$opText ${ref.display().removePrefix("?")}'",
+                at,
+            )
+        }
+        if (target.isVoid) {
+            throw err(
+                "'$opText' 的目标类型不能是 void：void 没有任何值可以转型 / 判型",
+                at,
+            )
+        }
+        if (!target.isArray && target.isPrimitive) {
+            throw err(
+                if (opText.endsWith("is")) {
+                    "'$opText' 的目标类型必须是引用类型或数组，'${ref.display()}' 是数值类型、" +
+                        "不可能是某个类的实例；比较数值直接用 == / < / >"
+                } else {
+                    "'$opText' 的目标类型必须是引用类型或数组，'${ref.display()}' 是数值类型；" +
+                        "数值转换用 toByte / toChar / charToInt / intToString / parseInt"
+                },
+                at,
+            )
+        }
+        castTargets[expr] = target
+        if (ref.typeArgs.isNotEmpty()) {
+            // 同一个节点只警告一次（type() 可能被多处重复调用）。
+            if (castErasureWarned.put(expr, true) == null) {
+                diagnostics.add(
+                    Diagnostic(
+                        Severity.WARNING,
+                        "checker",
+                        "'$opText' 的泛型实参只用于报错：'${ref.display()}' 在运行期按擦除后的 " +
+                            "'${ref.name}' 判（与 JVM 一致），'&<...>' 里的类型换一个结果也一样",
+                        currentSource.name,
+                        at.line,
+                        at.column,
+                    ),
+                )
+            }
+        }
+        return target
+    }
+
+    /** 一个**声明**的类型参数表；名字不是本批声明的类/接口时返回 null（交给 resolveType 报未知类型）。 */
+    private fun declaredTypeParams(bare: String): List<String>? {
+        classTable[bare]?.let { return it.decl.typeParams }
+        interfaceTable[bare]?.let { return it.decl.typeParams }
+        return null
+    }
+
+    /** 泛型擦除警告的记账本：同一个 `as` / `is` 节点只发一条。 */
+    private val castErasureWarned = IdentityHashMap<Expr, Boolean>()
 
     // ------------------------------------------------------------------ 成员访问
 

@@ -126,6 +126,19 @@ enum class TokenKind(val text: String) {
      * 误判成「修饰词后面写了个 '('」。
      */
     KW_SUPER("super"),
+    /**
+     * `as`（阶段 24）：`值 as 目标类型`、`值 ?as 目标类型`。
+     *
+     * 硬关键字：写成表达式里的中缀运算符，不走 [isTypeKeyword] / [isStaticKeyword]
+     * 那些修饰词集合——它只在 [Expr] 的后缀位置出现。
+     */
+    KW_AS("as"),
+    /**
+     * `is`（阶段 24）：`值 is 目标类型` / `值 !is 目标类型`，结果是 `bool`。
+     *
+     * 同样是硬关键字、同样是后缀运算符，不进任何修饰词集合。
+     */
+    KW_IS("is"),
     KW_IF("if"),
     KW_ELSE("else"),
     /**

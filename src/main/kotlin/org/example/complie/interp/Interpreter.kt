@@ -1,5 +1,6 @@
 package org.example.complie.interp
 
+import org.example.complie.ast.AsExpr
 import org.example.complie.ast.BinaryExpr
 import org.example.complie.ast.BoolLit
 import org.example.complie.ast.CallExpr
@@ -15,6 +16,7 @@ import org.example.complie.ast.FuncDecl
 import org.example.complie.ast.IfExpr
 import org.example.complie.ast.IndexExpr
 import org.example.complie.ast.IntLit
+import org.example.complie.ast.IsExpr
 import org.example.complie.ast.LongLit
 import org.example.complie.ast.MemberExpr
 import org.example.complie.ast.NewArrayExpr
@@ -135,6 +137,19 @@ class Interpreter(
 
     /** 代理 → 它代表的 rsf 对象（[javaProxyCache] 的反向表）。 */
     private val proxiedObjects = java.util.IdentityHashMap<Any, RsfObject>()
+
+    /**
+     * 数组对象 → 它的 **rsf 数组类型**（阶段 24），按**同一性**索引。
+     *
+     * 为什么必须记：解释器里的数组是**真的 JVM 数组**（见 [newArray]），而用户类的
+     * 数组载体一律是 `RsfObject[]` ——`B[]` 和 `C[]` 的载体类是同一个，`instanceof`
+     * 那个问题就答不了「`as1 is B[]`」。所以在这里记下 `new` 那一刻的声明类型，
+     * `is` / `as` 判数组时按它算（协变规则和 JVM 一样：`B[]` 是 `A[]`）。
+     *
+     * 原始类型的数组（`[I`）和 `string[]` 的载体类就够用了，但也都登记：
+     * 统一从这张表取，省得两套判据。
+     */
+    private val arrayTypes = java.util.IdentityHashMap<Any, RsfType>()
 
     /** 静默模式：重放 REPL 会话前缀时不产生输出（用户函数里的输出也一并静音）。 */
     private var silent = false
@@ -569,6 +584,24 @@ class Interpreter(
                 val value = eval(expr.operand, slots, body) ?: // 和编译产物保持一致：都是 NullPointerException、同样的消息
                 throw NullPointerException("rsf: 对 null 使用了 '!!'")
                 coerce(value, model.typeOf(expr))
+            }
+
+            // 阶段 24：`is` / `!is`。null 恒为 false——`INSTANCEOF` 对 null 本来就回 0，
+            // 所以这一支不需要特意判 null。
+            is IsExpr -> runtimeIs(eval(expr.operand, slots, body), model.castTargetOf(expr)) !=
+                expr.negated
+
+            // 阶段 24：`as` / `?as`。失败的**性质**两端必须一致：`as` 抛、`?as` 得 null。
+            // 消息里印的名字由 [castFailure] 拼，规则与字节码那边的 `__rsf_cast` 同源
+            // （见 [SemanticModel.jvmRuntimeNameOf]）。
+            is AsExpr -> {
+                val value = eval(expr.operand, slots, body)
+                val target = model.castTargetOf(expr)
+                when {
+                    runtimeIs(value, target) -> coerce(value, model.typeOf(expr))
+                    expr.safe -> null
+                    else -> throw RsfFailure(castFailure(value, target))
+                }
             }
 
             is MemberExpr -> evalMember(expr, slots, body, discard)
@@ -1664,10 +1697,13 @@ class Interpreter(
         // 新数组的总维数 = componentType 的维数 + dimensions.length」。
         // 传 `int[].class` 配 (2, 3) 建出来的是 `[[[I`（三维！），
         // 而 `new int[2][3]` 要的 `[[I` 必须用 `int.class` + (2, 3)。
-        return java.lang.reflect.Array.newInstance(
+        val array = java.lang.reflect.Array.newInstance(
             toJavaClass(resultType.copy(arrayDepth = 0)),
             *dims,
         )
+        // 阶段 24：把 rsf 的数组类型记下来——`is` / `as` 判数组（协变）只看它。
+        arrayTypes[array] = resultType
+        return array
     }
 
     /**
@@ -1694,6 +1730,130 @@ class Interpreter(
      */
     private fun coerceElement(v: Any?, element: RsfType): Any? =
         if (v == null) null else coerce(v, element)
+
+    // ------------------------------------------------------------------ 类型判断与转换（阶段 24）
+
+    /**
+     * 运行期判型：`is` / `!is` 与 `as` / `?as` 共用这一句。
+     *
+     * 判据**就是 JVM 的 `INSTANCEOF`**，不是重新实现的「rsf 自己的子类型关系」：
+     * - `null` 恒为 false（`INSTANCEOF` 对 null 回 0）；
+     * - 类型参数按擦除算 `Object`，非 null 的值都算（`t is T` 恒真）；
+     * - 数组按协变算（`B[]` 是 `A[]`），但**用户类的数组都同一个载体类**，
+     *   所以真正的答案要看 [arrayTypes] 里记下的声明类型；
+     * - rsf 对象沿类链 + 接口表（+ 挂在对象上的 JDK 父类实例）判；
+     * - 其余（`string`、JDK 对象）直接问 `Class.isInstance`，和 `INSTANCEOF` 同义。
+     */
+    private fun runtimeIs(value: Any?, target: RsfType): Boolean {
+        if (value == null) return false
+        // 类型参数擦除到 Object：任何非 null 的值都在里面
+        if (target.isTypeParam) return true
+        if (target.isArray) return runtimeIsArray(value, target)
+        if (value is RsfObject) return rsfObjectIs(value, target)
+        if (value is RsfEnumValue) return target.externalName == value.enumName
+        val cls = jvmClassOf(target) ?: return false
+        return cls.isInstance(value)
+    }
+
+    /**
+     * 数组的判型：**协变**（`B[]` 是 `A[]`），和 JVM 的 `INSTANCEOF`/`CHECKCAST` 一致。
+     *
+     * 用户类的数组在解释器里载体是 `RsfObject[]`（见 [toJavaClass]），载体类分不出
+     * `B[]` 和 `C[]`，所以查 [arrayTypes]。查不到时（JDK 交给我们的数组，比如
+     * `split` 的返回值）载体类就是真相，直接比类名。
+     */
+    private fun runtimeIsArray(value: Any, target: RsfType): Boolean {
+        if (!value.javaClass.isArray) return false
+        val declared = arrayTypes[value] ?: return value.javaClass.name == model.jvmRuntimeNameOf(target)
+        if (declared.arrayDepth != target.arrayDepth) return false
+        return elementIsInstance(declared.elementType, target.elementType)
+    }
+
+    /** 数组元素层的赋值兼容：`new C[1]` 的 `C` 能不能当成目标元素类型。 */
+    private fun elementIsInstance(actual: RsfType, target: RsfType): Boolean = when {
+        actual == target -> true
+        // 多维（`int[][]`）逐层拆
+        actual.isArray && target.isArray ->
+            actual.arrayDepth == target.arrayDepth &&
+                elementIsInstance(actual.elementType, target.elementType)
+        // 基本类型数组不协变：`int[]` 不是 `long[]`
+        actual.isPrimitive || target.isPrimitive -> false
+        target.isTypeParam -> true
+        actual.base == RsfBase.STRING -> target.base == RsfBase.STRING
+        actual.isExternal && actual.externalName != null ->
+            rsfTypeIs(actual.externalName!!, target)
+        else -> false
+    }
+
+    /** 一个**静态类型**是 rsf 类 [className] 的值，能不能当成 [target]。 */
+    private fun rsfTypeIs(className: String, target: RsfType): Boolean {
+        val name = target.externalName ?: return false
+        if (model.classChainOf(className).any { it.name == name }) return true
+        val visited = HashSet<String>()
+        return model.classChainOf(className).any { interfaceClosureContains(it.name, name, visited) }
+    }
+
+    /**
+     * [className]（或它继承的某个类）有没有实现接口 [want]，沿接口的父接口递归。
+     *
+     * 用「已访问」表防环：rsf 的接口没有环（Checker 查过），但这里不值得依赖它。
+     */
+    private fun interfaceClosureContains(
+        className: String,
+        want: String,
+        visited: MutableSet<String>,
+    ): Boolean {
+        if (!visited.add(className)) return false
+        for (superInterface in model.superInterfacesOf(className)) {
+            if (superInterface.internalName == want) return true
+            if (interfaceClosureContains(superInterface.internalName, want, visited)) return true
+        }
+        return false
+    }
+
+    /**
+     * 一个 rsf 对象能不能当成 [target]：类链 → 接口 → 挂在它上面的 JDK 父类实例。
+     *
+     * 最后那一跳是阶段 25 K3 的 `class MyError : Exception`：rsf 类在解释器里没有
+     * `.class`，`err is Exception` 只能问那个真实的父类实例；编译产物里
+     * `MyError extends Exception`，`INSTANCEOF` 的答案一模一样。
+     */
+    private fun rsfObjectIs(obj: RsfObject, target: RsfType): Boolean {
+        if (rsfTypeIs(obj.className, target)) return true
+        val jdkParent = obj.jdkParent ?: return false
+        val cls = jvmClassOf(target) ?: return false
+        return cls.isInstance(jdkParent)
+    }
+
+    /** [target] 在 classpath 上的真实 [Class]；rsf 自己的类没有（返回 null）。 */
+    private fun jvmClassOf(target: RsfType): Class<*>? {
+        val dotted = model.jvmRuntimeNameOf(target)
+        return try {
+            Class.forName(dotted)
+        } catch (e: ClassNotFoundException) {
+            null
+        }
+    }
+
+    /**
+     * `as` 失败时的消息：`rsf: 不能把 <实际 JVM 全名> 当成 <目标 JVM 全名>`。
+     *
+     * 两端**逐字一致**靠的是「名字只有一份实现」——这里和字节码的 `__rsf_cast`
+     * 都从 [SemanticModel.jvmRuntimeNameOf] 取；那边实际名字来自
+     * `getClass().getName()`，这里来自同一套载体对象，所以字面量相同。
+     */
+    private fun castFailure(value: Any?, target: RsfType): String =
+        "rsf: 不能把 " + runtimeNameOfValue(value) + " 当成 " + model.jvmRuntimeNameOf(target)
+
+    /** 一个值在运行期的 JVM 全名（和 `Class.getName()` 的写法一致）。 */
+    private fun runtimeNameOfValue(value: Any?): String = when {
+        value == null -> "null"
+        value is RsfObject -> model.jvmRuntimeNameOf(value.className)
+        value is RsfEnumValue -> model.jvmRuntimeNameOf(value.enumName)
+        value.javaClass.isArray ->
+            arrayTypes[value]?.let { model.jvmRuntimeNameOf(it) } ?: value.javaClass.name
+        else -> value.javaClass.name
+    }
 
     /** rsf 类型 → 反射要用的 Class。 */
     private fun toJavaClass(type: RsfType): Class<*> = when {

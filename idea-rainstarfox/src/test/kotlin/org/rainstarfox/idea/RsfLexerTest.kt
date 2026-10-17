@@ -191,6 +191,8 @@ class RsfLexerTest {
         "annotation", "companion", "entity",
         // 阶段 22：数学类的预留关键字（先占词，语法未定）
         "mathematic",
+        // 阶段 24：类型转换与类型判断（`as` / `?as` / `is` / `!is` 里的两个硬关键字）
+        "as", "is",
         "if", "else", "while", "for", "in", "break", "continue", "goto",
         "fail", "try", "catch", "true", "false", "null",
         "void", "int", "long", "float", "double", "string", "str", "bool", "boolean", "byte", "char",

@@ -2,6 +2,7 @@ package org.example
 
 import org.example.complie.ast.AnnotationDecl
 import org.example.complie.ast.AnnotationUse
+import org.example.complie.ast.AsExpr
 import org.example.complie.ast.AssignStmt
 import org.example.complie.ast.BinaryExpr
 import org.example.complie.ast.Block
@@ -30,6 +31,7 @@ import org.example.complie.ast.IfStmt
 import org.example.complie.ast.IndexAssignStmt
 import org.example.complie.ast.IndexExpr
 import org.example.complie.ast.IntLit
+import org.example.complie.ast.IsExpr
 import org.example.complie.ast.InterfaceDecl
 import org.example.complie.ast.LabelStmt
 import org.example.complie.ast.LongLit
@@ -536,6 +538,18 @@ object AstDump {
             is ForceExpr -> {
                 line(out, depth, "FORCE")
                 expr(out, depth + 1, e.operand)
+            }
+
+            is AsExpr -> {
+                line(out, depth, "AS", "safe" to bool(e.safe))
+                expr(out, depth + 1, e.operand)
+                line(out, depth + 1, "TARGET", "type" to typeText(e.type))
+            }
+
+            is IsExpr -> {
+                line(out, depth, "IS", "negated" to bool(e.negated))
+                expr(out, depth + 1, e.operand)
+                line(out, depth + 1, "TARGET", "type" to typeText(e.type))
             }
         }
     }

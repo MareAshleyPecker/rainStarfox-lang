@@ -2808,9 +2808,105 @@ class Parser(
                 expr = IndexExpr(expr, index, bracket.at)
                 continue
             }
+            // 阶段 24：类型转换 / 类型判断。四种写法都在 postfix 这一层
+            // （所以 `a as A` 的结果能直接接 `.成员` / `[下标]` / `!!`），
+            // 并且**解析完立刻 return**——只允许写一层，见 [expectNoChainedCast]。
+            if (check(TokenKind.KW_AS)) {
+                val op = advance()
+                val target = parseCastTarget("as")
+                expectNoChainedCast("as")
+                return AsExpr(expr, target, false, op.at)
+            }
+            if (check(TokenKind.QUESTION) && peek(1).kind == TokenKind.KW_AS) {
+                // `?as` 的 '?' 在 `as` **前面**（Kotlin 是 `as?`）——DESIGN-24 §3 的 Q3 拍板。
+                val question = advance()
+                advance()
+                val target = parseCastTarget("?as")
+                expectNoChainedCast("?as")
+                return AsExpr(expr, target, true, question.at)
+            }
+            if (check(TokenKind.KW_IS)) {
+                val op = advance()
+                val target = parseCastTarget("is")
+                expectNoChainedCast("is")
+                return IsExpr(expr, target, false, op.at)
+            }
+            if (check(TokenKind.BANG) && peek(1).kind == TokenKind.KW_IS) {
+                val bang = advance()
+                advance()
+                val target = parseCastTarget("!is")
+                expectNoChainedCast("!is")
+                return IsExpr(expr, target, true, bang.at)
+            }
             break
         }
         return expr
+    }
+
+    /**
+     * `as` / `is` 后面的目标类型（阶段 24）。
+     *
+     * 复用 [parseTypeRef]，所以 `A`、`A[]`、`Box&<int>`、`A::Nested` 都能写；
+     * 只多一条限制：**目标不许可空**。null 的三种行为已经被拍死
+     * （`null is A` 恒 false、`null as A` 抛、`null ?as A` 得 null，
+     * 见 DESIGN-24 §3 的 Q2），目标再写 `?` 不会带来任何区别，只会让人误会
+     * 「有 '?' 才是安全的那一种」——所以直接在语法层拒掉。
+     */
+    private fun parseCastTarget(opText: String): TypeRef {
+        val tok = peek()
+        // `?` 单拎出来报：否则会落到下面「需要一个目标类型」那条，把人引向
+        // 「该写什么类型」而不是「不许写 ?」，而 n1 的判据看的就是这条口径。
+        if (tok.kind == TokenKind.QUESTION) {
+            throw error(
+                tok,
+                "目标类型不许写可空：'... $opText ?...' 不合法——" +
+                    "'null is A' 恒为 false、'null as A' 抛、'null ?as A' 得 null，" +
+                    "行为由「写的是 as 还是 ?as」决定，跟目标带不带 '?' 无关；" +
+                    "去掉 '?' 写成 '$opText ...'",
+            )
+        }
+        if (!tok.kind.isTypeKeyword && tok.kind != TokenKind.IDENT) {
+            throw error(
+                tok,
+                "'$opText' 后面需要一个目标类型（类名 / 接口名 / 数组类型），" +
+                    "实际读到 ${tok.describe()}",
+            )
+        }
+        val ref = parseTypeRef()
+        if (ref.name.startsWith("?")) {
+            throw error(
+                tok,
+                "目标类型不许写可空：'... $opText ${ref.display()}' 不合法——" +
+                    "'null is A' 恒为 false、'null as A' 抛、'null ?as A' 得 null，" +
+                    "行为由「写的是 as 还是 ?as」决定，跟目标带不带 '?' 无关；" +
+                    "去掉 '?' 写成 '$opText ${ref.display().removePrefix("?")}'",
+            )
+        }
+        return ref
+    }
+
+    /**
+     * `as` / `is` **只允许写一层**（阶段 24，DESIGN-24 §3 的 Q4 拍板）。
+     *
+     * 写完一个转换/判型后立刻看一眼下一个记号：若是 `as` / `?as` / `is` / `!is` 就报错。
+     * 理由：`a as A as B` 的结论等价于 `a as B`（判型只认最后那个类型），
+     * 中间那层既不改变结果、也不做额外检查，链下去只让人误会它「逐层收窄」。
+     */
+    private fun expectNoChainedCast(opText: String) {
+        val t = peek()
+        val next = when {
+            t.kind == TokenKind.KW_AS -> "as"
+            t.kind == TokenKind.KW_IS -> "is"
+            t.kind == TokenKind.QUESTION && peek(1).kind == TokenKind.KW_AS -> "?as"
+            t.kind == TokenKind.BANG && peek(1).kind == TokenKind.KW_IS -> "!is"
+            else -> return
+        }
+        throw error(
+            t,
+            "'as' / 'is' 只允许写一层：'$opText ... $next ...' 不合法——" +
+                "判型只看最后一个目标类型，中间那层不改变结论；" +
+                "确实需要两步就分开写（`var x = a as A` 再 `x as B`）",
+        )
     }
 
     /**

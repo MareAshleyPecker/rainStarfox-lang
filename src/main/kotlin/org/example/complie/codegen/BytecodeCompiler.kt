@@ -1,6 +1,7 @@
 package org.example.complie.codegen
 
 import org.example.complie.ast.AnnotationDecl
+import org.example.complie.ast.AsExpr
 import org.example.complie.ast.BinaryExpr
 import org.example.complie.ast.Block
 import org.example.complie.ast.BoolLit
@@ -22,6 +23,7 @@ import org.example.complie.ast.IfStmt
 import org.example.complie.ast.IndexExpr
 import org.example.complie.ast.IntLit
 import org.example.complie.ast.InterfaceDecl
+import org.example.complie.ast.IsExpr
 import org.example.complie.ast.LongLit
 import org.example.complie.ast.MemberExpr
 import org.example.complie.ast.NamedAnnotationArg
@@ -353,6 +355,8 @@ class BytecodeCompiler(
         emitFileHelpers(cw)
         // 阶段 13：数组的边界检查 / 负数长度检查（两端必须抛同一套消息）
         emitArrayHelpers(cw)
+        // 阶段 24：`as` 的判型 + 抛错（失败消息与解释器一字不差）
+        emitCastHelper(cw)
         // `?:` 生成的合成方法跟调用点同住一个类（这样私有方法也照样能调）
         emitOrElseMethods(cw)
         cw.visitEnd()
@@ -663,28 +667,15 @@ class BytecodeCompiler(
 
     // ------------------------------------------------------------------ 用户自定义类（阶段 12-C2）
 
-    /** 用户类的内部名：跟着程序类的包走（`pkg a.b` + `P` → `a/b/P`）。 */
-    private fun classInternalName(simpleName: String): String {
-        // 只有**用户自定义类 / 枚举 / 注解**才跟着程序类的包走；classpath 上的 JVM 类
-        // （`java/util/ArrayList`）内部名本来就是绝对的，不能再加包前缀。
-        // 枚举和类一样在默认包里生成，所以两者都要带上包路径——漏了枚举的话，
-        // `pkg a.b` 里的 `GETSTATIC TokenKind.IDENT` 会指向默认包里的 TokenKind。
-        // 注解接口（阶段 21 M3）**不在此列**：它和 rsf 的接口一样只在默认包里生成，
-        // 因为 `sema` 交给后端的父接口表（`SuperInterface.internalName`）里，这份程序
-        // 自己声明的接口写的都是**简名**（`Marker`）——伴生类 `Marker$Impl` 的
-        // `implements` 列表就来自那里，后端要是把注解接口改成带包的名字，两边就对不上
-        // （NoClassDefFoundError: Marker）。保持和 rsf 接口同样的约定，前后端只有一处说法。
-        if (
-            !model.classModel.classes.containsKey(simpleName) &&
-            !model.enums.containsKey(simpleName)
-        ) {
-            return simpleName
-        }
-        return model.packageName
-            ?.takeIf { it.isNotEmpty() }
-            ?.let { it.replace('.', '/') + "/" + simpleName }
-            ?: simpleName
-    }
+    /**
+     * 用户类的内部名：跟着程序类的包走（`pkg a.b` + `P` → `a/b/P`）。
+     *
+     * 规则本身（它解释了为什么枚举跟着包走、而注解接口不跟）住在
+     * [SemanticModel.classInternalName]——阶段 24 起解释器也要拼同一个名字来印
+     * `as` 的报错文案，两边只能有一份实现。
+     */
+    private fun classInternalName(simpleName: String): String =
+        model.classInternalName(simpleName)
 
     /**
      * 这个内部名是不是**这份程序里的接口**（阶段 20）。
@@ -2481,6 +2472,22 @@ class BytecodeCompiler(
                 if (resultType.isPrimitive) unboxValue(mv, resultType.base)
             }
 
+            // 阶段 24：类型判断。`INSTANCEOF` 对 null 本身就回 0（= false），
+            // 正好对上「`null is A` 恒为 false」；`!is` 再把结果取反。
+            is IsExpr -> {
+                emitExpr(ctx, expr.operand)
+                mv.visitTypeInsn(INSTANCEOF, internalNameOf(model.castTargetOf(expr)))
+                if (expr.negated) {
+                    mv.visitInsn(ICONST_1)
+                    mv.visitInsn(IXOR)
+                }
+            }
+
+            // 阶段 24：类型转换。`?as` 失败得 null，`as` 失败抛（见 [emitCastHelper]）。
+            is AsExpr -> {
+                if (expr.safe) emitSafeCast(ctx, expr) else emitCheckedCast(ctx, expr)
+            }
+
             is MemberExpr -> {
                 // `super.方法(...)` / `super(接口).方法(...)`（阶段 25 K2）必须**最先**查这张表：
                 // Checker 把「super 调用到底落到哪一份」记在 superCalls 里（owner 是**声明**
@@ -2900,6 +2907,158 @@ class BytecodeCompiler(
      * 汇合之后再按需要拆箱。左边的基础类型和结果基础类型不同时（`?int ?: 0L`），
      * 在非空分支里拆箱→加宽→重新装箱。
      */
+    // ------------------------------------------------------------------ 类型转换 / 类型判断（阶段 24）
+
+    /**
+     * `x as A`：值是 null 或者不是 A 就抛 `RuntimeException`，否则原样返回。
+     *
+     * 判型与抛错全在程序类的 [CAST_HELPER] 里做，调用点只发三件事：
+     * 求值操作数、压目标类常量、压目标 JVM 名，然后 `INVOKESTATIC` + `CHECKCAST`。
+     *
+     * **为什么不内联** `if` + `throw`：调用点往往在表达式中间（`println(x as A)` 里
+     * 栈上还压着 PrintStream），一进异常处理器栈上就只剩异常对象，生成出来的类
+     * 会以 VerifyError 报废——这条经验见 [emitParseIntHelper] 与 [emitErrorCallElvis]。
+     *
+     * 为什么把**类常量**传进去，而不是给每个目标类型生成一个专用方法：目标可能是
+     * `A`、`A[]`、`I` 接口、擦除后的 `Object`（泛型目标）……一个通用方法就够了，
+     * 而且 `Class.isInstance` 对数组也给出与 `INSTANCEOF` 相同的结果
+     * （`[LB;` 的 `isInstance` 只认 `B[]` 的实例）。
+     */
+    private fun emitCheckedCast(ctx: ExprCtx, expr: AsExpr) {
+        val mv = ctx.mv
+        val target = model.castTargetOf(expr)
+        emitExpr(ctx, expr.operand)
+        mv.visitLdcInsn(Type.getObjectType(castTargetInternal(target)))
+        mv.visitLdcInsn(jvmClassNameOf(target))
+        mv.visitMethodInsn(
+            INVOKESTATIC, programInternalName, CAST_HELPER, CAST_HELPER_DESC, false,
+        )
+        mv.visitTypeInsn(CHECKCAST, internalNameOf(target))
+    }
+
+    /**
+     * `x ?as A`：判型失败得 `null`，不抛。
+     *
+     * 骨架（判型失败那一支把值替换成 null）：
+     *
+     * ```
+     * 求值 x            // [v]
+     * DUP               // [v, v]
+     * INSTANCEOF A      // [v, 是不是 A]
+     * IFEQ  Lnull       // [v]
+     * CHECKCAST A       // [A]
+     * GOTO  Lend
+     * Lnull: POP        // []
+     *        ACONST_NULL
+     * Lend:             // [A 或 null]
+     * ```
+     *
+     * 两支汇合时栈上都是一个引用，校验器把 `A` 与 `null` 合成 `A`——不需要额外的局部变量。
+     * 这里**可以**内联分支：两支都是纯粹的「值替换」，没有 try/catch 保护范围，
+     * 中间也不需要空栈。
+     */
+    private fun emitSafeCast(ctx: ExprCtx, expr: AsExpr) {
+        val mv = ctx.mv
+        val target = model.castTargetOf(expr)
+        val internal = castTargetInternal(target)
+        val nullBranch = Label()
+        val end = Label()
+        emitExpr(ctx, expr.operand)
+        mv.visitInsn(DUP)
+        mv.visitTypeInsn(INSTANCEOF, internal)
+        mv.visitJumpInsn(IFEQ, nullBranch)
+        mv.visitTypeInsn(CHECKCAST, internal)
+        mv.visitJumpInsn(GOTO, end)
+        mv.visitLabel(nullBranch)
+        mv.visitInsn(POP)
+        mv.visitInsn(ACONST_NULL)
+        mv.visitLabel(end)
+    }
+
+    /**
+     * `INSTANCEOF` / `CHECKCAST` / 类常量要的内部名。
+     *
+     * 和 [internalNameOf] 的差别只有一处：数组在这里已经是合法的
+     * `INSTANCEOF` 操作数（`[LB;`），不用再拆；类型参数按擦除算 `Object`。
+     */
+    private fun castTargetInternal(target: RsfType): String = internalNameOf(target)
+
+    /**
+     * 目标类型在**运行期**的 JVM 名——就是 `Class.getName()` 会给的那个字符串：
+     * 类用点分名（`demo.B`）、数组用描述符（`[LB;`、`[I`）。
+     *
+     * 错误消息里印的就是它（`rsf: 不能把 X 当成 Y` 的 Y）。真正的实现在
+     * [SemanticModel.jvmRuntimeNameOf]：解释器也调同一个方法，两端的文案
+     * 逐字一致靠的是**只有一份实现**，不是两边各写一遍再对。
+     */
+    private fun jvmClassNameOf(type: RsfType): String = model.jvmRuntimeNameOf(type)
+
+    /**
+     * 程序类上的类型转换辅助方法 `__rsf_cast(Object, Class, String) -> Object`（阶段 24）。
+     *
+     * 语义（与 [Interpreter] 的 `castValue` 逐字对齐）：
+     * ```
+     * if (v == null)                 throw new RuntimeException("rsf: 不能把 null 当成 " + targetName);
+     * if (!target.isInstance(v))     throw new RuntimeException("rsf: 不能把 "
+     *                                        + v.getClass().getName() + " 当成 " + targetName);
+     * return v;
+     * ```
+     *
+     * 放在**程序类**上并且是 public 的：用户类里的方法也要跨类调它（和 `parseInt`
+     * 那批辅助方法是同一个理由）。名字带 `$`，rsf 的标识符语法写不出，绝不撞车。
+     */
+    private fun emitCastHelper(cw: ClassWriter) {
+        val mv = cw.visitMethod(
+            ACC_PUBLIC or ACC_STATIC,
+            CAST_HELPER,
+            CAST_HELPER_DESC,
+            null,
+            null,
+        )
+        mv.visitCode()
+
+        // if (v == null) throw new RuntimeException("rsf: 不能把 null 当成 " + targetName)
+        val nonNull = Label()
+        mv.visitVarInsn(ALOAD, 0)
+        mv.visitJumpInsn(IFNONNULL, nonNull)
+        emitRuntimeExceptionHeader(mv)
+        mv.visitLdcInsn("rsf: 不能把 null 当成 ")
+        mv.visitVarInsn(ALOAD, 2)
+        emitConcat(mv)
+        emitRuntimeExceptionThrow(mv)
+        mv.visitLabel(nonNull)
+
+        // if (!target.isInstance(v)) throw new RuntimeException("rsf: 不能把 " + 实际类名 + " 当成 " + targetName)
+        val ok = Label()
+        mv.visitVarInsn(ALOAD, 1)
+        mv.visitVarInsn(ALOAD, 0)
+        mv.visitMethodInsn(
+            INVOKEVIRTUAL, "java/lang/Class", "isInstance", "(Ljava/lang/Object;)Z", false,
+        )
+        mv.visitJumpInsn(IFNE, ok)
+        emitRuntimeExceptionHeader(mv)
+        mv.visitLdcInsn("rsf: 不能把 ")
+        mv.visitVarInsn(ALOAD, 0)
+        mv.visitMethodInsn(
+            INVOKEVIRTUAL, "java/lang/Object", "getClass", "()Ljava/lang/Class;", false,
+        )
+        mv.visitMethodInsn(
+            INVOKEVIRTUAL, "java/lang/Class", "getName", "()Ljava/lang/String;", false,
+        )
+        emitConcat(mv)
+        mv.visitLdcInsn(" 当成 ")
+        emitConcat(mv)
+        mv.visitVarInsn(ALOAD, 2)
+        emitConcat(mv)
+        emitRuntimeExceptionThrow(mv)
+        mv.visitLabel(ok)
+
+        mv.visitVarInsn(ALOAD, 0)
+        mv.visitInsn(ARETURN)
+        mv.visitMaxs(0, 0)
+        mv.visitEnd()
+    }
+
     private fun emitElvis(ctx: ExprCtx, expr: ElvisExpr) {
         val mv = ctx.mv
         // 阶段 14：`f() ?: 兜底`——左边是 !T 调用时按「出错取右边」生成，不是 null 判断
@@ -3718,6 +3877,16 @@ class BytecodeCompiler(
     // ASM 的常量都在 Opcodes 接口里；这里显式列出用到的，避免整文件 Opcodes. 前缀。
 
     private companion object {
+        /**
+         * 阶段 24：`as` 的判型辅助方法名与描述符。
+         *
+         * `(Ljava/lang/Object;Ljava/lang/Class;Ljava/lang/String;)Ljava/lang/Object;`
+         * 三个参数分别是「被转的值」「目标类常量」「目标类的 JVM 名（印进错误消息）」。
+         */
+        const val CAST_HELPER = "__rsf_cast"
+        const val CAST_HELPER_DESC =
+            "(Ljava/lang/Object;Ljava/lang/Class;Ljava/lang/String;)Ljava/lang/Object;"
+
         const val ACC_PUBLIC = Opcodes.ACC_PUBLIC
         const val ACC_PRIVATE = Opcodes.ACC_PRIVATE
         const val ACC_PROTECTED = Opcodes.ACC_PROTECTED
@@ -3740,6 +3909,8 @@ class BytecodeCompiler(
 
         const val ACONST_NULL = Opcodes.ACONST_NULL
         const val CHECKCAST = Opcodes.CHECKCAST
+        // 阶段 24：`is` 用的类型判断
+        const val INSTANCEOF = Opcodes.INSTANCEOF
         const val ICONST_0 = Opcodes.ICONST_0
         const val ICONST_1 = Opcodes.ICONST_1
         const val BIPUSH = Opcodes.BIPUSH

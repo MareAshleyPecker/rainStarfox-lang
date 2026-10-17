@@ -85,6 +85,9 @@ private val KEYWORDS: Map<String, TokenKind> = buildMap {
     // 阶段 16：byte / char
     put("byte", TokenKind.KW_BYTE)
     put("char", TokenKind.KW_CHAR)
+    // 阶段 24：类型转换 / 类型判断的操作符关键字（`x as A` / `x is A`）
+    put("as", TokenKind.KW_AS)
+    put("is", TokenKind.KW_IS)
 }
 
 /**

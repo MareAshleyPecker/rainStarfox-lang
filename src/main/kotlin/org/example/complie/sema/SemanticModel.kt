@@ -535,6 +535,16 @@ class SemanticModel(
     val functionTable: Map<String, List<FuncDecl>>,
     val exprTypes: IdentityHashMap<Expr, RsfType>,
 
+    /**
+     * `as` / `?as` / `is` / `!is` 的**目标类型**（阶段 24，按**解析后**的 [RsfType] 记）。
+     *
+     * 为什么不复用 [exprTypes]：`is` / `!is` 的表达式类型是 `bool`，目标类型在那里没有位置；
+     * `?as` 的结果是 `?T`，把 `?` 剥回去也是一种重复知识。目标类型只解析一次，
+     * 记在这里，两个后端直接读——INSTANCEOF / CHECKCAST 用的内部名和错误消息里印的
+     * JVM 名都由它算出来，两端才不会各算一套。
+     */
+    val castTargets: IdentityHashMap<Expr, RsfType>,
+
     /** 变量读取 → 它绑定的那个变量（参数或局部声明）。 */
     val varRefs: IdentityHashMap<VarExpr, Binding>,
     /** 赋值语句 → 它写的那个变量。 */
@@ -722,6 +732,10 @@ class SemanticModel(
     fun typeOf(expr: Expr): RsfType =
         exprTypes[expr] ?: throw IllegalStateException("表达式缺少类型标注: $expr")
 
+    /** `as` / `is` 的目标类型（阶段 24）。 */
+    fun castTargetOf(expr: Expr): RsfType =
+        castTargets[expr] ?: throw IllegalStateException("类型转换/判断缺少目标类型: $expr")
+
     fun bindingOf(decl: VarDeclStmt): Binding =
         declBindings[decl] ?: throw IllegalStateException("变量声明没有绑定: $decl")
 
@@ -806,6 +820,70 @@ class SemanticModel(
 
     /** 一个枚举常量在 JVM 上的描述符：`TokenKind.IDENT` → `LTokenKind;`。 */
     fun enumDescriptor(enumName: String): String = "L$enumName;"
+
+    // ------------------------------------------------------------------ 类型转换/判断的运行期名字（阶段 24）
+
+    /**
+     * 一个**用户写的名字**在运行期对应的类文件内部名。
+     *
+     * 这是「名字 → 生成的类名」的**唯一实现**：用户类 / 枚举跟着程序类的包走
+     * （`pkg a.b` + `P` → `a/b/P`），rsf 接口 / 注解接口只在默认包里生成，
+     * classpath 上的 JVM 类名本身就是绝对的。字节码后端生成类文件、两个后端
+     * 拼 `as` 的报错文案，都从这里取，免得三处各写一条规则而悄悄分叉。
+     */
+    fun classInternalName(simpleName: String): String {
+        if (
+            !classModel.classes.containsKey(simpleName) &&
+            !enums.containsKey(simpleName)
+        ) {
+            return simpleName
+        }
+        return packageName
+            ?.takeIf { it.isNotEmpty() }
+            ?.let { it.replace('.', '/') + "/" + simpleName }
+            ?: simpleName
+    }
+
+    /**
+     * [classInternalName] 的点分写法——就是 `Class.getName()` 会印出来的那个字符串。
+     */
+    fun jvmRuntimeNameOf(simpleName: String): String =
+        classInternalName(simpleName).replace('/', '.')
+
+    /**
+     * 一个 [RsfType] 在运行期的**类名**（`Class.getName()` 的写法）。
+     *
+     * 数组按 JVM 的老规矩写描述符形式：`B[]` → `[LB;`、`int[][]` → `[[I`；
+     * 泛型的类型参数按擦除算 `java.lang.Object`；可空基本类型是它的包装类。
+     * `as` 失败时的文案里印的就是这个字符串（`rsf: 不能把 [LC; 当成 [LB;`）。
+     */
+    fun jvmRuntimeNameOf(type: RsfType): String =
+        if (type.isArray) {
+            "[" + arrayElementNameOf(type.elementType)
+        } else {
+            jvmRuntimeClassNameOf(type)
+        }
+
+    /**
+     * 数组**一层**元素在 `Class.getName()` 里的写法：引用类型是 `L全名;`、基本类型是
+     * 单字母描述符、多维再套一层 `[`。`B[]` → `[LB;`、`int[][]` → `[[I`。
+     */
+    private fun arrayElementNameOf(element: RsfType): String = when {
+        element.isArray -> "[" + arrayElementNameOf(element.elementType)
+        element.isPrimitive -> element.descriptor
+        // 引用元素（类 / 接口 / string / 擦除后的 Object）要带 L...;
+        else -> "L" + jvmRuntimeClassNameOf(element) + ";"
+    }
+
+    private fun jvmRuntimeClassNameOf(type: RsfType): String = when {
+        type.base == RsfBase.EXTERNAL ->
+            jvmRuntimeNameOf(type.externalName ?: "java/lang/Object")
+        // 其余（基本类型 / string / 类型参数 / 可空基本类型的包装类）描述符里
+        // 已经写全了：`I`、`Ljava/lang/String;`、`Ljava/lang/Object;`
+        else -> type.descriptor.let {
+            if (it.startsWith("L")) it.substring(1, it.length - 1).replace('/', '.') else it
+        }
+    }
 
     // ------------------------------------------------------------------ 接口（阶段 20）
 
