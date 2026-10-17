@@ -230,7 +230,7 @@ fun isNumberSuffix(c : char) -> bool {
 
 // ---------------------------------------------------------------- 关键字表
 //
-// 与 Kotlin 版 Lexer.kt 的 KEYWORDS **逐条对应**（那条 Map 有 55 个键；
+// 与 Kotlin 版 Lexer.kt 的 KEYWORDS **逐条对应**（那条 Map 有 57 个键；
 // str / boolean 是 string / bool 的别名，也各占一个键）。
 // 顺序无关紧要，只做查表。
 //
@@ -245,6 +245,11 @@ fun isNumberSuffix(c : char) -> bool {
 // 2026-10-16 自举同步（阶段 25 类继承，第 6 刀）：补上 open / final / abstract / super
 // （51 → 55 项），与 Kotlin 版 Lexer.kt:40-43 的四个 put 对齐。这四个词从这一刻起
 // 在两侧都是硬关键字，`rsfSrc/` 全库没有拿它们当标识符的地方（勘查已核）。
+//
+// 2026-10-17 自举同步（阶段 24b，词法这一刀）：补上 `as` / `is`（55 → 57 项），
+// 与 Kotlin 版 Lexer.kt:89-90 的两个 put 对齐。它们是**后缀运算符关键字**
+// （`x as A` / `x ?as A` / `x is A` / `x !is A`），不是修饰词、也不是类型关键字：
+// 别把这两个塞进 isTypeKeyword —— parseCastTarget 找的是它们**后面**那个类型。
 
 fun keywordKind(word : string) -> string {
     if (word == "fun") { rtn "KW_FUN" }
@@ -312,10 +317,15 @@ fun keywordKind(word : string) -> string {
     if (word == "boolean") { rtn "KW_BOOL" }
     if (word == "byte") { rtn "KW_BYTE" }
     if (word == "char") { rtn "KW_CHAR" }
+    // 阶段 24（自举同步 24b）：类型转换 / 类型判断的操作符关键字
+    // （`x as A` / `x ?as A` / `x is A` / `x !is A`）。位置与 Kotlin 版 Lexer.kt:89-90
+    // 的两个 put 一一对应：两者都是**硬关键字**，从此不能再当标识符用。
+    if (word == "as") { rtn "KW_AS" }
+    if (word == "is") { rtn "KW_IS" }
     rtn ""
 }
 
-// 老写法 `varis` 的统一文案：**不在这张关键字表里**（表要跟 Kotlin 版逐条对齐，55 项不变），
+// 老写法 `varis` 的统一文案：**不在这张关键字表里**（表要跟 Kotlin 版逐条对齐，57 项不变），
 // 拦截改在 readIdentOrKeyword 里单独做一次。文案与 Kotlin 版 Lexer.kt 的
 // LEGACY_VAR_MESSAGE **逐字相同**——差分测试里有一条把两边取出来比。
 fun legacyVarMessage() -> string {
@@ -518,7 +528,7 @@ public class Lexer(source : string) {
         }
         // 老写法 `varis`（2026-10-11 改名为 `var`）：与 Kotlin 版 Lexer.kt 的
         // readIdentOrKeyword 里那条判断**一一对应**。它**不在**关键字表里
-        // （keywordKind 里的 55 项要跟 Kotlin 版逐条对齐，不能多一项），
+        // （keywordKind 里的 57 项要跟 Kotlin 版逐条对齐，不能多一项），
         // 所以单独拦一次；文案也跟 Kotlin 版逐字相同（有差分测试守着）。
         // 位置取这个词的开头，与 Kotlin 版 `RsfError(.., at.line, at.column, ..)` 同口径。
         if (word == "varis") {

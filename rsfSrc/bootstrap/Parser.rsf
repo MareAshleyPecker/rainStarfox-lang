@@ -113,7 +113,15 @@ public enum NodeKind {
     // 类/方法**写了这个修饰词**时会多打一行 OPEN/FINAL/ABSTRACT，而 rsf 侧的 dumpAst
     // 是通用递归（没有任何 per-kind 分支），所以只能靠一个空 text 的子节点把这一行带出来。
     // 三个修饰词节点**只在写了时挂**：没写的既有语料一个孩子都不多，字节不变。
-    SUPER_CLASS, SUPER_CALL, OPEN, FINAL, ABSTRACT
+    SUPER_CLASS, SUPER_CALL, OPEN, FINAL, ABSTRACT,
+    // 阶段 24（自举同步 24b）：类型转换 / 类型判断。同样**一律追加在枚举末尾**。
+    // AS  = `a as A` / `a ?as A`（`safe` 区分两者）；
+    // IS  = `a is A` / `a !is A`（`negated` 区分两者）；
+    // TARGET 和上面 OPEN/FINAL/ABSTRACT 一样**不是 Kotlin 侧的 AST 节点**，只是 dump 行的
+    // 落点：AstDump.kt 在 AS / IS 下面多打一行 `TARGET type=<类型文本>`，而 rsf 侧的
+    // dumpAst 是通用递归（没有任何 per-kind 分支），所以只能靠一个子节点把这一行带出来。
+    // TARGET 的 text 就是 `type=<TypeInfo.text()>`，与 VAR / PARAM 打类型文本的口径同一套。
+    AS, IS, TARGET
 }
 
 // 枚举值 -> dump 里的名字。写成显式 switch（而不是靠 `"" + k` 拿 toString）有两个好处：
@@ -205,6 +213,10 @@ public fun kindName(k : NodeKind) -> string {
         NodeKind.OPEN : rtn "OPEN"
         NodeKind.FINAL : rtn "FINAL"
         NodeKind.ABSTRACT : rtn "ABSTRACT"
+        // 阶段 24（自举同步 24b）：类型转换 / 类型判断
+        NodeKind.AS : rtn "AS"
+        NodeKind.IS : rtn "IS"
+        NodeKind.TARGET : rtn "TARGET"
     }
     // 上面那个 switch 已经穷尽了 NodeKind 的每一个值，这里只是给「函数一定有返回值」
     // 一个静态的落点（rsf 的返回值检查是看最后一条语句，不看 switch 的穷尽性）。
@@ -2707,12 +2719,126 @@ public class Parser(tokens : Token[]) {
                         ix.add(index)
                         e = ix
                     } else {
+                        // 阶段 24（自举同步 24b）：类型转换 / 类型判断。四种写法都在 postfix
+                        // 这一层（所以 `a as A` 的结果能直接接 `.成员` / `[下标]` / `!!`），
+                        // 并且**解析完立刻 rtn**——只允许写一层，见 expectNoChainedCast。
+                        // 四者的 token 前缀互斥，所以下面四条并列 if 的先后无关紧要；
+                        // 每支都以 rtn 收尾，走到 `going = false` 的只有「四者都不是」。
+                        if (check("KW_AS")) {
+                            advance()
+                            var castTarget = parseCastTarget("as")
+                            expectNoChainedCast("as")
+                            var castNode = new Node(NodeKind.AS).put("safe", boolText(false))
+                            castNode.add(e)
+                            castNode.add(new Node(NodeKind.TARGET).put("type", castTarget.text()))
+                            rtn castNode
+                        }
+                        if (check("QUESTION") && checkAt(1, "KW_AS")) {
+                            // `?as` 的 '?' 在 `as` **前面**（Kotlin 是 `as?`）——DESIGN-24 §3 的 Q3 拍板。
+                            advance()
+                            advance()
+                            var safeTarget = parseCastTarget("?as")
+                            expectNoChainedCast("?as")
+                            var safeNode = new Node(NodeKind.AS).put("safe", boolText(true))
+                            safeNode.add(e)
+                            safeNode.add(new Node(NodeKind.TARGET).put("type", safeTarget.text()))
+                            rtn safeNode
+                        }
+                        if (check("KW_IS")) {
+                            advance()
+                            var isTarget = parseCastTarget("is")
+                            expectNoChainedCast("is")
+                            var isNode = new Node(NodeKind.IS).put("negated", boolText(false))
+                            isNode.add(e)
+                            isNode.add(new Node(NodeKind.TARGET).put("type", isTarget.text()))
+                            rtn isNode
+                        }
+                        if (check("BANG") && checkAt(1, "KW_IS")) {
+                            advance()
+                            advance()
+                            var negTarget = parseCastTarget("!is")
+                            expectNoChainedCast("!is")
+                            var negNode = new Node(NodeKind.IS).put("negated", boolText(true))
+                            negNode.add(e)
+                            negNode.add(new Node(NodeKind.TARGET).put("type", negTarget.text()))
+                            rtn negNode
+                        }
                         going = false
                     }
                 }
             }
         }
         rtn e
+    }
+
+    // `as` / `is` 后面的目标类型（阶段 24，自举同步 24b）。
+    //
+    // 复用 parseTypeRef()，所以 `A`、`A[]`、`Box&<int>`、`A::Nested` 都能写；
+    // 只多一条限制：**目标不许可空**。null 的三种行为已经被拍死
+    // （`null is A` 恒 false、`null as A` 抛、`null ?as A` 得 null，见 DESIGN-24 §3 的 Q2），
+    // 目标再写 `?` 不会带来任何区别，只会让人误会「有 '?' 才是安全的那一种」——
+    // 所以直接在语法层拒掉。
+    fun parseCastTarget(opText : string) -> TypeInfo {
+        var t = peek()
+        // `?` 单拎出来报：否则会落到下面「需要一个目标类型」那条，把人引向
+        // 「该写什么类型」而不是「不许写 ?」，而 n1 的判据看的就是这条口径。
+        if (t.kind == "QUESTION") {
+            failAt(t, "目标类型不许写可空：'... " + opText + " ?...' 不合法——" +
+                "'null is A' 恒为 false、'null as A' 抛、'null ?as A' 得 null，" +
+                "行为由「写的是 as 还是 ?as」决定，跟目标带不带 '?' 无关；" +
+                "去掉 '?' 写成 '" + opText + " ...'")
+            rtn new TypeInfo("?", "", 0, "")
+        }
+        if (!isTypeKeyword(t.kind) && t.kind != "IDENT") {
+            failAt(t, "'" + opText + "' 后面需要一个目标类型（类名 / 接口名 / 数组类型），" +
+                "实际读到 " + tokenDescribe(t))
+            rtn new TypeInfo("?", "", 0, "")
+        }
+        var ref = parseTypeRef()
+        if (startsWithChar(ref.name, '?')) {
+            failAt(t, "目标类型不许写可空：'... " + opText + " " + ref.text() + "' 不合法——" +
+                "'null is A' 恒为 false、'null as A' 抛、'null ?as A' 得 null，" +
+                "行为由「写的是 as 还是 ?as」决定，跟目标带不带 '?' 无关；" +
+                "去掉 '?' 写成 '" + opText + " " + dropFirstChar(ref.text()) + "'")
+            rtn new TypeInfo("?", "", 0, "")
+        }
+        rtn ref
+    }
+
+    // `failAt` 文案里那个「实际读到的记号」：口径对齐 Kotlin 版 Token.describe()
+    // （EOF 说「文件结束」、标识符带引号说明、字面量原样、其余打记号原文）。
+    fun tokenDescribe(t : Token) -> string {
+        if (t.kind == "EOF") { rtn "文件结束" }
+        if (t.kind == "IDENT") { rtn "标识符 '" + t.text + "'" }
+        if (t.kind == "INT_LIT" || t.kind == "LONG_LIT" || t.kind == "FLOAT_LIT" ||
+            t.kind == "DOUBLE_LIT" || t.kind == "STRING_LIT" || t.kind == "CHAR_LIT") {
+            rtn t.text
+        }
+        rtn "'" + t.text + "'"
+    }
+
+    // 去掉首字符（`?A` -> `A`）。只在「可空目标」那条错误文案里用，语义是 String.removePrefix。
+    fun dropFirstChar(s : string) -> string {
+        if (s.length() <= 1) { rtn "" }
+        rtn s.substring(1, s.length())
+    }
+
+    // `as` / `is` **只允许写一层**（阶段 24，DESIGN-24 §3 的 Q4 拍板）。
+    //
+    // 写完一个转换/判型后立刻看一眼下一个记号：若是 `as` / `?as` / `is` / `!is` 就报错。
+    // 理由：`a as A as B` 的结论等价于 `a as B`（判型只认最后那个类型），
+    // 中间那层既不改变结果、也不做额外检查，链下去只让人误会它「逐层收窄」。
+    fun expectNoChainedCast(opText : string) -> void {
+        var t = peek()
+        var next = ""
+        if (t.kind == "KW_AS") { next = "as" }
+        if (t.kind == "KW_IS") { next = "is" }
+        if (t.kind == "QUESTION" && checkAt(1, "KW_AS")) { next = "?as" }
+        if (t.kind == "BANG" && checkAt(1, "KW_IS")) { next = "!is" }
+        if (next.length() == 0) { rtn }
+        failAt(t, "'as' / 'is' 只允许写一层：'" + opText + " ... " + next + " ...' 不合法——" +
+            "判型只看最后一个目标类型，中间那层不改变结论；" +
+            "确实需要两步就分开写（`var x = a as A` 再 `x as B`）")
     }
 
     fun parsePrimary() -> Node {
