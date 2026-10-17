@@ -109,15 +109,15 @@ public enum NodeKind {
     // 阶段 25：类继承（自举同步第 6 刀）。同样**一律追加在枚举末尾**。
     // SUPER_CLASS = 父类槽位（Kotlin 侧 ClassDecl.superClass），其下挂 ARGS 子节点；
     // SUPER_CALL  = 构造体第一句 `super(实参)` 的委托（Kotlin 侧 SuperCallStmt）；
-    // OPEN / FINAL / ABSTRACT **不是 AST 节点**，只是「dump 行」的落点：AstDump.kt 在
-    // 类/方法**写了这个修饰词**时会多打一行 OPEN/FINAL/ABSTRACT，而 rsf 侧的 dumpAst
+    // FINAL / ABSTRACT **不是 AST 节点**，只是「dump 行」的落点：AstDump.kt 在
+    // 类/方法**写了这个修饰词**时会多打一行 FINAL/ABSTRACT，而 rsf 侧的 dumpAst
     // 是通用递归（没有任何 per-kind 分支），所以只能靠一个空 text 的子节点把这一行带出来。
-    // 三个修饰词节点**只在写了时挂**：没写的既有语料一个孩子都不多，字节不变。
-    SUPER_CLASS, SUPER_CALL, OPEN, FINAL, ABSTRACT,
+    // 两个修饰词节点**只在写了时挂**：没写的既有语料一个孩子都不多，字节不变。
+    SUPER_CLASS, SUPER_CALL, FINAL, ABSTRACT,
     // 阶段 24（自举同步 24b）：类型转换 / 类型判断。同样**一律追加在枚举末尾**。
     // AS  = `a as A` / `a ?as A`（`safe` 区分两者）；
     // IS  = `a is A` / `a !is A`（`negated` 区分两者）；
-    // TARGET 和上面 OPEN/FINAL/ABSTRACT 一样**不是 Kotlin 侧的 AST 节点**，只是 dump 行的
+    // TARGET 和上面 FINAL/ABSTRACT 一样**不是 Kotlin 侧的 AST 节点**，只是 dump 行的
     // 落点：AstDump.kt 在 AS / IS 下面多打一行 `TARGET type=<类型文本>`，而 rsf 侧的
     // dumpAst 是通用递归（没有任何 per-kind 分支），所以只能靠一个子节点把这一行带出来。
     // TARGET 的 text 就是 `type=<TypeInfo.text()>`，与 VAR / PARAM 打类型文本的口径同一套。
@@ -210,7 +210,6 @@ public fun kindName(k : NodeKind) -> string {
         // 阶段 25：类继承（自举同步第 6 刀）
         NodeKind.SUPER_CLASS : rtn "SUPER_CLASS"
         NodeKind.SUPER_CALL : rtn "SUPER_CALL"
-        NodeKind.OPEN : rtn "OPEN"
         NodeKind.FINAL : rtn "FINAL"
         NodeKind.ABSTRACT : rtn "ABSTRACT"
         // 阶段 24（自举同步 24b）：类型转换 / 类型判断
@@ -347,11 +346,10 @@ fun isStaticKeyword(kind : string) -> bool { rtn kind == "KW_STATIC" }
 
 fun isOverrideKeyword(kind : string) -> bool { rtn kind == "KW_OVERRIDE" }
 
-// 阶段 25：三个**继承修饰词**（与 Kotlin 侧 TokenKind.isInheritKeyword 同口径，
-// 见 src/main/kotlin/org/example/complie/lexing/Token.kt:279-280）。
+// 阶段 25：继承修饰词（阶段 27 起只剩 `final` / `abstract`，与 Kotlin 侧
+// TokenKind.isInheritKeyword 同口径，见 src/main/kotlin/org/example/complie/lexing/Token.kt）。
 // 注意 `super` **不在**这里：它不是修饰词，而是表达式位置上的接收者。
 fun isInheritKeyword(kind : string) -> bool {
-    if (kind == "KW_OPEN") { rtn true }
     if (kind == "KW_FINAL") { rtn true }
     rtn kind == "KW_ABSTRACT"
 }
@@ -556,8 +554,7 @@ public class SuperClause(baseName : string, baseDisplay : string, baseArgs : Nod
     var interfaces : Node = interfaces
 }
 
-public class InheritMods(isOpen : bool, isFinal : bool, isAbstract : bool) {
-    var isOpen : bool = isOpen
+public class InheritMods(isFinal : bool, isAbstract : bool) {
     var isFinal : bool = isFinal
     var isAbstract : bool = isAbstract
 }
@@ -585,9 +582,9 @@ public class Parser(tokens : Token[]) {
     // `allowOverride` 开关（缺省 false：顶层写 `override fun` 要判失败）。同样用「置位/还原」
     // 的字段表达，不加参数，保住 parseFuncDecl 的既有调用点形状与顶层的既有行为。
     var overrideOk : bool = false
-    // `open` / `final` / `abstract` 只准写在**类头**与**类体里的方法**前面（阶段 25）——
+    // `final` / `abstract` 只准写在**类头**与**类体里的方法**前面（阶段 25；阶段 27 起只剩这两个词）——
     // 这是 Kotlin 版 `parseInheritModifiers` 的 `allowInheritModifiers` 开关
-    // （Parser.kt:1505，缺省 false：接口体与顶层都不认这三个词）。同样用「置位/还原」
+    // （Parser.kt:1505，缺省 false：接口体与顶层都不认这两个词）。同样用「置位/还原」
     // 的字段表达，保住 parseFuncDecl 的既有调用点形状。
     var inheritOk : bool = false
 
@@ -773,8 +770,8 @@ public class Parser(tokens : Token[]) {
         rtn t.text
     }
 
-    // 声明前面那一串修饰词的个数（权限 / static / override / open / final / abstract）。
-    // 阶段 25 起 `open class Base` 里 `class` 前面不再是「一个可选的权限修饰词」，
+    // 声明前面那一串修饰词的个数（权限 / static / override / final / abstract）。
+    // 阶段 25 起 `class Base` 里 `class` 前面不再是「一个可选的权限修饰词」，
     // 所以四个前瞻都要按 Kotlin 版 modifierRun 的口径**整串**跳过去再认声明关键字。
     fun modifierRun() -> int {
         var offset = 0
@@ -784,7 +781,7 @@ public class Parser(tokens : Token[]) {
         rtn offset
     }
 
-    // 继承修饰词后面是不是一个字段：`open var x` / `final var x`。
+    // 继承修饰词后面是不是一个字段：`var x` / `final var x`。
     // 字段不吃继承修饰词（阶段 25 禁止字段遮蔽，DESIGN-25 §5），要单独给一句准确的报错
     // （Kotlin 版 isFieldDeclAheadAfterInherit，Parser.kt:1422）。
     fun isFieldDeclAheadAfterInherit() -> bool {
@@ -881,13 +878,13 @@ public class Parser(tokens : Token[]) {
     // annotations：声明前收到的注解序列（`@Marker public class C { }`）；空表也要挂（count=0），
     // 而且**挂在最后**（位置索引铁律：Interp.rsf:792/805/888/919 与 Backend.rsf:5692 用位置读孩子）。
     fun parseClassDecl(annotations : Node) -> Node {
-        // 阶段 25 K5a-fix：类头的权限修饰词与继承修饰词**任意穿插**（`public open class` 与
+        // 阶段 25 K5a-fix：类头的权限修饰词与继承修饰词**任意穿插**（`public class` 与
         // `open public class` 等价），与 Kotlin 版 Parser.kt:669 的循环一一对应。
         // 权限修饰词仍然只收一个；被权限词隔开的几段继承修饰词由 mergeInheritMods 合起来
         // 判重与互斥（`open public final class`）——与 parseFuncDecl 收到两段时同一条通路。
         var control = "DEFAULT"
         var sawControl = false
-        var mods = new InheritMods(false, false, false)
+        var mods = new InheritMods(false, false)
         var going = true
         while (going && !failed) {
             if (!sawControl && isControlKeyword(peek().kind)) {
@@ -987,14 +984,14 @@ public class Parser(tokens : Token[]) {
                 if (fld.line < 1) { fld.line = memberLine }
                 fields.add(fld)
             } else {
-                // 字段不吃继承修饰词（阶段 25 禁止字段遮蔽，DESIGN-25 §5）：`open var x` 要报一句
+                // 字段不吃继承修饰词（阶段 25 禁止字段遮蔽，DESIGN-25 §5）：`var x` 要报一句
                 // 准确的错，而不是掉进 parseFuncDecl 撞「这里需要一个函数声明」
                 // （Kotlin 版 isFieldDeclAheadAfterInherit，Parser.kt:1422）。
                 if (isFieldDeclAheadAfterInherit()) {
-                    failAt(peek(), "字段不能写 'open' / 'final' / 'abstract'：子类不能重复声明父类已有的字段（阶段 25 禁止字段遮蔽，DESIGN-25 §5），所以字段没有「可被覆盖」这一说，把修饰词删掉")
+                    failAt(peek(), "字段不能写 'final' / 'abstract'：子类不能重复声明父类已有的字段（阶段 25 禁止字段遮蔽，DESIGN-25 §5），所以字段没有「可被覆盖」这一说，把修饰词删掉")
                 }
                 // 构造器：`constructor` 以及「修饰词 + constructor」。修饰词可以排一串
-                // （阶段 25 起还包括 open/final/abstract），所以按 Kotlin 版 modifierRun
+                // （阶段 25 起还包括 final/abstract），所以按 Kotlin 版 modifierRun
                 // 的口径整串跳过去再认（Parser.kt:721/738）。
                 var ctorAhead = peek().kind == "KW_CONSTRUCTOR" ||
                     (isModifierKeyword(peek().kind) && peekAt(modifierRun()).kind == "KW_CONSTRUCTOR")
@@ -1004,7 +1001,7 @@ public class Parser(tokens : Token[]) {
                     if (memberAnnotations.childCount > 0) {
                         failAt(peek(), "构造器上不能写注解（'@'）：v1 的注解只标在类/接口/注解声明/方法/字段上")
                     }
-                    // 阶段 25：构造器上的 open/final/abstract 收下来就丢掉（构造器不参与继承），
+                    // 阶段 25：构造器上的 final/abstract 收下来就丢掉（构造器不参与继承），
                     // 与 Kotlin 版 parseClassDecl:745 完全同款——收下来是为了让 parseConstructor
                     // 看到的第一个记号就是 `constructor` 本身。
                     if (isInheritKeyword(peek().kind)) {
@@ -1023,10 +1020,10 @@ public class Parser(tokens : Token[]) {
         expect("RBRACE", "类 '" + nameTok.text + "' 没有闭合，缺少 '}'")
 
         // 孩子顺序**必须**与 AstDump.kt 的 classDecl(:179) 一致：
-        //   CLASS → SUPERS → [SUPER_CLASS + 它的 ARGS] → [OPEN | FINAL | ABSTRACT] →
+        //   CLASS → SUPERS → [SUPER_CLASS + 它的 ARGS] → [FINAL | ABSTRACT] →
         //   TYPE_PARAMS → FIELDS → METHODS → ANNOTATION_USES
         // SUPERS/后四项一个都不能少（位置索引铁律：Interp.rsf:792/805/888/919 与
-        // Backend.rsf:5692 按位置读孩子）。父类槽位与三个修饰词节点**只在写了时**挂，
+        // Backend.rsf:5692 按位置读孩子）。父类槽位与两个修饰词节点**只在写了时**挂，
         // 所以既有语料的字节一个都不变。
         var n = new Node(NodeKind.CLASS).put("control", control).put("name", escapeValue(nameTok.text))
         n.add(sup.interfaces)
@@ -1037,7 +1034,6 @@ public class Parser(tokens : Token[]) {
             base.add(sup.baseArgs.countTag())
             n.add(base)
         }
-        if (mods.isOpen) { n.add(new Node(NodeKind.OPEN)) }
         if (mods.isFinal) { n.add(new Node(NodeKind.FINAL)) }
         if (mods.isAbstract) { n.add(new Node(NodeKind.ABSTRACT)) }
         n.add(typeParams.countTag())
@@ -1094,50 +1090,40 @@ public class Parser(tokens : Token[]) {
     // 同时写、`abstract` 与另两个一起写，都在**这里**当场判失败（报错位置指到后面那个词）。
     // ⇒ 三个词**至多一个为真**。`super` 不在这条通路上（它是表达式接收者，不是修饰词）。
     fun parseInheritModifiers(kindWord : string) -> InheritMods {
-        var sawOpen = false
         var sawFinal = false
         var sawAbstract = false
         while (isInheritKeyword(peek().kind) && !failed) {
             var t = advance()
-            if (t.kind == "KW_OPEN") {
-                if (sawOpen) { failAt(t, kindWord + "上 'open' 写了两遍——写一次就够了") }
-                sawOpen = true
+            if (t.kind == "KW_FINAL") {
+                if (sawFinal) { failAt(t, kindWord + " 上 'final' 写了两遍——写一次就够了") }
+                sawFinal = true
             } else {
-                if (t.kind == "KW_FINAL") {
-                    if (sawFinal) { failAt(t, kindWord + "上 'final' 写了两遍——写一次就够了") }
-                    sawFinal = true
-                } else {
-                    if (sawAbstract) { failAt(t, kindWord + "上 'abstract' 写了两遍——写一次就够了") }
-                    sawAbstract = true
-                }
+                if (sawAbstract) { failAt(t, kindWord + " 上 'abstract' 写了两遍——写一次就够了") }
+                sawAbstract = true
             }
         }
-        if (sawOpen && sawFinal) {
-            failAt(peek(), kindWord + "上 'open' 与 'final' 不能同时写：'open' 是允许被继承/覆盖，'final' 是禁止（DESIGN-25 §4），删掉其中一个")
+        if (sawAbstract && sawFinal) {
+            var why = "抽象成员本来就是要被子类实现的"
+            if (kindWord == "类") { why = "抽象类本来就是要被继承的" }
+            failAt(peek(), kindWord + " 上 'abstract' 不能和 'final' 写在一起：" + why + "（DESIGN-25 §6），写 'abstract' 一个就够了")
         }
-        if (sawAbstract && (sawOpen || sawFinal)) {
-            failAt(peek(), kindWord + "上 'abstract' 不能和 'open' / 'final' 写在一起（DESIGN-25 §6），写 'abstract' 一个就够了")
-        }
-        rtn new InheritMods(sawOpen, sawFinal, sawAbstract)
+        rtn new InheritMods(sawFinal, sawAbstract)
     }
 
     // 两段修饰词合并（Kotlin 版 mergeInherit，Parser.kt:1724）：修饰词与注解可以夹着写
     // （`open @M final fun f()`），所以 parseFuncDecl 的收集循环可能前后收到两段。
     fun mergeInheritMods(cur : InheritMods, kindWord : string) -> InheritMods {
         var next = parseInheritModifiers(kindWord)
-        if (cur.isOpen && next.isOpen) { failAt(peek(), kindWord + "上 'open' 写了两遍——写一次就够了") }
-        if (cur.isFinal && next.isFinal) { failAt(peek(), kindWord + "上 'final' 写了两遍——写一次就够了") }
-        if (cur.isAbstract && next.isAbstract) { failAt(peek(), kindWord + "上 'abstract' 写了两遍——写一次就够了") }
-        var o = cur.isOpen || next.isOpen
+        if (cur.isFinal && next.isFinal) { failAt(peek(), kindWord + " 上 'final' 写了两遍——写一次就够了") }
+        if (cur.isAbstract && next.isAbstract) { failAt(peek(), kindWord + " 上 'abstract' 写了两遍——写一次就够了") }
         var f = cur.isFinal || next.isFinal
         var a = cur.isAbstract || next.isAbstract
-        if (o && f) {
-            failAt(peek(), kindWord + "上 'open' 与 'final' 不能同时写：'open' 是允许被继承/覆盖，'final' 是禁止（DESIGN-25 §4），删掉其中一个")
+        if (a && f) {
+            var why = "抽象成员本来就是要被子类实现的"
+            if (kindWord == "类") { why = "抽象类本来就是要被继承的" }
+            failAt(peek(), kindWord + " 上 'abstract' 不能和 'final' 写在一起：" + why + "（DESIGN-25 §6），写 'abstract' 一个就够了")
         }
-        if (a && (o || f)) {
-            failAt(peek(), kindWord + "上 'abstract' 不能和 'open' / 'final' 写在一起（DESIGN-25 §6），写 'abstract' 一个就够了")
-        }
-        rtn new InheritMods(o, f, a)
+        rtn new InheritMods(f, a)
     }
 
     // -------- 阶段 25：类头的 `:` 子句（父类 + 父接口） ------------------------
@@ -1695,9 +1681,9 @@ public class Parser(tokens : Token[]) {
         var control = "DEFAULT"
         var isOverride = false
         var isStatic = false
-        // 阶段 25：方法的继承修饰词（open / final / abstract）。缺省三个都为 false
-        // ⇒ 不写就一个 dump 行都不挂（AstDump 只在写了时打 OPEN / FINAL）。
-        var inherit = new InheritMods(false, false, false)
+        // 阶段 25：方法的继承修饰词（阶段 27 起只剩 final / abstract）。缺省两个都为 false
+        // ⇒ 不写就一个 dump 行都不挂（AstDump 只在写了时打 FINAL）。
+        var inherit = new InheritMods(false, false)
 
         collectLeadingAnnotations(anns)
 
@@ -1732,13 +1718,13 @@ public class Parser(tokens : Token[]) {
             }
         }
 
-        // 静态方法不参与继承（DESIGN-25 §3）：static 与 open/final/abstract 不能写到一起
-        if (isStatic && (inherit.isOpen || inherit.isFinal || inherit.isAbstract)) {
-            failAt(peek(), "静态方法不能是 'open' / 'final' / 'abstract'：静态方法只能写成 '类名.方法名' 调用（static 不参与继承，DESIGN-25 §3），把它上面的继承修饰词删掉")
+        // 静态方法不参与继承（DESIGN-25 §3）：static 与 final/abstract 不能写到一起
+        if (isStatic && (inherit.isFinal || inherit.isAbstract)) {
+            failAt(peek(), "静态方法不能是 'final' / 'abstract'：静态方法只能写成 '类名.方法名' 调用（static 不参与继承，DESIGN-25 §3），把它上面的继承修饰词删掉")
         }
 
         if (peek().kind != "KW_FUN") {
-            failAt(peek(), "顶层只能写函数声明，格式是 '[public|protected|private] [static] [override] [open|final|abstract] fun [类型] 名字() 返回子句 函数体'")
+            failAt(peek(), "顶层只能写函数声明，格式是 '[public|protected|private] [static] [override] [final|abstract] fun [类型] 名字() 返回子句 函数体'")
             rtn emptyFunc(control, isStatic, isOverride)
         }
         advance()   // fun
@@ -1821,9 +1807,8 @@ public class Parser(tokens : Token[]) {
             .put("ctor", "false")
             .put("primary", "false")
             .put("override", boolText(isOverride))
-        // AstDump 的方法分支顺序是 FUNC 行 → OPEN → FINAL → PARAMS → [BLOCK] → ANNOTATION_USES，
-        // 而且**只在写了时**才有那两行（ABSTRACT 在方法上不打：抽象方法体现为没有 BLOCK 孩子）。
-        if (inherit.isOpen) { n.add(new Node(NodeKind.OPEN)) }
+        // AstDump 的方法分支顺序是 FUNC 行 → FINAL → PARAMS → [BLOCK] → ANNOTATION_USES，
+        // 而且**只在写了时**才有那一行（ABSTRACT 在方法上不打：抽象方法体现为没有 BLOCK 孩子）。
         if (inherit.isFinal) { n.add(new Node(NodeKind.FINAL)) }
         n.add(params)
         if (hasBody) { n.add(body) }

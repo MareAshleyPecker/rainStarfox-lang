@@ -835,9 +835,9 @@ public class Interp(prog : Node) {
 
     fun makeFn(node : Node) -> Fn {
         var f = new Fn(attr(node, "name"))
-        // 阶段 25：FUNC 的孩子里 OPEN / FINAL **只在写了时才挂**，而且挂在 PARAMS **前面**
+        // 阶段 25：FUNC 的孩子里 FINAL **只在写了时才挂**，而且挂在 PARAMS **前面**
         // （Parser.rsf:1814-1815），所以参数表与函数体都必须**按 kind 找**，不能按下标 ——
-        // 按下标的话 `open fun` 的参数表会被当成函数体（跑起来就是「方法体没跑、返回 null」）。
+        // 按下标的话 `fun` 的参数表会被当成函数体（跑起来就是「方法体没跑、返回 null」）。
         // 抽象方法没有 BLOCK 孩子，留 `NodeKind.ERROR` 当哨兵（判据：`body.kind == NodeKind.BLOCK`）。
         var ps = new Node(NodeKind.ERROR)
         var body = new Node(NodeKind.ERROR)

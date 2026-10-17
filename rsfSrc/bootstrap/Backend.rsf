@@ -159,8 +159,8 @@ public fun propInt(n : Node, key : string) -> int {
 // 阶段 21：FUNC 的孩子形状是 `PARAMS → [BLOCK] → ANNOTATION_USES`（注解表恒在最后），
 // 所以「有没有函数体」**不能再看 childCount**：抽象方法的 childCount 从 1 变成了 2
 // （PARAMS + 空注解表），只看数量会把抽象方法错当成默认方法、给它发一段抛异常的体。
-// 阶段 25 再更正一次：K5a 给方法加了 `[OPEN] [FINAL]` 两个孩子，位置在 PARAMS
-// **之前**（Parser.rsf:1797-1803），于是「第二个孩子是不是 BLOCK」对 `open fun`
+// 阶段 25 再更正一次：K5a 给方法加了 `[FINAL]` 这个孩子（阶段 27 起 `open` 被删，
+// 只剩这一个），位置在 PARAMS **之前**（Parser.rsf:1797-1803），于是「第二个孩子是不是 BLOCK」对 `fun`
 // 也失效了 —— 会把它当抽象方法发出去，运行期
 // `AbstractMethodError: Receiver class X does not define or inherit an
 // implementation of the resolved method 'abstract ...'`。改成扫一遍找 BLOCK。
@@ -5984,10 +5984,9 @@ fun collectClasses(g : Gen, classes : Node, enums : Node) -> void {
                 // SUPERS 之后、TYPE_PARAMS 之前，且只在写了类父时才挂。
                 collectSuperClass(g, part, ci)
                 if (g.failed) { rtn }
-            } else if (part.kind == NodeKind.OPEN) {
-                // 修饰词槽位：默认 final，`open` 在字节码层面没有对应标志位。
             } else if (part.kind == NodeKind.FINAL) {
-                // 修饰词槽位：默认 final，字节码层面同样没有标志位。
+                // 修饰词槽位：阶段 27 起默认开放，`final` 由语义层把关（两端后端都不发
+                // ACC_FINAL，见 BytecodeCompiler.kt 的 cw.visit：字节层只认 abstract）。
             } else if (part.kind == NodeKind.ABSTRACT) {
                 // 只有写了 `abstract` 才挂这个槽位 —— 类头加 ACC_ABSTRACT 就看它。
                 ci.isAbstract = true

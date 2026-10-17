@@ -246,6 +246,10 @@ fun isNumberSuffix(c : char) -> bool {
 // （51 → 55 项），与 Kotlin 版 Lexer.kt:40-43 的四个 put 对齐。这四个词从这一刻起
 // 在两侧都是硬关键字，`rsfSrc/` 全库没有拿它们当标识符的地方（勘查已核）。
 //
+// 2026-10-17 自举同步（阶段 27，词法这一刀）：删掉 `open`（57 → 56 项）。阶段 27 把
+// 「默认开放、写 `final` 才封」当唯一口径（DESIGN-27），`open` 词本身被硬删——它不再是
+// 关键字，写出来就是语法错。`final` / `abstract` / `super` 三个词原样保留。
+//
 // 2026-10-17 自举同步（阶段 24b，词法这一刀）：补上 `as` / `is`（55 → 57 项），
 // 与 Kotlin 版 Lexer.kt:89-90 的两个 put 对齐。它们是**后缀运算符关键字**
 // （`x as A` / `x ?as A` / `x is A` / `x !is A`），不是修饰词、也不是类型关键字：
@@ -271,7 +275,6 @@ fun keywordKind(word : string) -> string {
     // 的四个 put 一一对应：`open`/`final`/`abstract` 是继承修饰词，`super` 是父类接收者
     // （`super.f()` / `super(接口名).f()` / `super(实参)`）。**都是硬关键字**，
     // 从此不能再当标识符用。
-    if (word == "open") { rtn "KW_OPEN" }
     if (word == "final") { rtn "KW_FINAL" }
     if (word == "abstract") { rtn "KW_ABSTRACT" }
     if (word == "super") { rtn "KW_SUPER" }
