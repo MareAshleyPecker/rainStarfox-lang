@@ -7726,7 +7726,7 @@ class RsfTest {
     fun `rsf 版解释器与 Kotlin 版输出逐字节一致`() {
         val dir = File(System.getProperty("user.dir"), "rsfSrc/lang")
         assertTrue(dir.isDirectory, "找不到示例目录: ${dir.absolutePath}")
-        val names = listOf("main", "class", "generics", "errors", "stdlib", "arrays", "files", "enums")
+        val names = listOf("main", "class", "generics", "errors", "stdlib", "arrays", "files", "enums", "inherit")
         var comparedLines = 0
         for (name in names) {
             val file = File(dir, "$name.rsf")

@@ -63,9 +63,9 @@ if [ -d "$ROOT/K/BackendCli" ]; then
 fi
 
 echo
-echo "=== J5：八示例输出锚点（raw 与 LF 归一化两种口径）==="
-declare -A ANCH=( [main]="606 28208184" [class]="295 D2ECC25E" [generics]="234 056FD6FE" [errors]="371 E9C8CDB6" [stdlib]="948 8F397D2A" [arrays]="1119 6D1A2875" [files]="666 6A0C940A" [enums]="763 3A33A504" )
-for name in main class generics errors stdlib arrays files enums; do
+echo "=== J5：九示例输出锚点（raw 与 LF 归一化两种口径）==="
+declare -A ANCH=( [main]="606 28208184" [class]="295 D2ECC25E" [generics]="234 056FD6FE" [errors]="371 E9C8CDB6" [stdlib]="948 8F397D2A" [arrays]="1119 6D1A2875" [files]="666 6A0C940A" [enums]="763 3A33A504" [inherit]="242 8AF81766" )
+for name in main class generics errors stdlib arrays files enums inherit; do
   java -jar "$JAR" run "rsfSrc/lang/$name.rsf" > "$ROOT/out_$name.txt" 2> "$ROOT/err_$name.txt"
   ec=$?
   sz=$(stat -c%s "$ROOT/out_$name.txt")

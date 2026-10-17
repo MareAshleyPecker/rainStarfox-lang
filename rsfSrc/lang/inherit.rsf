@@ -1,0 +1,118 @@
+// rainStarfox 阶段 25 示例：类继承（open / override / super / abstract / 构造顺序 / toString）
+//
+// 跑：rsf run rsfSrc/lang/inherit.rsf        （解释器）
+//     rsf build rsfSrc/lang/inherit.rsf      （字节码：每个类生成一个 .class）
+// 查：rsf check rsfSrc/lang/inherit.rsf
+
+// ---------------------------------------------------------------- open 类 + override + super.f()
+
+open class Animal(nm : string, legs0 : int) {
+    var name : string = nm
+    var legs : int = legs0
+
+    open fun sound() -> string {
+        rtn "..."
+    }
+
+    // 非 open 的方法子类照样继承；里面调 sound() 按运行期类型虚分派
+    fun describe() -> string {
+        rtn name + " 叫 " + sound() + "，有 " + intToString(legs) + " 条腿"
+    }
+}
+
+open class Dog(nm : string) : Animal(nm, 4) {
+    override fun sound() -> string {
+        rtn "woof"
+    }
+}
+
+// super.f()：先拿父类那一份结果，再补一截
+class Puppy(nm : string) : Dog(nm) {
+    override fun sound() -> string {
+        rtn super.sound() + "(小奶音)"
+    }
+}
+
+// ---------------------------------------------------------------- abstract class + 子类实现
+
+abstract class Shape(nm : string) {
+    var name : string = nm
+
+    abstract fun area() -> int
+
+    fun show() -> string {
+        rtn name + " 面积 = " + intToString(area())
+    }
+}
+
+class Rect(w0 : int, h0 : int) : Shape("rect") {
+    var w : int = w0
+    var h : int = h0
+
+    override fun area() -> int {
+        rtn w * h
+    }
+}
+
+class Square(s0 : int) : Shape("square") {
+    var side : int = s0
+
+    override fun area() -> int {
+        rtn side * side
+    }
+}
+
+// ---------------------------------------------------------------- 构造顺序：父类构造器 → 自己字段初值 → 构造体
+
+open class Base {
+    var id : int = 0
+
+    constructor(n : int) {
+        id = n
+        println("父类构造体先跑：id = " + intToString(id))
+    }
+}
+
+class Leaf(n0 : int) : Base(n0) {
+    // 自己的字段初值跑在父类构造器之后，所以这里读到的 id 已经是传进来的 7
+    var twice : int = id * 2
+
+    constructor() {
+        this(7)
+        println("子类构造体最后跑：twice = " + intToString(twice))
+    }
+}
+
+// ---------------------------------------------------------------- 入口
+
+fun main() -> void {
+    // 上转型变量：静态类型都是 Animal，运行期分别是 Dog / Puppy
+    var a : Animal = new Dog("旺财")
+    println(a.describe())
+    a = new Puppy("小旺")
+    println(a.describe())
+    println("直接拼 toString：" + a)
+
+    // 抽象类不能 new；父类型数组装两个子类，area() 在这里虚分派
+    var shapes : Shape[] = new Shape[2]
+    shapes[0] = new Rect(3, 4)
+    shapes[1] = new Square(5)
+    var i = 0
+    while (i < shapes.length) {
+        println(shapes[i].show())
+        i = i + 1
+    }
+
+    // 继承字段读写：name / legs 声明在 Animal 上，子类对象直接读写
+    var d = new Dog("小黑")
+    d.name = "大黑"
+    d.legs = 3
+    println(d.name + "：" + d.describe())
+
+    // 构造顺序看两行打印的先后；twice 用的是父类构造器刚定好的 id
+    var leaf = new Leaf()
+    // 继承对象的 toString：父链字段在前，然后是自己的字段
+    println(leaf)
+
+    rtn
+}

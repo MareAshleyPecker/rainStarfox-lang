@@ -47,7 +47,7 @@ echo "   输出：$(tr '\n' '|' < "$M/runR.txt")   stderr=$(stat -c%s "$M/runR.e
 
 echo
 echo "=== 2) 自举解释器运行比对（Kotlin 编的 InterpCli vs A 编的 InterpCli）==="
-for f in main class generics errors stdlib arrays files enums; do
+for f in main class generics errors stdlib arrays files enums inherit; do
   src="rsfSrc/lang/$f.rsf"
   java -Drsf.interp.file="$src" -cp "$K/InterpCli;$JAR" InterpCli > "$ROOT/ik_$f.txt" 2> "$ROOT/ik_$f.err"; ek=$?
   java -Drsf.interp.file="$src" -cp "$ROOT/J1/InterpCli;$JAR" InterpCli > "$ROOT/ir_$f.txt" 2> "$ROOT/ir_$f.err"; er=$?

@@ -1745,7 +1745,7 @@ A 编自己得（B），B 再编自己得（C），**B 与 C 的输出 126 个 `
 两端都在「结果被丢弃」时跳过泛型结果收敛（Java 的 `map.put(...)` 当语句也不拆箱）。
 细节见 [`BOOTSTRAP.md`](BOOTSTRAP.md) 的「17d 前置三件」与「17d 的下一步」。
 
-**2026-10-15 现状**：17e 闭环（B ≡ C）之后，离「rsf 版顶替 Kotlin 版」还差三类（详见
+**2026-10-15 现状**：17e 闭环（B ≡ C）之后，离「rsf 版顶替 Kotlin 版」还差这些（详见
 [`BOOTSTRAP.md`](BOOTSTRAP.md)）：① **阶段 20 的 `interface` / `override` 已同步**（词法 45 → 51 项 +
 `@` 记号 → 第 1 刀 `Parser.rsf` 语法 → 第 2 刀 `Backend.rsf` / `Interp.rsf` / `Sources.rsf` 语义；
 三件套 `bash build/verify21/knife-verify.sh` 全绿：J1 134 类 / diff 0、八示例一致）；
@@ -1758,10 +1758,10 @@ A 编自己得（B），B 再编自己得（C），**B 与 C 的输出 126 个 `
 `put|get|remove|containsKey|containsValue|size|isEmpty|clear` —— 判据是
 `interop/usejava.rsf` 与 `HashMap` 探针的 Kotlin 产物 vs 自举产物 `diff -r` 均为 0
 （`bash build/verify21/bootparity/backend-sweep.sh`）；表外成员仍显式报错，自举源自身也没有接口风格 /
-注解风格）；③ **阶段 25 的类继承还没同步到自举链**（Kotlin 版已经能编能跑：`open` / `override` /
-`abstract` / `final` / `super` / 继承 JDK 类，四刀 K1–K4 全落、探针台 `build/verify25/` 全绿；
-自举侧的 `Parser.rsf` / `Backend.rsf` / `Interp.rsf` 还没收这套语法与语义，K5 待做——自举源自身也还没写成
-类继承风格）；
+注解风格）；③ **阶段 25 的类继承已整条同步到自举链**（五刀：K5a `14a6b0a` 词法+解析 → K5a-fix `1ca8abd`
+类头修饰词顺序 → K5b `69916ab` 字节码后端 → K5c `45201d7` 解释器 → K5d 收口：新增
+`rsfSrc/lang/inherit.rsf` 闭环示例、八示例锚点扩成九示例；实跑 `J1 类总数=148`、`diff -r` 差异条目 0，
+`k5corpus` 15 份 / `astparity` 7 正例+5 负例 / 探针 17+17；自举源自身仍沿用旧写法，没改成类继承风格）；
 ④ 工具面（自举侧只有 4 个单文件 CLI，没有统一 CLI / LSP）。
 
 **每个阶段改哪些文件、验收标准、风险、以及要先拍板的 5 个语法点，都在 [`BOOTSTRAP.md`](BOOTSTRAP.md)。**
