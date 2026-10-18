@@ -15,6 +15,14 @@ enum class TokenKind(val text: String) {
 
     // ---- 关键字 ----
     KW_FUN("fn"),
+    /**
+     * lambda 字面量（阶段 30）：`lam(x : int) -> int { rtn x + 1 }`。
+     *
+     * 它是**普通关键字**——不参与 [isModifierKeyword] 判定（`lam` 只能出现在
+     * 表达式位置，不像 `public` / `static` 那样摆在声明前面），所以这里只加词法，
+     * 不动末尾那几个计算属性。
+     */
+    KW_LAM("lam"),
     KW_RTN("rtn"),
     KW_RETURN("return"),
     KW_IMPORT("import"),

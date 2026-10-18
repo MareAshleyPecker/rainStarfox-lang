@@ -24,6 +24,7 @@ import org.example.complie.ast.IndexExpr
 import org.example.complie.ast.IntLit
 import org.example.complie.ast.InterfaceDecl
 import org.example.complie.ast.IsExpr
+import org.example.complie.ast.LambdaExpr
 import org.example.complie.ast.LongLit
 import org.example.complie.ast.MemberExpr
 import org.example.complie.ast.NamedAnnotationArg
@@ -2518,6 +2519,15 @@ class BytecodeCompiler(
             is AsExpr -> {
                 if (expr.safe) emitSafeCast(ctx, expr) else emitCheckedCast(ctx, expr)
             }
+
+            // 阶段 30a：`lam` 只做到前端。JVM 那边要怎么表示（SAM 接口 / invokedynamic
+            // 的 LambdaMetafactory）是 30b 的活，这里明确拒绝。
+            is LambdaExpr -> throw RsfError(
+                "ir",
+                "[rsf-17d] 后端暂不支持：lambda 表达式（阶段 30b）",
+                expr.at.line,
+                expr.at.column,
+            )
 
             is MemberExpr -> {
                 // `super.方法(...)` / `super(接口).方法(...)`（阶段 25 K2）必须**最先**查这张表：

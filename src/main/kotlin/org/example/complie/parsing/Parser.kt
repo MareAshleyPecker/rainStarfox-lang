@@ -1177,12 +1177,12 @@ class Parser(
      * 函数、主构造、次构造三处共用，省得三份循环各写一遍（参数多了以后
      * 只改一处，不容易出现「函数能写、构造器不能写」这种不一致）。
      */
-    private fun parseParamList(missingParen: String): List<Param> {
+    private fun parseParamList(missingParen: String, allowUntyped: Boolean = false): List<Param> {
         expect(TokenKind.LPAREN, missingParen)
         val params = ArrayList<Param>()
         if (!check(TokenKind.RPAREN)) {
             do {
-                params.add(parseParam())
+                params.add(parseParam(allowUntyped))
             } while (match(TokenKind.COMMA))
         }
         expect(TokenKind.RPAREN, "参数表没有闭合，缺少 ')'")
@@ -1195,8 +1195,11 @@ class Parser(
      * [missingParen] 之外唯一的硬规则是「类型必须能看出来」：光写个名字
      * （`fun f(x) -> void`）不猜、不推断——参数类型是给调用方看的，
      * 猜错了要到运行期才发现。
+     *
+     * [allowUntyped] 只给 `lam` 开（阶段 30）：`lam(x)` 的类型由**期望类型**补，
+     * 补不出来由 Checker 报 §5 第 2 条文案；函数 / 方法 / 构造器的参数照旧必须写类型。
      */
-    private fun parseParam(): Param {
+    private fun parseParam(allowUntyped: Boolean = false): Param {
         val t = peek()
 
         // 0. 参数上的注解：v1 的可标位置是「类 / 接口 / 注解声明 / 方法 / 字段」，
@@ -1241,6 +1244,12 @@ class Parser(
         if (t.kind == TokenKind.IDENT &&
             (peek(1).kind == TokenKind.COMMA || peek(1).kind == TokenKind.RPAREN)
         ) {
+            // `lam` 的形参可以只写名字（阶段 30）：类型留空占位，Checker 拿期望类型补，
+            // 补不出来再报「lambda 的参数类型推不出来」。
+            if (allowUntyped) {
+                advance()
+                return Param(TypeRef("", t.at), t.lexeme, t.at)
+            }
             throw error(
                 t,
                 "参数 '${t.lexeme}' 缺少类型。两种写法都可以：Java 风格 'int ${t.lexeme}'，" +
@@ -1265,7 +1274,10 @@ class Parser(
      */
     private fun parseSuffixType(hint: String): TypeRef {
         val t = peek()
-        if (!t.kind.isTypeKeyword && t.kind != TokenKind.IDENT && t.kind != TokenKind.QUESTION) {
+        // 阶段 30：`g : (int) -> int` —— 函数类型以 '(' 开头，这里也要放行
+        if (!t.kind.isTypeKeyword && t.kind != TokenKind.IDENT && t.kind != TokenKind.QUESTION &&
+            t.kind != TokenKind.LPAREN
+        ) {
             throw error(t, "$hint，实际读到 ${t.describe()}")
         }
         return parseTypeRef()
@@ -1828,6 +1840,10 @@ class Parser(
      */
     private fun parseTypeRef(): TypeRef {
         val nullable = match(TokenKind.QUESTION)
+        // 阶段 30：类型位置遇到 '(' 有两种可能——函数类型 `(int) -> int`，
+        // 或者给函数类型加括号的数组写法 `((int) -> int)[]`。先看配对的 ')' 后面
+        // 是不是 '->'，两种都交给 [parseParenType]，这里不再往下走老路。
+        if (check(TokenKind.LPAREN)) return parseParenType(nullable)
         val t = peek()
         val name = when {
             t.kind.isTypeKeyword -> {
@@ -1901,6 +1917,113 @@ class Parser(
             )
         }
         return if (depth == 0) base else base.copy(arrayDepth = depth)
+    }
+
+    /**
+     * 类型位置的 `(`（阶段 30）：函数类型，或者「给函数类型加括号再挂 `[]`」。
+     *
+     * 两种写法靠**配对的 `)` 后面那个记号**区分，没有歧义：
+     *
+     * ```
+     * (int, string) -> bool      函数类型：`)` 后面是 `->`
+     * () -> void                 参数表可以为空
+     * ((int) -> int)[]           分组：`)` 后面是 `[`（整体括号 + 数组后缀）
+     * ```
+     *
+     * 分组那一层是**必需的**：`int[] -> int` 里 `[]` 属于参数类型，想表达
+     * 「函数类型的数组」只能写 `((int) -> int)[]`（工单 §3 的原文）。
+     */
+    private fun parseParenType(nullable: Boolean): TypeRef {
+        val at = peek()
+        val closeOffset = matchingParenOffset()
+        if (closeOffset < 0) {
+            throw error(
+                at,
+                "函数类型要写成 '(参数类型表) -> 返回类型'（DESIGN-30）——括号没有配对，缺少 ')'",
+            )
+        }
+        if (peek(closeOffset + 1).kind == TokenKind.ARROW) {
+            return parseFunctionType(nullable, at)
+        }
+        // `)` 后面既不是 `->` 也不是 `[]`：这不是分组，就是函数类型缺了返回类型。
+        // 工单 §3 要求这种位置给逐字文案，所以先拦这里，别再落到分组那一条。
+        if (peek(closeOffset + 1).kind != TokenKind.LBRACKET) {
+            throw error(at, "函数类型要写成 '(参数类型表) -> 返回类型'（DESIGN-30）")
+        }
+        // 分组：`((int) -> int)[]`。`?` 只能写在整个函数类型最前面（`?(int) -> int`），
+        // 套在括号外面没有意义，直接说清楚。
+        if (nullable) {
+            throw error(
+                at,
+                "'?' 要写在函数类型的最前面（?(int) -> int），不要套在括号外面",
+            )
+        }
+        advance() // (
+        val inner = parseTypeRef()
+        expect(TokenKind.RPAREN, "类型外面的括号没有闭合，缺少 ')'")
+        if (inner.fnRet == null) {
+            throw error(
+                at,
+                "类型外面的括号只能用来包函数类型（例如 ((int) -> int)[]）：" +
+                    "'(${inner.display()})' 直接写成 '${inner.display()}'",
+            )
+        }
+        var depth = 0
+        while (check(TokenKind.LBRACKET) && peek(1).kind == TokenKind.RBRACKET) {
+            advance() // [
+            advance() // ]
+            depth++
+        }
+        return if (depth == 0) inner else inner.copy(arrayDepth = inner.arrayDepth + depth)
+    }
+
+    /**
+     * 函数类型本体（阶段 30）：`(` 类型列表 `)` `->` 类型。
+     *
+     * 返回类型是**必填**的：`(int)` 不是类型，缺 `->` 就把整句写法给出去
+     * （工单 §3 的逐字文案）。
+     */
+    private fun parseFunctionType(nullable: Boolean, at: Token): TypeRef {
+        advance() // (
+        val params = ArrayList<TypeRef>()
+        if (!check(TokenKind.RPAREN)) {
+            do {
+                params.add(parseTypeRef())
+            } while (match(TokenKind.COMMA))
+        }
+        expect(TokenKind.RPAREN, "函数类型的参数表没有闭合，缺少 ')'")
+        if (!check(TokenKind.ARROW)) {
+            throw error(peek(), "函数类型要写成 '(参数类型表) -> 返回类型'（DESIGN-30）")
+        }
+        advance() // ->
+        val ret = parseTypeRef()
+        return TypeRef(
+            name = if (nullable) "?fn" else "fn",
+            at = at.at,
+            fnParams = params,
+            fnRet = ret,
+        )
+    }
+
+    /** 从当前位置（必须是 `(`）数到配对 `)` 的偏移；数不到返回 -1。 */
+    private fun matchingParenOffset(): Int {
+        var depth = 0
+        var i = 0
+        while (true) {
+            val t = peek(i)
+            when (t.kind) {
+                TokenKind.LPAREN -> depth++
+                TokenKind.RPAREN -> {
+                    depth--
+                    if (depth == 0) return i
+                }
+                // 括号没闭合就撞上了文件结束：交给调用方报错
+                TokenKind.EOF -> return -1
+                else -> Unit
+            }
+            i++
+            if (i > 4096) return -1
+        }
     }
 
     /**
@@ -2821,6 +2944,21 @@ class Parser(
                 expectNoChainedCast("!is")
                 return IsExpr(expr, target, true, bang.at)
             }
+            // 阶段 30：`f!!(1)` —— 可空的函数值先断言非空再调用。
+            // 只认 `!!` 之后紧跟实参表这一种形状（非空的 `f(1)` 仍然走 IDENT→CallExpr
+            // 那条老路，由 Checker 先查局部变量再查函数表），所以不会跟别的语法打架。
+            if (check(TokenKind.LPAREN) && expr is ForceExpr) {
+                val lparen = advance()
+                val args = ArrayList<Expr>()
+                if (!check(TokenKind.RPAREN)) {
+                    do {
+                        args.add(parseExpr())
+                    } while (match(TokenKind.COMMA))
+                }
+                expect(TokenKind.RPAREN, "调用函数值的参数表没有闭合，缺少 ')'")
+                expr = CallExpr(calleeText(expr), args, lparen.at, expr)
+                continue
+            }
             break
         }
         return expr
@@ -2848,7 +2986,7 @@ class Parser(
                     "去掉 '?' 写成 '$opText ...'",
             )
         }
-        if (!tok.kind.isTypeKeyword && tok.kind != TokenKind.IDENT) {
+        if (!tok.kind.isTypeKeyword && tok.kind != TokenKind.IDENT && tok.kind != TokenKind.LPAREN) {
             throw error(
                 tok,
                 "'$opText' 后面需要一个目标类型（类名 / 接口名 / 数组类型），" +
@@ -2856,6 +2994,8 @@ class Parser(
             )
         }
         val ref = parseTypeRef()
+        // 函数类型目标（阶段 30）由 Checker 的 castTarget 报（文案见 DESIGN-30 §5），
+        // 这里只拦「目标不许写可空」这一条语法层的规矩。
         if (ref.name.startsWith("?")) {
             throw error(
                 tok,
@@ -2961,6 +3101,38 @@ class Parser(
         return MemberExpr(sup, nameTok.lexeme, args, dot.at)
     }
 
+    /**
+     * lambda 字面量（阶段 30）：`lam` `(` 形参表 `)` [`->` 类型] 块。
+     *
+     * 形参表与函数 / 方法 / 构造器**共用** [parseParamList]（Kotlin 风格 `x : int` 与
+     * Java 风格 `int x` 都认），只多开一个 [allowUntyped]：`lam(x)` 的类型由期望类型补，
+     * 补不出来由 Checker 报 §5 第 2 条。体和普通块一样，`rtn` / `if` / `for` 全都能照写。
+     */
+    private fun parseLambda(at: SourceLine): Expr {
+        advance() // lam
+        val params = parseParamList(
+            missingParen = "'lam' 后面需要一个形参表：写法是 lam(x : int) -> int { … }",
+            allowUntyped = true,
+        )
+        val declaredReturn = if (match(TokenKind.ARROW)) parseTypeRef() else null
+        if (!check(TokenKind.LBRACE)) {
+            throw error(
+                peek(),
+                "lambda 体要写成块：lam(…) -> 类型 { … }（写法是 lam(x : int) -> int { rtn x + 1 }）",
+            )
+        }
+        val block = parseBlock()
+        return LambdaExpr(params, declaredReturn, block, at)
+    }
+
+    /** `f!!(1)` 那一次调用在报错里怎么称呼：尽力还原人写的那个名字。 */
+    private fun calleeText(expr: Expr): String = when (expr) {
+        is ForceExpr -> calleeText(expr.operand)
+        is VarExpr -> expr.name
+        is MemberExpr -> expr.name
+        else -> ""
+    }
+
     private fun parsePrimary(): Expr {
         val t = peek()
         return when (t.kind) {
@@ -2992,6 +3164,9 @@ class Parser(
                 advance()
                 parseNewExpr(t.at)
             }
+
+            // 阶段 30：lambda 字面量 `lam(x : int) -> int { rtn x + 1 }`
+            TokenKind.KW_LAM -> parseLambda(t.at)
 
             TokenKind.IDENT -> {
                 advance()

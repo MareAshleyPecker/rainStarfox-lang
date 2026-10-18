@@ -36,9 +36,44 @@ data class TypeRef(
      * 都留住，`display()` 原样写成 `Marker::Impl` 给人和报错看。
      */
     val nested: String? = null,
+    /**
+     * 函数类型的**形参类型表**（阶段 30）：`(int, string) -> bool` →
+     * [`int`, `string`]；`() -> void` → 空表。不是函数类型时是空表。
+     *
+     * 类型本身仍留在这个类上（**没有**另立一套 sealed TypeRef 树）：`name` 固定写
+     * `"fn"`（可空写 `"?fn"`），函数形状靠 [fnRet] 非 null 判定。理由是 `name` 在几十处
+     * 被当成「基础类型名 / 类名」直接比对（`ret.type.name == "void"`、`fromName(ref.name)`…），
+     * 换成 sealed 就得把那几十处全改成模式匹配，而 30a 这一刀只想加一个类型维度。
+     */
+    val fnParams: List<TypeRef> = emptyList(),
+    /**
+     * 函数类型的**返回类型**（阶段 30）：非 `null` ⇒ 这是一个函数类型。
+     * 可空函数类型的 `?` 写在 [name] 上（`"?fn"`），和别的类型的老约定一致。
+     */
+    val fnRet: TypeRef? = null,
 ) : Node {
-    /** 写给人看的完整类型名：`Box&<int>`、`Box&<Box&<int>>`、`int[][]`、`Marker::Impl`。 */
+    /** 是不是函数类型（阶段 30）：只看 [fnRet] 非 null。 */
+    val isFunctionType: Boolean get() = fnRet != null
+
+    /**
+     * lambda 形参**没写类型**时的占位（阶段 30）。
+     *
+     * 不把 `Param.type` 改成 `TypeRef?`：`lsp/EditorSupport.kt` 等处在
+     * `p.type.name` 上直接取值，那一刀不在本阶段的允许改动范围内，所以这里用一个
+     * 空名字的占位（`name` 为空且不是函数类型）表示「类型待期望类型补全」。
+     */
+    val isMissing: Boolean get() = name.isEmpty() && fnRet == null
+
+    /** 写给人看的完整类型名：`Box&<int>`、`int[][]`、`Marker::Impl`、`(int) -> bool`。 */
     fun display(): String {
+        val ret = fnRet
+        if (ret != null) {
+            // 函数类型（阶段 30）：`(参数类型表) -> 返回类型`，`?` 在整体最前面，
+            // `[]` 在整体最后面——`[]` 时整体要先加一层括号（`((int) -> int)[]`）。
+            val sig = "(" + fnParams.joinToString(", ") { it.display() } + ") -> " + ret.display()
+            val marked = if (name.startsWith("?")) "?$sig" else sig
+            return if (arrayDepth == 0) marked else "($marked)" + "[]".repeat(arrayDepth)
+        }
         val base = if (typeArgs.isEmpty()) name else "$name&<" + typeArgs.joinToString(", ") { it.display() } + ">"
         val whole = if (nested == null) base else "$base::$nested"
         return whole + "[]".repeat(arrayDepth)
@@ -1012,6 +1047,14 @@ data class CallExpr(
     val name: String,
     val arguments: List<Expr>,
     override val at: SourceLine,
+    /**
+     * 被调用的**表达式**（阶段 30）：只有「调用一个函数值」才有，普通 `f(x)` 是 `null`。
+     *
+     * 目前只有 `f!!(1)` 这种写法会填它（[ForceExpr] 后面直接跟实参表）——非空的函数值
+     * 调用 `f(1)` 仍然走 [name]，由 Checker 先查局部变量再查函数表。
+     * 放在 [at] 之后：老的 `CallExpr(name, args, at)` 位置参数一个字都不用改。
+     */
+    val callee: Expr? = null,
 ) : Expr
 
 data class UnaryExpr(
@@ -1045,6 +1088,24 @@ data class ElvisExpr(
 /** `x!!` —— 强制解包；是 null 就抛 NullPointerException。 */
 data class ForceExpr(
     val operand: Expr,
+    override val at: SourceLine,
+) : Expr
+
+/**
+ * lambda 字面量（阶段 30）：`lam(x : int) -> int { rtn x + 1 }`。
+ *
+ * 形参表复用既有的 [Param]（所以 `x : int` 与 `int x` 两种写法都跟着白拿）；
+ * 类型可以**不写**（[TypeRef.isMissing]），由 Checker 拿期望类型补；`-> 类型` 整段
+ * 也可以省。体是**块**——`rtn` 只从这个 lambda 返回，不是非局部返回（DESIGN-30 §3）。
+ *
+ * 后端这一刀不接（30b 才接）：[org.example.complie.ir.Lowering] 遇到它就抛
+ * `[rsf-17d] 后端暂不支持：lambda 表达式（阶段 30b）`，而不是静默跳过。
+ */
+data class LambdaExpr(
+    val params: List<Param>,
+    /** `-> 类型` 那一段；省了就是 `null`（靠期望类型 / `rtn` 的表达式推）。 */
+    val declaredReturn: TypeRef?,
+    val body: Block,
     override val at: SourceLine,
 ) : Expr
 

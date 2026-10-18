@@ -10,6 +10,10 @@ import org.example.complie.diag.SourceFile
  * 的 `keywordKind`）**逐条对齐**，条数不能变（阶段 27 起是 56 项：阶段 24 之前 51 项，
  * 加上 `as` / `is` 是 57 项，阶段 27 又删掉 `open` 减到 56）。所以拦它靠的是
  * [Lexer.readIdentOrKeyword] 里一条独立的判断，rsf 版那边也写了同一条。
+ *
+ * 阶段 30 加 `lam`（阶段 30a，表 56 → **57** 项）：这一刀只做 Kotlin 前端，
+ * rsf 版自举词法器（`rsfSrc/bootstrap/Lexer.rsf`）要到阶段 30c 才跟上，
+ * 在那之前两边的词法条目数**故意差一项**——30c 补完就重新对齐。
  */
 internal const val LEGACY_VAR_KEYWORD: String = "varis"
 
@@ -19,7 +23,7 @@ internal const val LEGACY_VAR_MESSAGE: String = "'varis' 已改名为 'var'：�
 /**
  * 函数声明关键字的老写法（2026-10-18 阶段 29 起唯一写法是 `fn`）。
  *
- * 与 [LEGACY_VAR_KEYWORD] 同一条路子：`fun` **不**在 [KEYWORDS] 里（表仍是 56 项，
+ * 与 [LEGACY_VAR_KEYWORD] 同一条路子：`fun` **不**在 [KEYWORDS] 里（表仍是 57 项，
  * 阶段 29 只是把表里那一项的字面量从 `fun` 改成 `fn`，记号名还要叫 [TokenKind.KW_FUN]），
  * 拦它靠 [Lexer.readIdentOrKeyword] 里一条独立判断，rsf 版那边写了同一条、同一句文案。
  */
@@ -30,6 +34,7 @@ internal const val LEGACY_FUN_MESSAGE: String = "'fun' 已改名为 'fn'：请�
 
 private val KEYWORDS: Map<String, TokenKind> = buildMap {
     put("fn", TokenKind.KW_FUN)
+    put("lam", TokenKind.KW_LAM)
     put("rtn", TokenKind.KW_RTN)
     put("return", TokenKind.KW_RETURN)
     put("import", TokenKind.KW_IMPORT)

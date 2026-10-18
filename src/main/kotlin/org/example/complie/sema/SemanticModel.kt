@@ -29,6 +29,35 @@ import org.example.complie.ir.LoweredFunction
 import org.example.complie.lexing.SourceLine
 import java.util.IdentityHashMap
 
+// ---------------------------------------------------------------- 函数类型（阶段 30）
+//
+// `RsfType` 本身没有「函数」这一档（阶段 30 不许改 RsfType.kt），函数类型借用
+// `EXTERNAL` + 内部名 `rsf/fn/<形状>` 表示：`simpleExternalName` 取最后一个 '/' 之后
+// 那段，正好是 `(int) -> int`，所以报错文案里读起来跟源码写法一样。
+
+/** 函数类型内部名的前缀。 */
+const val FN_TYPE_PREFIX = "rsf/fn/"
+
+/** 函数类型的形状文本：`(int, string) -> bool`、`() -> void`。 */
+fun fnTypeText(params: List<RsfType>, ret: RsfType): String =
+    "(" + params.joinToString(", ") { it.rsfName } + ") -> " + ret.rsfName
+
+/** 用形状文本造一个函数类型（[nullable] 就是 `?fn` 的那个 `?`）。 */
+fun functionTypeOf(text: String, nullable: Boolean): RsfType =
+    RsfType(RsfBase.EXTERNAL, nullable, FN_TYPE_PREFIX + text)
+
+/** 函数类型的形状文本；不是函数类型就是 null。 */
+val RsfType.fnTypeText: String?
+    get() {
+        if (base != RsfBase.EXTERNAL || arrayDepth != 0) return null
+        val name = externalName ?: return null
+        if (!name.startsWith(FN_TYPE_PREFIX)) return null
+        return name.substring(FN_TYPE_PREFIX.length)
+    }
+
+/** 是不是函数类型（`(int) -> int` 及其可空形式）。 */
+val RsfType.isFunctionType: Boolean get() = fnTypeText != null
+
 /** 用户自定义类的成员，解析完的样子。 */
 sealed interface UserMember {
     /** 字段：[index] 是它在对象字段数组里的下标（按声明顺序）。 */

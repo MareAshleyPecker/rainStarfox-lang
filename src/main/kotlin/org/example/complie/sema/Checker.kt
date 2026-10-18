@@ -38,6 +38,7 @@ import org.example.complie.ast.IntLit
 import org.example.complie.ast.IsExpr
 import org.example.complie.ast.InterfaceDecl
 import org.example.complie.ast.LabelStmt
+import org.example.complie.ast.LambdaExpr
 import org.example.complie.ast.LongLit
 import org.example.complie.ast.MemberAssignStmt
 import org.example.complie.ast.MemberExpr
@@ -152,6 +153,40 @@ class Checker(
     private val returnTypes = IdentityHashMap<FuncDecl, RsfType>()
     private val lowered = IdentityHashMap<FuncDecl, LoweredFunction>()
     private val diagnostics = ArrayList<Diagnostic>()
+
+    // ---------------------------------------------------------------- 函数类型（阶段 30）
+
+    /**
+     * 函数类型的**签名表**：`"(int) -> int"` → 形参类型 + 返回类型。
+     *
+     * 函数类型本身在 [RsfType] 里只是一个 `EXTERNAL` 类型（internal name 是
+     * `rsf/fn/(int) -> int`），报错时正好印成 `(int) -> int`；可空性不参与键
+     * （`?(int) -> int` 与非空版共用同一条签名）。调用函数值、拿期望类型补 `lam`
+     * 的形参类型，都要把「形参表 / 返回类型」再取回来，所以另存一张表，
+     * 键就是那段显示文本（见 `RsfType.fnTypeText`）。
+     */
+    private val fnSignatures = HashMap<String, FnSignature>()
+
+    /** 一个函数类型的形状（阶段 30）：形参类型表 + 返回类型。 */
+    private class FnSignature(val params: List<RsfType>, val ret: RsfType)
+
+    /**
+     * 「期望类型」：`lam` 的形参类型 / 返回类型靠它补（DESIGN-30 §4 第 3 条）。
+     *
+     * 目前三个传播点是变量声明的初始化表达式、`rtn` 的值、以及只有一个候选的重载实参。
+     * 用 [withExpectation] 成对设置 / 还原，嵌套时取最内层。
+     */
+    private var expectation: RsfType? = null
+
+    /**
+     * 正在检查的 `lam` 体里**读到过**的外层绑定（DESIGN-30 §4 第 4 条「捕获」）。
+     *
+     * 不绕弯子地做了个探针：形参 / 局部变量的读取都要经过 [computeType] 的 `VarExpr`
+     * 分支，那里顺手记一笔，[checkLambda] 事后拿「外层可见的绑定集合」一减，就知道
+     * 谁被捕获、是不是 `var`。比事后遍历一遍 lambda 体的 AST 少写一套 walker，
+     * 也不会漏掉藏在深层的读。
+     */
+    private var captureProbe: MutableList<Pair<VarExpr, Binding>>? = null
 
     // 逐函数状态
     private lateinit var currentFn: FuncDecl
@@ -286,6 +321,12 @@ class Checker(
         fun declares(name: String): Boolean = vars.containsKey(name)
         fun declare(name: String, binding: Binding) { vars[name] = binding }
         fun lookup(name: String): Binding? = vars[name] ?: parent?.lookup(name)
+
+        /** 把这个作用域链上**所有**绑定收进 [into]（阶段 30：判断 `lam` 捕获的是外层谁）。 */
+        fun collectAll(into: MutableSet<Binding>) {
+            into.addAll(vars.values)
+            parent?.collectAll(into)
+        }
     }
     // ------------------------------------------------------------------ 函数表
     private fun declareFunctions() {
@@ -4107,7 +4148,8 @@ class Checker(
             )
         }
         val declared = fieldMember(info, field, subst).type
-        val valueType = type(value)
+        // 阶段 30：字段是函数类型时，`this.f = lam(x) …` 也能借到形参类型
+        val valueType = withExpectation(declared.takeIf { it.isFunctionType }) { type(value) }
         if (!acceptsValue(declared, value, valueType)) {
             throw err(
                 "不能把 ${valueType.rsfName} 赋给 ${declared.rsfName} 字段 '${field.name}'",
@@ -4614,7 +4656,9 @@ class Checker(
 
             is VarDeclStmt -> {
                 val annotated = stmt.declaredType?.let { resolveType(it) }
-                val initType = type(stmt.initializer)
+                // 阶段 30：声明类型当**期望类型**，`lam` 里没写的形参类型 / 返回类型
+                // 就指望它（`var f : (int) -> int = lam(x) …`）。
+                val initType = withExpectation(annotated) { type(stmt.initializer) }
 
                 if (initType.isVoid) {
                     throw err("void 不能作为变量的值", stmt.at)
@@ -4631,6 +4675,16 @@ class Checker(
                     )
                 }
                 if (annotated != null && !acceptsValue(annotated, stmt.initializer, initType)) {
+                    // 阶段 30：函数类型对不上时给一句点名「类型不匹配」的话——
+                    // 形状差一个类型就整段不可赋（结构相等，没有子类型），
+                    // 老文案「不能把 X 赋给 Y 变量」在 `(int) -> int` 上读不出差在哪。
+                    if (annotated.isFunctionType || initType.isFunctionType) {
+                        throw err(
+                            "类型不匹配：变量 '${stmt.name}' 声明的是 ${annotated.rsfName}，" +
+                                "实际给的是 ${initType.rsfName}（函数类型要求形状完全一样）",
+                            stmt.at,
+                        )
+                    }
                     throw err(
                         "不能把 ${initType.rsfName} 赋给 ${annotated.rsfName} 变量 '${stmt.name}'",
                         stmt.at,
@@ -4723,7 +4777,8 @@ class Checker(
                         stmt.at,
                     )
                 }
-                val valueType = type(stmt.value)
+                // 阶段 30：`f = lam(x) …` 里 `f` 的类型就是期望类型
+                val valueType = withExpectation(bound.type.takeIf { it.isFunctionType }) { type(stmt.value) }
                 if (!acceptsValue(bound.type, stmt.value, valueType)) {
                     if (valueType.isNullLiteral) {
                         throw err(
@@ -5166,7 +5221,8 @@ class Checker(
             exprTypes[value] = RsfType.NULL
             return
         }
-        val valueType = type(value)
+        // 阶段 30：`rtn lam(x) …` 里的期望类型就是本函数的返回类型
+        val valueType = withExpectation(currentReturn.takeIf { it.isFunctionType }) { type(value) }
         if (currentReturn.isVoid) {
             throw err(
                 "函数 '${currentFn.name}' 是 void 函数，不能 rtn 一个 ${valueType.rsfName} 值" +
@@ -5312,6 +5368,35 @@ class Checker(
         return t
     }
 
+    // ------------------------------------------------------- 函数类型（阶段 30）
+
+    /**
+     * 造一个函数类型，并把形状记进 [fnSignatures]。
+     *
+     * [RsfType] 这边只留一个 `EXTERNAL` + 内部名 `rsf/fn/(int) -> int`：`rsfName`
+     * （= `simpleExternalName`）因此正好印成 `(int) -> int` / `?(int) -> int`，
+     * 相等性靠内部名字符串，跟结构相等等价（形参逐个 + 返回类型都进了那段文本）。
+     */
+    private fun fnType(params: List<RsfType>, ret: RsfType, nullable: Boolean): RsfType {
+        val text = fnTypeText(params, ret)
+        fnSignatures[text] = FnSignature(params, ret)
+        return functionTypeOf(text, nullable)
+    }
+
+    /** 取回函数类型的形状；不是函数类型就是 null。 */
+    private fun fnSignature(t: RsfType): FnSignature? = t.fnTypeText?.let { fnSignatures[it] }
+
+    /** 在「期望类型 = [t]」的上下文里跑 [block]，跑完还原（嵌套取最内层）。 */
+    private inline fun <T> withExpectation(t: RsfType?, block: () -> T): T {
+        val saved = expectation
+        expectation = t
+        try {
+            return block()
+        } finally {
+            expectation = saved
+        }
+    }
+
     private fun computeType(expr: Expr): RsfType =
         when (expr) {
             is IntLit -> RsfType.INT
@@ -5350,6 +5435,10 @@ class Checker(
                 )
             }
 
+            // 阶段 30：lambda 字面量。形参类型 / 返回类型都能省，靠「期望类型」补，
+            // 补不出来就报 DESIGN-30 §5 的第 2 条。
+            is LambdaExpr -> checkLambda(expr)
+
             // 阶段 13：数组的创建与下标读
             is NewArrayExpr -> checkNewArray(expr)
 
@@ -5359,6 +5448,8 @@ class Checker(
                 val binding = scope.lookup(expr.name)
                 if (binding != null) {
                     varRefs[expr] = binding
+                    // 阶段 30：`lam` 体里的读先记一笔，checkLambda 事后判「捕获的是不是 var」
+                    captureProbe?.add(expr to binding)
                     binding.type
                 } else {
                     // 不是局部变量 参数——在类里就再看看字段（裸字段名写法：`rtn x`）。
@@ -5494,6 +5585,126 @@ class Checker(
             is MemberExpr -> checkMember(expr)
         }
 
+    // ------------------------------------------------------- lambda 字面量（阶段 30）
+
+    /**
+     * `lam` 字面量（DESIGN-30 §2）。
+     *
+     * 形参类型和 `-> 返回类型` 都能省：省了就借**期望类型**（`var f : (int) -> int = lam(x) …`
+     * 里那个 `(int) -> int`）——借不到就是 §5 第 2 条。捕获一律**按值**：
+     * 体里读到外层的 `var` 就是 §5 第 1 条（`imutvar` / 形参 / `this` 都行）。
+     */
+    private fun checkLambda(expr: LambdaExpr): RsfType {
+        val expected = expectation?.takeIf { it.isFunctionType }
+        val expectedSig = expected?.let { fnSignature(it) }
+
+        // 1) 形参类型：写了就解析，没写就借期望类型的（借不到报 §5 第 2 条）
+        val paramTypes = ArrayList<RsfType>(expr.params.size)
+        for ((i, p) in expr.params.withIndex()) {
+            if (!p.type.isMissing) {
+                paramTypes.add(resolveType(p.type))
+                continue
+            }
+            val borrowed = if (expectedSig != null && i < expectedSig.params.size) {
+                expectedSig.params[i]
+            } else {
+                throw err(
+                    "lambda 的参数类型推不出来：'${p.name}' 没写类型，这里也没有期望的函数类型" +
+                        "（DESIGN-30）——把参数类型写上，或者先赋给一个有类型的变量",
+                    p.at,
+                )
+            }
+            paramTypes.add(borrowed)
+        }
+        if (expectedSig != null && expectedSig.params.size != expr.params.size) {
+            throw err(
+                "类型不匹配：这个 lambda 有 ${expr.params.size} 个形参，期望的函数类型" +
+                    " ${fnTypeText(expectedSig.params, expectedSig.ret)} 要 ${expectedSig.params.size} 个",
+                expr.at,
+            )
+        }
+
+        // 2) 开一层新作用域：形参名只在 lambda 体里可见（也遮住外面的同名变量）
+        val outer = LinkedHashSet<Binding>()
+        scope.collectAll(outer)
+
+        val savedScope = scope
+        val savedReturn = currentReturn
+        val savedProbe = captureProbe
+        scope = Scope(savedScope)
+        for ((i, p) in expr.params.withIndex()) {
+            if (scope.declares(p.name)) {
+                throw err("lambda 的形参 '${p.name}' 重名了", p.at)
+            }
+            // 形参不能赋值，所以一律按 imutvar 记——lambda 体里再读它就是普通参数
+            scope.declare(p.name, Binding(p.name, paramTypes[i], false, i, p.at))
+        }
+
+        // 3) 返回类型：写的 > 期望类型的 > 从体里的 `rtn 表达式` 推的
+        val ret = when {
+            expr.declaredReturn != null -> resolveType(expr.declaredReturn)
+            expectedSig != null -> expectedSig.ret
+            else -> inferLambdaReturn(expr)
+        }
+
+        val probe = ArrayList<Pair<VarExpr, Binding>>()
+        currentReturn = ret
+        captureProbe = probe
+        try {
+            checkBlock(expr.body, pushScope = false)
+        } finally {
+            captureProbe = savedProbe
+            currentReturn = savedReturn
+            scope = savedScope
+        }
+
+        // 4) 捕获判定：读到外层绑定的才叫捕获；是 var 就不能按值抓（§5 第 1 条）
+        for ((use, binding) in probe) {
+            if (!outer.contains(binding)) continue
+            if (binding.mutable) {
+                throw err(
+                    "lambda 只能值捕获：'${binding.name}' 是 var（DESIGN-30）——" +
+                        "改成 imutvar，或者把它当参数传进来",
+                    use.at,
+                )
+            }
+        }
+
+        return fnType(paramTypes, ret, nullable = false)
+    }
+
+    /**
+     * lambda 既没写 `-> 类型`、也没有期望类型时，从体里的 `rtn 表达式` 推返回类型。
+     *
+     * 一个 `rtn 值` 都没有 ⇒ `void`；多个就取第一个（返回类型不一致由 `rtn` 自己的
+     * 检查兜住，因为这里把推出来的那个当成了声明的返回类型）。
+     */
+    private fun inferLambdaReturn(expr: LambdaExpr): RsfType {
+        val found = ArrayList<RsfType>()
+        collectLambdaReturns(expr.body, found)
+        return found.firstOrNull() ?: RsfType.VOID
+    }
+
+    private fun collectLambdaReturns(block: Block, out: MutableList<RsfType>) {
+        for (stmt in block.statements) {
+            when (stmt) {
+                is ReturnStmt -> stmt.value?.let { out.add(type(it)) }
+                is Block -> collectLambdaReturns(stmt, out)
+                is IfStmt -> {
+                    collectLambdaReturns(stmt.body, out)
+                    stmt.elseBody?.let { collectLambdaReturns(it, out) }
+                }
+                is WhileStmt -> collectLambdaReturns(stmt.body, out)
+                is ForStmt -> collectLambdaReturns(stmt.body, out)
+                is TryStmt -> {
+                    collectLambdaReturns(stmt.body, out)
+                    collectLambdaReturns(stmt.catchBody, out)
+                }
+                else -> Unit
+            }
+        }
+    }
+
     // ------------------------------------------------------- 类型转换 / 类型判断（阶段 24）
 
     /**
@@ -5563,6 +5774,12 @@ class Checker(
      * 每次写都发一条 stderr 警告，免得用户以为 `Box&<int>` 和 `Box&<string>` 判得不一样。
      */
     private fun castTarget(ref: TypeRef, opText: String, expr: Expr, at: SourceLine): RsfType {
+        // 阶段 30：v1 不许把函数类型当 `as` / `is` 的目标（DESIGN-30 §3 最后一条）。
+        // 函数类型在 JVM 上还没定型（30b 才决定 SAM 名字），现在放过去只会让
+        // 后端在更远的地方炸，不如在这里直接说清楚。
+        if (ref.isFunctionType) {
+            throw err("'$opText' 的目标不能是函数类型（DESIGN-30）", at)
+        }
         // 先查「非泛型不许写实参」：解析阶段那条 checkArity 的报错说的是
         // 「类型实参个数不对」，这里的口径要直白一点，先拦下来说清楚。
         if (ref.typeArgs.isNotEmpty()) {
@@ -6094,6 +6311,17 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
             return checkConstruction(expr.name, emptyList(), expr.arguments, expr)
         }
 
+        // 阶段 30：调的是**函数值**而不是函数名。
+        // ① `f!!(1)`：Parser 已经把 callee 挂在 CallExpr 上；
+        // ② `f(1)`：`f` 是局部变量 / 形参，类型是函数类型——局部变量遮蔽同名函数
+        //    （跟普通变量遮蔽一个道理，写起来也最符合直觉）。
+        if (expr.callee != null) {
+            return checkFunctionValueCall(expr, null, expr.callee)
+        }
+        scope.lookup(expr.name)?.let { b ->
+            if (b.type.isFunctionType) return checkFunctionValueCall(expr, b, null)
+        }
+
         val named = functionTable[expr.name]
         if (named.isNullOrEmpty()) {
             // 类里可以直接按名字调本类方法：`shift(x, y)`（实例方法隐式带 this）
@@ -6134,10 +6362,16 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
             )
         }
 
-        // 实参先求类型：void 与「不能当参数传」的老报错保持原样
+        // 实参先求类型：void 与「不能当参数传」的老报错保持原样。
+        // 阶段 30：某个位置上的候选形参类型**完全一致**时，把它当期望类型喂给实参，
+        // 这样 `each(xs, lam(n) { ... })` 的 `lam` 才知道形参类型与返回类型。
+        val expectAt = (0 until expr.arguments.size).map { i ->
+            val distinct = sameArity.mapNotNull { it.params.getOrNull(i) }.distinct()
+            if (distinct.size == 1) distinct.single() else null
+        }
         val argTypes = ArrayList<RsfType>(expr.arguments.size)
         for ((i, arg) in expr.arguments.withIndex()) {
-            val argType = type(arg)
+            val argType = withExpectation(expectAt[i]) { type(arg) }
             if (argType == RsfType.VOID) {
                 throw err("第 ${i + 1} 个实参是 void 表达式，不能当参数传", arg.at)
             }
@@ -6287,6 +6521,57 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
      * 「可能失败的内置函数也要显式处理错误」——`parseInt` 和 rsf 自己写的 `!T`
      * 函数走的是同一套规矩（try / `?:` / `!!`），用户不用记两套。
      */
+    // ------------------------------------------------------- 调用函数值（阶段 30）
+
+    /**
+     * 调用一个**函数值**：`f(1, 2)`（`f` 是函数类型的变量 / 形参）或 `f!!(1)`。
+     *
+     * 可空函数值必须先 `!!`：`?fn` 不可调用是 DESIGN-30 §5 第 3 条（跟 JVM 上
+     * 「引用可能是 null」是同一件事，这里在**编译期**就拦住）。
+     */
+    private fun checkFunctionValueCall(expr: CallExpr, binding: Binding?, callee: Expr?): RsfType {
+        val calleeType = when {
+            callee != null -> type(callee)
+            binding != null -> binding.type
+            else -> throw err("未定义的函数 '${expr.name}'", expr.at)
+        }
+        val label = expr.name.ifEmpty { calleeType.rsfName }
+
+        if (!calleeType.isFunctionType || calleeType.arrayDepth > 0) {
+            throw err("'$label' 不是函数，不能调用（${calleeType.rsfName}）", expr.at)
+        }
+        if (calleeType.isNullable) {
+            throw err(
+                "'$label' 是可空的函数值，先断言非空（f!!）再调用（DESIGN-30）",
+                expr.at,
+            )
+        }
+        val sig = fnSignature(calleeType)
+            ?: throw err("'$label' 不是函数，不能调用（${calleeType.rsfName}）", expr.at)
+        if (sig.params.size != expr.arguments.size) {
+            throw err(
+                "调用 '$label' 的参数个数不对：实际给了 ${expr.arguments.size} 个，" +
+                    "函数类型 ${calleeType.rsfName} 要 ${sig.params.size} 个",
+                expr.at,
+            )
+        }
+        for ((i, arg) in expr.arguments.withIndex()) {
+            val want = sig.params[i]
+            val argType = withExpectation(want) { type(arg) }
+            if (argType == RsfType.VOID) {
+                throw err("第 ${i + 1} 个实参是 void 表达式，不能当参数传", arg.at)
+            }
+            if (!want.accepts(argType)) {
+                throw err(
+                    "第 ${i + 1} 个实参类型不匹配：'$label' 的第 ${i + 1} 个参数要 ${want.rsfName}，" +
+                        "实际给了 ${argType.rsfName}",
+                    arg.at,
+                )
+            }
+        }
+        return sig.ret
+    }
+
     private fun checkBuiltinCall(expr: CallExpr, builtin: Builtin): RsfType {
         if (expr.arguments.size != builtin.params.size) {
             throw err(
@@ -6524,6 +6809,16 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
      */
     private fun resolveType(ref: TypeRef, env: Map<String, RsfType> = typeParams): RsfType {
         val nullable = ref.name.startsWith("?")
+
+        // 阶段 30：函数类型。形参 / 返回类型逐个解析，再拼成一个 EXTERNAL 形状。
+        // 函数类型没有泛型、也不参与数组维度（`((int) -> int)[]` 的元素类型由
+        // Parser 在括号外面那一层已经处理掉了，这里只管非数组的那一层）。
+        if (ref.isFunctionType) {
+            val params = ref.fnParams.map { resolveType(it, env) }
+            val ret = ref.fnRet?.let { resolveType(it, env) } ?: RsfType.VOID
+            return fnType(params, ret, nullable = nullable)
+        }
+
         val bare = if (nullable) ref.name.substring(1) else ref.name
         val args = ref.typeArgs.map { resolveType(it, env) }
         val depth = ref.arrayDepth

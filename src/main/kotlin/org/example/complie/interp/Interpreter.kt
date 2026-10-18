@@ -17,6 +17,7 @@ import org.example.complie.ast.IfExpr
 import org.example.complie.ast.IndexExpr
 import org.example.complie.ast.IntLit
 import org.example.complie.ast.IsExpr
+import org.example.complie.ast.LambdaExpr
 import org.example.complie.ast.LongLit
 import org.example.complie.ast.MemberExpr
 import org.example.complie.ast.NewArrayExpr
@@ -603,6 +604,15 @@ class Interpreter(
                     else -> throw RsfFailure(castFailure(value, target))
                 }
             }
+
+            // 阶段 30a：`lam` 只做到前端。闭包值（抓到外层变量的那一份环境）是 30b
+            // 的活，这里明确拒绝——不编一个「能跑但什么都不做」的空实现。
+            is LambdaExpr -> throw RsfError(
+                "ir",
+                "[rsf-17d] 后端暂不支持：lambda 表达式（阶段 30b）",
+                expr.at.line,
+                expr.at.column,
+            )
 
             is MemberExpr -> evalMember(expr, slots, body, discard)
         }

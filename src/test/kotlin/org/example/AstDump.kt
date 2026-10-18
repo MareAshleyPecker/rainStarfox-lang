@@ -34,6 +34,7 @@ import org.example.complie.ast.IntLit
 import org.example.complie.ast.IsExpr
 import org.example.complie.ast.InterfaceDecl
 import org.example.complie.ast.LabelStmt
+import org.example.complie.ast.LambdaExpr
 import org.example.complie.ast.LongLit
 import org.example.complie.ast.MemberAssignStmt
 import org.example.complie.ast.MemberExpr
@@ -483,7 +484,20 @@ object AstDump {
 
             is CallExpr -> {
                 line(out, depth, "CALL", "name" to esc(e.name))
+                // 阶段 30：`f!!(1)` 的行是 CALL name="" + 下面这一行（老语料没有 callee，
+                // 输出保持原样，rsf 版词法/AST 的逐行对拍不会受影响）
+                e.callee?.let { expr(out, depth + 1, it) }
                 args(out, depth + 1, e.arguments)
+            }
+
+            // 阶段 30：`lam(x : int) -> int { … }`
+            is LambdaExpr -> {
+                val ret = e.declaredReturn?.let { typeText(it) } ?: "-"
+                line(out, depth, "LAMBDA", "params" to e.params.size.toString(), "ret" to ret)
+                for (p in e.params) {
+                    line(out, depth + 1, "PARAM", "name" to esc(p.name), "type" to typeText(p.type))
+                }
+                block(out, depth + 1, e.body)
             }
 
             is NewExpr -> {
@@ -565,6 +579,13 @@ object AstDump {
      * （`Outer&<int>::Inner` 里的 `&<int>` 属于 `Outer`），所以 `::` 部分不打类型实参。
      */
     private fun typeText(t: TypeRef): String {
+        // 阶段 30：函数类型逐字照 `.display()` 的形状打，别把形参表吞进 name
+        if (t.isFunctionType) {
+            val sig = "(" + t.fnParams.joinToString(",") { typeText(it) } + ") -> " +
+                typeText(t.fnRet ?: TypeRef("void", t.at))
+            val marked = if (t.name.startsWith("?")) "?$sig" else sig
+            return if (t.arrayDepth == 0) marked else "($marked)" + "[]".repeat(t.arrayDepth)
+        }
         val head = if (t.typeArgs.isEmpty()) {
             t.name
         } else {
