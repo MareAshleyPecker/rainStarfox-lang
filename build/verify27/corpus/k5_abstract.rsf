@@ -1,0 +1,15 @@
+// k5：抽象类 + 抽象方法——子类实现，默认开放
+abstract class Shape {
+    abstract fn area() -> int
+    fn describe() -> string { rtn "area=" + intToString(area()) }
+}
+
+class Square(s : int) : Shape() {
+    var side : int = s
+    override fn area() -> int { rtn side * side }
+}
+
+fn main() -> void {
+    var x : Shape = new Square(3)
+    println(x.describe())
+}

@@ -1,0 +1,21 @@
+// p3：`?as` 成功给对象、失败给 null（结果类型 ?T）
+class A { }
+class B : A() { }
+
+fn main() -> void {
+    var a : ?A = new B()
+    var ok : ?B = a ?as B
+    if (ok == null) {
+        println("ok-null")
+    } else {
+        println("ok-non-null")
+    }
+    var a2 : ?A = new A()
+    var bad : ?B = a2 ?as B
+    if (bad == null) {
+        println("bad-null")
+    } else {
+        println("bad-non-null")
+    }
+    rtn
+}

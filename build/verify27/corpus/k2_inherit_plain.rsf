@@ -1,0 +1,12 @@
+// k2：默认开放——子类**什么都不覆盖**也能继承，父类方法照常可调
+class Base {
+    fn hello() -> string { rtn "hello" }
+}
+
+class Child : Base() {
+}
+
+fn main() -> void {
+    var c : Child = new Child()
+    println(c.hello())
+}

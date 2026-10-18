@@ -1,0 +1,6 @@
+open class A { }
+fn main() -> void {
+    var a : A = new A()
+    if (a is A is A) { println("x") }
+    rtn
+}

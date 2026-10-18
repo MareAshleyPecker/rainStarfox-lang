@@ -1,0 +1,18 @@
+// p5：null 的三种行为——`null is Foo` 给 false、`null ?as Foo` 给 null、`null as Foo` 抛
+class A { }
+
+fn main() -> void {
+    var a : ?A = null
+    println("" + (a is A))
+    var b : ?A = a ?as A
+    if (b == null) {
+        println("safe-null")
+    }
+    try {
+        var c : A = a as A
+        println("不该到这里")
+    } catch (e : string) {
+        println(e)
+    }
+    rtn
+}

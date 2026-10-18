@@ -1,0 +1,12 @@
+open class A { }
+class B : A() { var x : int = 7 }
+fn take(b : B) -> void {
+    println("" + b.x)
+}
+fn main() -> void {
+    var a : A = new B()
+    take(a as B)
+    println("" + (a as B).x)
+    println("" + (a ?as B)!!.x)
+    rtn
+}

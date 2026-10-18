@@ -1,0 +1,4 @@
+class Base {
+    final fun fixed() -> string { rtn "fixed" }
+    fun open_() -> string { rtn "open" }
+}

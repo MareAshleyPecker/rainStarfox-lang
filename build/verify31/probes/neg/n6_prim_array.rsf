@@ -1,0 +1,9 @@
+fn first&<T>(xs : T[]) -> T {
+    rtn xs[0]
+}
+
+fn main() {
+    var xs : int[] = new int[3]
+    xs[0] = 1
+    println("" + first(xs))
+}

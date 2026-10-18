@@ -1,0 +1,9 @@
+// 阶段 27 的 dump 口径：不写修饰词 → 一个修饰词 dump 行都不挂
+class Base(p : int) {
+    var x : int = p
+    fun tag() -> string { rtn "base" }
+}
+
+class Child(p : int) : Base(p) {
+    override fun tag() -> string { rtn super.tag() + "+child" }
+}

@@ -1,0 +1,20 @@
+class Box {
+    var n : int = 0
+
+    constructor(v0 : int) {
+        n = v0
+    }
+}
+
+fn first&<T>(xs : T[]) -> T {
+    rtn xs[0]
+}
+
+fn main() {
+    var ss : string[] = new string[2]
+    ss[0] = "hey"
+    println(first(ss))
+    var bs : Box[] = new Box[2]
+    bs[0] = new Box(7)
+    println("" + first(bs).n)
+}

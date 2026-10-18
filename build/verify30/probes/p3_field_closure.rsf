@@ -1,0 +1,17 @@
+class Adder {
+    var delta : int = 0
+
+    constructor(d : int) {
+        this.delta = d
+    }
+
+    public fn make() -> (int) -> int {
+        rtn lam(x : int) -> int { rtn x + this.delta }
+    }
+}
+
+fn main() {
+    var a : Adder = new Adder(3)
+    var f : (int) -> int = a.make()
+    println("" + f(4))
+}

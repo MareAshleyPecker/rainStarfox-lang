@@ -1,0 +1,8 @@
+open class A { }
+class B : A() { }
+fn main() -> void {
+    var a : A = new B()
+    if (a is B) { println("y") }
+    if (a !is B) { println("n") }
+    rtn
+}

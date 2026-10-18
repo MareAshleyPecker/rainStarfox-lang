@@ -1,0 +1,7 @@
+// n6：?as 的结果是可空的，不能直接赋给非空变量
+class A { }
+fn main() -> void {
+    var a : ?A = null
+    var b : A = a ?as A
+    rtn
+}

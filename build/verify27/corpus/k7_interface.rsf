@@ -1,0 +1,13 @@
+// k7：接口 + 实现类（阶段 27 不动接口规矩，这里只保证词法删掉 open 后照常跑）
+interface Greeter {
+    fn greet() -> string
+}
+
+class Impl : Greeter {
+    override fn greet() -> string { rtn "hi" }
+}
+
+fn main() -> void {
+    var g : Greeter = new Impl()
+    println(g.greet())
+}

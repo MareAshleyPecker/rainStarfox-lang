@@ -1,0 +1,18 @@
+// p7：接口判型/转型，以及「类 + 接口」混合
+interface Greeter { fn greet() -> string { rtn "hi" } }
+class Impl : Greeter { override fn greet() -> string { rtn "impl" } }
+class Base { }
+class Both : Base(), Greeter { override fn greet() -> string { rtn "both" } }
+
+fn main() -> void {
+    var g : Greeter = new Impl()
+    println("" + (g is Impl))
+    println("" + (g is Greeter))
+    var i : Impl = g as Impl
+    println(i.greet())
+    var g2 : Greeter = new Both()
+    println("" + (g2 is Base))
+    var b : Base = g2 as Base
+    println("" + (b is Greeter))
+    rtn
+}

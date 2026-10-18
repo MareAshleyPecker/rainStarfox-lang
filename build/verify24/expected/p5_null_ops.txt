@@ -1,0 +1,3 @@
+false
+safe-null
+rsf: 不能把 null 当成 A

@@ -1,0 +1,18 @@
+// p3：每个方法各自一套标签（同名不冲突，标注按方法分开）。
+// one() 有两个标签（loop、出口，声明顺序如此）；main() 有一个标签（loop，声明了但没跳）。
+// 期望 stdout：one / main
+fn one() -> void {
+    `loop`:
+    println("one")
+    goto `出口`
+    println("不该打印")
+    `出口`:
+    rtn
+}
+
+fn main() -> void {
+    `loop`:
+    one()
+    println("main")
+    rtn
+}

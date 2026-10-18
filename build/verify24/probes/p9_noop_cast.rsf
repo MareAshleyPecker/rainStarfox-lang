@@ -1,0 +1,12 @@
+// p9：同类型 / 上转型的 `as` 是空操作（不抛、不改值）
+class A { fn who() -> string { rtn "A" } }
+class B : A() { }
+
+fn main() -> void {
+    var b : B = new B()
+    var b2 : B = b as B
+    var a : A = b2 as A
+    println(b2.who())
+    println(a.who())
+    rtn
+}

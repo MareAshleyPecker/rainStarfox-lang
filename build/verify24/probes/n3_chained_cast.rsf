@@ -1,0 +1,7 @@
+// n3：不许链式
+class A { }
+fn main() -> void {
+    var a : A = new A()
+    var b : A = a as A as A
+    rtn
+}

@@ -1,0 +1,13 @@
+// p8：泛型实参允许写、按擦除判（每次写发一条 stderr 警告）
+class Box&<T>(v : T) {
+    var value : T = v
+    fn get() -> T { rtn value }
+}
+
+fn main() -> void {
+    var b : Box&<int> = new Box&<int>(5)
+    var o : Box&<int> = b as Box&<int>
+    println("" + o.get())
+    println("" + (o is Box&<int>))
+    rtn
+}

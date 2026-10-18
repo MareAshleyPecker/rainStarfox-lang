@@ -1,0 +1,16 @@
+// p1：反引号标签名里的特殊字符（`-` `.` `$` `@` `/`），并且真的被 goto 跳到过。
+// 期望 stdout：0 1 2 3 done（每行一个）
+fn main() -> void {
+    var n = 0
+    `step-one`:
+    if (n < 3) {
+        println("" + n)
+        n = n + 1
+        goto `step-one`
+    }
+    goto `a.b$c@d/e`
+    println("不该到这里")
+    `a.b$c@d/e`:
+    println("done")
+    rtn
+}

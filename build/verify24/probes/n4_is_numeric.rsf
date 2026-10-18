@@ -1,0 +1,6 @@
+// n4：is 只判引用类型
+fn main() -> void {
+    var n : int = 5
+    println("" + (n is int))
+    rtn
+}

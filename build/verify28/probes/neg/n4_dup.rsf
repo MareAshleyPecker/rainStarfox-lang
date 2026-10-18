@@ -1,0 +1,6 @@
+// n4：`` `finish` `` 与 `finish` 是同一个名字 → 期望报错「标签 'finish' 在函数 'main' 里重复定义」
+fn main() -> void {
+    `finish`:
+    finish:
+    rtn
+}

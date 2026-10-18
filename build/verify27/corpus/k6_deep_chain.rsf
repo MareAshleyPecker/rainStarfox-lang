@@ -1,0 +1,19 @@
+// k6：三层继承——每一层都默认开放，中间层不写 override 直接透传
+class A {
+    fn who() -> string { rtn "A" }
+}
+
+class B : A() {
+    override fn who() -> string { rtn "B<" + super.who() + ">" }
+}
+
+class C : B() {
+    override fn who() -> string { rtn "C<" + super.who() + ">" }
+}
+
+fn main() -> void {
+    var c : C = new C()
+    println(c.who())
+    var a : A = c
+    println(a.who())
+}

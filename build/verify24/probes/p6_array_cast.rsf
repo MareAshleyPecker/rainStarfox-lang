@@ -1,0 +1,23 @@
+// p6：数组转型与判型（协变：B[] 是 A[]，反过来运行期才判）
+class A { }
+class B : A() { }
+class C : A() { }
+
+fn main() -> void {
+    var bs : B[] = new B[2]
+    var as1 : A[] = bs
+    var bs2 : B[] = as1 as B[]
+    println("" + (bs2 is B[]))
+    println("" + (as1 is B[]))
+    println("" + (bs is A[]))
+    var cs : C[] = new C[1]
+    var as2 : A[] = cs
+    println("" + (as2 is B[]))
+    try {
+        var x : B[] = as2 as B[]
+        println("不该到这里")
+    } catch (e : string) {
+        println(e)
+    }
+    rtn
+}

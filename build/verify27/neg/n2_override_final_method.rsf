@@ -1,0 +1,13 @@
+// n2：final 方法不许被子类覆盖
+class Base {
+    final fn fixed() -> string { rtn "fixed" }
+}
+
+class Derived : Base() {
+    override fn fixed() -> string { rtn "broken" }
+}
+
+fn main() -> void {
+    var d : Derived = new Derived()
+    println(d.fixed())
+}

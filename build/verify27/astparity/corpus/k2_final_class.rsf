@@ -1,0 +1,3 @@
+final class Sealed {
+    fun id() -> int { rtn 1 }
+}

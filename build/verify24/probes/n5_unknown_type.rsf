@@ -1,0 +1,7 @@
+// n5：目标类型必须是已知类型
+class A { }
+fn main() -> void {
+    var a : A = new A()
+    var b : A = a as Nope
+    rtn
+}

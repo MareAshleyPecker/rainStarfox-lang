@@ -1,0 +1,21 @@
+fun risky() -> void {
+    try {
+        fail "boom"
+    } catch (e : string) {
+        println(e)
+    }
+    rtn
+}
+
+fun withLabel() -> void {
+    var n = 0
+    `a-b`:
+    if (n < 1) { n = n + 1; goto `a-b` }
+    println("ok")
+    rtn
+}
+
+fun main() -> void {
+    risky()
+    withLabel()
+}

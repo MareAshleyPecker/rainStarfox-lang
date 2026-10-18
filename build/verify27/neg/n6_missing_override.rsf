@@ -1,0 +1,13 @@
+// n6：同签名必须写 override（默认开放只放开「能不能覆盖」，不放开「要不要写 override」）
+class Base {
+    fn tag() -> string { rtn "base" }
+}
+
+class Derived : Base() {
+    fn tag() -> string { rtn "derived" }
+}
+
+fn main() -> void {
+    var d : Derived = new Derived()
+    println(d.tag())
+}

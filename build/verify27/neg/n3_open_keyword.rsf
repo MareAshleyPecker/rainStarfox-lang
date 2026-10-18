@@ -1,0 +1,9 @@
+// n3：`open` 已不是关键字（阶段 27 硬删），写成修饰词就是语法错
+open class A {
+    fn f() -> string { rtn "A" }
+}
+
+fn main() -> void {
+    var a : A = new A()
+    println(a.f())
+}

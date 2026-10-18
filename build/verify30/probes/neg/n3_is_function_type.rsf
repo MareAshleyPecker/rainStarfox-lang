@@ -1,0 +1,4 @@
+fn main() {
+    var f : (int) -> int = lam(x : int) -> int { rtn x }
+    println("" + (f is (int) -> int))
+}

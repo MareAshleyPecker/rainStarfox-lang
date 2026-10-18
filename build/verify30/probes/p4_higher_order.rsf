@@ -1,0 +1,14 @@
+fn apply(x : int, g : (int) -> int) -> int {
+    rtn g(x)
+}
+
+fn twice(g : (int) -> int) -> (int) -> int {
+    rtn lam(x : int) -> int { rtn g(g(x)) }
+}
+
+fn main() {
+    var inc : (int) -> int = lam(x : int) -> int { rtn x + 1 }
+    println("" + apply(10, inc))
+    var quad : (int) -> int = twice(twice(inc))
+    println("" + quad(0))
+}

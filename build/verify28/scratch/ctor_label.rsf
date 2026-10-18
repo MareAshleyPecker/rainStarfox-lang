@@ -1,0 +1,13 @@
+class A {
+    var n : int = 0
+    constructor() {
+        `ctor-lab`:
+        n = 1
+    }
+    public fun ping() -> void { println("ping") }
+}
+
+fun main() -> void {
+    var a = new A()
+    a.ping()
+}

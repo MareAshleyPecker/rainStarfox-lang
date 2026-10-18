@@ -1,0 +1,7 @@
+interface Shape {
+    fn area&<T>(x : T) -> T
+}
+
+fn main() {
+    println("0")
+}

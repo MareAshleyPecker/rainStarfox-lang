@@ -1,0 +1,4 @@
+// n4：abstract 与 final 互斥（阶段 27 只剩这两个继承修饰词）
+abstract final class A {
+    fn f() -> string { rtn "A" }
+}

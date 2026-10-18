@@ -1,0 +1,9 @@
+// k4：`final` 类——不许继承，但自己可以 new、可以调用
+final class Sealed {
+    fn id() -> int { rtn 42 }
+}
+
+fn main() -> void {
+    var s : Sealed = new Sealed()
+    println(intToString(s.id()))
+}

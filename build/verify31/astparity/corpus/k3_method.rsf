@@ -1,0 +1,19 @@
+class Calc {
+    var base : int = 0
+
+    constructor(b : int) {
+        base = b
+    }
+
+    public fn same&<T>(x : T) -> T {
+        rtn x
+    }
+
+    public static fn pick&<T>(x : T, y : T) -> T {
+        rtn x
+    }
+}
+
+fn main() {
+    println("0")
+}

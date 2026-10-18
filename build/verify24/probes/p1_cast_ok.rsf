@@ -1,0 +1,16 @@
+// p1：上转型之后 `as` 回子类，调子类独有方法
+class A {
+    fn who() -> string { rtn "A" }
+}
+class B : A() {
+    fn only() -> string { rtn "B-only" }
+}
+
+fn main() -> void {
+    var b : B = new B()
+    var a : A = b
+    var b2 : B = a as B
+    println(b2.only())
+    println(b2.who())
+    rtn
+}

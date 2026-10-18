@@ -1,0 +1,57 @@
+// 父代理的 24d 独立抽查（不进判据台，只用来交叉验证自举解释器的语义边界）
+class A { }
+class B : A() { }
+interface I { fun tag() -> string }
+interface J : I { }
+class Impl : A(), J { override fun tag() -> string { rtn "impl" } }
+class Holder { class Inner : A() { } }
+enum Color { RED, GREEN }
+class Box&<T>(v : T) { var value : T = v }
+
+fun main() -> void {
+    // 1) 接口由**祖先类**实现（Impl : A(), J；J 继承 I）
+    var i : I = new Impl()
+    println("" + (i is I))
+    println("" + (i is J))
+    println("" + (i is A))
+    println("" + (i is B))
+
+    // 2) 枚举
+    var c : Color = Color.RED
+    println("" + (c is Color))
+    println("" + (c as Color == Color.RED))
+
+    // 3) null 三态
+    var n : ?A = null
+    println("" + (n is A))
+    var s : ?A = n ?as A
+    println("" + (s == null))
+    try {
+        var x : A = n as A
+        println("不该到这里")
+    } catch (e : string) {
+        println(e)
+    }
+
+    // 4) 泛型擦除
+    var bi : Box&<int> = new Box&<int>(5)
+    println("" + (bi is Box&<string>))
+    var bs : Box&<string> = bi as Box&<string>
+    println("" + bs.value)
+
+    // 5) 数组 + 接口元素
+    var arr : I[] = new Impl[2]
+    println("" + (arr is I[]))
+    println("" + (arr is A[]))
+    println("" + (arr is J[]))
+
+    // 6) 嵌套类
+    var inner : Holder::Inner = new Holder::Inner()
+    println("" + (inner is Holder::Inner))
+    println("" + (inner is A))
+
+    // 7) string
+    var t = "abc"
+    println("" + (t is string))
+    rtn
+}

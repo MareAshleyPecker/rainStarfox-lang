@@ -1,0 +1,15 @@
+// k3：`final` 方法——自己不封类，只是不许子类覆盖；正常调用不受影响
+class Base {
+    final fn fixed() -> string { rtn "fixed" }
+    fn open_() -> string { rtn "open" }
+}
+
+class Derived : Base() {
+    override fn open_() -> string { rtn "derived" }
+}
+
+fn main() -> void {
+    var d : Derived = new Derived()
+    println(d.fixed())
+    println(d.open_())
+}

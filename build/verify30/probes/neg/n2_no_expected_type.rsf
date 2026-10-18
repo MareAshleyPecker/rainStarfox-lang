@@ -1,0 +1,4 @@
+fn main() {
+    var f = lam(x) -> int { rtn x + 1 }
+    println("" + f(1))
+}

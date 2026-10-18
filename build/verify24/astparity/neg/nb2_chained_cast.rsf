@@ -1,0 +1,7 @@
+open class A { }
+class B : A() { }
+fn main() -> void {
+    var a : A = new B()
+    var c : A = a as A as A
+    rtn
+}

@@ -1,0 +1,8 @@
+fn make&<T>() -> ?T {
+    rtn null
+}
+
+fn main() {
+    var x : ?int = make()
+    println("" + (x == null))
+}

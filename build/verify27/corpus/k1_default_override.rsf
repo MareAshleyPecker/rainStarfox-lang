@@ -1,0 +1,15 @@
+// k1：默认开放——父类没写 open，子类照样能继承并 override（阶段 27 的核心口径）
+class Base(p : int) {
+    var x : int = p
+    fn tag() -> string { rtn "base" }
+}
+
+class Derived(p : int) : Base(p) {
+    override fn tag() -> string { rtn super.tag() + "+derived" }
+}
+
+fn main() -> void {
+    var d : Derived = new Derived(7)
+    println(d.tag())
+    println(intToString(d.x))
+}

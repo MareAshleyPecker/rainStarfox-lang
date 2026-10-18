@@ -1,0 +1,19 @@
+// p4：is / !is 的七种组合（类、父类、接口、否定）
+class A { }
+class B : A() { }
+interface Named { fn name() -> string }
+class N : A(), Named { override fn name() -> string { rtn "n" } }
+
+fn main() -> void {
+    var b : B = new B()
+    var a : A = b
+    var n : Named = new N()
+    println("" + (a is B))
+    println("" + (a is A))
+    println("" + (b is A))
+    println("" + (b is B))
+    println("" + (n is A))
+    println("" + (a !is B))
+    println("" + (b !is B))
+    rtn
+}

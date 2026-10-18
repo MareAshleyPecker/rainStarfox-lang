@@ -1,0 +1,7 @@
+// n7：不许把 is 的结果再拿去 is（bool 不是引用类型）
+class A { }
+fn main() -> void {
+    var a : A = new A()
+    println("" + (a is A is A))
+    rtn
+}

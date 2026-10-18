@@ -1,0 +1,12 @@
+// n1：final 类不许继承
+final class Sealed {
+    fn id() -> int { rtn 1 }
+}
+
+class Broken : Sealed() {
+}
+
+fn main() -> void {
+    var b : Broken = new Broken()
+    println(intToString(b.id()))
+}

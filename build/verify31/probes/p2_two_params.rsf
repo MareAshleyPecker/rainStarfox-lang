@@ -1,0 +1,9 @@
+fn firstOf&<T, U>(a : T, b : U) -> T {
+    rtn a
+}
+
+fn main() {
+    println("" + firstOf(7, "ignored"))
+    println(firstOf("kept", 2))
+    println("" + firstOf(1.5, false))
+}

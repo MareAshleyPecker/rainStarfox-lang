@@ -1,0 +1,7 @@
+// n1：目标类型不许写可空
+class A { }
+fn main() -> void {
+    var a : A = new A()
+    var b : A = a as ?A
+    rtn
+}

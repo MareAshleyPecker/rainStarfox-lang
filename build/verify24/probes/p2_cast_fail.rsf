@@ -1,0 +1,15 @@
+// p2：兄弟类之间 `as` 失败 → 文案里印 JVM 全名，try/catch 接住
+class A { }
+class B : A() { }
+class C : A() { }
+
+fn main() -> void {
+    var a : A = new C()
+    try {
+        var b : B = a as B
+        println("不该到这里")
+    } catch (e : string) {
+        println(e)
+    }
+    rtn
+}

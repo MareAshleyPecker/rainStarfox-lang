@@ -1,0 +1,6 @@
+// n2：数值转换不归 as 管（走 toByte/toChar/charToInt 这些内置函数）
+fn main() -> void {
+    var n : int = 5
+    var m : int = n as int
+    rtn
+}

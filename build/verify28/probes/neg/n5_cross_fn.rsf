@@ -1,0 +1,9 @@
+// n5：跨函数 goto（另一个函数里的反引号标签）→ 期望报错「goto 的标签 '目标' 在函数 'main' 里没有定义」
+fn one() -> void {
+    `目标`:
+    rtn
+}
+
+fn main() -> void {
+    goto `目标`
+}
