@@ -1297,6 +1297,7 @@ rsf build <file.rsf> [-o <dir>] [-n 类名]    编译成 .class（默认输出�
 rsf build <file.rsf> --dump                 顺便打印生成的字节码（ASM 文本）
 rsf check <file.rsf>                        只做检查，列出函数表
 rsf lex   <file.rsf>                        打印 token 流
+rsf lsp                                     语言服务器（stdio 上的 LSP，给编辑器用）
 rsf repl                                    交互式解释器
 rsf help | version
 ```
@@ -1364,7 +1365,7 @@ src/test/kotlin/org/example/        测试（359 个：两端一致性、rsf 版
 ### IntelliJ IDEA 插件
 
 `idea-rainstarfox/` 是给 IntelliJ 平台写的插件（文件类型、语法高亮、实时诊断、
-代码补全、一键运行/编译），诊断与补全走 `rsf check --json` 和 `rsf complete`
+代码补全、一键运行/编译），诊断与补全走常驻的 `rsf lsp`（LSP over stdio）
 两个 CLI 命令——报错和补全全部来自编译器，只有一份语义实现。用本机已装的
 IDEA 当 SDK 编译，不下载 IDE 分发包：
 
@@ -1475,7 +1476,7 @@ gradlew.bat verifyPlugin          :: 官方校验器静态检查
 | 7 | 构造对象（`new`，含 `new 导入的 JVM 类(...)`） | ✅ |
 | 8 | `!T` 错误返回 | ✅（阶段 14） |
 | 9 | 用户自定义类/结构体 | ✅（阶段 12） |
-| 10 | 编辑器支持：诊断 + 补全（走 `rsf check --json` / `rsf complete`） | ✅ |
+| 10 | 编辑器支持：诊断 + 补全（走 `rsf lsp`，LSP over stdio） | ✅ |
 | 11 | Language Server（增量分析 / 跳转定义 / 悬停类型） | 待做 |
 | 12 | 用户自定义类 + `new` 构造 | ✅ |
 | 13 | 数组类型 `T[]` | ✅ |

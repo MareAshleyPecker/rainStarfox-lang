@@ -15,9 +15,10 @@ import javax.swing.Icon
 /**
  * 代码补全。
  *
- * 候选**不是**插件自己算的，而是把光标位置交给编译器的 `rsf complete`——语法、
- * 作用域、import 展开这些规则编译器已经有一份权威实现，插件照着再写一遍必然走样。
- * 代价是每次补全要起一次 JVM（两三百毫秒），实测在补全菜单弹出时感觉不到。
+ * 候选**不是**插件算的：把光标位置和整篇文本交给语言服务器（[RsfLspClient]），
+ * 用的是编译器那份权威实现——语法、作用域、import 展开都不会走样。
+ *
+ * 服务器常驻，所以这条路只剩一次管道往返；不再像以前那样每次补全起一个 JVM。
  */
 class RsfCompletionContributor : CompletionContributor() {
     init {
@@ -37,15 +38,15 @@ class RsfCompletionProvider : CompletionProvider<CompletionParameters>() {
         val file = parameters.originalFile as? RsfPsiFile ?: return
         val virtualFile = file.virtualFile ?: return
         val command = RsfLauncher.detect(file.project) ?: return
+        val baseDir = virtualFile.parent?.path?.let { File(it) } ?: return
 
         val document = parameters.editor.document
         val offset = parameters.offset.coerceIn(0, document.textLength)
         val lineIndex = document.getLineNumber(offset)
-        val line = lineIndex + 1
-        val column = offset - document.getLineStartOffset(lineIndex) + 1
-        val baseDir = virtualFile.parent?.path?.let { File(it) } ?: return
+        val character = offset - document.getLineStartOffset(lineIndex)
 
-        val items = RsfCli.complete(command, virtualFile.path, document.text, line, column, baseDir)
+        val client = RsfLspService.client(command, baseDir) ?: return
+        val items = client.complete(RsfLspClient.toUri(virtualFile.path), document.text, lineIndex, character)
         for (item in items) {
             result.addElement(
                 LookupElementBuilder.create(item.label)
@@ -58,9 +59,11 @@ class RsfCompletionProvider : CompletionProvider<CompletionParameters>() {
     /** 只给有把握的几种配图标；认不出来的不给图标，比给错图标强。 */
     private fun iconOf(kind: String): Icon? = when (kind) {
         "function" -> AllIcons.Nodes.Method
+        "method" -> AllIcons.Nodes.Method
         "variable" -> AllIcons.Nodes.Variable
         "field" -> AllIcons.Nodes.Field
         "class" -> AllIcons.Nodes.Class
+        "type" -> AllIcons.Nodes.Type
         else -> null
     }
 }

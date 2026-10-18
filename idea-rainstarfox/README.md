@@ -10,23 +10,22 @@
 |---|---|
 | 文件类型 | `.rsf` 有独立的图标、语言 ID、括号配对、`Ctrl+/` 注释 |
 | 语法高亮 | 关键字、修饰词、类型名、函数定义/调用、内置函数、字符串、数字、注释；配色可以在 Setting → Editor → Color Scheme → rainStarfox 里逐项改 |
-| 实时诊断 | 停止输入约 0.5 秒后调用编译器检查**编辑器里的当前文本**（不必先保存），错误划红波浪线、警告划黄波浪线 |
+| 实时诊断 | 停止输入约 0.3 秒后让语言服务器检查**编辑器里的当前文本**（不必先保存），错误划红波浪线、警告划黄波浪线、提示划灰线 |
 | 代码补全 | 关键字、类型、内置函数、跨文件函数、参数、局部变量、`Math.` 这类 JVM 成员 |
 | 运行 / 编译 | 右键或 Run 菜单里执行 `rsf run` / `rsf build`，输出进 Run 控制台，**报错行可点击跳转** |
 | 设置 | Setting → Tools → rainStarfox：指定编译器路径、开关实时诊断与补全 |
 
 ## 诊断和补全从哪来
 
-不是插件自己实现的，而是复用编译器自己的命令行：
+走 **LSP**：插件起一个常驻的 `rsf lsp` 进程，通过 stdio 上的 JSON-RPC 说话。
 
 ```
-rsf check    <文件> --json                    # 诊断
-rsf complete <文件> --line L --col C          # 补全
+rsf lsp        # 语言服务器：initialize / didOpen / didChange / diagnostic / completion
 ```
 
-理由很实在：语法规则、作用域、重载解析、import 展开这些逻辑，编译器里已经有一份权威实现，插件再写一遍必然两边走样。代价是每次请求要起一次 JVM（约 200~300 毫秒），所以诊断是**防抖**之后才跑的——你打字的时候它不会每敲一个键就跑一次。
+这不是「每次起一个 JVM 跑一条命令」：服务器只起一次，之后每次诊断/补全只花一次管道往返（毫秒级）——这才是编辑器里「边打边报」的手感。语言规则仍然只有编译器那一份权威实现，插件不重复写。
 
-缓冲区没保存时，插件会把当前文本写进临时文件，再用 `--base <真实目录>` 告诉编译器相对目录在哪，这样 `import "lib/greet.rsf"` 依然找得到旁边的文件。
+插件把**整篇当前文本**发过去（LSP 全量同步），服务器负责算诊断和补全；未保存的缓冲区不需要插件再落临时文件，服务器自己按文档所在目录解 `imp` 的相对路径。
 
 ## 插件不打包编译器
 
@@ -36,6 +35,8 @@ rsf complete <文件> --line L --col C          # 补全
 2. 项目里的 `build/native/rainStarfox/rainStarfox.exe`（`gradlew exe` 的产物）
 3. 项目里的 `build/libs/*.jar`（`gradlew jar` 的产物）
 4. PATH 里的 `rainStarfox` / `rsf`
+
+⚠️ jar 模式对 **java 版本**有要求：编译器 jar 按 JDK 25 编译（class 版本 69），IDEA 自带的 JBR 21 跑不了它。要么用原生的 `rainStarfox.exe`（推荐），要么在设置里把 `java` 指到 JDK 25。
 
 找不到时不会静默失败：用到编译器相关功能会弹一次通知，告诉你去哪配。
 
@@ -80,10 +81,12 @@ src/main/kotlin/org/rainstarfox/idea/
     RsfColorSettingsPage.kt    配色预览页
     RsfCommenter.kt            注释
     RsfBraceMatcher.kt         括号配对
-    RsfExternalAnnotator.kt    诊断波浪线（后台线程跑编译器）
+    RsfExternalAnnotator.kt    诊断波浪线（后台线程问语言服务器）
     RsfCompletionContributor.kt 补全
-    RsfCli.kt                  调用编译器的唯一入口
-    RsfJson.kt                 极小的 JSON 读取器
+    RsfLspClient.kt            LSP 客户端：起 `rsf lsp`、收发 JSON-RPC、连接池
+    RsfDiagnostics.kt          诊断对齐（只留本文档 / 去重）
+    RsfCli.kt                  跑 run / build 的一次性进程
+    RsfJson.kt                 极小的 JSON 读取器（读 LSP 响应）
     RsfLauncher.kt             找编译器
     RsfSettings.kt             设置存储
     RsfConfigurable.kt         设置界面

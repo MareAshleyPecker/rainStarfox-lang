@@ -183,7 +183,8 @@ class RsfLexerTest {
         "var", "imutvar", "let",
         // 阶段 20：`interface` 是那时进的前端（这份快照当时漏抄了，插件的高亮表其实已经有一份）；
         // `override` 是阶段 20 追加的可选修饰词，和 public/static 同族
-        "pub", "prv", "prot", "stc", "override",
+        // 阶段 25：继承带来的三个修饰词/表达式关键字（这份快照当时漏抄了，插件高亮表早有）
+        "pub", "prv", "prot", "stc", "override", "final", "abstract", "super",
         "class", "new", "this", "constructor", "interface",
         // 阶段 19c：枚举声明 + 枚举分派（这份快照和插件的高亮表当时都漏抄了）
         "enum", "switch", "case",
@@ -193,6 +194,8 @@ class RsfLexerTest {
         "mathematic",
         // 阶段 24：类型转换与类型判断（`as` / `?as` / `is` / `!is` 里的两个硬关键字）
         "as", "is",
+        // 阶段 30：`lam` 字面量（写在表达式位置，和 this/as 一样是硬关键字）
+        "lam",
         "if", "else", "while", "for", "in", "break", "continue", "goto",
         "fail", "try", "catch", "true", "false", "null",
         "void", "int", "long", "float", "double", "string", "str", "bool", "boolean", "byte", "char",

@@ -40,51 +40,65 @@ object EditorSupport {
      * 修掉之后再跑就能看到下一条。warnings（比如不可达代码）是全部收集的。
      */
     fun diagnosticsJson(file: File, baseDir: File?): String {
-        val source = SourceFile.of(file)
         val sb = StringBuilder()
         sb.append("{\"diagnostics\":[")
-
-        var first = true
-        fun emit(
-            line: Int,
-            col: Int,
-            endCol: Int,
-            severity: String,
-            phase: String,
-            message: String,
-        ) {
-            if (!first) sb.append(',')
-            first = false
-            sb.append("{\"line\":").append(line)
-            sb.append(",\"col\":").append(col)
-            sb.append(",\"endCol\":").append(endCol)
-            sb.append(",\"severity\":\"").append(severity).append('"')
-            sb.append(",\"phase\":\"").append(Json.escape(phase)).append('"')
-            sb.append(",\"message\":\"").append(Json.escape(message)).append('"')
+        for ((i, d) in diagnostics(file, baseDir).withIndex()) {
+            if (i > 0) sb.append(',')
+            sb.append("{\"file\":\"").append(Json.escape(d.file)).append('"')
+            sb.append(",\"line\":").append(d.line)
+            sb.append(",\"col\":").append(d.col)
+            sb.append(",\"endCol\":").append(d.endCol)
+            sb.append(",\"severity\":\"").append(d.severity).append('"')
+            sb.append(",\"phase\":\"").append(Json.escape(d.phase)).append('"')
+            sb.append(",\"message\":\"").append(Json.escape(d.message)).append('"')
             sb.append('}')
         }
+        sb.append("]}")
+        return sb.toString()
+    }
 
+    /**
+     * 一次检查的**类型化**结果（编辑器守护进程直接用它，不用再过一遍 JSON）。
+     *
+     * 前端是「遇错即停」，所以 error 最多一条；warning 全部收集。
+     * `file` 是绝对路径——import 展开后别的文件里的错也在这里，调用方按它分流。
+     */
+    fun diagnostics(file: File, baseDir: File?): List<Located> {
+        val out = ArrayList<Located>()
         try {
             val loaded = Rsf.load(file, baseDir)
             val model = Rsf.analyze(loaded)
             for (d in model.diagnostics) {
                 val src = loaded.files.firstOrNull { it.name == d.file } ?: loaded.root
-                emit(d.line, d.col, underlineEnd(src, d.line, d.col), d.severity.json, d.phase, d.message)
+                out.add(Located(src.name, d.line, d.col, underlineEnd(src, d.line, d.col), d.severity.json, d.phase, d.message))
             }
         } catch (e: RsfError) {
-            val src = e.source ?: source
-            emit(
-                maxOf(e.line, 1),
-                maxOf(e.column, 1),
-                underlineEnd(src, e.line, e.column),
-                "error",
-                e.phase,
-                e.detail,
+            val src = e.source ?: SourceFile.of(file)
+            out.add(
+                Located(
+                    src.name,
+                    maxOf(e.line, 1),
+                    maxOf(e.column, 1),
+                    underlineEnd(src, e.line, e.column),
+                    "error",
+                    e.phase,
+                    e.detail,
+                ),
             )
         }
-        sb.append("]}")
-        return sb.toString()
+        return out
     }
+
+    /** 一条带位置的诊断。[severity] 与编译器 JSON 的取值一致：`error` / `warning` / `info`。 */
+    data class Located(
+        val file: String,
+        val line: Int,
+        val col: Int,
+        val endCol: Int,
+        val severity: String,
+        val phase: String,
+        val message: String,
+    )
 
     /** 插入符该有多长：把出错位置那个「词」整体划出来，比只划一个字符好看得多。 */
     private fun underlineEnd(source: SourceFile, line: Int, col: Int): Int {
@@ -102,6 +116,21 @@ object EditorSupport {
     // ------------------------------------------------------------------ 补全
 
     fun completionJson(file: File, text: String?, line: Int, col: Int, baseDir: File?): String {
+        val items = completions(file, text, line, col, baseDir)
+        val sb = StringBuilder("{\"items\":[")
+        for ((i, item) in items.withIndex()) {
+            if (i > 0) sb.append(',')
+            sb.append("{\"label\":\"").append(Json.escape(item.label)).append('"')
+            sb.append(",\"kind\":\"").append(item.kind).append('"')
+            sb.append(",\"detail\":\"").append(Json.escape(item.detail)).append('"')
+            sb.append('}')
+        }
+        sb.append("]}")
+        return sb.toString()
+    }
+
+    /** 补全的**类型化**结果（守护进程用；顺序与去重规则都在 [Completer] 里）。 */
+    fun completions(file: File, text: String?, line: Int, col: Int, baseDir: File?): List<CompletionItem> {
         val source = if (text != null) SourceFile.of(file.path, text) else SourceFile.of(file)
 
         // 被 import 进来的函数也要能补出来。带上「当前文件」与「整个程序」两份函数表：
@@ -118,17 +147,7 @@ object EditorSupport {
             ).parseProgram().functions
         }
 
-        val items = Completer(source, line, col, ownFunctions, allFunctions).items()
-        val sb = StringBuilder("{\"items\":[")
-        for ((i, item) in items.withIndex()) {
-            if (i > 0) sb.append(',')
-            sb.append("{\"label\":\"").append(Json.escape(item.label)).append('"')
-            sb.append(",\"kind\":\"").append(item.kind).append('"')
-            sb.append(",\"detail\":\"").append(Json.escape(item.detail)).append('"')
-            sb.append('}')
-        }
-        sb.append("]}")
-        return sb.toString()
+        return Completer(source, line, col, ownFunctions, allFunctions).items()
     }
 }
 

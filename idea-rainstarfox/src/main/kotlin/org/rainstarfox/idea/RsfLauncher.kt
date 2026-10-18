@@ -16,6 +16,9 @@ data class RsfCommand(
     /** 给人看的说明，设置页里显示「当前用的是哪个」。 */
     val description: String,
 ) {
+    /** 完整的命令行文本，给日志和「当前用的哪个编译器」提示用。 */
+    val commandLineString: String get() = (listOf(executable) + prefix).joinToString(" ")
+
     fun commandLine(vararg args: String): GeneralCommandLine {
         val cmd = GeneralCommandLine(executable)
         cmd.addParameters(prefix)

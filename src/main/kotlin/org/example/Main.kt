@@ -19,8 +19,9 @@ fun main(args: Array<String>) {
     // 不这么做的话，Windows 上 JVM 会按本机编码（cp936）往管道里写字，编辑器那头
     // 一律按 UTF-8 解码，中文提示就会变成乱码。人看的输出维持本机编码不动——
     // 那是控制台自己的编码，改了反而花屏。
-    if (args.any { it == "--json" }) {
+    if (args.any { it == "--json" } || args.firstOrNull() == "lsp") {
         System.setOut(java.io.PrintStream(java.io.FileOutputStream(java.io.FileDescriptor.out), true, Charsets.UTF_8))
+        System.setErr(java.io.PrintStream(java.io.FileOutputStream(java.io.FileDescriptor.err), true, Charsets.UTF_8))
     }
     exitProcess(Cli().run(args.toList()))
 }
@@ -34,6 +35,7 @@ class Cli {
             "build", "compile" -> wrap { cmdBuild(argv.drop(1)) }
             "check" -> wrap { cmdCheck(argv.drop(1)) }
             "complete" -> wrap { cmdComplete(argv.drop(1)) }
+            "lsp" -> wrap { cmdLsp() }
             "lex" -> wrap { cmdLex(argv.drop(1)) }
             "repl" -> repl()
             "help", "--help", "-h", "-?" -> { usage(); 0 }
@@ -208,6 +210,17 @@ class Cli {
             "complete <file.rsf> --line <L> --col <C> [--base <dir>]",
         )
         println(EditorSupport.completionJson(file, null, line, col, baseDir))
+        return 0
+    }
+
+    /**
+     * 语言服务器：stdio 上跑 LSP，给编辑器插件用。
+     *
+     * 和 `check --json` 的区别是**常驻**：起一次 JVM，之后每次诊断/补全只花一次管道往返。
+     * stdout 是协议通道（UTF-8 的 JSON-RPC 帧），任何调试输出都只能走 stderr。
+     */
+    private fun cmdLsp(): Int {
+        org.example.complie.lsp.LanguageServer(System.`in`, System.out).serve()
         return 0
     }
 
