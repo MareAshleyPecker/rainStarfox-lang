@@ -43,6 +43,9 @@ import org.example.complie.ast.UnaryExpr
 import org.example.complie.ast.VarExpr
 import org.example.complie.ast.WhileStmt
 import org.example.complie.diag.RsfError
+import org.example.complie.ir.Capture
+import org.example.complie.ir.ClosurePlan
+import org.example.complie.ir.ClosureScopes
 import org.example.complie.ir.ControlFlow
 import org.example.complie.ir.IAssign
 import org.example.complie.ir.IBranch
@@ -57,6 +60,7 @@ import org.example.complie.ir.IReturn
 import org.example.complie.ir.ISuperDelegate
 import org.example.complie.ir.ISwitch
 import org.example.complie.ir.IVarDecl
+import org.example.complie.ir.LambdaClosure
 import org.example.complie.ir.LoweredFunction
 import org.example.complie.interop.ClassPath
 import org.example.complie.interop.JvmMethod
@@ -69,6 +73,7 @@ import org.example.complie.sema.AnnotationSpec
 import org.example.complie.sema.AnnotationTarget
 import org.example.complie.sema.AnnotationUseSite
 import org.example.complie.sema.ArrayRuntime
+import org.example.complie.sema.Binding
 import org.example.complie.sema.Builtin
 import org.example.complie.sema.Builtins
 import org.example.complie.sema.EnumRuntime
@@ -79,6 +84,9 @@ import org.example.complie.sema.RsfType
 import org.example.complie.sema.SemanticModel
 import org.example.complie.sema.SuperCall
 import org.example.complie.sema.UserMember
+import org.example.complie.sema.fnSignatureOf
+import org.example.complie.sema.fnTypeText
+import org.example.complie.sema.isFunctionType
 import org.objectweb.asm.AnnotationVisitor
 import org.objectweb.asm.ClassWriter
 import org.objectweb.asm.Handle
@@ -211,6 +219,22 @@ class BytecodeCompiler(
                 )
             }
             pending += internalName to annotationClass(internalName, spec).toByteArray()
+        }
+
+        // 函数类型的 SAM 接口（阶段 30b，工单 §1）：一个**实际用到的** arity 一个类，
+        // 按 arity 升序生成。没有 lambda 的程序一个都不生成——旧语料写出去的 .class
+        // 列表和每个文件的字节都不变（判据台的 J1 仍是 148）。
+        for (arity in usedArities()) {
+            val internalName = samInternalName(arity)
+            if (pending.any { it.first.equals(internalName, ignoreCase = true) }) {
+                throw RsfError(
+                    "codegen",
+                    "'$internalName' 是函数类型的 SAM 接口名，但程序里已经有一个同名（或只差大小写）的类：" +
+                        "两者会写到同一个 .class 上互相覆盖。给那个类改个名字。",
+                    1, 1, null,
+                )
+            }
+            pending += internalName to samInterface(internalName, arity)
         }
 
         if (!outDir.exists() && !outDir.mkdirs()) {
@@ -696,10 +720,17 @@ class BytecodeCompiler(
      * 写了 `pkg` 时要在这里补上包路径，否则描述符会指向默认包里的同名类。
      */
     private fun descriptorOfType(type: RsfType): String {
+        // 阶段 30b：函数类型在 JVM 上的表示就是它的 SAM 接口（工单 §1）：
+        // `(int) -> int` → `L__RsfFn1;`，可空与否共用同一个接口（可空 = 引用可能是 null）。
         // 阶段 13：数组 = 一层 '[' + 元素的描述符，**递归一层**。
         // （别写成 `"[".repeat(arrayDepth) + descriptorOfType(elementType)`：
         // elementType 自己还带着剩下的维度，那样 `int[][]` 会算出 `[[[I`。）
         if (type.isArray) return "[" + descriptorOfType(type.elementType)
+        type.fnTypeText?.let { text ->
+            val sig = fnSignatureOf(text)
+                ?: throw IllegalStateException("内部错误：函数类型解析失败（$text）")
+            return "L${samInternalName(sig.first.size)};"
+        }
         val name = type.externalName
         if (type.isExternal && name != null && model.classModel.classes.containsKey(name)) {
             return "L${classInternalName(name)};"
@@ -1613,7 +1644,10 @@ class BytecodeCompiler(
         if (ctor != null) {
             // 构造器体和普通方法体走同一条生成路径（实例方法，localOffset = 0）；
             // 体里那句 this(...) 已经在上面发过了，emitBody 会跳过它
-            emitBody(mv, owner, ctor, localOffset = 0, returnType = RsfType.VOID, lvt = lvt)
+            emitBody(
+                mv, owner, ctor, localOffset = 0, returnType = RsfType.VOID, lvt = lvt,
+                closures = ClosureScopes.of(model, ctor),
+            )
         } else {
             // 隐式无参构造器：没有形参也没有局部变量，LVT 只有 0 号槽的 this
             mv.visitInsn(RETURN)
@@ -1621,6 +1655,8 @@ class BytecodeCompiler(
         }
         mv.visitMaxs(0, 0)
         mv.visitEnd()
+        // 构造器体里的 lambda：合成方法同样紧跟在这个 <init> 后面（工单 §1）
+        if (ctor != null) emitLambdaMethods(cw, owner, ctor)
     }
 
     /**
@@ -1720,9 +1756,14 @@ class BytecodeCompiler(
         mv.visitCode()
         // 实例方法的 0 号槽是 this；static 方法没有
         val lvt = beginLvt(mv, if (fn.isStatic) null else owner)
-        emitBody(mv, owner, fn, localOffset = 0, returnType = model.returnTypeOf(fn), lvt = lvt)
+        emitBody(
+            mv, owner, fn, localOffset = 0, returnType = model.returnTypeOf(fn), lvt = lvt,
+            closures = ClosureScopes.of(model, fn),
+        )
         mv.visitMaxs(0, 0)
         mv.visitEnd()
+        // lambda 合成方法紧跟在包围方法后面（工单 §1：方法表顺序确定）
+        emitLambdaMethods(cw, owner, fn)
     }
 
     private fun accessOf(fn: FuncDecl): Int = when (fn.control) {
@@ -1925,9 +1966,272 @@ class BytecodeCompiler(
         mv.visitCode()
         // 顶层函数一律 static：LVT 里没有 this，只有形参与局部变量
         val lvt = beginLvt(mv, null)
-        emitBody(mv, owner, fn, localOffset = if (isEntry(fn)) 1 else 0, returnType = returnType, lvt = lvt)
+        emitBody(
+            mv, owner, fn, localOffset = if (isEntry(fn)) 1 else 0, returnType = returnType, lvt = lvt,
+            closures = ClosureScopes.of(model, fn),
+        )
         mv.visitMaxs(0, 0)
         mv.visitEnd()
+        // lambda 合成方法紧跟在包围函数后面（工单 §1：方法表顺序确定）
+        emitLambdaMethods(cw, owner, fn)
+    }
+
+    // ------------------------------------------------------------------ 函数值 / lambda（阶段 30b）
+
+    /**
+     * `LambdaMetafactory.metafactory` 的句柄——描述符是工单 §1 逐字规定的那个。
+     *
+     * 为什么不用 `altMetafactory`：rsf 的 lambda 不捕获泛型、不做序列化、没有
+     * 桥接方法，`metafactory` 正好够用，而且它的参数表最短，30c 复刻时最不容易走样。
+     */
+    private val lambdaMetafactory = Handle(
+        H_INVOKESTATIC,
+        "java/lang/invoke/LambdaMetafactory",
+        "metafactory",
+        "(Ljava/lang/invoke/MethodHandles\$Lookup;Ljava/lang/String;Ljava/lang/invoke/MethodType;" +
+            "Ljava/lang/invoke/MethodType;Ljava/lang/invoke/MethodHandle;Ljava/lang/invoke/MethodType;)" +
+            "Ljava/lang/invoke/CallSite;",
+        false,
+    )
+
+    /** 函数类型的 SAM 接口内部名：`(int, int) -> int` → `__RsfFn2`（工单 §1）。 */
+    private fun samInternalName(arity: Int): String = "__RsfFn$arity"
+
+    /** `invoke` 的描述符：形参全擦成 Object，返回也是 Object（工单 §1）。 */
+    private fun samInvokeDescriptor(arity: Int): String =
+        "(" + "Ljava/lang/Object;".repeat(arity) + ")Ljava/lang/Object;"
+
+    /** 创建点那条 indy 的描述符：捕获值逐个进来，吐出一个 SAM 接口引用。 */
+    private fun samFactoryDescriptor(arity: Int, captures: List<Capture>): String =
+        "(" + captures.joinToString("") { descriptorOfType(it.type) } + ")L${samInternalName(arity)};"
+
+    /**
+     * lambda 实现方法的描述符：捕获值 + 自己的形参 → 声明返回类型（工单 §1）。
+     *
+     * **void 的 lambda 是个例外**：返回 `void` 的 lambda（`(int) -> void`）在这里落成
+     * `Ljava/lang/Object;`，方法体末尾压 null 返回。原因是 JVM 的硬约束——
+     * `LambdaMetafactory` 要求实现方法的返回类型**能放进** SAM 的返回类型（Object），
+     * 而 `void` 放不进：
+     * ```
+     * LambdaConversionException: Type mismatch for lambda return: void is not convertible to class java.lang.Object
+     * ```
+     * 非 void 的 lambda 不受这条影响（基本类型由 metafactory 装箱，见
+     * [instantiatedDescriptor]），所以只有这一档偏离工单。
+     */
+    private fun implDescriptorOf(closure: LambdaClosure): String {
+        val sb = StringBuilder("(")
+        for (c in closure.captures) sb.append(descriptorOfType(c.type))
+        for (p in closure.params) sb.append(descriptorOfType(p.type))
+        sb.append(')')
+        val ret = if (closure.returnType == RsfType.VOID) {
+            "Ljava/lang/Object;"
+        } else {
+            descriptorOfType(closure.returnType)
+        }
+        return sb.append(ret).toString()
+    }
+
+    /**
+     * 程序里**实际用到**的函数类型 arity，升序。
+     *
+     * 口径：只看有降级体的函数/方法——lambda 只可能出现在这些体里。没有 lambda 的
+     * 程序得到空表，[compile] 因此一个 SAM 类都不写（旧语料的类文件列表一个不差）。
+     */
+    private fun usedArities(): List<Int> {
+        val arities = sortedSetOf<Int>()
+        for (fn in lambdaHosts()) {
+            for (closure in ClosureScopes.of(model, fn).closures) arities += closure.arity
+        }
+        return arities.toList()
+    }
+
+    /** 所有可能有 lambda 的函数/方法/构造器：顶层函数 + 类/接口/枚举的方法。 */
+    private fun lambdaHosts(): List<FuncDecl> {
+        val hosts = LinkedHashSet<FuncDecl>()
+        hosts += model.lowered.keys
+        hosts += model.classModel.methodLowered.keys
+        return hosts.toList()
+    }
+
+    /**
+     * SAM 接口类（工单 §1）：`__RsfFn<arity>`。
+     *
+     * 形状是硬性的——`V17`、`ACC_PUBLIC|ACC_INTERFACE|ACC_ABSTRACT`、父类 Object、
+     * 没有字段没有构造器，只有一个抽象 `invoke`。30c 的自举后端要逐字节复刻它。
+     */
+    private fun samInterface(internalName: String, arity: Int): ByteArray {
+        val cw = newClassWriter()
+        cw.visit(
+            V17,
+            ACC_PUBLIC or ACC_INTERFACE or ACC_ABSTRACT,
+            internalName,
+            null,
+            "java/lang/Object",
+            null,
+        )
+        val mv = cw.visitMethod(
+            ACC_PUBLIC or ACC_ABSTRACT, "invoke", samInvokeDescriptor(arity), null, null,
+        )
+        mv.visitEnd()
+        cw.visitEnd()
+        return cw.toByteArray()
+    }
+
+    /**
+     * lambda 创建点（工单 §1）：把捕获值按顺序压栈，再一条 `invokedynamic`
+     * 换来一个 SAM 实例。
+     *
+     * 栈上的东西**就是** indy 的实参——被调方法 `lambda$…` 把这几格当形参收，
+     * 所以创建点不需要 new、不需要构造器，也不需要往字段里塞值。
+     */
+    private fun emitLambda(ctx: ExprCtx, expr: LambdaExpr) {
+        val mv = ctx.mv
+        val closure = ctx.closures.lambdaOf(expr)
+            ?: throw IllegalStateException("内部错误：lambda 没有闭包分析结果（${expr.at.line} 行）")
+        // 捕获值按工单 §1 的顺序压栈：`this` 在最前，然后按体里首次引用的顺序。
+        for (c in closure.captures) {
+            when (c) {
+                is Capture.This -> emitThis(ctx, "lambda 里的 this")
+                is Capture.Local -> loadSlot(mv, c.type, ctx.slotOf(c.binding) + ctx.localOffset)
+            }
+        }
+        val samDesc = samFactoryDescriptor(closure.arity, closure.captures)
+        mv.visitInvokeDynamicInsn(
+            "invoke",
+            samDesc,
+            lambdaMetafactory,
+            // samMethodType：`invoke` 在接口里的擦除形态 —— (Object…)Object
+            Type.getMethodType(samInvokeDescriptor(closure.arity)),
+            // 实现方法：程序类（或用户类）上的 private static 合成方法
+            Handle(H_INVOKESTATIC, ctx.owner, closure.implName, implDescriptorOf(closure), false),
+            // instantiatedMethodType：形参/返回的**真实类型**。JVM 校验要求它每一项都能
+            // 放进 samMethodType 的 Object 里，所以基本类型在这一栏落成**包装类**
+            // （`(int)int` → `(Ljava/lang/Integer;)Ljava/lang/Integer;`）——
+            // 装箱/拆箱由 LambdaMetafactory 适配到实现方法自己的 `(I)I`。这正是 javac
+            // 为 `Function<Integer,Integer>` 写出来的形状。
+            Type.getMethodType(instantiatedDescriptor(closure)),
+        )
+    }
+
+    /**
+     * `instantiatedMethodType` 的描述符（工单 §1 的「形参/返回真实类型」）。
+     *
+     * 与 [implDescriptorOf] 的唯一区别：基本类型用**包装类**。JVM 的
+     * `LambdaMetafactory` 会校验「samMethodType 的每一项都能装下 instantiated 的对应项」，
+     * 而 `Object` 装不下 `int`（原始类型不是 Object 的子类型），只装得下 `Integer`。
+     */
+    private fun instantiatedDescriptor(closure: LambdaClosure): String {
+        val sb = StringBuilder("(")
+        for (p in closure.params) sb.append(samBoxedDescriptor(p.type))
+        // void 的 lambda：`invoke` 的返回在接口里恒为 Object，JVM 校验要求
+        // instantiated 和实现方法的返回都**能放进** Object 里（`void` 放不进），
+        // 所以两栏都落成 Object（实现方法压 null 返回，见 [implDescriptorOf]）。
+        sb.append(')').append(
+            if (closure.returnType == RsfType.VOID) "Ljava/lang/Object;" else samBoxedDescriptor(closure.returnType),
+        )
+        return sb.toString()
+    }
+
+    /** 基本类型取包装类描述符，其余同 [descriptorOfType]。 */
+    private fun samBoxedDescriptor(type: RsfType): String =
+        if (type.isPrimitive) type.base.boxedDescriptor else descriptorOfType(type)
+
+    /**
+     * 把 [fn] 体里的 lambda 实现方法逐个发出去——**紧跟在包围方法后面**（工单 §1：
+     * 方法表顺序必须确定，30c 要拿它对拍到字节）。
+     */
+    private fun emitLambdaMethods(cw: ClassWriter, owner: String, fn: FuncDecl) {
+        val closures = ClosureScopes.of(model, fn)
+        for (closure in closures.closures) {
+            val mv = cw.visitMethod(
+                ACC_PRIVATE or ACC_STATIC or ACC_SYNTHETIC,
+                closure.implName,
+                implDescriptorOf(closure),
+                null,
+                null,
+            )
+            mv.visitCode()
+            // 合成方法不发 LVT、不发 @RsfLabels：它的帧布局（捕获 + 形参 + 体里的
+            // 局部变量）是自己的一套，和 `bodyLvtEntries` 的符号表口径不是一回事。
+            emitBody(
+                mv = mv,
+                owner = owner,
+                fn = fn,
+                localOffset = 0,
+                returnType = closure.returnType,
+                lvt = null,
+                closures = closures,
+                closure = closure,
+                voidReturnsObject = closure.returnType == RsfType.VOID,
+            )
+            mv.visitMaxs(0, 0)
+            mv.visitEnd()
+        }
+    }
+
+    /**
+     * 按名字调用一个**函数值**（`f(1)` 的 `f`，或 `f!!(1)` 里那个 `f!!`）：
+     * 取出引用 → `CHECKCAST __RsfFn<arity>` → 实参装箱 → `INVOKEINTERFACE invoke`
+     * → 按静态返回类型收敛（工单 §1）。
+     */
+    private fun emitFnValueCall(ctx: ExprCtx, expr: CallExpr, fnType: RsfType, target: Expr?) {
+        val mv = ctx.mv
+        val text = fnType.fnTypeText
+            ?: throw IllegalStateException("内部错误：'${expr.name}' 的类型不是函数类型")
+        val (params, _) = fnSignatureOf(text)
+            ?: throw IllegalStateException("内部错误：函数类型解析失败（$text）")
+        val arity = params.size
+        val sam = samInternalName(arity)
+        if (target != null) {
+            // `f!!(1)`：目标本身是个表达式（ForceExpr），它已经把值收敛成函数类型了
+            emitExpr(ctx, target)
+        } else {
+            val binding = ctx.closures.fnValueCallee(expr)
+            if (binding != null) {
+                loadSlot(mv, binding.type, ctx.slotOf(binding) + ctx.localOffset)
+            } else {
+                emitExpr(ctx, expr) // 走不到：emitCall 已判过 callee
+            }
+        }
+        mv.visitTypeInsn(CHECKCAST, sam)
+        for ((i, arg) in expr.arguments.withIndex()) {
+            val declared = params.getOrNull(i) ?: fnType
+            emitExpr(ctx, arg)
+            emitWiden(mv, model.typeOf(arg), declared)
+            // SAM 的形参全是 Object：基本类型要装箱，引用类型原样（包括数组/可空值）
+            if (declared.isPrimitive) boxValue(mv, declared.base)
+        }
+        mv.visitMethodInsn(INVOKEINTERFACE, sam, "invoke", samInvokeDescriptor(arity), true)
+        // invoke 的返回在类文件里恒为 Object：void 的直接丢掉，其余按静态类型收敛
+        val resultType = model.typeOf(expr)
+        if (resultType == RsfType.VOID) mv.visitInsn(POP) else emitObjectTo(mv, resultType)
+    }
+
+    /**
+     * 把栈上的一个 `Object`（擦除后的引用）收敛到 rsf 的静态类型 [want]。
+     *
+     * 和 [emitResultCast] 是同一条规矩，只是**没有**「声明类型」可比——`invoke` 的
+     * 返回在类文件里恒为 Object。拿一个永不相等的声明类型当引子，复用同一份实现，
+     * 避免两条路各自长出一套装箱/拆箱的分支。
+     */
+    private fun emitObjectTo(mv: MethodVisitor, want: RsfType) {
+        emitResultCast(mv, RsfType.external("java/lang/Object"), want)
+    }
+
+    /**
+     * 压 `this`。
+     *
+     * 普通方法体里它就是 0 号槽；**lambda 帧**里 0 号槽是第一个捕获值，`this` 得从
+     * 自己的捕获槽取（工单 §1：`this` 算一项捕获，排在捕获清单最前）。
+     */
+    private fun emitThis(ctx: ExprCtx, what: String) {
+        val slot = ctx.thisSlot
+        if (slot != null) {
+            ctx.mv.visitVarInsn(ALOAD, slot)
+        } else {
+            requireInstanceScope(ctx, what)
+            ctx.mv.visitVarInsn(ALOAD, 0)
+        }
     }
 
     // ------------------------------------------------------------------ 调试信息（第 26 刀：LVT）
@@ -2047,13 +2351,18 @@ class BytecodeCompiler(
         fn: FuncDecl,
         localOffset: Int,
         returnType: RsfType,
-        lvt: LvtScope,
+        lvt: LvtScope?,
+        closures: ClosurePlan = ClosurePlan.EMPTY,
+        closure: LambdaClosure? = null,
+        voidReturnsObject: Boolean = false,
     ) {
-        val body = model.loweredOf(fn)
-        bodyLvtEntries(fn, body, localOffset, lvt)
+        // 阶段 30b：lambda 的体是**另一个帧**（捕获项占最前面的槽），由闭包分析单独
+        // 降级好了放在 [closure] 里；为 null 时就是常规的函数体。
+        val body = closure?.body ?: model.loweredOf(fn)
+        if (lvt != null && closure == null) bodyLvtEntries(fn, body, localOffset, lvt)
         val cf = ControlFlow(body.instructions, body.labelIndex, body.handlers)
         val reach = cf.reachable()
-        val ctx = ExprCtx(mv, owner, body, localOffset)
+        val ctx = ExprCtx(mv, owner, body, localOffset, closures, closure)
 
         val labels = HashMap<String, Label>()
         for (instr in body.instructions) {
@@ -2119,15 +2428,14 @@ class BytecodeCompiler(
                     val binding = model.bindingOf(instr.stmt)
                     emitExpr(ctx, instr.stmt.initializer)
                     emitWiden(mv, model.typeOf(instr.stmt.initializer), binding.type)
-                    storeSlot(mv, binding.type, binding.slot + localOffset)
+                    storeSlot(mv, binding.type, ctx.slotOf(binding) + localOffset)
                 }
 
                 is IAssign -> {
                     // 裸字段名赋值（`x = 1`）：目标是字段而不是局部槽，this 在 0 号槽
                     val field = model.classModel.bareFieldWrites[instr.stmt]
                     if (field != null) {
-                        requireInstanceScope(ctx, "裸字段名 '${instr.stmt.name}'")
-                        mv.visitVarInsn(ALOAD, 0)
+                        emitThis(ctx, "裸字段名 '${instr.stmt.name}'")
                         emitExpr(ctx, instr.stmt.value)
                         val declared = declaredFieldType(field.className, field.index, field.type)
                         // 往**声明**类型上收敛（泛型字段擦除后是 Object ⇒ 这里要装箱）
@@ -2140,7 +2448,7 @@ class BytecodeCompiler(
                         val binding = model.bindingOf(instr.stmt)
                         emitExpr(ctx, instr.stmt.value)
                         emitWiden(mv, model.typeOf(instr.stmt.value), binding.type)
-                        storeSlot(mv, binding.type, binding.slot + localOffset)
+                        storeSlot(mv, binding.type, ctx.slotOf(binding) + localOffset)
                     }
                 }
 
@@ -2153,8 +2461,7 @@ class BytecodeCompiler(
                         )
                     val target = instr.stmt.target
                     if (target.receiver is ThisExpr) {
-                        requireInstanceScope(ctx, "this.${target.name}")
-                        mv.visitVarInsn(ALOAD, 0)
+                        emitThis(ctx, "this.${target.name}")
                     } else {
                         emitExpr(ctx, target.receiver)
                     }
@@ -2209,7 +2516,10 @@ class BytecodeCompiler(
                 is IReturn -> {
                     val value = instr.stmt.value
                     if (value == null) {
-                        mv.visitInsn(RETURN)
+                        // 裸 `rtn`：void 方法用 RETURN；void 的 lambda 方法返回 Object
+                        // （见 implDescriptorOf），得压 null 再 ARETURN
+                        if (voidReturnsObject) mv.visitInsn(ACONST_NULL)
+                        mv.visitInsn(if (voidReturnsObject) ARETURN else RETURN)
                     } else if (value is NullLit) {
                         // 可空返回类型：压 null 再按返回类型的指令返回
                         mv.visitInsn(ACONST_NULL)
@@ -2302,7 +2612,11 @@ class BytecodeCompiler(
         }
 
         // 走到函数末尾：void 函数正常结束；非 void 时 Checker 已经拦住了，这里是防御
-        if (reach[cf.exit]) {
+        if (reach[cf.exit] && voidReturnsObject) {
+            // void 的 lambda 走到体末尾：返回 null（对应描述符里的 Object 返回）
+            mv.visitInsn(ACONST_NULL)
+            mv.visitInsn(ARETURN)
+        } else if (reach[cf.exit]) {
             if (returnType == RsfType.VOID) {
                 mv.visitInsn(RETURN)
             } else {
@@ -2318,10 +2632,11 @@ class BytecodeCompiler(
         }
 
         // 体发完、visitMaxs 之前：发 LVT 的结束标签，再逐条写表（见 beginLvt）
-        endLvt(mv, lvt)
+        if (lvt != null) endLvt(mv, lvt)
 
-        // 阶段 28a：再把标签名写进 @RsfLabels（同样必须在 visitMaxs 之前）
-        emitLabelMetadata(mv, fn)
+        // 阶段 28a：再把标签名写进 @RsfLabels（同样必须在 visitMaxs 之前）。
+        // lambda 合成方法不发：标签表属于包围方法那一帧。
+        if (closure == null) emitLabelMetadata(mv, fn)
     }
 
     /**
@@ -2365,7 +2680,23 @@ class BytecodeCompiler(
         val owner: String,
         val body: LoweredFunction?,
         val localOffset: Int,
-    )
+        /** 本方法的闭包清单（lambda 创建点、函数值调用都从这儿查）。 */
+        val closures: ClosurePlan = ClosurePlan.EMPTY,
+        /** 非 null 表示正在发一个 lambda 合成方法——帧布局是闭包自己的那一套。 */
+        private val closure: LambdaClosure? = null,
+    ) {
+
+        /** lambda 帧里 `this` 的捕获槽；不在 lambda 里就是 null（= 0 号槽）。 */
+        val thisSlot: Int? = closure?.captures?.firstOrNull { it is Capture.This }?.slot
+
+        /**
+         * 本帧里某个绑定占哪一格。
+         *
+         * 常规帧就是 `binding.slot`；lambda 帧要先过一层闭包分析的槽位表（捕获项、
+         * Checker 另造的形参绑定都在这张表里换号）。
+         */
+        fun slotOf(binding: Binding): Int = closure?.slotOf(binding) ?: binding.slot
+    }
 
     private fun emitExpr(ctx: ExprCtx, expr: Expr, discard: Boolean = false) {
         val mv = ctx.mv
@@ -2393,15 +2724,14 @@ class BytecodeCompiler(
                 // 命中字段时 this 就是 0 号槽。
                 val field = model.classModel.fieldReads[expr]
                 if (field != null) {
-                    requireInstanceScope(ctx, "裸字段名 '${expr.name}'")
-                    mv.visitVarInsn(ALOAD, 0)
+                    emitThis(ctx, "裸字段名 '${expr.name}'")
                     mv.visitFieldInsn(
                         GETFIELD, classInternalName(field.className), expr.name,
                         descriptorOfType(field.type),
                     )
                 } else {
                     val binding = model.bindingOf(expr)
-                    loadSlot(mv, binding.type, binding.slot + ctx.localOffset)
+                    loadSlot(mv, binding.type, ctx.slotOf(binding) + ctx.localOffset)
                 }
             }
 
@@ -2421,11 +2751,8 @@ class BytecodeCompiler(
                 mv.visitInsn(arrayLoadOpcode(element))
             }
 
-            // 实例方法（含构造器）的 0 号槽就是 this
-            is ThisExpr -> {
-                requireInstanceScope(ctx, "this")
-                mv.visitVarInsn(ALOAD, 0)
-            }
+            // 实例方法（含构造器）的 0 号槽就是 this；lambda 帧里它是第一个捕获槽
+            is ThisExpr -> emitThis(ctx, "this")
 
             is CallExpr -> if (model.isConstruction(expr)) emitNew(ctx, expr) else emitCall(ctx, expr)
 
@@ -2520,14 +2847,9 @@ class BytecodeCompiler(
                 if (expr.safe) emitSafeCast(ctx, expr) else emitCheckedCast(ctx, expr)
             }
 
-            // 阶段 30a：`lam` 只做到前端。JVM 那边要怎么表示（SAM 接口 / invokedynamic
-            // 的 LambdaMetafactory）是 30b 的活，这里明确拒绝。
-            is LambdaExpr -> throw RsfError(
-                "ir",
-                "[rsf-17d] 后端暂不支持：lambda 表达式（阶段 30b）",
-                expr.at.line,
-                expr.at.column,
-            )
+            // 阶段 30b：lambda 创建点——捕获值压栈 + 一条 LambdaMetafactory 的 indy。
+            // 实现方法（`lambda$<包围方法>$<k>`）由 [emitLambdaMethods] 紧跟在包围方法后面发。
+            is LambdaExpr -> emitLambda(ctx, expr)
 
             is MemberExpr -> {
                 // `super.方法(...)` / `super(接口).方法(...)`（阶段 25 K2）必须**最先**查这张表：
@@ -2776,8 +3098,7 @@ class BytecodeCompiler(
             is UserMember.Field -> {
                 // rsf 没有静态字段，所以字段访问一定有一个实例接收者
                 if (expr.receiver is ThisExpr) {
-                    requireInstanceScope(ctx, "this.${expr.name}")
-                    mv.visitVarInsn(ALOAD, 0)
+                    emitThis(ctx, "this.${expr.name}")
                 } else {
                     emitExpr(ctx, expr.receiver)
                 }
@@ -2922,6 +3243,12 @@ class BytecodeCompiler(
         // 阶段 13：数组——ASM 的 visitTypeInsn / ANEWARRAY 收的是「内部名**或者**
         // 数组描述符」，数组给描述符即可（`[I`、`[Ljava/lang/String;`）
         if (type.isArray) return descriptorOfType(type)
+        // 阶段 30b：函数类型 CHECKCAST 到它的 SAM 接口（`__RsfFn<arity>`）
+        type.fnTypeText?.let { text ->
+            val sig = fnSignatureOf(text)
+                ?: throw IllegalStateException("内部错误：函数类型解析失败（$text）")
+            return samInternalName(sig.first.size)
+        }
         // 类型参数擦除到 Object（`new T[3]` 建出来的就是 Object[]）
         if (type.isTypeParam) return "java/lang/Object"
         // 可空的基本类型在 JVM 上是包装类（`?int[]` 的元素是 Integer）
@@ -3304,8 +3631,7 @@ class BytecodeCompiler(
             val params = ArrayList<RsfType>()
             if (!decl.isStatic) {
                 if (expr.receiver is ThisExpr) {
-                    requireInstanceScope(ctx, "this.${expr.name}")
-                    mv.visitVarInsn(ALOAD, 0)
+                    emitThis(ctx, "this.${expr.name}")
                 } else {
                     emitExpr(ctx, expr.receiver)
                 }
@@ -3380,6 +3706,19 @@ class BytecodeCompiler(
     private fun emitCall(ctx: ExprCtx, expr: CallExpr) {
         val mv = ctx.mv
 
+        // 阶段 30b：`f(1)` 里的 `f` 是一个**函数值**（局部变量/形参/捕获项）。
+        // Checker 让局部变量遮住同名顶层函数，所以这里必须抢在隐式调用和 callTargets
+        // 之前判——判据就是闭包分析记下的那张表（与解释器读同一份，见 ClosurePlan）。
+        val fnValue = ctx.closures.fnValueCallee(expr)
+        if (fnValue != null) {
+            emitFnValueCall(ctx, expr, fnValue.type, null)
+            return
+        }
+        if (expr.callee != null && model.typeOf(expr.callee).isFunctionType) {
+            emitFnValueCall(ctx, expr, model.typeOf(expr.callee), expr.callee)
+            return
+        }
+
         if (expr.name == "print" || expr.name == "println") {
             mv.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;")
             if (expr.arguments.isEmpty()) {
@@ -3409,10 +3748,9 @@ class BytecodeCompiler(
         val implicit = model.classModel.implicitCalls[expr]
         if (implicit != null) {
             val decl = implicit.decl
-            // 实例方法的接收者就是当前对象：0 号槽
+            // 实例方法的接收者就是当前对象：0 号槽（lambda 帧里是捕获槽）
             if (!decl.isStatic) {
-                requireInstanceScope(ctx, "'${expr.name}(...)'（隐式 this 调用）")
-                mv.visitVarInsn(ALOAD, 0)
+                emitThis(ctx, "'${expr.name}(...)'（隐式 this 调用）")
             }
             val params = model.paramTypesOf(decl)
             for ((i, arg) in expr.arguments.withIndex()) {
@@ -3439,8 +3777,7 @@ class BytecodeCompiler(
         if (inheritedJvm != null) {
             val m = inheritedJvm.method
             if (!m.isStatic) {
-                requireInstanceScope(ctx, "'${expr.name}(...)'（隐式 this 调用继承来的 JDK 方法）")
-                mv.visitVarInsn(ALOAD, 0)
+                emitThis(ctx, "'${expr.name}(...)'（隐式 this 调用继承来的 JDK 方法）")
             }
             for ((i, arg) in expr.arguments.withIndex()) {
                 emitExpr(ctx, arg)

@@ -1,29 +1,59 @@
 package org.example.complie.ir
 
+import org.example.complie.ast.AsExpr
 import org.example.complie.ast.AssignStmt
+import org.example.complie.ast.BinaryExpr
 import org.example.complie.ast.Block
 import org.example.complie.ast.BoolLit
 import org.example.complie.ast.BreakStmt
+import org.example.complie.ast.CallExpr
+import org.example.complie.ast.CharLit
 import org.example.complie.ast.ContinueStmt
+import org.example.complie.ast.DoubleLit
+import org.example.complie.ast.ElvisExpr
 import org.example.complie.ast.Expr
 import org.example.complie.ast.ExprStmt
 import org.example.complie.ast.FailStmt
+import org.example.complie.ast.FloatLit
 import org.example.complie.ast.ForStmt
+import org.example.complie.ast.ForceExpr
 import org.example.complie.ast.FuncDecl
 import org.example.complie.ast.GotoStmt
+import org.example.complie.ast.IfExpr
 import org.example.complie.ast.IfStmt
 import org.example.complie.ast.IndexAssignStmt
+import org.example.complie.ast.IndexExpr
+import org.example.complie.ast.IntLit
+import org.example.complie.ast.IsExpr
 import org.example.complie.ast.LabelStmt
+import org.example.complie.ast.LambdaExpr
+import org.example.complie.ast.LongLit
 import org.example.complie.ast.MemberAssignStmt
+import org.example.complie.ast.MemberExpr
+import org.example.complie.ast.NewArrayExpr
+import org.example.complie.ast.NewExpr
+import org.example.complie.ast.NullLit
 import org.example.complie.ast.ReturnStmt
 import org.example.complie.ast.Stmt
+import org.example.complie.ast.StringLit
 import org.example.complie.ast.SuperCallStmt
+import org.example.complie.ast.SuperExpr
 import org.example.complie.ast.SwitchStmt
 import org.example.complie.ast.ThisCallStmt
+import org.example.complie.ast.ThisExpr
 import org.example.complie.ast.TryStmt
+import org.example.complie.ast.UnaryExpr
+import org.example.complie.ast.VarExpr
 import org.example.complie.ast.WhileStmt
 import org.example.complie.ast.VarDeclStmt
 import org.example.complie.sema.Binding
+import org.example.complie.sema.Builtins
+import org.example.complie.sema.RsfBase
+import org.example.complie.sema.RsfType
+import org.example.complie.sema.SemanticModel
+import org.example.complie.sema.fnSignatureOf
+import org.example.complie.sema.fnTypeText
+import org.example.complie.sema.isFunctionType
 import org.example.complie.lexing.SourceLine
 import java.util.IdentityHashMap
 
@@ -248,6 +278,14 @@ class Lowering(
      * 它跟普通局部变量一样要占一格槽位，但它没有 `VarDeclStmt` 可以挂，所以单开一张表。
      */
     private val catchBindings: Map<TryStmt, Binding> = emptyMap(),
+    /**
+     * 要降级的**函数体**；null 就是用 [fn] 自己的体。
+     *
+     * 阶段 30b 的 lambda 需要它：lambda 的体是 `fn` 里的一条表达式，却要当成一个独立的
+     * 帧来铺槽位。给 [fn] 保持**外层函数**不动（`classModel.ownerOf(fn)`、`isInstance(fn)`、
+     * 报错文案都还认得出它是哪个类的方法），只把「铺哪段语句」换掉。
+     */
+    private val bodyOverride: Block? = null,
 ) {
 
     private val out = ArrayList<Instr>()
@@ -270,7 +308,7 @@ class Lowering(
 
         // 抽象方法（接口里只写签名的那种）没有体，降级结果就是一个空函数——
         // 调用方（Checker）本来就不该给它铺槽位，这里只是让签名对得上。
-        fn.body?.let { lowerBlock(it) }
+        (bodyOverride ?: fn.body)?.let { lowerBlock(it) }
 
         val labelIndex = LinkedHashMap<String, Int>()
         for ((i, ins) in out.withIndex()) {
@@ -668,5 +706,483 @@ class ControlFlow(
         }
 
         return inSet.map { it as Set<VarDeclStmt> }
+    }
+}
+
+// ------------------------------------------------------------------ 闭包（阶段 30b）
+
+/**
+ * lambda 的一个**捕获项**（值捕获，DESIGN-30 §4）。
+ *
+ * 捕获清单的顺序是硬性的：工单 §1 规定「按体里首次引用的顺序」，`this` 也算一项、
+ * 而且排在最前。30c 的自举后端要逐字节复刻，所以顺序在两端只能是这一份算法。
+ */
+sealed interface Capture {
+    val type: RsfType
+
+    /** 捕获值在本帧里的槽位（从 0 开始按宽度累加）。 */
+    val slot: Int
+
+    /** 捕获的是外层的 `this`：JVM 上类型是 `L<包围类>;`，创建点传 `ALOAD 0`。 */
+    data class This(override val type: RsfType, override val slot: Int) : Capture
+
+    /** 捕获的是外层的一个局部变量/形参。 */
+    data class Local(val binding: Binding, override val slot: Int) : Capture {
+        override val type: RsfType get() = binding.type
+    }
+}
+
+/**
+ * 一个 lambda 的降级结果：捕获清单 + 自己的形参 + 体 + 帧槽位表。
+ *
+ * 帧布局（两端必须一模一样，30c 要对拍）：
+ * ```
+ * 槽 0 ..                捕获项（`this` 在前，然后按首次引用顺序，long/double 占两格）
+ * 槽 captureSlotCount .. 形参（按签名顺序）
+ * 槽 ...                 体里的局部变量（[Lowering] 分配，永不复用）
+ * ```
+ * 之所以让捕获项占**帧里最前面的槽**：JVM 那边被调方法的前几个局部变量槽就是实参
+ * （捕获值），解释器这边照抄同一个号，两边就不用各自再翻译一次。
+ */
+class LambdaClosure(
+    /** 包围这个方法的名字（`lambda$<包围方法名>$<k>` 里的那一段）。 */
+    val encloser: FuncDecl,
+    val expr: LambdaExpr,
+    /** 在包围方法里的出现序号（从 0 开始）。 */
+    val index: Int,
+    val captures: List<Capture>,
+    /** 自己的形参绑定；槽位已由 [body] 的 Lowering 分配好。 */
+    val params: List<Binding>,
+    val returnType: RsfType,
+    val body: LoweredFunction,
+    private val slots: Map<Binding, Int>,
+) {
+    /** 形参个数——也就是 SAM 接口的 arity。 */
+    val arity: Int get() = params.size
+
+    /** 捕获项一共占多少槽（long/double 各占两格）。 */
+    val captureSlotCount: Int = captures.sumOf { it.type.slots }
+
+    /** 合成方法的确定性名字（工单 §1）。 */
+    val implName: String get() = "lambda\$${encloser.name}\$$index"
+
+    /**
+     * 本帧里某个绑定占哪一格。
+     *
+     * 为什么不能只看 `binding.slot`：捕获项的绑定属于**外层**帧，它的 `slot` 是外层
+     * 的槽位号，在本帧里必须换成捕获槽。同一份表里还有一格「Checker 造的那份形参
+     * 绑定 → 我们的形参槽」——Checker 在 `checkLambda` 里另造了一套 `Binding`，只活在
+     * 它自己的作用域里，我们拿不到，只能在遇到读的时候按名字对上来。
+     */
+    fun slotOf(binding: Binding): Int = slots[binding] ?: binding.slot
+}
+
+/**
+ * 整个函数（含嵌套 lambda）的闭包清单。
+ *
+ * 两端后端都从这里读，绝不各自再走一遍 AST——捕获顺序、槽位号、lambda 编号一旦不同，
+ * 字节码与解释器就会给出不同的结果，而 30c 还要拿它对拍到字节。
+ */
+class ClosurePlan(
+    val closures: List<LambdaClosure>,
+    private val byExpr: IdentityHashMap<LambdaExpr, LambdaClosure>,
+    private val fnCalls: IdentityHashMap<CallExpr, Binding>,
+) {
+    fun lambdaOf(expr: LambdaExpr): LambdaClosure? = byExpr[expr]
+
+    /** 按名字调用的函数值（`f(1)`）解析到的绑定；不是函数值调用就是 null。 */
+    fun fnValueCallee(call: CallExpr): Binding? = fnCalls[call]
+
+    companion object {
+        val EMPTY = ClosurePlan(emptyList(), IdentityHashMap(), IdentityHashMap())
+    }
+}
+
+/**
+ * 闭包分析的缓存：同一个 `FuncDecl` 只算一次。
+ *
+ * 两个后端都会问同一批函数，但真正要紧的是**两端读到同一份结果**（尤其是 lambda 编号
+ * 和槽位号）。键用 `FuncDecl` 的**身份**：数据类的 `equals` 会把整个体走一遍，太贵。
+ */
+object ClosureScopes {
+    private val cache = IdentityHashMap<FuncDecl, ClosurePlan>()
+
+    fun of(model: SemanticModel, fn: FuncDecl): ClosurePlan =
+        cache.getOrPut(fn) { ClosureAnalyser(model, fn).analyze() }
+}
+
+/**
+ * 走一遍函数体，找出每个 lambda 的捕获清单，以及每个「函数值按名字调用」的绑定。
+ *
+ * 为什么要自己走：Checker 把捕获探测的结果留在它自己的 `captureProbe` 里就扔了，
+ * `SemanticModel` 里没有「lambda → 捕获」这张表（阶段 30a 没存，30b 也不许改语义）。
+ * 两边后端又都需要它，所以放在 IR 这一层算一次——这里已经是 AST 的下游，正好是
+ * 「语义已经查完、还没开始生成」的位置。
+ *
+ * 归属规则（配合下面 [Level] 的说明）：
+ * - 一个读命中的绑定如果**本帧自己声明**，那它不算捕获；
+ * - 形参的 `Binding` 是 Checker 在 `checkLambda` 里新造的（`paramIndex >= 0`），
+ *   按「下标 + 名字」认回它属于哪一层；
+ * - catch 变量同理（Checker 也是在 catch 体里新造一个 `Binding`），按名字认回最近的
+ *   `catch (名字 : string)`；
+ * - 其余的一律是外层帧的值，从**读到它的那一层**一路标到函数帧：每一层都得捕获，
+ *   因为每一层都要把值再传给下一层。
+ *
+ * 只认 `VarExpr` 读和 `this`：赋值的左边不是读（`x = ...` 改的是外层那个变量，
+ * 而 `var` 的捕获本来就被 Checker 拒了）。
+ */
+private class ClosureAnalyser(
+    private val model: SemanticModel,
+    private val fn: FuncDecl,
+) {
+    /** 按**出现顺序**收集的 lambda（就是编号 `k` 的顺序）。 */
+    private val allLevels = ArrayList<Level>()
+    private val levels = ArrayList<Level>()
+    private val scopeMaps = ArrayDeque<MutableMap<String, Binding>>()
+    private val catchScopes = ArrayList<CatchScope>()
+    private val catchBindings = IdentityHashMap<TryStmt, Binding>()
+    private val fnCalls = IdentityHashMap<CallExpr, Binding>()
+
+    private class CatchScope(val name: String, val fresh: Binding, val owner: Level?)
+
+    /** 一层 lambda 的分析中间结果。 */
+    private inner class Level(val expr: LambdaExpr, val params: List<Binding>, val ret: RsfType) {
+        /** 体里用了 `this`（含嵌套 lambda 里用的）。 */
+        var hasThis = false
+
+        /** 捕获的**外层局部**，首次引用顺序（`this` 不在里面，它排在捕获清单最前）。 */
+        val captured = ArrayList<Binding>()
+
+        /** 本帧自己的绑定（形参/局部/catch），命中这些就不算捕获。 */
+        val declared = HashSet<Binding>()
+
+        /** Checker 造的 catch 绑定 → 我们这份帧内的 catch 绑定。 */
+        val aliases = IdentityHashMap<Binding, Binding>()
+
+        /** 形参在 Checker 眼里的绑定（读到时才对得上）。 */
+        val checkerParams = arrayOfNulls<Binding>(params.size)
+    }
+
+    fun analyze(): ClosurePlan {
+        scopeMaps.addLast(HashMap())
+        for (p in model.paramsOf(fn)) scopeMaps.last()[p.name] = p
+        fn.body?.let { walkBlock(it, pushScope = true) }
+        scopeMaps.removeLast()
+
+        val plan = ArrayList<LambdaClosure>(allLevels.size)
+        val byExpr = IdentityHashMap<LambdaExpr, LambdaClosure>()
+        for ((k, level) in allLevels.withIndex()) {
+            val captures = ArrayList<Capture>()
+            var slot = 0
+            if (level.hasThis) {
+                val ownerName = model.classModel.ownerOf(fn)?.name
+                    ?: model.classModel.interfaceOwnerOf(fn)?.name
+                    ?: throw IllegalStateException(
+                        "内部错误：'${fn.name}' 里用了 this，但它不属于任何类或接口",
+                    )
+                captures += Capture.This(RsfType(RsfBase.EXTERNAL, false, ownerName), slot)
+                slot += 1
+            }
+            for (b in level.captured) {
+                captures += Capture.Local(b, slot)
+                slot += b.type.slots
+            }
+
+            // lambda 的体铺成独立一帧：捕获项占最前面的槽，形参紧随其后。
+            val body = Lowering(
+                fn = fn,
+                declBindings = model.declBindings,
+                params = level.params,
+                firstSlot = slot,
+                catchBindings = catchBindings,
+                bodyOverride = level.expr.body,
+            ).lower()
+
+            val slots = IdentityHashMap<Binding, Int>()
+            for (c in captures) {
+                if (c is Capture.Local) slots[c.binding] = c.slot
+            }
+            for ((i, fresh) in level.params.withIndex()) {
+                slots[fresh] = fresh.slot
+                level.checkerParams[i]?.let { slots[it] = fresh.slot }
+            }
+            for ((checker, fresh) in level.aliases) slots[checker] = fresh.slot
+
+            val closure = LambdaClosure(
+                encloser = fn,
+                expr = level.expr,
+                index = k,
+                captures = captures,
+                params = level.params,
+                returnType = level.ret,
+                body = body,
+                slots = slots,
+            )
+            plan += closure
+            byExpr[level.expr] = closure
+        }
+        return ClosurePlan(plan, byExpr, fnCalls)
+    }
+
+    // -------------------------------------------------------------- 遍历
+
+    private fun walkBlock(block: Block, pushScope: Boolean) {
+        if (pushScope) scopeMaps.addLast(HashMap())
+        for (stmt in block.statements) walkStmt(stmt)
+        if (pushScope) scopeMaps.removeLast()
+    }
+
+    private fun walkStmt(stmt: Stmt) {
+        when (stmt) {
+            is Block -> walkBlock(stmt, pushScope = true)
+
+            is VarDeclStmt -> {
+                val binding = model.bindingOf(stmt)
+                levels.lastOrNull()?.declared?.add(binding)
+                scopeMaps.last()[stmt.name] = binding
+                walkExpr(stmt.initializer)
+            }
+
+            is AssignStmt -> {
+                // 裸字段名赋值（`x = 1`）在两端都靠 `this`——它也是一次 this 使用
+                if (model.classModel.bareFieldWrites[stmt] != null) markThis()
+                walkExpr(stmt.value)
+            }
+            is MemberAssignStmt -> {
+                walkExpr(stmt.target)
+                walkExpr(stmt.value)
+            }
+            is IndexAssignStmt -> {
+                walkExpr(stmt.target)
+                walkExpr(stmt.value)
+            }
+            is ThisCallStmt -> stmt.arguments.forEach(::walkExpr)
+            is SuperCallStmt -> stmt.arguments.forEach(::walkExpr)
+            is ExprStmt -> walkExpr(stmt.expr)
+            is ReturnStmt -> stmt.value?.let(::walkExpr)
+            is FailStmt -> walkExpr(stmt.message)
+            is LabelStmt -> {}
+            is GotoStmt -> {}
+            is BreakStmt -> {}
+            is ContinueStmt -> {}
+
+            is IfStmt -> {
+                walkExpr(stmt.condition)
+                walkBlock(stmt.body, pushScope = true)
+                stmt.elseBody?.let { walkBlock(it, pushScope = true) }
+            }
+
+            is WhileStmt -> {
+                walkExpr(stmt.condition)
+                walkBlock(stmt.body, pushScope = true)
+            }
+
+            is ForStmt -> {
+                stmt.condition?.let(::walkExpr)
+                walkBlock(stmt.body, pushScope = true)
+                stmt.step?.let { walkStmt(it) }
+            }
+
+            is SwitchStmt -> {
+                walkExpr(stmt.subject)
+                for (case in stmt.cases) walkBlock(case.body, pushScope = true)
+                stmt.elseBody?.let { walkBlock(it, pushScope = true) }
+            }
+
+            is TryStmt -> {
+                walkBlock(stmt.body, pushScope = true)
+                val fresh = Binding(
+                    name = stmt.catchName,
+                    type = RsfType(RsfBase.STRING),
+                    mutable = false,
+                    paramIndex = -1,
+                    at = stmt.at,
+                    catchVar = true,
+                )
+                catchBindings[stmt] = fresh
+                catchScopes += CatchScope(stmt.catchName, fresh, levels.lastOrNull())
+                scopeMaps.addLast(HashMap())
+                scopeMaps.last()[stmt.catchName] = fresh
+                walkBlock(stmt.catchBody, pushScope = false)
+                scopeMaps.removeLast()
+                catchScopes.removeLast()
+            }
+        }
+    }
+
+    private fun walkExpr(expr: Expr) {
+        when (expr) {
+            is IntLit -> {}
+            is LongLit -> {}
+            is FloatLit -> {}
+            is DoubleLit -> {}
+            is StringLit -> {}
+            is CharLit -> {}
+            is BoolLit -> {}
+            is NullLit -> {}
+
+            is VarExpr -> {
+                // 裸字段名（`rtn x`）不是局部变量读：它编译成 `this.x`，也算一次 this 使用
+                val field = model.classModel.fieldReads[expr]
+                if (field != null) {
+                    markThis()
+                } else {
+                    // 既不是字段也不是局部变量的 VarExpr 是**类名/枚举名的前缀**
+                    // （`Math.abs`、`TokenKind.Add`、`System.out`），它没有绑定，
+                    // 和闭包捕获无关。`bindingOf` 对这种情况会抛，所以直接查表。
+                    model.varRefs[expr]?.let { use(it) }
+                }
+            }
+
+            is ThisExpr -> markThis()
+            is SuperExpr -> markThis()
+
+            is CallExpr -> {
+                expr.callee?.let(::walkExpr)
+                // 隐式 this 调用（`helper()`、继承来的 JDK 方法）的接收者也是本帧的 this
+                val implicitDecl = model.classModel.implicitCalls[expr]?.decl
+                if (implicitDecl != null && !implicitDecl.isStatic) markThis()
+                val inherited = model.classModel.implicitJvmCallOf(expr)?.method
+                if (inherited != null && !inherited.isStatic) markThis()
+                if (expr.callee == null) recordFnValueCall(expr)
+                expr.arguments.forEach(::walkExpr)
+            }
+
+            is UnaryExpr -> walkExpr(expr.operand)
+            is BinaryExpr -> {
+                walkExpr(expr.left)
+                walkExpr(expr.right)
+            }
+            is IfExpr -> {
+                walkExpr(expr.condition)
+                walkExpr(expr.whenTrue)
+                walkExpr(expr.whenFalse)
+            }
+            is ElvisExpr -> {
+                walkExpr(expr.left)
+                walkExpr(expr.right)
+            }
+            is ForceExpr -> walkExpr(expr.operand)
+            is IsExpr -> walkExpr(expr.operand)
+            is AsExpr -> walkExpr(expr.operand)
+            is NewExpr -> expr.arguments.forEach(::walkExpr)
+            is NewArrayExpr -> expr.dimensions.forEach(::walkExpr)
+            is IndexExpr -> {
+                walkExpr(expr.receiver)
+                walkExpr(expr.index)
+            }
+            is MemberExpr -> {
+                walkExpr(expr.receiver)
+                expr.arguments?.forEach(::walkExpr)
+            }
+
+            is LambdaExpr -> walkLambda(expr)
+        }
+    }
+
+    private fun walkLambda(expr: LambdaExpr) {
+        val type = model.typeOf(expr)
+        val text = type.fnTypeText ?: throw IllegalStateException(
+            "内部错误：lambda 的类型不是函数类型（${type.rsfName}）",
+        )
+        val (paramTypes, ret) = fnSignatureOf(text) ?: throw IllegalStateException(
+            "内部错误：函数类型解析失败（$text）",
+        )
+        val params = expr.params.mapIndexed { i, p ->
+            Binding(p.name, paramTypes[i], mutable = false, paramIndex = i, at = p.at)
+        }
+        val level = Level(expr, params, ret)
+        allLevels += level
+        levels += level
+        scopeMaps.addLast(HashMap())
+        for ((i, b) in params.withIndex()) scopeMaps.last()[expr.params[i].name] = b
+        walkBlock(expr.body, pushScope = false)
+        scopeMaps.removeLast()
+        levels.removeLast()
+    }
+
+    // -------------------------------------------------------------- 归属
+
+    private fun markThis() {
+        for (level in levels) level.hasThis = true
+    }
+
+    /**
+     * 一次读：判断它是本帧的绑定还是外层的捕获。
+     */
+    private fun use(binding: Binding) {
+        val top = levels.lastOrNull() ?: return // 函数顶层（不在任何 lambda 里）不需要捕获
+        if (top.declared.contains(binding)) return
+
+        // catch 变量：Checker 在 catch 体里造的那份 Binding，按名字认回我们的
+        if (binding.catchVar) {
+            val scope = catchScopes.lastOrNull { it.name == binding.name }
+            if (scope == null) {
+                top.declared.add(binding) // 兜底：认不出来就当作本帧的，别误捕
+                return
+            }
+            val owner = scope.owner
+            if (owner != null) {
+                owner.aliases[binding] = scope.fresh
+                owner.declared.add(binding)
+            }
+            captureUpTo(binding, owner)
+            return
+        }
+
+        // 形参：按「下标 + 名字」认出属于哪一层（Checker 那份 Binding 只活在它作用域里）
+        if (binding.paramIndex >= 0) {
+            val owner = levels.lastOrNull {
+                binding.paramIndex < it.params.size &&
+                    it.expr.params[binding.paramIndex].name == binding.name
+            }
+            if (owner == null) {
+                captureUpTo(binding, null)
+                return
+            }
+            owner.declared.add(binding)
+            if (owner.checkerParams[binding.paramIndex] == null) {
+                owner.checkerParams[binding.paramIndex] = binding
+            }
+            if (owner !== top) captureUpTo(binding, owner)
+            return
+        }
+
+        captureUpTo(binding, null)
+    }
+
+    /**
+     * 从最内层一路标到 [owner]（**不含** owner 那一层；null 表示函数帧）：
+     * 中间每一层都得把值攥在手里，才传得到最里面。
+     */
+    private fun captureUpTo(binding: Binding, owner: Level?) {
+        val stop = if (owner == null) -1 else levels.indexOf(owner)
+        var i = levels.lastIndex
+        while (i > stop) {
+            val level = levels[i]
+            if (!level.declared.contains(binding) && !level.captured.contains(binding)) {
+                level.captured += binding
+            }
+            i--
+        }
+    }
+
+    /** 按名字调用的函数值：`f(1)` 里的 `f`（不是函数值就什么也不做）。 */
+    private fun recordFnValueCall(call: CallExpr) {
+        if (call.name == "print" || call.name == "println") return
+        if (Builtins[call.name] != null) return
+        if (model.isConstruction(call)) return
+        if (model.callTargets[call] != null) return
+        val binding = lookup(call.name) ?: return
+        if (!binding.type.isFunctionType) return
+        fnCalls[call] = binding
+        use(binding)
+    }
+
+    private fun lookup(name: String): Binding? {
+        for (i in scopeMaps.indices.reversed()) {
+            scopeMaps[i][name]?.let { return it }
+        }
+        return null
     }
 }

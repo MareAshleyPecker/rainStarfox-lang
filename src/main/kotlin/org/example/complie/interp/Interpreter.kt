@@ -32,6 +32,8 @@ import org.example.complie.diag.RsfError
 import org.example.complie.interop.JvmMethod
 import org.example.complie.interop.ResolvedField
 import org.example.complie.interop.ResolvedMethod
+import org.example.complie.ir.Capture
+import org.example.complie.ir.ClosureScopes
 import org.example.complie.ir.IAssign
 import org.example.complie.ir.IBranch
 import org.example.complie.ir.ICtorDelegate
@@ -45,6 +47,7 @@ import org.example.complie.ir.IReturn
 import org.example.complie.ir.ISuperDelegate
 import org.example.complie.ir.ISwitch
 import org.example.complie.ir.IVarDecl
+import org.example.complie.ir.LambdaClosure
 import org.example.complie.ir.LoweredFunction
 import org.example.complie.lexing.SourceLine
 import org.example.complie.lexing.TokenKind
@@ -155,6 +158,25 @@ class Interpreter(
     /** 静默模式：重放 REPL 会话前缀时不产生输出（用户函数里的输出也一并静音）。 */
     private var silent = false
 
+    /**
+     * 正在执行的 lambda 帧（阶段 30b）：帧的槽位数组 → 它的闭包计划。
+     *
+     * 为什么要这张表：捕获项在 lambda 帧里占的槽号和**外层帧不一样**（工单 §1 规定：
+     * 捕获项排在最前面），而读一个捕获变量时手里只有 Checker 当初给的那个 [Binding]
+     * ——它的 `slot` 是**外层**的号。按数组同一性查这张表就能把号换过来；普通函数帧
+     * 根本不在表里，查不到就照旧用 `binding.slot`。
+     */
+    private val closureFrames = java.util.IdentityHashMap<Array<Any?>, LambdaClosure>()
+
+    /**
+     * 一个函数值（阶段 30b）。
+     *
+     * [captures] 是**创建那一刻**的值快照（DESIGN-30 §4：值捕获）。捕获 `var` 已被
+     * Checker 拒掉，剩下的 imutvar / 形参 / `this` 在闭包活着的时候都不会再变，所以
+     * 快照和「引用」在可观察行为上没有区别。
+     */
+    private class Closure(val plan: LambdaClosure, val captures: List<Any?>)
+
     /** 从 main 开始执行。 */
     fun runEntry(): Any? {
         // 阶段 25 K3 起类继承在解释器里**跑得动了**，K1 那道解释器守卫就撤了。
@@ -229,6 +251,57 @@ class Interpreter(
             )
         }
         depth++
+    }
+
+    // ------------------------------------------------------------------ 闭包（阶段 30b）
+
+    /**
+     * 某个绑定在当前帧里占哪一格。
+     *
+     * 只有 lambda 帧会换号（捕获项排最前，见 [ClosureScopes] / [LambdaClosure.slotOf]）；
+     * 普通函数帧查不到，直接就是 `binding.slot`。
+     */
+    private fun slotOf(binding: Binding, slots: Array<Any?>): Int =
+        closureFrames[slots]?.slotOf(binding) ?: binding.slot
+
+    /**
+     * 调用一个函数值：铺一帧新槽，把捕获快照和实参填进去，然后跑 lambda 的体。
+     *
+     * 帧布局和 JVM 那边**完全一致**（工单 §1）：捕获项在前，形参紧随其后，体里的局部
+     * 变量由 lambda 自己的 [org.example.complie.ir.Lowering] 分配。`rtn` 只从这一帧返回
+     * ——传的正是 lambda 自己的 [LambdaClosure.body]，所以外层帧的 pc 一点没动（DESIGN-30：
+     * 没有非局部返回）。
+     */
+    private fun invokeClosure(closure: Closure, args: List<Any?>): Any? {
+        val plan = closure.plan
+        if (args.size != plan.arity) {
+            throw RsfFailure(
+                "rsf: 函数值需要 ${plan.arity} 个参数，给了 ${args.size} 个",
+            )
+        }
+        enter(plan.expr.at, plan.implName)
+        try {
+            val body = plan.body
+            val slots = arrayOfNulls<Any>(body.slotCount)
+            for ((i, capture) in plan.captures.withIndex()) {
+                slots[capture.slot] = closure.captures[i]
+            }
+            for ((i, param) in plan.params.withIndex()) {
+                slots[param.slot] = coerce(args[i], param.type)
+            }
+            closureFrames[slots] = plan
+            try {
+                return execute(body, slots, 0)
+            } finally {
+                closureFrames.remove(slots)
+            }
+        } catch (failure: RsfFailure) {
+            // 和 [call] 一样记一笔：`?:` 要判断失败是不是目标调用自己造成的
+            failure.frames.add(0, plan.encloser)
+            throw failure
+        } finally {
+            depth--
+        }
     }
 
     // ------------------------------------------------------------------ 指令循环
@@ -346,7 +419,11 @@ class Interpreter(
                     is IReturn -> {
                         val value = instr.stmt.value
                         if (value == null || value is NullLit) return null
-                        return coerce(eval(value, slots, body), model.returnTypeOf(body.function))
+                        // 阶段 30b：lambda 帧的 `rtn` 收敛到 lambda 自己的返回类型
+                        // （包围方法的返回类型在这里是错的——lambda 的返回类型可以是别的）
+                        val retType = closureFrames[slots]?.returnType
+                            ?: model.returnTypeOf(body.function)
+                        return coerce(eval(value, slots, body), retType)
                     }
 
                     // `fail <消息>`：抛出去（编译产物那头是 `throw new RuntimeException(msg)`）
@@ -492,7 +569,8 @@ class Interpreter(
                     thisObject(slots).fields[field.index]
                 } else {
                     val binding = model.bindingOf(expr)
-                    slots[binding.slot]
+                    // 阶段 30b：lambda 体里读外层变量时，槽号要按捕获清单换
+                    slots[slotOf(binding, slots)]
                 }
             }
 
@@ -607,12 +685,24 @@ class Interpreter(
 
             // 阶段 30a：`lam` 只做到前端。闭包值（抓到外层变量的那一份环境）是 30b
             // 的活，这里明确拒绝——不编一个「能跑但什么都不做」的空实现。
-            is LambdaExpr -> throw RsfError(
-                "ir",
-                "[rsf-17d] 后端暂不支持：lambda 表达式（阶段 30b）",
-                expr.at.line,
-                expr.at.column,
-            )
+            // 阶段 30b：lambda 求值成一个函数值——当场把捕获项取成**值快照**。
+            // 捕获 `var` 已被 Checker 拒掉，剩下的 imutvar / 形参 / this 之后都不会再变。
+            is LambdaExpr -> {
+                val plan = ClosureScopes.of(model, body.function).lambdaOf(expr)
+                    ?: throw RsfError(
+                        "interp", "内部错误：lambda 没有闭包分析结果",
+                        expr.at.line, expr.at.column,
+                    )
+                Closure(
+                    plan = plan,
+                    captures = plan.captures.map { capture ->
+                        when (capture) {
+                            is Capture.This -> thisObject(slots)
+                            is Capture.Local -> slots[slotOf(capture.binding, slots)]
+                        }
+                    },
+                )
+            }
 
             is MemberExpr -> evalMember(expr, slots, body, discard)
         }
@@ -1912,6 +2002,22 @@ class Interpreter(
     }
 
     private fun evalCall(expr: CallExpr, slots: Array<Any?>, body: LoweredFunction): Any? {
+        // 阶段 30b：函数值调用（`f(1)` / `f!!(1)`）。Checker 把「这个位置调的是函数值」
+        // 解析成某个局部变量/形参，闭包分析把那个绑定记在 fnValueCallee 里；`f!!(1)`
+        // 的 Checker 结果则是 callee（ForceExpr），按普通表达式求值即可（含 `!!` 判空）。
+        val fnValue = ClosureScopes.of(model, body.function).fnValueCallee(expr)
+        if (fnValue != null || expr.callee != null) {
+            val value = if (expr.callee != null) {
+                eval(expr.callee, slots, body)
+            } else {
+                slots[slotOf(fnValue!!, slots)]
+            }
+            val closure = value as? Closure ?: throw RsfFailure(
+                "rsf: 函数值是 null，不能调用（DESIGN-30：可空函数值要先 f!! 断言非空）",
+            )
+            return invokeClosure(closure, expr.arguments.map { eval(it, slots, body) })
+        }
+
         if (expr.name == "print" || expr.name == "println") {
             if (expr.arguments.isEmpty()) {
                 if (expr.name == "println" && !silent) out.println()

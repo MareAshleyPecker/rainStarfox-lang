@@ -58,6 +58,106 @@ val RsfType.fnTypeText: String?
 /** 是不是函数类型（`(int) -> int` 及其可空形式）。 */
 val RsfType.isFunctionType: Boolean get() = fnTypeText != null
 
+/**
+ * 把函数类型的形状文本解析回 `(形参类型表, 返回类型)`；不是函数类型就返回 null。
+ *
+ * 为什么需要**反向**解析：形状文本是阶段 30a 存进 `externalName` 的唯一信息
+ * （`RsfType` 本身没有函数这一档），而后端要拿形参个数去挑 SAM 接口
+ * （`__RsfFn<arity>`）、拿形参/返回类型去拼描述符。所以这里把 [fnTypeText] 写出去
+ * 的文本再读回来，**只有这一份**解析实现，两个后端共用。
+ *
+ * 文本是我们自己按 `(", ")` 拼的（见 [fnTypeText]），所以按顶层逗号切分是安全的：
+ * 嵌套的函数类型自己带着括号（`((int) -> int) -> void`），递归下降能认出来。
+ * 读不懂就返回 null（调用方按「不是函数类型」处理），不在这里报错。
+ */
+fun fnSignatureOf(text: String): Pair<List<RsfType>, RsfType>? {
+    val parser = FnTextParser(text)
+    return parser.parseFunction()?.takeIf { parser.atEnd() }
+}
+
+/** [fnSignatureOf] 的递归下降实现：形如 `('?'? 类型 (', ' 类型)*)? ' -> ' 类型`。 */
+private class FnTextParser(private val text: String) {
+    private var i = 0
+
+    fun atEnd(): Boolean = i >= text.length
+
+    fun parseFunction(): Pair<List<RsfType>, RsfType>? {
+        if (text.getOrNull(i) != '(') return null
+        i++
+        val params = ArrayList<RsfType>()
+        if (text.getOrNull(i) == ')') {
+            i++
+        } else {
+            while (true) {
+                params += parseType() ?: return null
+                when (text.getOrNull(i)) {
+                    ',' -> i += 2 // ", "
+                    ')' -> { i++; break }
+                    else -> return null
+                }
+            }
+        }
+        // [fnTypeText] 拼出来的是 `(...) -> ret`：右括号和箭头之间有一个空格
+        while (text.getOrNull(i) == ' ') i++
+        if (!text.startsWith("-> ", i)) return null
+        i += 3
+        val ret = parseType() ?: return null
+        return params to ret
+    }
+
+    private fun parseType(): RsfType? {
+        var nullable = false
+        if (text.getOrNull(i) == '?') {
+            nullable = true
+            i++
+        }
+        // 形参/返回位置上的函数类型：整段再递归一次
+        if (text.getOrNull(i) == '(') {
+            val (ps, ret) = parseFunction() ?: return null
+            return functionTypeOf(fnTypeText(ps, ret), nullable)
+        }
+        val start = i
+        while (i < text.length && text[i] != ',' && text[i] != ')' && text[i] != '[' && text[i] != '&') i++
+        val name = text.substring(start, i)
+        if (name.isEmpty()) return null
+        // 泛型实参（`Pair&<string, int>`）对描述符没有影响，跳过 `<...>`
+        if (text.getOrNull(i) == '&') {
+            i++
+            if (text.getOrNull(i) != '<') return null
+            var level = 0
+            while (i < text.length) {
+                when (text[i++]) {
+                    '<' -> level++
+                    '>' -> if (--level == 0) break
+                }
+            }
+            if (level != 0) return null
+        }
+        var depth = 0
+        while (text.startsWith("[]", i)) {
+            depth++
+            i += 2
+        }
+        val base = when (name) {
+            "void" -> RsfBase.VOID
+            "bool" -> RsfBase.BOOL
+            "byte" -> RsfBase.BYTE
+            "char" -> RsfBase.CHAR
+            "int" -> RsfBase.INT
+            "long" -> RsfBase.LONG
+            "float" -> RsfBase.FLOAT
+            "double" -> RsfBase.DOUBLE
+            "string" -> RsfBase.STRING
+            else -> RsfBase.EXTERNAL
+        }
+        return if (base == RsfBase.EXTERNAL) {
+            RsfType(RsfBase.EXTERNAL, nullable, name, arrayDepth = depth)
+        } else {
+            RsfType(base, nullable, null, arrayDepth = depth)
+        }
+    }
+}
+
 /** 用户自定义类的成员，解析完的样子。 */
 sealed interface UserMember {
     /** 字段：[index] 是它在对象字段数组里的下标（按声明顺序）。 */
