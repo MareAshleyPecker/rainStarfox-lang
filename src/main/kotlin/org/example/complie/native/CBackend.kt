@@ -13,6 +13,10 @@ import org.example.complie.ast.ForStmt
 import org.example.complie.ast.FuncDecl
 import org.example.complie.ast.IfExpr
 import org.example.complie.ast.IfStmt
+import org.example.complie.ast.IndexAssignStmt
+import org.example.complie.ast.IndexExpr
+import org.example.complie.ast.MemberExpr
+import org.example.complie.ast.NewArrayExpr
 import org.example.complie.ast.IntLit
 import org.example.complie.ast.LongLit
 import org.example.complie.ast.ReturnStmt
@@ -43,6 +47,9 @@ import org.example.complie.sema.SemanticModel
  * 浮点、数组、内置函数都还没接。
  */
 class CBackend(private val model: SemanticModel) {
+
+    /** 换行符用码点拼，避免源码里的转义在工具链里被二次解析。 */
+    private val NL: Char = 10.toChar()
 
     fun emit(): String {
         val sb = StringBuilder()
@@ -88,7 +95,8 @@ class CBackend(private val model: SemanticModel) {
     private fun returnType(fn: FuncDecl): RsfType = model.returnTypes[fn] ?: RsfType.VOID
 
     private fun cType(type: RsfType, at: Expr? = null): String {
-        if (type.arrayDepth > 0) fail("数组类型")
+        if (type.arrayDepth > 1) fail("多维数组")
+        if (type.arrayDepth == 1) return "rsf_arr"
         return when (type.base) {
             RsfBase.VOID -> "void"
             RsfBase.INT -> "int32_t"
@@ -128,6 +136,11 @@ class CBackend(private val model: SemanticModel) {
             pad(indent) + "${cType(type)} ${paramName(s.name)} = ${expr(s.initializer)};\n"
         }
         is AssignStmt -> pad(indent) + "${paramName(s.name)} = ${expr(s.value)};\n"
+        is IndexAssignStmt -> {
+            val target = s.target
+            val elem = elemCType(elementOf(model.typeOf(target.receiver)))
+            pad(indent) + "(($elem*)" + expr(target.receiver) + ".data)[" + expr(target.index) + "] = " + expr(s.value) + ";" + NL
+        }
         is ExprStmt -> pad(indent) + expr(s.expr) + ";\n"
         is ReturnStmt -> {
             val value = s.value
@@ -198,7 +211,52 @@ class CBackend(private val model: SemanticModel) {
         is BinaryExpr -> binary(e)
         is IfExpr -> "(${expr(e.condition)} ? ${expr(e.whenTrue)} : ${expr(e.whenFalse)})"
         is CallExpr -> call(e)
+        is IndexExpr -> indexRead(e)
+        is MemberExpr -> member(e)
+        is NewArrayExpr -> newArray(e)
         else -> fail("表达式 ${e::class.simpleName}")
+    }
+
+    /** 数组元素的 C 类型（`int[]` → `int32_t`）；只看 [RsfType.base]。 */
+    private fun elemCType(type: RsfType): String = when (type.base) {
+        RsfBase.INT -> "int32_t"
+        RsfBase.LONG -> "int64_t"
+        RsfBase.BOOL -> "bool"
+        RsfBase.STRING -> "rsf_str"
+        RsfBase.CHAR -> "uint16_t"
+        RsfBase.BYTE -> "int8_t"
+        else -> fail("数组元素类型 '${type.base.rsfName}'")
+    }
+
+    private fun elementOf(type: RsfType): RsfType =
+        if (type.arrayDepth > 0) type.copy(arrayDepth = type.arrayDepth - 1) else type
+
+    private fun indexRead(e: IndexExpr): String {
+        val arrayType = model.typeOf(e.receiver)
+        val elem = elemCType(elementOf(arrayType))
+        return "(($elem*)${expr(e.receiver)}.data)[${expr(e.index)}]"
+    }
+
+    private fun member(e: MemberExpr): String {
+        if (e.name == "length" && e.arguments == null) return "(${expr(e.receiver)}.len)"
+        fail("成员访问 '${e.name}'")
+    }
+
+    private fun newArray(e: NewArrayExpr): String {
+        if (e.dimensions.size != 1) fail("多维数组")
+        val type = RsfType(externalNameOf(e.elementType), arrayDepth = 0)
+        val elemSize = elemCType(type)
+        return "rsf_arr_new(${expr(e.dimensions[0])}, (int64_t)sizeof($elemSize))"
+    }
+
+    private fun externalNameOf(ref: org.example.complie.ast.TypeRef): RsfBase = when (ref.name) {
+        "int" -> RsfBase.INT
+        "long" -> RsfBase.LONG
+        "bool" -> RsfBase.BOOL
+        "string" -> RsfBase.STRING
+        "char" -> RsfBase.CHAR
+        "byte" -> RsfBase.BYTE
+        else -> fail("数组元素类型 '${ref.name}'")
     }
 
     private fun unary(e: UnaryExpr): String {
@@ -295,6 +353,11 @@ class CBackend(private val model: SemanticModel) {
             #include <string.h>
 
             typedef struct { int64_t len; const char* data; } rsf_str;
+            typedef struct { int64_t len; void* data; } rsf_arr;
+
+            static rsf_arr rsf_arr_new(int64_t len, int64_t elem) {
+                rsf_arr a; a.len = len; a.data = calloc((size_t)(len > 0 ? len : 0), (size_t)elem); return a;
+            }
 
             static rsf_str rsf_str_lit(const char* data, int64_t len) {
                 rsf_str s; s.len = len; s.data = data; return s;

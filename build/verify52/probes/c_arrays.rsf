@@ -1,0 +1,26 @@
+// 阶段 52：C 后端探针 5 —— 一维数组、length、下标读写、for-each
+fn sum(xs : int[]) -> int {
+    var s : int = 0
+    for (x in xs) { s = s + x }
+    rtn s
+}
+
+fn main() -> void {
+    var xs : int[] = new int[5]
+    var i : int = 0
+    while (i < xs.length) {
+        xs[i] = i * i
+        i = i + 1
+    }
+    println(sum(xs))
+    println(xs.length)
+    println(xs[4])
+    var names : string[] = new string[3]
+    names[0] = "a"
+    names[1] = "b"
+    names[2] = "c"
+    var joined : string = ""
+    for (n in names) { joined = joined + n }
+    println(joined)
+    rtn
+}
