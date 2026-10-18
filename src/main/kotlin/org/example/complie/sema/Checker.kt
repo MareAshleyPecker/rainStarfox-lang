@@ -150,6 +150,14 @@ class Checker(
     private val paramBindings = IdentityHashMap<FuncDecl, List<Binding>>()
     private val paramTypes = IdentityHashMap<FuncDecl, List<RsfType>>()
     private val callTargets = IdentityHashMap<CallExpr, FuncDecl>()
+
+    /**
+     * 阶段 31：每一处**泛型调用**推导出来的类型实参绑定（键是调用点表达式）。
+     *
+     * 只记不用：31a 不发码，31b 的字节码后端按它在调用点插 `CHECKCAST`
+     * （擦除之后 `fn id&<T>(x : T) -> T` 编出来是 `id(Object)Object`）。
+     */
+    private val genericCalls = IdentityHashMap<Expr, GenericCallSite>()
     private val returnTypes = IdentityHashMap<FuncDecl, RsfType>()
     private val lowered = IdentityHashMap<FuncDecl, LoweredFunction>()
     private val diagnostics = ArrayList<Diagnostic>()
@@ -311,6 +319,7 @@ class Checker(
             annotationNewTargets = annotationNewTargets,
             companionAnnotations = companionAnnotations,
             annotationAccessors = annotationAccessors.toList(),
+            genericCalls = genericCalls,
         )
     }
 
@@ -366,6 +375,9 @@ class Checker(
                 )
             }
 
+            // 阶段 31：泛型函数自己的类型参数要先并进解析环境（`x : T` 才认得出 T 是占位）
+            val savedTypeParams = pushTypeParams(fn)
+
             // 参数：解析类型、建绑定、查量
             val types = ArrayList<RsfType>(fn.params.size)
             val bindings = ArrayList<Binding>(fn.params.size)
@@ -400,6 +412,7 @@ class Checker(
             // 表示（returnTypes 里存的就是那个 T）。真正的约束在**调用方**：调用 !T 函数必须
             // 显式处理错误，见 requireErrorHandled。
             returnTypes[fn] = resolveType(fn.ret.type)
+            typeParams = savedTypeParams
         }
 
         // 重载的合法性：同名函数必须在 JVM 上是不同的方法（擦除后的描述符不能撞车）。
@@ -1354,7 +1367,9 @@ class Checker(
         // 阶段 25 K1（G4）：父类方法的签名要按**它的类型参数**代换成子类里的具体类型
         // （`class IntHolder : Holder&<int>` 的 `super.get()` 给回 int）。
         val subst = substitutionFromInside(info, owner)
-        val candidates = listOf(OverloadCandidate(method, memberParamTypes(method).map { it.substitute(subst) }))
+        val candidates = listOf(
+            OverloadCandidate(method, memberParamTypes(method).map { it.substitute(memberSubstFor(method, subst)) }),
+        )
         val sameArity = candidates.filter { it.params.size == args.size }
         if (sameArity.isEmpty()) {
             throw err(
@@ -1380,8 +1395,8 @@ class Checker(
         if (picked.ret.mayError) {
             requireErrorHandled(picked.name, "!${picked.ret.type.display()}", expr, expr.at)
         }
-        val ret = memberReturnType(picked)
-        return if (ret.isVoid) RsfType.VOID else ret.substitute(subst)
+        // 泛型方法：返回类型里的 T 按这一处的绑定代换（31a 只记录，31b 才用）
+        return instantiateReturn(expr, chosen, memberReturnType(picked).substitute(memberSubstFor(picked, subst)))
     }
 
     /**
@@ -1429,8 +1444,8 @@ class Checker(
                 expr.at,
             )
         }
-        val pickable = defaults.map {
-            it to OverloadCandidate(it.decl!!, it.params.map { p -> p.substitute(subst) })
+        val pickable = defaults.map { rm ->
+            rm to OverloadCandidate(rm.decl!!, rm.params.map { p -> p.substitute(memberSubstFor(rm.decl!!, subst)) })
         }
         val sameArity = pickable.filter { it.second.params.size == args.size }
         if (sameArity.isEmpty()) {
@@ -1445,7 +1460,7 @@ class Checker(
             what = "调用 '${expr.name}'", candidates = sameArity.map { it.second }, args = args,
             argTypes = argTypes, at = expr.at,
         ) { c, i -> memberMismatch(expr.name, c, i, argTypes[i]) }
-        val wanted = pickable.first { it.second === chosen }.first
+        val wanted = pickable.first { it.second === chosen.original() }.first
         val method = wanted.decl!!
         superCalls[expr] = SuperCall.Rsf(
             className = interfaceOwnerTable[method]?.name ?: wanted.ownerName,
@@ -1455,8 +1470,7 @@ class Checker(
         if (method.ret.mayError) {
             requireErrorHandled(method.name, "!${method.ret.type.display()}", expr, expr.at)
         }
-        val ret = wanted.ret.substitute(subst)
-        return if (ret.isVoid) RsfType.VOID else ret
+        return instantiateReturn(expr, chosen, wanted.ret.substitute(memberSubstFor(method, subst)))
     }
 
 
@@ -2523,7 +2537,7 @@ class Checker(
             ?: throw err("$who 里没有方法 '${expr.name}'" + interfaceMethodHint(info), expr.at)
 
         val candidates = named.map {
-            OverloadCandidate(it, memberParamTypes(it).map { t -> t.substitute(subst) })
+            OverloadCandidate(it, memberParamTypes(it).map { t -> t.substitute(memberSubstFor(it, subst)) })
         }
         val sameArity = candidates.filter { it.params.size == expr.arguments.size }
         if (sameArity.isEmpty()) {
@@ -2550,8 +2564,7 @@ class Checker(
         if (method.ret.mayError) {
             requireErrorHandled(method.name, "!${method.ret.type.display()}", expr, expr.at)
         }
-        val ret = memberReturnType(method)
-        return if (ret.isVoid) RsfType.VOID else ret.substitute(subst)
+        return instantiateReturn(expr, chosen, memberReturnType(method).substitute(memberSubstFor(method, subst)))
     }
 
     /**
@@ -2586,7 +2599,7 @@ class Checker(
         if (method.ret.mayError) {
             requireErrorHandled(method.name, "!${method.ret.type.display()}", expr, expr.at)
         }
-        return memberReturnType(method)
+        return instantiateReturn(expr, chosen, memberReturnType(method))
     }
 
     /**
@@ -3238,6 +3251,21 @@ class Checker(
     private var typeParams: Map<String, RsfType> = emptyMap()
 
     /**
+     * 阶段 31：进入一个（可能带类型参数的）函数时，把**它的**类型参数并进 [typeParams]。
+     *
+     * 函数级类型参数**遮蔽**同名的类级类型参数（DESIGN-31 §3）：`class Box&<T>` 里写
+     * `fn first&<T>(xs : T[])`，方法体里的 `T` 是方法的那个。返回旧环境，
+     * 调用方用完负责还原（`typeParams = saved`）。
+     */
+    private fun pushTypeParams(fn: FuncDecl): Map<String, RsfType> {
+        val saved = typeParams
+        if (fn.typeParams.isNotEmpty()) {
+            typeParams = saved + fn.typeParams.associateWith { RsfType.typeParam(it) }
+        }
+        return saved
+    }
+
+    /**
      * 字段成员。[subst] 是泛型实参的替换表：`Box&<int>` 的 `value` 从 `T` 变成 `int`；
      * 在类体内部（`this.value` / 裸写 `value`）传空表，`T` 就还是占位。
      *
@@ -3366,6 +3394,8 @@ class Checker(
         // 方法/构造器的参数绑定与返回类型：按 FuncDecl 记，不写进按名字索引的那两张表
         for (m in cls.methods) {
             methodOwner[m] = cls
+            // 阶段 31：泛型方法自己的类型参数要并进解析环境（否则 `xs : T[]` 里的 T 是未知类型）
+            val savedTypeParams = pushTypeParams(m)
             // 报错时的称呼：构造器就说「构造器 '类名'」，方法就说「方法 '名字'」
             val what = if (m.isConstructor) "构造器 '${cls.name}'" else "方法 '${m.name}'"
             val bindings = ArrayList<Binding>(m.params.size)
@@ -3383,6 +3413,7 @@ class Checker(
             methodParams[m] = bindings
             methodReturns[m] =
                 if (m.ret.type.name == "void") RsfType.VOID else resolveType(m.ret.type)
+            typeParams = savedTypeParams
         }
 
         // 阶段 19d：同一个方法名下的多个重载必须在 JVM 上是**不同的方法**
@@ -3936,7 +3967,26 @@ class Checker(
         val signature: String = decl.params.mapIndexed { i, p ->
             "${p.name} : ${params.getOrNull(i)?.rsfName ?: p.type.name}"
         }.let { "${decl.name}(${it.joinToString(", ")})" }
+
+        /**
+         * 阶段 31：泛型候选**按这一处实参推导出来的**类型实参绑定（`T` → `int`）。
+         *
+         * 非泛型候选永远是空表。泛型候选被选中时由 [resolveOverload] 填上：
+         * 调用点要拿它把返回类型里的 `T` 换成实际类型，并记进
+         * [SemanticModel.genericCalls] 给 31b 的后端插 cast。
+         */
+        var bindings: Map<String, RsfType> = emptyMap()
+
+        /**
+         * 泛型候选会以「实例化后的副本」参与打分（形参里的 `T` 已经换成具体类型），
+         * 这个字段指回原来那个候选——调用点要按原件去找配对信息
+         * （super 调用、接口默认方法的 `RequiredMethod` 都是按**引用**配对的）。
+         */
+        var origin: OverloadCandidate? = null
     }
+
+    /** 泛型候选的实例化副本 → 原件；非泛型候选就是自己。 */
+    private fun OverloadCandidate.original(): OverloadCandidate = origin ?: this
 
     /** 把候选签名列成一句人话；空表就什么都不说。 */
     private fun describeCandidates(candidates: List<OverloadCandidate>): String =
@@ -3958,8 +4008,10 @@ class Checker(
      * 3. 总分**最低**者胜；**最低分并列就报错**并列出候选签名，绝不静默取
      *    「声明在前」的那个。
      *
-     * 第 3 条与**构造器**的规则故意不同：`resolveCtor` 同分时取声明在前的那个
-     * （主构造排最前），那条老规矩有既有测试钉着，本次不动。
+     * **泛型候选（阶段 31）**：非泛型候选优先——先照上面 1-3 在**非泛型**候选里挑，
+     * 一个都没接住才轮到泛型候选（[bindGeneric] 按实参推导类型参数，再用实例化后的
+     * 形参重新打分，还是同一把尺子）。所以 `f(int)` 永远赢过 `f&<T>(T)`，
+     * 而 `f(1, 2)` 在有 `f&<T>(T, T)` 时也不必要求写类型实参（DESIGN-31 §5）。
      *
      * [candidates] 必须已经按实参个数筛过（调用方负责，这样「个数不对」的报错
      * 不必先给实参算类型，保持了老行为）。[mismatch] 在「只有一个同个数候选」时
@@ -3973,6 +4025,255 @@ class Checker(
         at: SourceLine,
         mismatch: (OverloadCandidate, Int) -> String,
     ): OverloadCandidate {
+        // 没有泛型候选就是老路——打分 → 并列报错 → 没接住报错，行为一个字都不变。
+        val genericCandidates = candidates.filter { it.decl.typeParams.isNotEmpty() }
+        if (genericCandidates.isEmpty()) {
+            return decideOverload(
+                what, candidates, scoreOverloads(candidates, args, argTypes), argTypes, at, mismatch,
+            )
+        }
+
+        // 非泛型候选优先：只要有一个接住就直接用它，泛型候选连参与的机会都没有。
+        // 非泛型之间并列也照旧报「无法确定用哪个重载」，不让泛型候选来"化解"。
+        val plain = candidates.filter { it.decl.typeParams.isEmpty() }
+        if (plain.isNotEmpty()) {
+            val scoredPlain = scoreOverloads(plain, args, argTypes)
+            if (scoredPlain.best != null) {
+                return decideOverload(what, plain, scoredPlain, argTypes, at, mismatch)
+            }
+        }
+
+        // 非泛型一个都没接住 → 泛型候选上场：先按实参推导类型参数，再用
+        // **实例化之后**的形参正常打分（`T` 已经变成 `int`，加宽/空值规则照旧）。
+        val attempts = genericCandidates.map { bindGeneric(it, argTypes) }
+        val instantiated = ArrayList<OverloadCandidate>()
+        for (b in attempts) {
+            if (b !is GenericAttempt.Bound) continue
+            val inst = OverloadCandidate(b.cand.decl, b.params)
+            inst.bindings = b.bindings
+            inst.origin = b.cand
+            instantiated.add(inst)
+        }
+        var fallbackIndex = 0
+        if (instantiated.isNotEmpty()) {
+            val scored = scoreOverloads(instantiated, args, argTypes)
+            if (scored.best != null) {
+                return decideOverload(what, instantiated, scored, argTypes, at, mismatch)
+            }
+            instantiated.forEach { c -> scored.firstFailure[c]?.let { fallbackIndex = it } }
+        }
+        attempts.filterIsInstance<GenericAttempt.Mismatch>().firstOrNull()?.let { fallbackIndex = it.at }
+
+        // 一个都没接住：**冲突**和**推不出来**都比「类型对不上」更接近真正的原因，
+        // 优先报它们（同一种里按类型参数的声明顺序取第一个）。
+        attempts.filterIsInstance<GenericAttempt.Conflict>().minByOrNull { it.order }?.let {
+            throw err(
+                "类型参数 '${it.name}' 同时被要求是 '${it.first.rsfName}' 和 '${it.second.rsfName}'" +
+                    "（来自第 ${it.firstArg} 个和第 ${it.secondArg} 个实参）",
+                at,
+            )
+        }
+        attempts.filterIsInstance<GenericAttempt.Unbound>().minByOrNull { it.order }?.let {
+            throw err(
+                "类型参数 '${it.name}' 推不出来：它只出现在返回类型里，" +
+                    "让它出现在某个参数类型里（例如 'fn f(x : T) -> T'）",
+                at,
+            )
+        }
+
+        // 推是推出来了（或者根本推不动），但实参对不上：按今天的老口径报类型不匹配。
+        val single = candidates.singleOrNull()
+        if (single != null) {
+            throw err(mismatch(instantiated.firstOrNull() ?: single, fallbackIndex), at)
+        }
+        throw err(
+            "$what 的实参类型对不上任何候选：" +
+                "实际给的是 (${argTypes.joinToString(", ") { it.rsfName }})，" +
+                describeCandidates(candidates),
+            at,
+        )
+    }
+
+    /**
+     * 把**函数级**类型参数从类的替换表里摘掉（阶段 31）。
+     *
+     * 函数级类型参数遮蔽同名的类级类型参数（DESIGN-31 §3）：`class Box&<T>` 里的
+     * `fn first&<T>(xs : T[])` —— 这里的 `T` 是**方法的**，不是类的。候选形参如果先被
+     * 类级替换表换成 `int`，推导就再也看不到占位符了，所以先摘掉再代换。
+     */
+    private fun memberSubstFor(m: FuncDecl, subst: Map<String, RsfType>): Map<String, RsfType> =
+        if (m.typeParams.isEmpty()) subst else subst.filterKeys { it !in m.typeParams }
+
+    /**
+     * 选中候选之后算调用表达式的类型：返回类型里的类型参数按**绑定表**代换，
+     * 并顺手把这一处的绑定记进 [genericCalls]（31b 的后端要在调用点插 cast）。
+     *
+     * [declared] 是调用点已经按类级实参代换过的返回类型；非泛型候选原样返回。
+     */
+    private fun instantiateReturn(expr: Expr, chosen: OverloadCandidate, declared: RsfType): RsfType {
+        val out = if (chosen.bindings.isEmpty()) declared else declared.substitute(chosen.bindings)
+        if (chosen.decl.typeParams.isNotEmpty()) {
+            genericCalls[expr] = GenericCallSite(chosen.decl.typeParams, chosen.bindings, out)
+        }
+        return if (out.isVoid) RsfType.VOID else out
+    }
+
+    /** 一次泛型推导的结果（阶段 31，DESIGN-31 §4）。 */
+    private sealed interface GenericAttempt {
+        /** 推成功了：[bindings] 每个类型参数都有值，[params] 是代换之后的形参类型。 */
+        class Bound(
+            val cand: OverloadCandidate,
+            val bindings: Map<String, RsfType>,
+            val params: List<RsfType>,
+        ) : GenericAttempt
+
+        /** 同一个类型参数被两个实参要求成两个不同的类型。 */
+        class Conflict(
+            /** 在 `decl.typeParams` 里的下标：多个冲突时按声明顺序报第一个。 */
+            val order: Int,
+            val name: String,
+            val first: RsfType,
+            val second: RsfType,
+            val firstArg: Int,
+            val secondArg: Int,
+        ) : GenericAttempt
+
+        /** 走完实参表还有类型参数没被绑上（只出现在返回类型里）。 */
+        class Unbound(val order: Int, val name: String) : GenericAttempt
+
+        /** 推出来了（或压根不用推），但具体形参对不上实参——交给普通的重载报错。 */
+        class Mismatch(val cand: OverloadCandidate, val at: Int) : GenericAttempt
+    }
+
+    /** 推导的一步：对齐一对「形参 / 实参类型」。 */
+    private sealed interface BindStep {
+        /** 绑上了，或者这一对里没有要绑的东西。 */
+        object Ok : BindStep
+
+        /** 实参是 `null` 字面量，提供不了类型信息。 */
+        object Skip : BindStep
+
+        /** 结构对不上（`T[]` 收了非数组、`Box&<T>` 收了 `List&<int>`…）。 */
+        object Mismatch : BindStep
+
+        class Conflict(
+            val name: String,
+            val first: RsfType,
+            val second: RsfType,
+            val firstArg: Int,
+            val secondArg: Int,
+        ) : BindStep
+    }
+
+    /**
+     * 按实参推导一个泛型候选的类型参数（DESIGN-31 §4：**只看实参**、按声明顺序）。
+     *
+     * 冲突与「推不出来」都只**记下来**、不立刻抛：多个泛型候选里可能有一个是好的，
+     * 只有全都没接住时才把最贴近原因的报出去（见 [resolveOverload]）。
+     */
+    private fun bindGeneric(c: OverloadCandidate, argTypes: List<RsfType>): GenericAttempt {
+        val params = c.params
+        if (params.size != argTypes.size) return GenericAttempt.Mismatch(c, 0)
+        val bindings = LinkedHashMap<String, RsfType>()
+        val origin = HashMap<String, Int>()
+        var nullAt = -1
+        for (i in params.indices) {
+            when (val step = bindTypeParamPattern(params[i], argTypes[i], bindings, origin, i + 1)) {
+                BindStep.Ok -> Unit
+                BindStep.Skip -> if (nullAt < 0) nullAt = i
+                BindStep.Mismatch -> return GenericAttempt.Mismatch(c, i)
+                is BindStep.Conflict -> return GenericAttempt.Conflict(
+                    c.decl.typeParams.indexOf(step.name), step.name,
+                    step.first, step.second, step.firstArg, step.secondArg,
+                )
+            }
+        }
+        for ((order, name) in c.decl.typeParams.withIndex()) {
+            if (name in bindings) continue
+            // 之所以没绑上是被 `null` 字面量挡住的——那属于「实参类型对不上」，
+            // 报「推不出来（它只出现在返回类型里）」会误导人。
+            return if (nullAt >= 0) {
+                GenericAttempt.Mismatch(c, nullAt)
+            } else {
+                GenericAttempt.Unbound(order, name)
+            }
+        }
+        return GenericAttempt.Bound(c, bindings, params.map { it.substitute(bindings) })
+    }
+
+    /**
+     * 递归对齐「形参里的类型参数」与「实参类型」，只负责**绑定**；
+     * 能不能真传（可空、加宽）由实例化之后的 [argCost] 说了算。
+     */
+    private fun bindTypeParamPattern(
+        param: RsfType,
+        arg: RsfType,
+        bindings: MutableMap<String, RsfType>,
+        origin: MutableMap<String, Int>,
+        argIndex: Int,
+    ): BindStep {
+        // `null` 提供不了任何类型信息（它给任何可空类型都成立）：不绑、也不算冲突。
+        if (arg.isNullLiteral) return BindStep.Skip
+
+        // `T[]` ↔ `X[]`：数组维度逐层剥离。可空性属于「这一层数组」，不带给元素
+        // （`?int[]` 的元素是 `int`，不是 `?int`）。
+        if (param.arrayDepth > 0) {
+            if (arg.arrayDepth <= 0) return BindStep.Mismatch
+            return bindTypeParamPattern(
+                param.elementType.asNonNull(), arg.elementType.asNonNull(), bindings, origin, argIndex,
+            )
+        }
+
+        // `T` / `?T`：`?T` 连非空实参也收，绑的是脱掉可空之后的类型（DESIGN-31 §4）。
+        val name = param.typeParamName
+        if (name != null) {
+            val actual = if (param.nullable) arg.asNonNull() else arg
+            val prev = bindings[name]
+            if (prev == null) {
+                bindings[name] = actual
+                origin[name] = argIndex
+                return BindStep.Ok
+            }
+            return if (prev == actual) {
+                BindStep.Ok
+            } else {
+                BindStep.Conflict(name, prev, actual, origin[name] ?: argIndex, argIndex)
+            }
+        }
+
+        // `Box&<T>` ↔ `Box&<int>`：同基名、类型实参数目一致、逐个递归。
+        if (param.typeArgs.isNotEmpty()) {
+            if (param.base != arg.base || param.externalName != arg.externalName) return BindStep.Mismatch
+            if (param.typeArgs.size != arg.typeArgs.size) return BindStep.Mismatch
+            for (k in param.typeArgs.indices) {
+                val step = bindTypeParamPattern(param.typeArgs[k], arg.typeArgs[k], bindings, origin, argIndex)
+                if (step != BindStep.Ok) return step
+            }
+        }
+        // 具体类型（`int`、`string`、`Box&<int>` 里的 int）：这里没有要绑的东西。
+        return BindStep.Ok
+    }
+
+    /** [scoreOverloads] 的结果：谁最低分、谁并列、谁在第几个实参上最先出局。 */
+    private class OverloadScore(
+        val best: OverloadCandidate?,
+        val bestScore: Int,
+        /** 并列最低分的候选（含 [best] 自己）；`size > 1` 就是并列。 */
+        val tied: List<OverloadCandidate>,
+        val firstFailure: Map<OverloadCandidate, Int>,
+    )
+
+    /**
+     * 按实参给候选打分（DESIGN-19d §2 的档位表），只算不抛错。
+     *
+     * 抽出来是为了让泛型候选能拿**实例化之后**的形参再来一遍同一套打分：
+     * 「先推导、再打分」两步用的必须是同一把尺子。
+     */
+    private fun scoreOverloads(
+        candidates: List<OverloadCandidate>,
+        args: List<Expr>,
+        argTypes: List<RsfType>,
+    ): OverloadScore {
         var best: OverloadCandidate? = null
         var bestScore = Int.MAX_VALUE
         val tied = ArrayList<OverloadCandidate>()
@@ -4004,13 +4305,25 @@ class Checker(
             }
         }
 
-        val chosen = best
+        return OverloadScore(best, bestScore, tied, firstFailure)
+    }
+
+    /** 打分结果落地：最低分者胜、并列报错、一个都没接住时报「类型不匹配」。 */
+    private fun decideOverload(
+        what: String,
+        candidates: List<OverloadCandidate>,
+        scored: OverloadScore,
+        argTypes: List<RsfType>,
+        at: SourceLine,
+        mismatch: (OverloadCandidate, Int) -> String,
+    ): OverloadCandidate {
+        val chosen = scored.best
         if (chosen != null) {
-            if (tied.size > 1) {
+            if (scored.tied.size > 1) {
                 throw err(
                     "$what 无法确定用哪个重载：实参类型（${argTypes.joinToString(", ") { it.rsfName }}）" +
-                        "下有 ${tied.size} 个候选并列最低分（${bestScore} 分）—— " +
-                        describeCandidates(tied) +
+                        "下有 ${scored.tied.size} 个候选并列最低分（${scored.bestScore} 分）—— " +
+                        describeCandidates(scored.tied) +
                         "。rsf 不替你按声明顺序挑一个：把实参写成与其中一个候选**完全一致**的类型" +
                         "（必要时先赋给一个显式标注了类型的局部变量）再调一次",
                     at,
@@ -4021,7 +4334,7 @@ class Checker(
 
         // 一个候选都没接住
         if (candidates.size == 1) {
-            firstFailure[candidates[0]]?.let { i ->
+            scored.firstFailure[candidates[0]]?.let { i ->
                 throw err(mismatch(candidates[0], i), at)
             }
         }
@@ -4374,7 +4687,7 @@ class Checker(
         // 在 `class IntHolder : Holder&<int>` 上必须变成 `get() -> int`（G4）。
         val candidates = usable.map { (owner, m) ->
             val ownerSubst = substitutionAlongChain(info, subst, owner)
-            OverloadCandidate(m, memberParamTypes(m).map { t -> t.substitute(ownerSubst) })
+            OverloadCandidate(m, memberParamTypes(m).map { t -> t.substitute(memberSubstFor(m, ownerSubst)) })
         }
         val sameArity = candidates.filter { it.params.size == expr.arguments.size }
         if (sameArity.isEmpty()) {
@@ -4397,9 +4710,11 @@ class Checker(
         if (method.ret.mayError) {
             requireErrorHandled(method.name, "!${method.ret.type.display()}", expr, expr.at)
         }
-        val ret = memberReturnType(method)
-        // 返回类型同样要按声明类那一层代换（G4）。
-        return if (ret.isVoid) RsfType.VOID else ret.substitute(substitutionAlongChain(info, subst, declarer))
+        // 返回类型同样要按声明类那一层代换（G4）；泛型方法再叠一层这一处的绑定。
+        return instantiateReturn(
+            expr, chosen,
+            memberReturnType(method).substitute(memberSubstFor(method, substitutionAlongChain(info, subst, declarer))),
+        )
     }
 
     /**
@@ -4441,8 +4756,8 @@ class Checker(
         val defaults = required.values.flatten().filter {
             it.decl != null && it.concrete && it.name == expr.name
         }
-        val pickable = defaults.map {
-            it to OverloadCandidate(it.decl!!, it.params.map { p -> p.substitute(subst) })
+        val pickable = defaults.map { rm ->
+            rm to OverloadCandidate(rm.decl!!, rm.params.map { p -> p.substitute(memberSubstFor(rm.decl!!, subst)) })
         }
         val sameArity = pickable.filter { it.second.params.size == args.size }
         if (sameArity.isEmpty()) return null
@@ -4453,7 +4768,7 @@ class Checker(
             args = args, argTypes = argTypes, at = expr.at,
         ) { c, i -> memberMismatch(expr.name, c, i, argTypes[i]) }
 
-        val wanted = pickable.first { it.second === chosen }.first
+        val wanted = pickable.first { it.second === chosen.original() }.first
         val method = wanted.decl!!
         userMembers[expr] = UserMember.Method(
             className = interfaceOwnerTable[method]?.name ?: wanted.ownerName,
@@ -4464,8 +4779,7 @@ class Checker(
             requireErrorHandled(method.name, "!${method.ret.type.display()}", expr, expr.at)
         }
         // 返回类型取**替换过接口实参**的那一份（`fun get() -> T` 在 `Box&<int>` 上是 int）
-        val ret = wanted.ret.substitute(subst)
-        return if (ret.isVoid) RsfType.VOID else ret
+        return instantiateReturn(expr, chosen, wanted.ret.substitute(memberSubstFor(method, subst)))
     }
 
     /** 「第 N 个实参类型不匹配」的成员版落款（沿用阶段 18 的老文案，只是形参类型可能是替换过的）。 */
@@ -4495,6 +4809,10 @@ class Checker(
     }
     /** 方法/构造器的形参类型：读在 [declareClasses] 里算好的那份（带类型参数占位）。
 */
+    /** 这个类型里还有类型参数占位吗（`T`、`T[]`、`Box&<T>`）——阶段 31 用。 */
+    private fun RsfType.mentionsTypeParam(): Boolean =
+        isTypeParam || typeArgs.any { it.mentionsTypeParam() }
+
     private fun memberParamTypes(m: FuncDecl): List<RsfType> = paramTypesOfDecl(m)
 
     private fun memberReturnType(m: FuncDecl): RsfType =
@@ -4569,6 +4887,14 @@ class Checker(
 
     // ------------------------------------------------------------------ 函数体
     private fun checkFunction(fn: FuncDecl) {
+        // 阶段 31：泛型函数的类型参数并进解析环境（函数级遮蔽类级），查完就还原，
+        // 否则 `fn id&<T>(x : T) -> T` 的 T 会漏给下一个被检查的函数。
+        val savedTypeParams = pushTypeParams(fn)
+        checkFunctionBody(fn)
+        typeParams = savedTypeParams
+    }
+
+    private fun checkFunctionBody(fn: FuncDecl) {
         currentFn = fn
         currentSource = sourceOfFunction[fn] ?: currentClass?.source ?: source
         // 返回类型直接从签名算，不查 returnTypes 表：那张表只装了顶层函数，
@@ -6367,7 +6693,9 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
         // 这样 `each(xs, lam(n) { ... })` 的 `lam` 才知道形参类型与返回类型。
         val expectAt = (0 until expr.arguments.size).map { i ->
             val distinct = sameArity.mapNotNull { it.params.getOrNull(i) }.distinct()
-            if (distinct.size == 1) distinct.single() else null
+            // 阶段 31：形参里还有类型参数占位（`T`）时**不当**期望类型——`T` 是不透明的，
+            // 拿它去推 `lam` 的形参只会把「未知类型」传给用户。
+            if (distinct.size == 1 && !distinct.single().mentionsTypeParam()) distinct.single() else null
         }
         val argTypes = ArrayList<RsfType>(expr.arguments.size)
         for ((i, arg) in expr.arguments.withIndex()) {
@@ -6388,7 +6716,7 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
         if (target.ret.mayError) {
             requireErrorHandled(target.name, "!${target.ret.type.display()}", expr, expr.at)
         }
-        return returnTypes[target] ?: RsfType.VOID
+        return instantiateReturn(expr, chosen, returnTypes[target] ?: RsfType.VOID)
     }
 
     /** 「参数类型不匹配」的顶层函数版落款（沿用阶段 10 的老文案，带上形参名）。 */
@@ -6426,7 +6754,10 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
         // 形参按**声明它的那个类**那一层代换（G4：`get() -> T` 在
         // `class IntHolder : Holder&<int>` 上要变成 `get() -> int`）。
         val candidates = named.map { (owner, m) ->
-            OverloadCandidate(m, memberParamTypes(m).map { t -> t.substitute(substitutionFromInside(info, owner)) })
+            OverloadCandidate(
+                m,
+                memberParamTypes(m).map { t -> t.substitute(memberSubstFor(m, substitutionFromInside(info, owner))) },
+            )
         }
         val sameArity = candidates.filter { it.params.size == expr.arguments.size }
         if (sameArity.isEmpty()) {
@@ -6449,8 +6780,10 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
         if (method.ret.mayError) {
             requireErrorHandled(method.name, "!${method.ret.type.display()}", expr, expr.at)
         }
-        val ret = memberReturnType(method)
-        return if (ret.isVoid) RsfType.VOID else ret.substitute(substitutionFromInside(info, declarer))
+        return instantiateReturn(
+            expr, chosen,
+            memberReturnType(method).substitute(memberSubstFor(method, substitutionFromInside(info, declarer))),
+        )
     }
 
     /**

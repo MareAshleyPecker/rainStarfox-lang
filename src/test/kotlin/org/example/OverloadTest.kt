@@ -504,18 +504,14 @@ class OverloadTest {
     }
 
     @Test
-    fun `泛型函数还不支持 报错要明确`() {
-        val e = assertFailsWith<RsfError> {
-            Rsf.analyze(
-                source(
-                    "fn pick&<T>(a : T) -> T {\n    rtn a\n}\n" +
-                        "fn main() -> void {\n    rtn\n}\n",
-                ),
-            )
-        }
-        assertEquals("parser", e.phase)
-        assertTrue(e.detail.contains("泛型函数还不支持"), e.detail)
-        assertTrue(e.detail.contains("重载"), e.detail)
+    fun `泛型函数从阶段 31 起已支持 不再是解析错误`() {
+        // 阶段 31 之前这里报「泛型函数还不支持」；现在按实参推导（详见 GenericFnTest）
+        Rsf.analyze(
+            source(
+                "fn pick&<T>(a : T) -> T {\n    rtn a\n}\n" +
+                    "fn main() -> void {\n    var x : int = pick(7)\n    rtn\n}\n",
+            ),
+        )
     }
 
     @Test

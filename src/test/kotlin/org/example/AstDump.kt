@@ -168,6 +168,13 @@ object AstDump {
         // 而自举那一侧还不认识这个修饰词（27b 才同步）。默认形态保持原样是硬约束。
         // 阶段 27 删掉了 `open`：默认可覆盖，所以这里只剩 FINAL 一行。
         if (f.isFinal) line(out, depth + 1, "FINAL")
+        // 阶段 31：泛型函数的类型参数表。**非空才打**——普通函数的 dump 一个字都不变
+        // （自举解析器那一侧还不认识 `&<...>`，逐字对拍的语料里不会有泛型函数）。
+        // 形态与 class 的 TYPE_PARAMS 一样：一行 count，接着每个名字一行。
+        if (f.typeParams.isNotEmpty()) {
+            line(out, depth + 1, "TYPE_PARAMS", "count" to f.typeParams.size.toString())
+            for (tp in f.typeParams) line(out, depth + 2, "TYPE_PARAM", "name" to esc(tp))
+        }
         line(out, depth + 1, "PARAMS", "count" to f.params.size.toString())
         for (p in f.params) {
             line(out, depth + 2, "PARAM", "type" to typeText(p.type), "name" to esc(p.name))

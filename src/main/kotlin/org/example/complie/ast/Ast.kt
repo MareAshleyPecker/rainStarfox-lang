@@ -402,6 +402,17 @@ data class FuncDecl(
      * 与 `public @M fun` 等价）。主构造与次构造同样可以带注解——它们本来就复用这个节点。
      */
     val annotations: List<AnnotationUse> = emptyList(),
+    /**
+     * 泛型函数的类型参数表（阶段 31）：`fn id&<T>(x : T) -> T` 里的 `["T"]`。
+     *
+     * 和 [ClassDecl.typeParams] 一样只是**名字**；真正的占位类型由 Checker 造
+     * （[org.example.complie.sema.RsfType.typeParam]）。空表 = 普通函数，所以
+     * 既有代码一行都不用改。构造器不能带类型参数（Parser 直接拒）。
+     *
+     * 函数级类型参数**遮蔽**同名的类级类型参数（`class Box&<T>` 里的
+     * `fn id&<T>(x : T)`：函数体里的 `T` 是函数自己的那个）。
+     */
+    val typeParams: List<String> = emptyList(),
 ) : Node {
     /**
      * 抽象方法：只有签名没有体（[body] == null）。

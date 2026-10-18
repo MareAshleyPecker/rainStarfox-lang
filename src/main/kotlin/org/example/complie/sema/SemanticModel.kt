@@ -646,6 +646,25 @@ data class AnnotationAccessor(
 }
 
 /**
+ * **一处泛型调用**推导出来的类型实参绑定（阶段 31）。
+ *
+ * 例：`fn id&<T>(x : T) -> T` 的调用点 `id("hi")` → [typeParams] = `["T"]`、
+ * [bindings] = `{T: string}`、[returnType] = `string`。
+ *
+ * [bindings] 的键一定是 [typeParams] 里的名字，且**每个都有值**（推不出来的类型参数
+ * 在检查阶段就报错了，走不到这里）。31a 只把它记在 [SemanticModel.genericCalls] 里，
+ * 31b 的字节码后端按它在调用点插 `CHECKCAST`（擦除之后形参/返回值都是 `Object`）。
+ */
+data class GenericCallSite(
+    /** 被调用函数自己的类型参数名（声明顺序）。 */
+    val typeParams: List<String>,
+    /** 每个类型参数推导出的具体类型（`T` → `int`）。 */
+    val bindings: Map<String, RsfType>,
+    /** 把返回类型里出现的类型参数代换掉之后的结果（= 调用表达式的类型）。 */
+    val returnType: RsfType,
+)
+
+/**
  * 语义检查的产物：函数表、类型标注、名字解析结果、降级后的指令，以及分析告警。
  *
  * AST 本身保持不可变，一切标注放在这里（用 IdentityHashMap 按引用索引，
@@ -822,6 +841,20 @@ class SemanticModel(
      * 一个使用点一条；同一个使用点只有一个注解（同一个目标上同一个注解重复标会报错）。
      */
     val annotationAccessors: List<AnnotationAccessor> = emptyList(),
+
+    /**
+     * 阶段 31：**每一处泛型调用**推导出来的类型实参绑定（`T` → `int`）。
+     *
+     * 键是调用点那个表达式：顶层函数调用是 [CallExpr]，方法调用是 [MemberExpr]
+     * （rsf 的成员调用就是「成员访问 + 实参表」，两者都可能是泛型函数的目标）。
+     * 值见 [GenericCallSite]。
+     *
+     * 31a 只**记录**、不使用：这一刀不发码（两个后端对泛型函数一律报 17d）。
+     * 31b 的字节码后端要按这张表在调用点插 `CHECKCAST`——擦除之后
+     * `fn id&<T>(x : T) -> T` 编出来是 `id(Object)Object`，`var s : string = id("x")`
+     * 拿回来的静态类型却是 `Object`，不 cast 就过不了 JVM 的校验。
+     */
+    val genericCalls: IdentityHashMap<Expr, GenericCallSite> = IdentityHashMap(),
 ) {
     /** 给命令行用的文本形式。 */
     val warnings: List<String>

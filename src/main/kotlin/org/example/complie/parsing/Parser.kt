@@ -962,18 +962,35 @@ class Parser(
      * 类别词（"类" / "接口"），[declWord] 是写法示例里的关键字——两边的规则一模一样，
      * 只有这两个词不同，所以抽出来一份，免得将来只改了一边。
      */
-    private fun parseTypeParamList(nameTok: Token, kindWord: String, declWord: String): List<String> {
+    private fun parseTypeParamList(
+        nameTok: Token,
+        kindWord: String,
+        declWord: String,
+        /** `&<>`（空表）的文案；null = 沿用「类型参数需要一个名字」那句老文案（class / interface）。 */
+        emptyMessage: String? = null,
+        /** 重名文案；null = 沿用「$kindWord '…' 的类型参数 '…' 重名了」那句老文案。 */
+        duplicateMessage: ((name: String, param: String) -> String)? = null,
+    ): List<String> {
         val typeParams = ArrayList<String>()
         if (check(TokenKind.AMP)) {
             advance() // &
             expect(TokenKind.LT, "'&' 后面缺少 '<'：类型参数要写成 $declWord ${nameTok.lexeme}&<T>")
+            // 阶段 31：函数那份要的是「表是空的」这句专门文案（`&<>` 是合法前缀、
+            // 只是里面什么都没有）。class / interface 不传 emptyMessage，保持老文案。
+            if (emptyMessage != null && check(TokenKind.GT)) {
+                throw error(peek(), emptyMessage)
+            }
             do {
                 val paramTok = expect(
                     TokenKind.IDENT,
                     "类型参数需要一个名字，写法是 $declWord ${nameTok.lexeme}&<T>",
                 )
                 if (typeParams.contains(paramTok.lexeme)) {
-                    throw error(paramTok, "$kindWord '${nameTok.lexeme}' 的类型参数 '${paramTok.lexeme}' 重名了")
+                    throw error(
+                        paramTok,
+                        duplicateMessage?.invoke(nameTok.lexeme, paramTok.lexeme)
+                            ?: "$kindWord '${nameTok.lexeme}' 的类型参数 '${paramTok.lexeme}' 重名了",
+                    )
                 }
                 if (paramTok.lexeme == nameTok.lexeme) {
                     throw error(paramTok, "类型参数不能和${kindWord}同名（都叫 '${nameTok.lexeme}'）")
@@ -1337,6 +1354,12 @@ class Parser(
 
         val tok = advance() // constructor
 
+        // 阶段 31：构造器不能是泛型的——类型参数写在**类**上（`class Box&<T>`），
+        // 因为构造器的「类型参数」就是类自己的那些，写第二份只会互相打架。
+        if (check(TokenKind.AMP)) {
+            throw error(peek(), "构造器不能是泛型的：类型参数写在类上（class Box&<T>）")
+        }
+
         val params = parseParamList(
             "constructor 后面缺少 '('，写法是 constructor(参数) { ... }",
         )
@@ -1658,16 +1681,31 @@ class Parser(
             throw error(t, "缺少函数名（实际读到 ${t.describe()}）")
         }
 
-        // 泛型**函数**不支持：类型参数只能写在 class 上。看见 `&` 就直说，
-        // 否则用户只会收到一句「后面缺少 '('」，猜不到问题在哪。
-        if (check(TokenKind.AMP)) {
-            throw error(
-                peek(),
-                "泛型函数还不支持：类型参数只能写在 class 上（class Box&<T> { ... }），" +
-                    "函数名后面不能跟 '&<...>'。想要「什么类型都能收」的函数，就为每种类型" +
-                    "各写一个重载（阶段 19d 起同名函数按实参类型挑），" +
-                    "或者把数据放进一个泛型类里、用它的方法",
-            )
+        // 阶段 31：泛型函数的类型参数表——`fn 名字&<T, U>(...)`。
+        // `&<` 必须紧跟在**函数名之后、`(` 之前**，和 class / interface 共用同一套
+        // 解析（含重名检查）；空表 `&<>` 与重名各有函数自己的文案。
+        val typeParams = parseTypeParamList(
+            nameTok,
+            kindWord = "函数",
+            declWord = "fn",
+            emptyMessage = "泛型函数的类型参数表是空的：写 '&<T>'，或干脆删掉 '&<>'",
+        ) { _, param -> "类型参数 '$param' 写了两遍" }
+
+        // v1 不支持泛型覆盖/泛型抽象方法（DESIGN-31）：类型参数一旦写出来就直接拒，
+        // 让用户马上知道「这条路上 v1 走不通」，而不是等到覆盖检查时收到一句莫名其妙的报错。
+        if (typeParams.isNotEmpty()) {
+            if (isOverride) {
+                throw error(
+                    peek(),
+                    "泛型方法不能写 'override'（v1 不支持泛型覆盖，DESIGN-31）",
+                )
+            }
+            if (inherit?.isAbstract == true) {
+                throw error(
+                    peek(),
+                    "泛型方法不能写 'abstract'（v1 不支持泛型抽象方法，DESIGN-31）",
+                )
+            }
         }
 
         val params = parseParamList("函数名 '${nameTok.lexeme}' 后面缺少 '('")
@@ -1691,6 +1729,14 @@ class Parser(
         //   否则「省略返回子句 = void」这条规则与抽象方法撞在一起就分不清是不是漏写了体；
         // - 其余任何地方都要求有体。
         val body: Block? = if (allowAbstractBody && !check(TokenKind.LBRACE)) {
+            // 接口里的方法天然是抽象的（没有体）。泛型方法在 v1 里不能是抽象方法，
+            // 这条分支就是「接口里只写签名的泛型方法」——同样是 DESIGN-31 的禁区。
+            if (typeParams.isNotEmpty()) {
+                throw error(
+                    peek(),
+                    "泛型方法不能写 'abstract'（v1 不支持泛型抽象方法，DESIGN-31）",
+                )
+            }
             null
         } else if (inherit?.isAbstract == true) {
             if (check(TokenKind.LBRACE)) {
@@ -1719,6 +1765,7 @@ class Parser(
             isOverride = isOverride,
             isFinal = inherit?.isFinal == true,
             annotations = leading,
+            typeParams = typeParams,
         )
     }
 
