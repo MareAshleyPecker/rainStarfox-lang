@@ -1502,6 +1502,7 @@ gradlew.bat verifyPlugin          :: 官方校验器静态检查
 | 28 | **标签名特殊字符 + 元数据**：标签名可用反引号包任意字符（`` `a-b` ``），每个有标签的方法发一条 runtime-visible `@RsfLabels(value = string[])`，按声明顺序把名字保留进 class 文件 | ✅ 2026-10-18（28a `5edbd27` Kotlin 侧 / 28b `cc1bf17` 自举链；判据 `build/verify28/`：4 正例 + 5 负例 + 两端 class 逐字节对拍；564 tests） |
 | 29 | **关键字改名**：`fun` → `fn`（硬删 + 统一改名声，词法表仍 56 项、`TokenKind` 仍 `KW_FUN`） | ✅ 2026-10-18（`017a2cb`；判据 `build/verify29/` 旧词负例 + 全部探针台回归；564 tests） |
 | 30 | **函数类型与 `lam`**：`(int, string) -> bool` / `?(int) -> int`，字面量 `lam(x : int) -> int { … }`，值捕获只许 `imutvar`/形参/`this`；JVM 走按 arity 生成的 `__RsfFn<n>` SAM 接口 + `LambdaMetafactory` | ✅ 2026-10-18（30a `d2d124e` 前端 / 30b `822e600` Kotlin 两端 / 30c `f54dcf8` 自举链；判据 `build/verify30/` 6 正例 + 5 负例 + 两端 class 逐字节零差异；581 tests；关键字 56→57） |
+| 31 | **泛型函数**（v1）：`fn id&<T>(x : T) -> T`，调用点按实参推导、JVM 擦成 `Object`；泛型方法不能 `override`/`abstract`、构造器不能泛型、`T[]` 只接引用元素数组 | ✅ 2026-10-18（31a `3317a0b` 前端+语义 / 31b `5700962` Kotlin 两端 / 31c `cf252e2` 自举链；判据 `build/verify31/`：6 正例 + 6 负例 + 两端 6 份 class 逐字节零差异；604 tests） |
 | 23 | 显式指针（`&` 取地址 / `*` 解引用，C 风格） | ⏸ 2026-10-18 用户定：JVM 上不实现，整体移交 native（`DESIGN-23.md`） |
 | 24 | 类型转换与类型判断（`as` / `?as` / `is` / `!is`） | ✅ 2026-10-18（24a `076aeee` / 24b `5b5d7aa` / 24c `707cbe3` / 24d `51bd707`；判据 `build/verify24/`：9 正例 + 8 负例 + 自举解释器对拍 14 份） |
 
