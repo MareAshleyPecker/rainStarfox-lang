@@ -1384,6 +1384,302 @@ public class Interp(prog : Node) {
         rtn false
     }
 
+    // ------------------------------------------------------------ 阶段 24d：as / ?as / is / !is
+    //
+    // 判型口径照抄 Kotlin 解释器 `Interpreter.kt:1747-1856`（`runtimeIs` /
+    // `runtimeIsArray` / `elementIsInstance` / `rsfTypeIs` / `castFailure`）：
+    //
+    //   * 数组**协变**（`B[]` 是 `A[]`）：先比层数，再比元素层；基本类型数组不协变；
+    //   * 用户对象先看整条**类链**，再对链上每一层走**接口闭包**；
+    //   * 枚举比枚举名；`string` / `ArrayList` / `File` 各自比名字。
+    //
+    // 报错文案逐字对齐工单 §2.7：`rsf: 不能把 <实际 JVM 名> 当成 <目标 JVM 名>`。
+    // 两端的名字都按 `SemanticModel.jvmRuntimeNameOf` 的规则现算：
+    // 数组是 `[`×depth + 元素描述符（`C[]` → `[LC;`、`int[][]` → `[[I`），
+    // `string` 是 `java.lang.String`，装值的那几个 JDK 类给全名，其余类名原样。
+    //
+    // **已知差异（工单 §4 陷阱①）**：自举版完全不认识 `pkg` —— `Cls.name` 只有**简单名**，
+    // 所以带包名的程序里同一个类在文案/比较里会是 `C` 而不是 `demo.C`。
+    // 判据语料没有包名；这里只把差异写下来，不动 Sources.rsf 的装载口径。
+
+    // 类型文本末尾 `[]` 的层数：`A`→0、`A[]`→1、`int[][]`→2。
+    // 形状由 `TypeInfo.text()` 定死（`[]` 永远在最外、`&<...>` 在它里侧，见
+    // Parser.rsf:291-297），所以从**尾部**剥就不会误伤泛型实参里的 `[]`（`Box&<int[]>`）。
+    fun arrayDepthOfText(typeText : string) -> int {
+        var t = typeText
+        var dep = 0
+        while (t.length() >= 2 && t.endsWith("[]")) {
+            t = t.substring(0, t.length() - 2)
+            dep = dep + 1
+        }
+        rtn dep
+    }
+
+    // 剥掉末尾所有 `[]` 之后的**元素**类型文本（擦形之前，可能还带 `&<...>` / `::` / `?`）
+    fun elemTextOfArray(typeText : string) -> string {
+        var t = typeText
+        while (t.length() >= 2 && t.endsWith("[]")) {
+            t = t.substring(0, t.length() - 2)
+        }
+        rtn t
+    }
+
+    // 去掉类型文本里的可空标记（前导 `?`）——判型和取名都不看它（`A?` 与 `A` 同义）
+    fun dropNullableMark(nm : string) -> string {
+        if (nm.length() > 0 && nm.charAt(0) == '?') { rtn nm.substring(1, nm.length()) }
+        rtn nm
+    }
+
+    // `s` 重复 `n` 次（拼 `[`×depth 用；rsf 没有字符串乘法）
+    fun repeatStr(s : string, n : int) -> string {
+        var out = ""
+        var i = 0
+        while (i < n) {
+            out = out + s
+            i = i + 1
+        }
+        rtn out
+    }
+
+    // 类名 → `Class.getName()` 的写法：擦掉泛型实参（`&<...>`）与 `[]`、去掉 `?`，
+    // 嵌套类型的 `::` 换成 `$`（class 文件里就是 `A$Nested`）。
+    fun jvmDottedNameOf(nm : string) -> string {
+        var t = baseTypeName(nm)
+        var i = indexOfTextIn(t, "::")
+        if (i < 0) { rtn t }
+        rtn t.substring(0, i) + "$" + t.substring(i + 2, t.length())
+    }
+
+    // 类名 → JVM **内部**名（数组描述符里用）：`::`→`$`、包分隔 `.`→`/`
+    fun jvmInternalNameOf(nm : string) -> string {
+        var t = jvmDottedNameOf(nm)
+        var out = ""
+        var i = 0
+        while (i < t.length()) {
+            var ch = t.charAt(i)
+            if (ch == '.') {
+                out = out + "/"
+            } else {
+                out = out + ("" + ch)
+            }
+            i = i + 1
+        }
+        rtn out
+    }
+
+    // 元素类型文本 → JVM 描述符里的**元素段**：int→`I` … byte→`B`、
+    // string→`Ljava/lang/String;`、用户类→`L<内部名>;`。`[`×depth 由调用方补。
+    fun elemDescriptorOf(elemText : string) -> string {
+        var t = baseTypeName(dropNullableMark(elemText))
+        if (t == "int") { rtn "I" }
+        if (t == "long") { rtn "J" }
+        if (t == "float") { rtn "F" }
+        if (t == "double") { rtn "D" }
+        if (t == "bool") { rtn "Z" }
+        if (t == "char") { rtn "C" }
+        if (t == "byte") { rtn "B" }
+        if (t == "string") { rtn "Ljava/lang/String;" }
+        rtn "L" + jvmInternalNameOf(t) + ";"
+    }
+
+    // 目标类型文本 → `jvmRuntimeNameOf` 的写法：
+    //   数组 → `[`×depth + 元素段（元素先擦泛型、擦 `?`）；
+    //   string → `java.lang.String`；其余基础类型按描述符（Kotlin 侧同口径）；
+    //   类名 → 原样（泛型实参擦掉、`::`→`$`）。
+    fun jvmTypeNameOf(typeText : string) -> string {
+        var depth = arrayDepthOfText(typeText)
+        if (depth > 0) {
+            rtn repeatStr("[", depth) + elemDescriptorOf(elemTextOfArray(typeText))
+        }
+        var nm = baseTypeName(typeText)
+        if (nm == "string") { rtn "java.lang.String" }
+        if (isPrimitiveName(nm)) { rtn elemDescriptorOf(nm) }
+        rtn jvmDottedNameOf(nm)
+    }
+
+    // 一个值在运行期的 JVM 名（`runtimeNameOfValue` 的自举版）
+    fun runtimeNameOfVal(v : Val) -> !string {
+        switch (v.k) {
+            Kind.NULLV : rtn "null"
+            Kind.STRV : rtn "java.lang.String"
+            Kind.INTV : rtn "java.lang.Integer"
+            Kind.LONGV : rtn "java.lang.Long"
+            Kind.FLOATV : rtn "java.lang.Float"
+            Kind.DOUBLEV : rtn "java.lang.Double"
+            Kind.BOOLV : rtn "java.lang.Boolean"
+            Kind.CHARV : rtn "java.lang.Character"
+            Kind.BYTEV : rtn "java.lang.Byte"
+            Kind.LISTV : rtn "java.util.ArrayList"
+            Kind.FILEV : rtn "java.io.File"
+            Kind.ENUMV : rtn jvmDottedNameOf(v.en)
+            Kind.OBJV : rtn objClsOf(v)!!
+            Kind.ARRV : rtn arrNameOf(v)!!
+            else : fail unsupported("转型失败文案：值种类 " + ("" + v.k))
+        }
+        rtn ""
+    }
+
+    // 对象值的运行期类名（OBJV 的载荷一定在；不在说明内部状态坏了，响亮报错）
+    fun objClsOf(v : Val) -> !string {
+        var o = v.ov
+        if (o == null) { fail unsupported("类型名：对象值没有载荷") }
+        rtn jvmDottedNameOf(o!!.cls)
+    }
+
+    // 数组值的运行期名：`[`×depth + 元素段（`C[]`→`[LC;`、`int[][]`→`[[I`）。
+    // 声明类型记在 `Arr.depth` / `Arr.elemType` 上（`makeArray` 装的），正是 Kotlin 侧
+    // `arrayTypes` 那张表的自举版——JVM 上用户对象数组的载体分不出 `B[]` 和 `C[]`，
+    // 所以这里只能问这两个槽。
+    fun arrNameOf(v : Val) -> !string {
+        var a = v.av
+        if (a == null) { fail unsupported("类型名：数组值没有载荷") }
+        rtn repeatStr("[", a!!.depth) + elemDescriptorOf(a!!.elemType)
+    }
+
+    // 工单 §2.7 的逐字文案（`as` 失败必须走 `fail`，让 rsf 的 `try` 接得住）
+    fun castFailure(v : Val, typeText : string) -> !string {
+        rtn "rsf: 不能把 " + runtimeNameOfVal(v)!! + " 当成 " + jvmTypeNameOf(typeText)
+    }
+
+    // `A::B` 这类**嵌套写法**的属主（`A`）。没有 `::` 就返回空串。
+    //
+    // 自举解释器只有注解伴生类（`annotation Marker() { companion entity Impl … }`）
+    // 会写成 `Marker::Impl`，而 `loadCompanion` 是**把伴生体的成员并进属主类 `Marker`**
+    // （`Interp.rsf:989-999`）——所以 `Marker::Impl` 这个类型在解释器里的身份就是 `Marker`。
+    // 判型时必须认这一条，否则 `x is Marker::Impl` 会静默给 false（Kotlin 侧给 true）。
+    // Parser/Checker 保证 `::` 只出现在注解伴生类上，所以「取 `::` 前面那段」不会误伤别的类型。
+    fun nestedOwnerOf(typeText : string) -> string {
+        var t = baseTypeName(dropNullableMark(typeText))
+        var i = indexOfTextIn(t, "::")
+        if (i < 0) { rtn "" }
+        rtn t.substring(0, i)
+    }
+
+    // `[className]`（含它链上每一层）能不能当成 [want]：先比类链上的名字，
+    // 再认「注解伴生类 `A::B` 的身份是 `A`」，最后对每一层走接口闭包
+    // （Kotlin `rsfTypeIs` :1789-1794 同口径）。
+    fun rsfTypeIsName(className : string, want : string) -> bool {
+        var chain = chainArray(className)
+        var wk = jvmDottedNameOf(want)
+        var owner = nestedOwnerOf(want)
+        var wkOwner = ""
+        if (owner.length() > 0) { wkOwner = jvmDottedNameOf(owner) }
+        var i = 0
+        while (i < chain.length) {
+            var c = chain[i]
+            if (jvmDottedNameOf(c.name) == wk) { rtn true }
+            if (wkOwner.length() > 0 && jvmDottedNameOf(c.name) == wkOwner) { rtn true }
+            if (ifaceClosureHas(c.name, wk)) { rtn true }
+            i = i + 1
+        }
+        rtn false
+    }
+
+    // [startName] 的**接口闭包**（直接父接口 + 父接口的父接口……）里有没有 [want]。
+    // BFS 结构与 `ifaceDefaultScan` 一致：名字数组 + 线性查重防环（rsf 没有 HashSet，
+    // 规模也只有个位数）。起点同样两处：`findCls(startName).supers`（类声明的父类型）
+    // 与 `findIface(startName).supers`（接口自己继承的父接口）——与 Kotlin
+    // `interfaceClosureContains` :1801-1812 从 `superInterfacesOf` 出发同义。
+    fun ifaceClosureHas(startName : string, want : string) -> bool {
+        var seen : string[] = new string[4]
+        var sn = 0
+        var queue : string[] = new string[8]
+        var qn = 0
+        var head = 0
+        var c0 = findCls(startName)
+        if (c0 != null) {
+            var s0 = 0
+            while (s0 < c0!!.scount) {
+                queue = growText(queue, qn, c0!!.supers[s0])
+                qn = qn + 1
+                s0 = s0 + 1
+            }
+        }
+        var i0 = findIface(startName)
+        if (i0 != null) {
+            var s1 = 0
+            while (s1 < i0!!.scount) {
+                queue = growText(queue, qn, i0!!.supers[s1])
+                qn = qn + 1
+                s1 = s1 + 1
+            }
+        }
+        while (head < qn) {
+            var cur = queue[head]
+            head = head + 1
+            if (jvmDottedNameOf(cur) == want) { rtn true }
+            var dup = false
+            var vi = 0
+            while (vi < sn) {
+                if (seen[vi] == cur) { dup = true }
+                vi = vi + 1
+            }
+            if (!dup) {
+                seen = growText(seen, sn, cur)
+                sn = sn + 1
+                var ic = findIface(cur)
+                if (ic != null) {
+                    var s2 = 0
+                    while (s2 < ic!!.scount) {
+                        queue = growText(queue, qn, ic!!.supers[s2])
+                        qn = qn + 1
+                        s2 = s2 + 1
+                    }
+                }
+            }
+        }
+        rtn false
+    }
+
+    // 数组**元素层**的赋值兼容（Kotlin `elementIsInstance` :1773-1786）：
+    // 擦形后同名直接相容（`Box&<int>` 与 `Box&<string>` 都擦成 `Box`）；
+    // 任一边是基础类型就**不协变**（`int[]` 不是 `long[]`）；其余按类链/接口闭包判。
+    fun elemIsInstance(actual : string, target : string) -> bool {
+        var ab = baseTypeName(dropNullableMark(actual))
+        var tb = baseTypeName(dropNullableMark(target))
+        if (ab == tb) { rtn true }
+        if (isPrimitiveName(ab) || isPrimitiveName(tb)) { rtn false }
+        rtn rsfTypeIsName(ab, tb)
+    }
+
+    // `v` 能不能当成类型文本 [typeText]（`A` / `A[]` / `int[][]` / `Box&<int>` / `A::Nested`）。
+    // 不认识的**值种类**一律 `fail`（工单 §2.4 / 17c 铁律：绝不许兜底 false 或静默降级）。
+    public fun isInstanceOf(v : Val, typeText : string) -> !bool {
+        var depth = arrayDepthOfText(typeText)
+        if (depth > 0) {
+            if (v.k != Kind.ARRV) { rtn false }
+            var a = v.av
+            if (a == null) { fail unsupported("is 判型：数组值没有载荷") }
+            if (a!!.depth != depth) { rtn false }
+            rtn elemIsInstance(a!!.elemType, elemTextOfArray(typeText))
+        }
+        var want = baseTypeName(typeText)
+        switch (v.k) {
+            Kind.NULLV : rtn false
+            // 目标是**非数组**类型，值却是数组：JVM 上数组永远不是任何一个引用类型的实例
+            // （`Class.isInstance` 只认 `Object`/`Cloneable`/`Serializable`，rsf 都没有），
+            // 所以 Kotlin 版 `runtimeIs` 落到 `jvmClassOf(target)?.isInstance(value) ?: false`
+            // 时答案恒为 false —— 这里给同一个答案，`as` 才走得出 §2.7 的文案
+            // （`arr as string` → `rsf: 不能把 [[I 当成 java.lang.String`），不会变成
+            // 「暂不支持」。这不是兜底：数组在这条分支上的答案本来就是确定的 false。
+            Kind.ARRV : rtn false
+            Kind.OBJV : rtn rsfTypeIsName(objClsOf(v)!!, want)
+            Kind.ENUMV : rtn jvmDottedNameOf(v.en) == jvmDottedNameOf(want)
+            Kind.STRV : rtn want == "string"
+            Kind.INTV : rtn want == "int"
+            Kind.LONGV : rtn want == "long"
+            Kind.FLOATV : rtn want == "float"
+            Kind.DOUBLEV : rtn want == "double"
+            Kind.BOOLV : rtn want == "bool"
+            Kind.CHARV : rtn want == "char"
+            Kind.BYTEV : rtn want == "byte"
+            Kind.LISTV : rtn want == "ArrayList"
+            Kind.FILEV : rtn want == "File"
+            else : fail unsupported("is 判型：值种类 " + ("" + v.k))
+        }
+        rtn false
+    }
+
     // ------------------------------------------------------------------ 数值取值
     //
     // 每种「按目标类型取数」写成一个函数，是因为 rsf 的数值转换只允许**加宽**
@@ -1810,9 +2106,34 @@ public class Interp(prog : Node) {
             // 阶段 25 K5c：`super` 只作为 `super.f(...)` / `super(接口).f(...)` 的**接收者**
             // 出现（Parser.rsf:2376-2419）；选择哪一份声明在 evMember 里做
             NodeKind.SUPER : rtn evSuper(n, env)!!
+            // 阶段 24d：`x as A` / `x ?as A` / `x is A` / `x !is A`。
+            // 孩子 = [操作数, TARGET]，TARGET 的 `type` 是目标类型文本（Parser.rsf:2716-2748）。
+            NodeKind.AS : rtn evAs(n, env)!!
+            NodeKind.IS : rtn evIs(n, env)!!
             else : fail unsupported("表达式节点 " + kindName(n.kind))
         }
         rtn vNull()
+    }
+
+    // 阶段 24d：`x as A` / `x ?as A`（工单 §2.6）。判型成功**原样**给值（不改值、不改引用，
+    // 与 Kotlin `coerce(value, model.typeOf(expr))` 同义，收敛交给声明处）；`?as` 失败给 null；
+    // `as` 失败走 `fail` —— rsf 的 `try` 只接 `fail` 的消息，抛 JVM 异常接不住。
+    public fun evAs(n : Node, env : Env) -> !Val {
+        var v = ev(kid(n, 0), env)!!
+        var target = attr(kid(n, 1), "type")
+        if (isInstanceOf(v, target)!!) { rtn v }
+        if (attrBool(n, "safe")) { rtn vNull() }
+        var msg = castFailure(v, target)!!
+        fail msg
+        rtn vNull()
+    }
+
+    // 阶段 24d：`x is A` / `x !is A` —— 恒 `bool`（v1 不做智能转换），否定就是取反
+    public fun evIs(n : Node, env : Env) -> !Val {
+        var v = ev(kid(n, 0), env)!!
+        var r = isInstanceOf(v, attr(kid(n, 1), "type"))!!
+        if (attrBool(n, "negated")) { r = !r }
+        rtn vBool(r)
     }
 
     // `super` 表达式本身语义上就是 this（哪一份实现在 evSuperMember 里挑）
