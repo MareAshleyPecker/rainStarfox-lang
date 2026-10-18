@@ -58,13 +58,17 @@ public class Checker(failure : ?CheckFailure) {
     var labelCount : int = 0
     var curRetText : string = "void"
     var curVoid : bool = true
+    var warnLines : int[] = new int[8]
+    var warnCols : int[] = new int[8]
+    var warnTexts : string[] = new string[8]
+    var warnCount : int = 0
     var curExpect : string = ""
     var curBodyHasTypeParam : bool = false
     var scopes : Scopes = new Scopes()
 
     // ---------------------------------------------------------------- 类型文本
 
-    fn typeOfText(text : string) -> RType {
+    fn typeOfTextT(text : string) -> RType {
         var t = text
         var nullable = false
         if (t.length() > 0 && t.charAt(0) == '?') {
@@ -119,6 +123,35 @@ public class Checker(failure : ?CheckFailure) {
         if (failure != null) { rtn }
         failure = new CheckFailure(detail, node.line, node.col)
     }
+
+    // 阶段 38：不可达代码警告（与 Kotlin `Diagnostic(Severity.WARNING, "checker", …)` 同款）
+    fn addWarn(line : int, col : int, detail : string) -> void {
+        if (warnCount >= warnLines.length) {
+            var b1 = new int[warnLines.length * 2]
+            var b2 = new int[warnCols.length * 2]
+            var b3 = new string[warnTexts.length * 2]
+            var i = 0
+            while (i < warnCount) {
+                b1[i] = warnLines[i]
+                b2[i] = warnCols[i]
+                b3[i] = warnTexts[i]
+                i = i + 1
+            }
+            warnLines = b1
+            warnCols = b2
+            warnTexts = b3
+        }
+        warnLines[warnCount] = line
+        warnCols[warnCount] = col
+        warnTexts[warnCount] = detail
+        warnCount = warnCount + 1
+    }
+
+    public fn failed() -> bool { rtn failure != null }
+    public fn failureOf() -> ?CheckFailure { rtn failure }
+    public fn warningCount() -> int { rtn warnCount }
+    public fn warnLine(i : int) -> int { rtn warnLines[i] }
+    public fn warnText(i : int) -> string { rtn warnTexts[i] }
 
     // ---------------------------------------------------------------- 函数表
 
@@ -185,7 +218,7 @@ public class Checker(failure : ?CheckFailure) {
 
     public fn check(program : Node) -> void {
         declareFunctions(program)
-        collectClasses(program)
+        gatherClasses(program)
         checkClasses()
         if (failure != null) { rtn }
         var funcs = childNodeOf(program, NodeKind.FUNCS)
@@ -285,7 +318,7 @@ public class Checker(failure : ?CheckFailure) {
         clsCount = clsCount + 1
     }
 
-    fn collectClasses(prg : Node) -> void {
+    fn gatherClasses(prg : Node) -> void {
         cls = new ClsInfo[8]
         clsCount = 0
         var cs = childNodeOf(prg, NodeKind.CLASSES)
@@ -572,8 +605,15 @@ public class Checker(failure : ?CheckFailure) {
     fn checkBlock(block : Node) -> void {
         scopes.enter()
         var i = 0
+        var dead = false
         while (i < block.childCount && failure == null) {
-            checkStmt(block.children[i])
+            var st = block.children[i]
+            if (dead && st.kind != NodeKind.LABEL && st.kind != NodeKind.GOTO && st.line > 0) {
+                addWarn(st.line, st.col, "不可达代码（永远执行不到）")
+            }
+            checkStmt(st)
+            if (st.kind == NodeKind.RETURN || st.kind == NodeKind.FAIL) { dead = true }
+            if (st.kind == NodeKind.BREAK || st.kind == NodeKind.CONTINUE || st.kind == NodeKind.GOTO) { dead = true }
             i = i + 1
         }
         scopes.leave()
@@ -691,7 +731,7 @@ public class Checker(failure : ?CheckFailure) {
             failAt("变量 '" + nodeProp(stmt, "name") + "' 在同一个作用域里重复声明", stmt)
             rtn
         }
-        if (typeOfText(declared).voidQ()) {
+        if (typeOfTextT(declared).voidQ()) {
             failAt("变量不能是 void 类型", stmt)
             rtn
         }
@@ -951,7 +991,45 @@ public class Checker(failure : ?CheckFailure) {
     }
 
     fn acceptsText(from : string, to : string) -> bool {
-        rtn typeOfText(to).accepts(typeOfText(from))
+        var ft = typeOfTextT(from)
+        var tt = typeOfTextT(to)
+        if (tt.accepts(ft)) { rtn true }
+        // 阶段 38：类/接口子类型（Kotlin 的 `RsfType.accepts` 只认同一类型名，
+        // 子类赋给父类由 `checker` 的继承检查兜住，这里补上）
+        if (tt.base != "EXTERNAL" || ft.base != "EXTERNAL") { rtn false }
+        if (tt.depth != ft.depth) { rtn false }
+        if (ft.nullable && !tt.nullable) { rtn false }
+        rtn isSubclassName(ft.extName, tt.extName)
+    }
+
+    // `have` 是不是 `want` 的子类型（沿父类链 + 自己的接口 + 接口继承闭包）
+    fn isSubclassName(have : string, want : string) -> bool {
+        if (have == want) { rtn true }
+        var c = findCls(have)
+        var guard = 0
+        while (c != null && guard < 64) {
+            var i = 0
+            while (i < c!!.ifaceCount) {
+                if (ifaceExtendsName(c!!.ifaces[i], want)) { rtn true }
+                i = i + 1
+            }
+            if (c!!.parent == want) { rtn true }
+            c = findCls(c!!.parent)
+            guard = guard + 1
+        }
+        rtn false
+    }
+
+    fn ifaceExtendsName(nm : string, want : string) -> bool {
+        if (nm == want) { rtn true }
+        var i = findCls(nm)
+        if (i == null) { rtn false }
+        var k = 0
+        while (k < i!!.ifaceCount) {
+            if (ifaceExtendsName(i!!.ifaces[k], want)) { rtn true }
+            k = k + 1
+        }
+        rtn false
     }
 
     // ------------------------------------------------------------ 阶段 33d：IS / lambda / 泛型推导
@@ -1205,12 +1283,26 @@ public class ClsInfo(name : string, isFinal : bool, isAbstract : bool, isIface :
 }
 
 // 检查一份源码：通过就 rtn null，否则返回第一处错
-public fn checkSource(text : string) -> ?CheckFailure {
+public fn checkSourceFull(text : string) -> Checker {
     var ast = parseSource(text)
-    if (ast.kind == NodeKind.ERROR) { rtn null }
     var c = new Checker(null)
+    if (ast.kind == NodeKind.ERROR) { rtn c }
     c.check(ast)
-    rtn c.failure
+    rtn c
+}
+
+public fn checkSource(text : string) -> ?CheckFailure {
+    var c = checkSourceFull(text)
+    rtn c.failureOf()
+}
+
+// 与 Kotlin `Main` 同款：`[rsf] 警告: <文件名>:<行>: <文案>`（只有行号，没有列）
+public fn printWarnings(c : Checker, file : string) -> void {
+    var i = 0
+    while (i < c.warningCount()) {
+        System.err.println("[rsf] 警告: " + file + ":" + ("" + c.warnLine(i)) + ": " + c.warnText(i))
+        i = i + 1
+    }
 }
 
 // ---------------------------------------------------------------- 阶段 33d：纯字符串/类型名工具

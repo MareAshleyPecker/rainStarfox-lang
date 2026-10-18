@@ -41,7 +41,7 @@ fn baseName(b : string) -> string {
     rtn ""
 }
 
-fn baseDesc(b : string) -> string {
+fn rtBaseDesc(b : string) -> string {
     if (b == "VOID") { rtn "V" }
     if (b == "BOOL") { rtn "Z" }
     if (b == "BYTE") { rtn "B" }
@@ -96,7 +96,7 @@ fn baseBoxed(b : string) -> string {
     if (b == "LONG") { rtn "Ljava/lang/Long;" }
     if (b == "FLOAT") { rtn "Ljava/lang/Float;" }
     if (b == "DOUBLE") { rtn "Ljava/lang/Double;" }
-    rtn baseDesc(b)
+    rtn rtBaseDesc(b)
 }
 
 // 隐式加宽表（与 Kotlin `widenTargets` 同）：`char` 一个口子都不开
@@ -201,7 +201,7 @@ public class RType(base : string, nullable : bool, extName : string, targs : RTy
         if (base == "EXTERNAL") { rtn "L" + extName + ";" }
         if (base == "TYPE_PARAM") { rtn "Ljava/lang/Object;" }
         if (nullable && baseIsPrim(base)) { rtn baseBoxed(base) }
-        rtn baseDesc(base)
+        rtn rtBaseDesc(base)
     }
 
     public fn desc() -> string {
@@ -322,18 +322,18 @@ public class RType(base : string, nullable : bool, extName : string, targs : RTy
 
 // —— 构造器（rsf 没有默认参数，用工厂函数） ——
 
-public fn tVoid() -> RType { rtn new RType("VOID", false, "", new RType[0], 0) }
-public fn tBool() -> RType { rtn new RType("BOOL", false, "", new RType[0], 0) }
-public fn tByte() -> RType { rtn new RType("BYTE", false, "", new RType[0], 0) }
-public fn tChar() -> RType { rtn new RType("CHAR", false, "", new RType[0], 0) }
-public fn tInt() -> RType { rtn new RType("INT", false, "", new RType[0], 0) }
-public fn tLong() -> RType { rtn new RType("LONG", false, "", new RType[0], 0) }
-public fn tFloat() -> RType { rtn new RType("FLOAT", false, "", new RType[0], 0) }
-public fn tDouble() -> RType { rtn new RType("DOUBLE", false, "", new RType[0], 0) }
-public fn tString() -> RType { rtn new RType("STRING", false, "", new RType[0], 0) }
-public fn tNull() -> RType { rtn new RType("NULL", false, "", new RType[0], 0) }
-public fn tObject(name : string) -> RType { rtn new RType("EXTERNAL", false, name, new RType[0], 0) }
-public fn tParam(name : string) -> RType { rtn new RType("TYPE_PARAM", false, name, new RType[0], 0) }
+public fn rtVoid() -> RType { rtn new RType("VOID", false, "", new RType[0], 0) }
+public fn rtBool() -> RType { rtn new RType("BOOL", false, "", new RType[0], 0) }
+public fn rtByte() -> RType { rtn new RType("BYTE", false, "", new RType[0], 0) }
+public fn rtChar() -> RType { rtn new RType("CHAR", false, "", new RType[0], 0) }
+public fn rtInt() -> RType { rtn new RType("INT", false, "", new RType[0], 0) }
+public fn rtLong() -> RType { rtn new RType("LONG", false, "", new RType[0], 0) }
+public fn rtFloat() -> RType { rtn new RType("FLOAT", false, "", new RType[0], 0) }
+public fn rtDouble() -> RType { rtn new RType("DOUBLE", false, "", new RType[0], 0) }
+public fn rtString() -> RType { rtn new RType("STRING", false, "", new RType[0], 0) }
+public fn rtNull() -> RType { rtn new RType("NULL", false, "", new RType[0], 0) }
+public fn rtObject(name : string) -> RType { rtn new RType("EXTERNAL", false, name, new RType[0], 0) }
+public fn rtParam(name : string) -> RType { rtn new RType("TYPE_PARAM", false, name, new RType[0], 0) }
 
 // 小工具（rsf 的标准库还很薄，先放着；阶段 32 的 core stdlib 会把它们搬走）
 fn lastSlash(s : string) -> int {

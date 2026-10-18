@@ -28,37 +28,37 @@ fn main() -> void {
     var types : RType[] = new RType[16]
 
     labels[0] = "int"
-    types[0] = tInt()
+    types[0] = rtInt()
     labels[1] = "?int"
-    types[1] = tInt().asNullable()
+    types[1] = rtInt().asNullable()
     labels[2] = "long"
-    types[2] = tLong()
+    types[2] = rtLong()
     labels[3] = "byte"
-    types[3] = tByte()
+    types[3] = rtByte()
     labels[4] = "char"
-    types[4] = tChar()
+    types[4] = rtChar()
     labels[5] = "void"
-    types[5] = tVoid()
+    types[5] = rtVoid()
     labels[6] = "null"
-    types[6] = tNull()
+    types[6] = rtNull()
     labels[7] = "string"
-    types[7] = tString()
+    types[7] = rtString()
     labels[8] = "?string"
-    types[8] = tString().asNullable()
+    types[8] = rtString().asNullable()
     labels[9] = "int[]"
-    types[9] = tInt().arrayOf(1)
+    types[9] = rtInt().arrayOf(1)
     labels[10] = "int[][]"
-    types[10] = tInt().arrayOf(2)
+    types[10] = rtInt().arrayOf(2)
     labels[11] = "Box&<int>"
-    types[11] = new RType("EXTERNAL", false, "demo/Box", boxArgs(tInt()), 0)
+    types[11] = new RType("EXTERNAL", false, "demo/Box", boxArgs(rtInt()), 0)
     labels[12] = "?Box&<string>"
-    types[12] = new RType("EXTERNAL", true, "demo/Box", boxArgs(tString()), 0)
+    types[12] = new RType("EXTERNAL", true, "demo/Box", boxArgs(rtString()), 0)
     labels[13] = "T"
-    types[13] = tParam("T")
+    types[13] = rtParam("T")
     labels[14] = "T[]"
-    types[14] = tParam("T").arrayOf(1)
+    types[14] = rtParam("T").arrayOf(1)
     labels[15] = "Object"
-    types[15] = tObject("java/lang/Object")
+    types[15] = rtObject("java/lang/Object")
 
     var i = 0
     while (i < labels.length) {
@@ -86,7 +86,7 @@ fn main() -> void {
     println("--- substitute T -> int ---")
     i = 0
     while (i < types.length) {
-        var r = types[i].substitute("T", tInt())
+        var r = types[i].substitute("T", rtInt())
         println(labels[i] + " -> " + r.name() + " " + r.desc())
         i = i + 1
     }
