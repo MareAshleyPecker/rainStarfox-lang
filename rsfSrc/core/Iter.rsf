@@ -1,0 +1,50 @@
+// 阶段 46：核心标准库 · 迭代器 Iter<T>
+//
+// 语言里的 `for (x in 数组)` 只能遍历数组，容器（Vec/Deque/Queue）要么先 toArray()，
+// 要么用这里的迭代器手写 while 循环：
+//
+//     var it : ArrayIter&<int> = new ArrayIter&<int>()
+//     it.reset(xs)
+//     while (it.hasNext()) { println("" + it.next()) }
+//
+// 口径：只有「游标 + 数组」两段状态，不依赖 JDK 的 Iterator 接口（两端都认的语法）。
+pub class ArrayIter&<T> {
+    var items : T[] = new T[0]
+    var at : int = 0
+
+    // 换一份数据重新开始；同一个迭代器可以反复用，不额外分配
+    pub fn reset(xs : T[]) -> void {
+        items = xs
+        at = 0
+    }
+
+    pub fn hasNext() -> bool { rtn at < items.length }
+
+    // 前置条件：hasNext() 为真。越界取会由数组下标检查报运行期错误
+    pub fn next() -> T {
+        var v : T = items[at]
+        at = at + 1
+        rtn v
+    }
+
+    // 看一眼下一个；到头了返回 null（元素本身可以为 null，所以这里只当哨兵用）
+    pub fn peek() -> ?T {
+        if (at >= items.length) { rtn null }
+        rtn items[at]
+    }
+
+    pub fn index() -> int { rtn at }
+
+    pub fn size() -> int { rtn items.length }
+
+    pub fn remaining() -> int {
+        if (at >= items.length) { rtn 0 }
+        rtn items.length - at
+    }
+
+    // 跳过 n 个；超过末尾就停在末尾
+    pub fn skip(n : int) -> void {
+        at = at + n
+        if (at > items.length) { at = items.length }
+    }
+}

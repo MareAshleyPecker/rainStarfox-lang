@@ -556,7 +556,8 @@ for (x in xs) { println(x) }                // xs 是 T[]
 ```
 
 解糖成下标循环，所以 `continue` / `break` 就是普通循环的语义。只认**数组**：
-`Vec` / `Deque` 这类容器先 `toArray()`，或者自己写 `while (it.hasNext())`。
+`Vec` / `Deque` / `Queue` 这类容器先 `toArray()`，再用 `rsfSrc/core/Iter.rsf` 的
+`ArrayIter` 手写 `while (it.hasNext())`。
 
 **Java 式** —— 三段都可以省略，用 `,` 分隔多项：
 

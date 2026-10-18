@@ -1,0 +1,63 @@
+// 阶段 46：核心标准库 · 队列 Queue<T>（FIFO）
+//
+// 环形缓冲区，容量 2 倍增长；与 Deque 的区别是只从一头进、另一头出，
+// 名字也叫得更直白（push/pop）。空队列取元素返回 null，由调用方自己判。
+pub class Queue&<T> {
+    var items : T[] = new T[4]
+    var head : int = 0
+    var n : int = 0
+
+    pub fn size() -> int { rtn n }
+
+    pub fn isEmpty() -> bool { rtn n == 0 }
+
+    pub fn clear() -> void {
+        head = 0
+        n = 0
+    }
+
+    // 入队（放尾部）
+    pub fn push(x : T) -> void {
+        if (n == items.length) { grow() }
+        items[(head + n) % items.length] = x
+        n = n + 1
+    }
+
+    // 出队（取头部）；空队列返回 null
+    pub fn pop() -> ?T {
+        if (n == 0) { rtn null }
+        var v : ?T = items[head]
+        head = (head + 1) % items.length
+        n = n - 1
+        rtn v
+    }
+
+    pub fn peek() -> ?T {
+        if (n == 0) { rtn null }
+        rtn items[head]
+    }
+
+    // 第 i 个（0 是队头），不消耗队列
+    pub fn get(i : int) -> T { rtn items[(head + i) % items.length] }
+
+    pub fn toArray() -> T[] {
+        var out : T[] = new T[n]
+        var i = 0
+        while (i < n) {
+            out[i] = items[(head + i) % items.length]
+            i = i + 1
+        }
+        rtn out
+    }
+
+    pub fn grow() -> void {
+        var bigger : T[] = new T[items.length * 2]
+        var i = 0
+        while (i < n) {
+            bigger[i] = items[(head + i) % items.length]
+            i = i + 1
+        }
+        items = bigger
+        head = 0
+    }
+}

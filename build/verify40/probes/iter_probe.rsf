@@ -1,0 +1,51 @@
+import "../../../rsfSrc/core/Iter.rsf"
+import "../../../rsfSrc/core/Vec.rsf"
+
+fn main() -> void {
+    var xs : int[] = new int[5]
+    var i = 0
+    while (i < 5) {
+        xs[i] = (i + 1) * 10
+        i = i + 1
+    }
+
+    var it : ArrayIter&<int> = new ArrayIter&<int>()
+    it.reset(xs)
+    println("" + it.size() + " " + it.remaining() + " " + it.index())
+    println("" + it.peek() + " " + it.next() + " " + it.index())
+    it.skip(2)
+    println("" + it.peek() + " " + it.remaining())
+    var sum = 0
+    while (it.hasNext()) {
+        sum = sum + it.next()
+    }
+    println("" + sum + " " + it.hasNext() + " " + it.remaining())
+
+    var words : string[] = new string[3]
+    words[0] = "a"
+    words[1] = "bb"
+    words[2] = "ccc"
+    var sit : ArrayIter&<string> = new ArrayIter&<string>()
+    sit.reset(words)
+    var line = ""
+    while (sit.hasNext()) {
+        line = line + sit.next()
+    }
+    println(line + "|" + sit.remaining())
+
+    var v : Vec&<int> = new Vec&<int>()
+    v.push(7)
+    v.push(8)
+    v.push(9)
+    it.reset(v.toArray())
+    var total = 0
+    while (it.hasNext()) {
+        total = total + it.next()
+    }
+    println("" + total + " " + it.size())
+
+    // 空数组：hasNext 直接为假
+    var none : int[] = new int[0]
+    it.reset(none)
+    println("" + it.hasNext() + " " + it.peek() + " " + it.remaining())
+}
