@@ -66,6 +66,15 @@ fun arrayIndexHelperDesc() -> string { rtn "(II)I" }
 fun arrayLengthHelperName() -> string { rtn "__rsf_arrayLength$rt" }
 fun arrayLengthHelperDesc() -> string { rtn "(I)I" }
 
+// 阶段 24：`as` 的判型/抛错辅助方法（与 Kotlin `BytecodeCompiler.CAST_HELPER` 同名同签名）
+fun castHelperName() -> string { rtn "__rsf_cast" }
+fun castHelperDesc() -> string {
+    rtn "(Ljava/lang/Object;Ljava/lang/Class;Ljava/lang/String;)Ljava/lang/Object;"
+}
+fun castNullPrefix() -> string { rtn "rsf: 不能把 null 当成 " }
+fun castPrefix() -> string { rtn "rsf: 不能把 " }
+fun castMid() -> string { rtn " 当成 " }
+
 fun readTextHelperName() -> string { rtn "__rsf_readText$rt" }
 fun readTextHelperDesc() -> string { rtn "(Ljava/lang/String;)Ljava/lang/String;" }
 fun writeTextHelperName() -> string { rtn "__rsf_writeText$rt" }
@@ -569,11 +578,44 @@ fun byteRangeLiteral(e : Node) -> bool {
 // 数据源在 `Gen.isSubtypeName`（类 → 接口、接口 → 父接口）。
 fun acceptsValue(g : Gen, target : BType, value : Node, source : BType) -> bool {
     if (accepts(target, source)) { rtn true }
-    if (target.base == "external" && source.base == "external" && target.depth == 0 && source.depth == 0) {
+    // 阶段 24：数组是**协变**的（`B[]` 能当 `A[]` 用），与 JVM 的 CHECKCAST/INSTANCEOF
+    // 一致——`var as1 : A[] = bs` 这种写法必须能过，否则 `as B[]` 那类探针连第一行都
+    // 写不出来。两边只要有一边是数组就走 isArraySubtype（镜像 Checker.isSourceSubtype）。
+    if (target.isArray() || source.isArray()) {
+        if (isArraySubtype(g, target, source)) { rtn true }
+    } else if (target.base == "external" && source.base == "external") {
         if (!(source.nullable && !target.nullable) && g.isSubtypeName(source.name, target.name)) { rtn true }
     }
     if (target.base != "byte" || target.depth > 0 || target.nullable) { rtn false }
     rtn byteRangeLiteral(value)
+}
+
+// Checker.isArraySubtype（阶段 24）：数组之间的赋值兼容。
+// 逐层拆 `[]` 比元素类型，规则与运行期那条 INSTANCEOF 完全一致：
+// - 基本类型数组**不**协变（`int[]` 不是 `long[]`，JVM 也不让）；
+// - 引用元素走类链/接口链（`C[]` 不是 `B[]`）；
+// - 类型参数擦除到 Object：`T[]` 与 `Object[]` 互相放得下。
+fun isArraySubtype(g : Gen, want : BType, value : BType) -> bool {
+    if (!want.isArray() || !value.isArray()) { rtn false }
+    if (want.depth != value.depth) { rtn false }
+    // 可空只能往更宽的地方走，和引用类型的老规矩一致
+    if (value.nullable && !want.nullable) { rtn false }
+    var we = want.element()
+    var ve = value.element()
+    if (sameType(we, ve)) { rtn true }
+    if (we.isArray() && ve.isArray()) { rtn isArraySubtype(g, we, ve) }
+    if (we.isPrimitive() || ve.isPrimitive()) { rtn false }
+    if (ve.isTypeParam() || we.isTypeParam()) { rtn ve.isTypeParam() && we.isTypeParam() }
+    rtn isRefSubtype(g, we, ve)
+}
+
+// 引用元素那一层：数组继续递归，其余只能是 external 走名字链（string 元素不放行，
+// 与 Kotlin `isSourceSubtype` 一样）。
+fun isRefSubtype(g : Gen, want : BType, value : BType) -> bool {
+    if (want.isArray() || value.isArray()) { rtn isArraySubtype(g, want, value) }
+    if (want.base != "external" || value.base != "external") { rtn false }
+    if (value.nullable && !want.nullable) { rtn false }
+    rtn g.isSubtypeName(value.name, want.name)
 }
 
 // RsfType.promote：三目 / ?: 两边合并。推不出来返回 null（调用方报「不支持」）
@@ -4023,6 +4065,20 @@ public class Walker(g : Gen) {
             if (!requireInstanceScope("super")) { rtn tVoid() }
             var ci = g.cur
             t = new BType("external", ci!!.internal, false, 0)
+        } else if (k == NodeKind.AS) {
+            // 阶段 24：`x as A` / `x ?as A`。目标类型写在 children[1]（TARGET）的 `type` 里，
+            // TARGET **不是**真 AST 节点（Kotlin 侧也没有这个类），所以不要 walkExpr 它，
+            // 只把它的类型文本解成 BType。结果类型：`as` 非空、`?as` 可空（判型失败得 null）。
+            walkExpr(e.children[0], sc)
+            var at = typeOfText(g, prop(e.children[1], "type"))
+            if (at == null) { rtn tVoid() }
+            if (propBool(e, "safe")) { t = at!!.withNullable(true) } else { t = at!!.withNullable(false) }
+        } else if (k == NodeKind.IS) {
+            // 阶段 24：`x is A` / `x !is A`——结果恒 `bool`（v1 不做智能转换）。
+            walkExpr(e.children[0], sc)
+            var itt = typeOfText(g, prop(e.children[1], "type"))
+            if (itt == null) { rtn tVoid() }
+            t = tBool()
         } else {
             g.bad("表达式 " + kindName(k))
             rtn tVoid()
@@ -4497,6 +4553,51 @@ fun internalNameOf(t : BType) -> string {    if (t.isArray()) { rtn t.desc() }
     rtn "java/lang/Object"
 }
 
+// ------------------------------------------------------------ 运行期类名（阶段 24）
+
+// 内部名 → 点分名。只换 '/'，其余原样（`Marker$Impl` 的 '$' 必须留着 —— 那就是
+// `Class.getName()` 打出来的样子）。rsf 的 `String.replace` 收的是 CharSequence，
+// 这里走 indexOf/substring 自己拼，不依赖隐式上转。
+fun dottedName(internal : string) -> string {
+    var out = ""
+    var rest = internal
+    var i = rest.indexOf("/")
+    while (i >= 0) {
+        out = out + rest.substring(0, i) + "."
+        rest = rest.substring(i + 1, rest.length())
+        i = rest.indexOf("/")
+    }
+    rtn out + rest
+}
+
+// 目标类型在运行期的 JVM 名 = `Class.getName()` 会给的那个字符串，**逐字**镜像
+// Kotlin `SemanticModel.jvmRuntimeNameOf(type)`：数组按 JVM 老规矩写描述符形式
+// （`B[]` → `[LB;`、`int[][]` → `[[I`、`A[]` → `[LA;`），非数组写点分类名
+// （`demo/B` → `demo.B`、`java/lang/String` → `java.lang.String`）。擦除后的类型参数
+// 是 `java/lang/Object` → `java.lang.Object`。`as` 失败时的文案印的就是它。
+fun runtimeNameOf(t : BType) -> string {
+    if (t.isArray()) { rtn "[" + runtimeElemNameOf(t.element()) }
+    rtn runtimeClassOnly(t)
+}
+
+// 数组**一层**元素在 Class.getName() 里的写法：多维再套 '['
+fun runtimeElemNameOf(el : BType) -> string {
+    if (el.isArray()) { rtn "[" + runtimeElemNameOf(el.element()) }
+    if (el.isPrimitive()) { rtn el.desc() }
+    rtn "L" + runtimeClassOnly(el) + ";"
+}
+
+// 非数组类型的点分类名：external 直接用 name 换掉 '/'，
+// 其余看描述符（`Ljava/lang/String;` → `java.lang.String`、`I` → `I`）。
+fun runtimeClassOnly(t : BType) -> string {
+    if (t.base == "external") { rtn dottedName(t.name) }
+    var d = t.desc()
+    if (d.length() > 0 && d.charAt(0) == 'L') {
+        rtn dottedName(d.substring(1, d.length() - 1))
+    }
+    rtn d
+}
+
 fun accessOf(fn : Node) -> int {
     var c = prop(fn, "control")
     if (c == "PRIVATE") { rtn accPrivate() }
@@ -4561,6 +4662,51 @@ fun emitParseIntHelper(g : Gen) -> void {
     mv.visitLdcInsn(parseIntSuffix())
     eConcat(mv)
     eRuntimeExceptionThrow(mv)
+    mv.visitMaxs(0, 0)
+    mv.visitEnd()
+}
+
+// 程序类上的类型转换辅助方法（阶段 24），与 Kotlin `BytecodeCompiler.emitCastHelper`
+// 逐条对齐：
+//   if (v == null)             throw new RuntimeException("rsf: 不能把 null 当成 " + name);
+//   if (!target.isInstance(v)) throw new RuntimeException("rsf: 不能把 "
+//                                   + v.getClass().getName() + " 当成 " + name);
+//   return v;
+// 不发 LVT 条目（Kotlin 侧这个辅助方法就没有 LocalVariableTable）。
+fun emitCastHelper(g : Gen) -> void {
+    var mv = g.cw.visitMethod(accPublic() + accStatic(), castHelperName(), castHelperDesc(), null, null)
+    mv.visitCode()
+    // if (v == null) throw ...
+    var nonNull = new Label()
+    mv.visitVarInsn(25, 0)
+    mv.visitJumpInsn(199, nonNull)
+    eRuntimeExceptionHeader(mv)
+    mv.visitLdcInsn(castNullPrefix())
+    mv.visitVarInsn(25, 2)
+    eConcat(mv)
+    eRuntimeExceptionThrow(mv)
+    mv.visitLabel(nonNull)
+    // if (!target.isInstance(v)) throw ...
+    var ok = new Label()
+    mv.visitVarInsn(25, 1)
+    mv.visitVarInsn(25, 0)
+    mv.visitMethodInsn(182, "java/lang/Class", "isInstance", "(Ljava/lang/Object;)Z", false)
+    mv.visitJumpInsn(154, ok)
+    eRuntimeExceptionHeader(mv)
+    mv.visitLdcInsn(castPrefix())
+    mv.visitVarInsn(25, 0)
+    mv.visitMethodInsn(182, "java/lang/Object", "getClass", "()Ljava/lang/Class;", false)
+    mv.visitMethodInsn(182, "java/lang/Class", "getName", "()Ljava/lang/String;", false)
+    eConcat(mv)
+    mv.visitLdcInsn(castMid())
+    eConcat(mv)
+    mv.visitVarInsn(25, 2)
+    eConcat(mv)
+    eRuntimeExceptionThrow(mv)
+    mv.visitLabel(ok)
+    // return v
+    mv.visitVarInsn(25, 0)
+    mv.visitInsn(176)
     mv.visitMaxs(0, 0)
     mv.visitEnd()
 }
@@ -5273,6 +5419,65 @@ fun emitForce(g : Gen, mv : MethodVisitor, e : Node, off : int) -> void {
     if (res.isPrimitive() && !res.nullable) { eUnbox(mv, res.base) }
 }
 
+// `x is A` / `x !is A`（阶段 24）。`INSTANCEOF` 对 null 本身就回 0（= false），
+// 正好对上「`null is A` 恒为 false」；`!is` 再把结果取反（ICONST_1 + IXOR）。
+fun emitIsTest(g : Gen, mv : MethodVisitor, e : Node, off : int) -> void {
+    var target = castTargetOf(g, e, "is")
+    if (target == null) { rtn }
+    emitExpr(g, mv, e.children[0], off)
+    mv.visitTypeInsn(193, internalNameOf(target!!))
+    if (propBool(e, "negated")) {
+        mv.visitInsn(4)
+        mv.visitInsn(130)
+    }
+}
+
+// `x as A`（阶段 24）：判型与抛错全在 `__rsf_cast` 里做，调用点只发四件事：
+// 求值操作数、压目标类常量、压目标 JVM 名、INVOKESTATIC + CHECKCAST。
+// **不内联** if + throw：调用点常常在表达式中间（栈上还压着别的值），
+// 一进异常处理器栈就只剩异常对象，类会以 VerifyError 报废。
+fun emitCheckedCast(g : Gen, mv : MethodVisitor, e : Node, off : int) -> void {
+    var target = castTargetOf(g, e, "as")
+    if (target == null) { rtn }
+    var internal = internalNameOf(target!!)
+    emitExpr(g, mv, e.children[0], off)
+    mv.visitLdcInsn(Type.getObjectType(internal))
+    mv.visitLdcInsn(runtimeNameOf(target!!))
+    mv.visitMethodInsn(184, g.owner, castHelperName(), castHelperDesc(), false)
+    mv.visitTypeInsn(192, internal)
+}
+
+// `x ?as A`（阶段 24）：判型失败那一支把值换成 null，不抛。两支都是纯粹的「值替换」，
+// 没有 try/catch 保护范围，可以内联。
+fun emitSafeCast(g : Gen, mv : MethodVisitor, e : Node, off : int) -> void {
+    var target = castTargetOf(g, e, "?as")
+    if (target == null) { rtn }
+    var internal = internalNameOf(target!!)
+    var nullBranch = new Label()
+    var end = new Label()
+    emitExpr(g, mv, e.children[0], off)
+    mv.visitInsn(89)
+    mv.visitTypeInsn(193, internal)
+    mv.visitJumpInsn(153, nullBranch)
+    mv.visitTypeInsn(192, internal)
+    mv.visitJumpInsn(167, end)
+    mv.visitLabel(nullBranch)
+    mv.visitInsn(87)
+    mv.visitInsn(1)
+    mv.visitLabel(end)
+}
+
+// 三种发码共用的目标类型解析（TARGET 节点的 `type` 文本 → BType）。
+// walkExpr 已经把这类错误拦过一遍了，这里是兜底。
+fun castTargetOf(g : Gen, e : Node, opText : string) -> ?BType {
+    var t = typeOfText(g, prop(e.children[1], "type"))
+    if (t == null) {
+        g.setFailed("内部错误：" + opText + " 的目标类型没解析出来")
+        rtn null
+    }
+    rtn t
+}
+
 // 合成方法写进当前类（每个类生成完写一次，顺序=登记顺序）
 fun emitOrElseMethods(g : Gen) -> void {
     var i = 0
@@ -5456,6 +5661,18 @@ fun emitExpr(g : Gen, mv : MethodVisitor, e : Node, off : int) -> void {
     }
     if (k == NodeKind.FORCE) {
         emitForce(g, mv, e, off)
+        rtn
+    }
+    if (k == NodeKind.IS) {
+        emitIsTest(g, mv, e, off)
+        rtn
+    }
+    if (k == NodeKind.AS) {
+        if (propBool(e, "safe")) {
+            emitSafeCast(g, mv, e, off)
+        } else {
+            emitCheckedCast(g, mv, e, off)
+        }
         rtn
     }
     if (k == NodeKind.INDEX) {
@@ -7840,6 +8057,9 @@ public fun compileProgram(g : Gen, ast : Node, sourceName : string) -> void {
     emitParseIntHelper(g)
     emitFileHelpers(g)
     emitArrayHelpers(g)
+    // 阶段 24：顺序必须与 Kotlin `BytecodeCompiler` 一致
+    // （parseInt → file → array → **cast** → orElse），方法顺序影响 class 字节。
+    emitCastHelper(g)
     emitOrElseRange(g, 0, g.orCount)
     g.cw.visitEnd()
 
