@@ -1498,7 +1498,8 @@ gradlew.bat verifyPlugin          :: 官方校验器静态检查
 | 20 | `interface`（抽象/默认方法、接口继承接口、`class X : A, B` 多接口实现、`override`、JVM 接口互操作与桥方法） | ✅ 2026-10-15 |
 | 21 | 注解 `annotation`：元素 + 默认值 + `companion entity` 行为、`@` 使用点、`Marker::Impl` 嵌套类型、字节码与解释器两端逐字节一致 | ✅ 2026-10-15 |
 | 25 | **类继承**（Kotlin 式单继承：`override` / `abstract` / `final`、`super.f()` 与 `super(接口).f()`、`static` 不继承、允许继承 JDK 类） | ✅ 2026-10-16（K1 前端+语义 / K3 解释器 / K2 字节码 / K4 收口；自举同步已含于阶段 27） |
-| 27 | **默认开放**：删掉 `open` 关键字，类默认可继承、方法默认可覆盖，`final` 成为唯一收窄手段（推翻阶段 25 的「默认 final」） | 🔄 2026-10-17 开工（`DESIGN-27.md`；27a Kotlin 侧 / 27b 自举同步 / 27c 收口） |
+| 27 | **默认开放**：删掉 `open` 关键字，类默认可继承、方法默认可覆盖，`final` 成为唯一收窄手段（推翻阶段 25 的「默认 final」） | ✅ 2026-10-18（27a `5df701f` Kotlin 前端 / 27b `20a5e13` 自举同步，关键字 57→56；判据 `build/verify27/` 五条 + `build/verify24` 回归全绿） |
+| 28 | **标签名特殊字符 + 元数据**：标签名可用反引号包任意字符（`` `a-b` ``），每个有标签的方法发一条 runtime-visible `@RsfLabels(value = string[])`，按声明顺序把名字保留进 class 文件 | ✅ 2026-10-18（28a `5edbd27` Kotlin 侧 / 28b `cc1bf17` 自举链；判据 `build/verify28/`：4 正例 + 5 负例 + 两端 class 逐字节对拍；564 tests） |
 | 23 | 显式指针（`&` 取地址 / `*` 解引用，C 风格） | ⏳ 计划（2026-10-15，`DESIGN-23.md`，等预案） |
 | 24 | 类型转换与类型判断（`as` / `?as` / `is` / `!is`） | ✅ 2026-10-18（24a `076aeee` / 24b `5b5d7aa` / 24c `707cbe3` / 24d `51bd707`；判据 `build/verify24/`：9 正例 + 8 负例 + 自举解释器对拍 14 份） |
 
