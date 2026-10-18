@@ -427,6 +427,13 @@ fun canonicalTypeName(kind : string) -> string {
     rtn ""
 }
 
+// 阶段 28b：反引号只允许出现在「标签声明」和 `goto` 之后。其它位置（表达式、变量名、
+// 字段名、函数名、goto 以外的语句首……）一律报这一句 —— 与 Kotlin 版
+// Parser.labelNameOnlyError（:3090）**逐字一致**（含逗号后没有空格）。
+public fun labelNameOnlyMessage() -> string {
+    rtn "反引号只用来写标签名（合法写法只有 `名字:` 与 goto `名字` 两种），变量 / 字段 / 函数名不能用反引号"
+}
+
 // ---------------------------------------------------------------- 值转义
 //
 // 与 AstDump.kt 的 `esc` **是同一张表**：`\` `换行` `回车` `制表` `空格` 各自一个转义，
@@ -2030,8 +2037,13 @@ public class Parser(tokens : Token[]) {
         }
         if (k == "KW_GOTO") {
             advance()
-            var label = expect("IDENT", "'goto' 后面缺少标签名")
-            rtn new Node(NodeKind.GOTO).put("label", escapeValue(label.text))
+            // 阶段 28b：`goto` 后面既收普通 IDENT，也收反引号标签名（Kotlin Parser.kt:2068）
+            if (check("IDENT") || check("LABEL_NAME")) {
+                var label = advance()
+                rtn new Node(NodeKind.GOTO).put("label", escapeValue(label.text))
+            }
+            failAt(peek(), "'goto' 后面缺少标签名")
+            rtn errorNode()
         }
         if (k == "KW_FAIL") { rtn parseFail() }
         if (k == "KW_TRY") { rtn parseTry() }
@@ -2053,10 +2065,24 @@ public class Parser(tokens : Token[]) {
 
         if (k == "IDENT" && checkAt(1, "ASSIGN")) { rtn parseAssign() }
 
+        // 阶段 28b：标签声明 `名字:` —— 普通 IDENT 与反引号标签名两种记号都收
+        // （Kotlin Parser.kt:2113）。放在赋值判断之后，两种记号不会打架。
+        if (k == "LABEL_NAME" && checkAt(1, "COLON")) {
+            advance()
+            advance()   // :
+            rtn new Node(NodeKind.LABEL).put("name", escapeValue(t.text))
+        }
+
         if (k == "IDENT" && checkAt(1, "COLON")) {
             advance()
             advance()   // :
             rtn new Node(NodeKind.LABEL).put("name", escapeValue(t.text))
+        }
+
+        // 阶段 28b：走到这里说明 LABEL_NAME 出现在不允许的位置（语句首、表达式……）
+        if (k == "LABEL_NAME") {
+            failAt(t, labelNameOnlyMessage())
+            rtn errorNode()
         }
 
         rtn finishExprStmt(parseExpr())
@@ -2925,6 +2951,13 @@ public class Parser(tokens : Token[]) {
             var inner = parseExpr()
             expect("RPAREN", "括号没有闭合，缺少 ')'")
             rtn inner
+        }
+
+        // 阶段 28b：反引号标签名不能出现在表达式里（Kotlin Parser.kt:3041 同一位置），
+        // 文案必须比笼统的「这里需要一个表达式」更准确
+        if (k == "LABEL_NAME") {
+            failAt(t, labelNameOnlyMessage())
+            rtn errorNode()
         }
 
         failAt(t, "这里需要一个表达式")

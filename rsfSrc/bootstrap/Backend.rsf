@@ -2638,7 +2638,7 @@ fun asmLabel() -> BType { rtn tExternal("org/objectweb/asm/Label") }
 // 三条构造器 <init>(I)V / Label.<init>()V / Handle.<init>(...) 在 jdkNewRef 里；
 // 第 26 刀补第 31 条 `MethodVisitor.visitLocalVariable`）。
 fun asmTable() -> AsmMem[] {
-    var t : AsmMem[] = new AsmMem[31]
+    var t : AsmMem[] = new AsmMem[32]
     var i = 0
 
     // --- ClassWriter（6 条成员）---
@@ -2721,10 +2721,16 @@ fun asmTable() -> AsmMem[] {
         "(Ljava/lang/String;Z)Lorg/objectweb/asm/AnnotationVisitor;",
         tExternal("org/objectweb/asm/AnnotationVisitor"), memP2(tString(), tBool()))
 
-    // --- AnnotationVisitor（3 条成员：注解实参写入器）---
+    // --- AnnotationVisitor（4 条成员：注解实参写入器）---
     // 第 2 参声明成 Object，装箱按**元素声明类型**在调用点完成（emitAnnPair / emitAnnDefault）。
     i = asmRow(t, i, "org/objectweb/asm/AnnotationVisitor", "visit", 2,
         "(Ljava/lang/String;Ljava/lang/Object;)V", tVoid(), memP2(tString(), tObject()))
+    // 阶段 28b：`@RsfLabels(value = {...})` 的数组值——一次 visitArray 拿到写数组的
+    // AnnotationVisitor，再逐项 visit(null, 名字) → 两个 visitEnd（Kotlin
+    // BytecodeCompiler.emitLabelMetadata :2341-2352 是同一串调用）
+    i = asmRow(t, i, "org/objectweb/asm/AnnotationVisitor", "visitArray", 1,
+        "(Ljava/lang/String;)Lorg/objectweb/asm/AnnotationVisitor;",
+        tExternal("org/objectweb/asm/AnnotationVisitor"), memP1(tString()))
     i = asmRow(t, i, "org/objectweb/asm/AnnotationVisitor", "visitEnum", 3,
         "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V", tVoid(),
         memP3(tString(), tString(), tString()))
@@ -2971,8 +2977,20 @@ public class Walker(g : Gen) {
     var labVals : Label[] = new Label[8]
     var labCount : int = 0
 
+    // ---------------------------------------------------------- 标签**声明顺序**表（阶段 28b）
+    // `@RsfLabels` 的 value 是「每个方法体里标签的**声明顺序**」（Kotlin 侧扫
+    // loweredOf(fn).instructions 里 ILabel 的出现顺序，被 goto 首次提及但不声明的不算）。
+    // 所以这张表只在 emitStmt 的 LABEL 分支登记，goto 分支绝不登记。
+    //
+    // 注意状态是**每个 Walker 一份**（Walker 就是一次函数体编译），prepBody / emitFunction
+    // 每次都 new 一个，所以两个方法的同名标签天然不共用 Label；resetLabels() 是显式的
+    // 「体开始编译」标记，调用点在 prepBody 与 emitFunction 里紧跟 new Walker 之后。
+    var declLabels : string[] = new string[4]
+    var declCount : int = 0
+
     public fun resetLabels() -> void {
         labCount = 0
+        declCount = 0
     }
 
     public fun labelFor(name : string) -> Label {
@@ -3338,9 +3356,13 @@ public class Walker(g : Gen) {
         }
         if (k == NodeKind.LABEL) {
             var ins = new Ins("label")
-            ins.lbl = this.labelFor(prop(st, "name"))
+            var nm = prop(st, "name")
+            ins.lbl = this.labelFor(nm)
             ins.node = st
             emit(ins)
+            // 阶段 28b：声明顺序登记（goto 分支绝不登记）。prop 已 unescape，可直接进注解。
+            declLabels = strArrPush(declLabels, declCount, nm)
+            declCount = declCount + 1
             rtn
         }
         if (k == NodeKind.GOTO) {
@@ -6072,7 +6094,9 @@ fun emitFunction(g : Gen, fn : Node) -> void {
         g.slotCount = g.slotCount + pt.slots()
         i = i + 1
     }
+    // 阶段 28b：顶层函数体开始编译前清标签状态（见 prepBody 里的说明）
     var w = new Walker(g)
+    w.resetLabels()
     w.walkBlock(fn.children[1], root)
     if (g.failed) { rtn }
 
@@ -6226,6 +6250,10 @@ public class Prep(w : Walker, reach : bool[]) {
 }
 
 fun prepBody(g : Gen, body : Node, firstSlot : int, pTypes : BType[], pNames : string[], ret : BType) -> ?Prep {
+    // 阶段 28b：每个函数/方法体开始编译前清空标签状态（名字 → Label 表 + 声明顺序表）。
+    // Walker 本来就是「一次函数体编译」的容器（labNames 等都在它身上），prepBody 每次都
+    // new 一个，所以两个方法的同名标签（例如都叫 `loop`）天然不共用 ASM Label；
+    // 这里显式 reset 一次，把「体开始编译」写明白，也给将来复用 Walker 留了保险。
     g.slotCount = firstSlot
     g.returnType = ret
     var root = new Scope(null)
@@ -6238,6 +6266,7 @@ fun prepBody(g : Gen, body : Node, firstSlot : int, pTypes : BType[], pNames : s
         i = i + 1
     }
     var w = new Walker(g)
+    w.resetLabels()
     w.walkBlock(body, root)
     if (g.failed) { rtn null }
     linkTargets(w)
@@ -6296,6 +6325,21 @@ fun flushBody(g : Gen, mv : MethodVisitor, p : Prep, off : int, ret : BType, tai
     }
     // 体发完、visitMaxs 之前：发 LVT 的结束标签，再按槽位升序写表（见 lvtBegin）
     lvtEnd(g, mv, off)
+    // 阶段 28b：方法级 `@RsfLabels`——value 是**声明顺序**的标签名数组。
+    // 与 Kotlin BytecodeCompiler.emitLabelMetadata（:2341-2352）同一串调用、同一位置
+    // （endLvt 之后、visitMaxs 之前）。**没有用户标签就一个字节都不发**，
+    // 旧语料（不带反引号标签名）的 .class 因此完全不变。
+    if (w.declCount > 0) {
+        var lav : AnnotationVisitor = mv.visitAnnotation("LRsfLabels;", true)
+        var larr : AnnotationVisitor = lav.visitArray("value")
+        var li = 0
+        while (li < w.declCount) {
+            larr.visit(null, w.declLabels[li])
+            li = li + 1
+        }
+        larr.visitEnd()
+        lav.visitEnd()
+    }
     mv.visitMaxs(0, 0)
     mv.visitEnd()
 }

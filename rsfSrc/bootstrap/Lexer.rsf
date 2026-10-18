@@ -29,6 +29,8 @@
 public class TokenKind {
     public static fun eof() -> string { rtn "EOF" }
     public static fun ident() -> string { rtn "IDENT" }
+    // 阶段 28b：反引号标签名（`` `名字` ``）。Kotlin 版是 TokenKind.LABEL_NAME
+    public static fun labelName() -> string { rtn "LABEL_NAME" }
     public static fun intLit() -> string { rtn "INT_LIT" }
     public static fun longLit() -> string { rtn "LONG_LIT" }
     public static fun floatLit() -> string { rtn "FLOAT_LIT" }
@@ -771,6 +773,50 @@ public class Lexer(source : string) {
         reportError(message, startLine, startCol)
     }
 
+    // ------------------------------------------------------------ 反引号标签名（阶段 28b）
+    //
+    // Kotlin 版 Lexer.readLabelName（:182-205）：从开引号一直吃到**同一行**的下一个
+    // 反引号，中间字符一个都不解释（没有转义，也不查标识符字符集），token 文本去掉引号。
+    // 三种错与 Kotlin 版逐字一致；出错位置都指向**开引号**（与 readCharLiteral 同一套）。
+    fun readLabelName() -> void {
+        var startLine = line
+        var startCol = column
+        advance()   // 开引号
+        var text = ""
+        while (true) {
+            if (atEnd()) {
+                labelUnclosed(startLine, startCol)
+                rtn
+            }
+            var c = src.charAt(pos)
+            if (c == '`') {
+                advance()   // 收尾引号
+                break
+            }
+            if (charToInt(c) == 10) {
+                labelUnclosed(startLine, startCol)
+                rtn
+            }
+            if (charToInt(c) == 13) {
+                labelUnclosed(startLine, startCol)
+                rtn
+            }
+            text = text + c
+            advance()
+        }
+        if (text.length() == 0) {
+            // Kotlin：（写法是 `名字:`，反引号里至少一个字符）
+            reportError("标签名不能是空的（写法是 `名字:`，反引号里至少一个字符）", startLine, startCol)
+            rtn
+        }
+        add(TokenKind.labelName(), text, startLine, startCol)
+    }
+
+    // 引号内换行也按「没有收尾」报——同一句文案，与 Kotlin unclosedLabelError 一致
+    fun labelUnclosed(startLine : int, startCol : int) -> void {
+        reportError("反引号标签名没有收尾（标签名要写成 `名字:`，收尾的 '`' 不能漏、也不能跨行）", startLine, startCol)
+    }
+
     // ------------------------------------------------------------ 标点与运算符
 
     fun readPunct() -> void {
@@ -916,10 +962,14 @@ public class Lexer(source : string) {
                     if (c == '\'') {
                         readCharLiteral()
                     } else {
-                        if (isIdentStart(c)) {
-                            readIdentOrKeyword()
+                        if (c == '`') {
+                            readLabelName()
                         } else {
-                            readPunct()
+                            if (isIdentStart(c)) {
+                                readIdentOrKeyword()
+                            } else {
+                                readPunct()
+                            }
                         }
                     }
                 }
