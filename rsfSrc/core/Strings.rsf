@@ -148,4 +148,43 @@ pub class Strings {
         while (j < n) { exact[j] = out[j]; j = j + 1 }
         rtn exact
     }
+
+    // 两端去空白（charToInt 口径与 trimStart/trimEnd 一致）
+    pub stc fn trim(s : string) -> string {
+        rtn trimEnd(trimStart(s))
+    }
+
+    // 安全切片：越界的 from/to 夹到 [0, length]，from > to 给空串
+    pub stc fn slice(s : string, from : int, to : int) -> string {
+        var a = from
+        var b = to
+        if (a < 0) { a = 0 }
+        if (b > s.length()) { b = s.length() }
+        if (a > b) { rtn "" }
+        rtn s.substring(a, b)
+    }
+
+    // 忽略大小写的包含判断
+    pub stc fn containsIgnoreCase(s : string, sub : string) -> bool {
+        rtn s.toLowerCase().contains(sub.toLowerCase())
+    }
+
+    pub stc fn endsWithIgnoreCase(s : string, suffix : string) -> bool {
+        if (suffix.length() > s.length()) { rtn false }
+        rtn s.substring(s.length() - suffix.length(), s.length()).toLowerCase() == suffix.toLowerCase()
+    }
+
+    // 全是 ASCII 字母且非空
+    pub stc fn isAlpha(s : string) -> bool {
+        if (s.length() == 0) { rtn false }
+        var i = 0
+        while (i < s.length()) {
+            var c = charToInt(s.charAt(i))
+            var lower = c
+            if (lower >= 65 && lower <= 90) { lower = lower + 32 }
+            if (lower < 97 || lower > 122) { rtn false }
+            i = i + 1
+        }
+        rtn true
+    }
 }

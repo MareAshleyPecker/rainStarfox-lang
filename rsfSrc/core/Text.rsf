@@ -124,4 +124,69 @@ pub class Text {
         }
         rtn s
     }
+
+    // 按字符串分隔符切（sep 为空时整串算一段；连续分隔符会产生空段）
+    pub stc fn splitBy(s : string, sep : string) -> string[] {
+        if (sep.length() == 0) {
+            var one : string[] = new string[1]
+            one[0] = s
+            rtn one
+        }
+        var out : string[] = new string[8]
+        var n = 0
+        var start = 0
+        var i = 0
+        while (i + sep.length() <= s.length()) {
+            if (s.substring(i, i + sep.length()) == sep) {
+                var piece = s.substring(start, i)
+                if (n == out.length) {
+                    var bigger : string[] = new string[out.length * 2]
+                    var k = 0
+                    while (k < n) { bigger[k] = out[k]; k = k + 1 }
+                    out = bigger
+                }
+                out[n] = piece
+                n = n + 1
+                i = i + sep.length()
+                start = i
+            } else {
+                i = i + 1
+            }
+        }
+        var tail = s.substring(start, s.length())
+        if (n == out.length) {
+            var bigger2 : string[] = new string[out.length * 2]
+            var k2 = 0
+            while (k2 < n) { bigger2[k2] = out[k2]; k2 = k2 + 1 }
+            out = bigger2
+        }
+        out[n] = tail
+        n = n + 1
+        var exact : string[] = new string[n]
+        var j = 0
+        while (j < n) { exact[j] = out[j]; j = j + 1 }
+        rtn exact
+    }
+
+    // 子串第一次出现的下标；没有给 -1（不用 JDK 的 indexOf，自举侧没登记这个成员）
+    pub stc fn indexOf(s : string, sub : string) -> int {
+        if (sub.length() == 0) { rtn 0 }
+        var i = 0
+        while (i + sub.length() <= s.length()) {
+            if (s.substring(i, i + sub.length()) == sub) { rtn i }
+            i = i + 1
+        }
+        rtn -1
+    }
+
+    // 子串最后一次出现的下标；没有给 -1
+    pub stc fn lastIndexOf(s : string, sub : string) -> int {
+        if (sub.length() == 0) { rtn s.length() }
+        var i = s.length() - sub.length()
+        while (i >= 0) {
+            if (s.substring(i, i + sub.length()) == sub) { rtn i }
+            i = i - 1
+        }
+        rtn -1
+    }
 }

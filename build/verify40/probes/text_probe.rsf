@@ -1,0 +1,15 @@
+import "../../../rsfSrc/core/Text.rsf"
+import "../../../rsfSrc/core/Strings.rsf"
+
+fn main() -> void {
+    var parts = Text.splitBy("a::b::c", "::")
+    println("" + parts.length + " " + parts[0] + " " + parts[1] + " " + parts[2])
+    var spaced = Text.splitBy("a, b,", ", ")
+    println("" + spaced.length + " [" + spaced[0] + "][" + spaced[1] + "]")
+    println("" + Text.indexOf("hello world", "lo") + " " + Text.indexOf("hello", "zz") + " " + Text.indexOf("abc", ""))
+    println("" + Text.lastIndexOf("a-b-c", "-") + " " + Text.lastIndexOf("abc", "z"))
+    println("[" + Strings.trim("  hi  ") + "] [" + Strings.trim("x") + "]")
+    println("[" + Strings.slice("abcdef", 1, 4) + "] [" + Strings.slice("abc", -2, 99) + "] [" + Strings.slice("abc", 2, 1) + "]")
+    println("" + Strings.containsIgnoreCase("Hello", "ELL") + " " + Strings.endsWithIgnoreCase("Main.RSF", ".rsf"))
+    println("" + Strings.isAlpha("abcXYZ") + " " + Strings.isAlpha("ab1"))
+}
