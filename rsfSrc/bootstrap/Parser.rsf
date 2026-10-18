@@ -242,6 +242,12 @@ public class Node(kind : NodeKind, text : string) {
         this.col = t.col
         rtn this
     }
+    // 位置照抄另一个节点（二元表达式要报左操作数起点，不是运算符）
+    public fn atNode(o : Node) -> Node {
+        this.line = o.line
+        this.col = o.col
+        rtn this
+    }
     // 属性串：`name=foo mutable=true`（字段之间正好一个空格）。
     // 值里的空格/换行已经在 escapeValue 里转义掉了，所以「按空格切」是无歧义的。
     var text : string = text
@@ -1747,6 +1753,7 @@ public class Parser(tokens : Token[]) {
     // 所以进来之后、每吃下一个修饰词之后都再收一轮（与 Kotlin 版 collectLeadingAnnotations 同口径）。
     // 注解列表挂在**最后**（PARAMS → [BLOCK] → ANNOTATION_USES）。
     fn parseFuncDecl(annotations : Node) -> Node {
+        var fnTok = prevToken()
         var anns = annotations
         var control = "DEFAULT"
         var isOverride = false
@@ -1898,6 +1905,7 @@ public class Parser(tokens : Token[]) {
             }
         }
         var n = new Node(NodeKind.FUNC)
+            .at(fnTok)
             .put("control", control)
             .put("static", boolText(isStatic))
             .put("main", mainType)
@@ -2236,19 +2244,20 @@ public class Parser(tokens : Token[]) {
             rtn errorNode()
         }
         if (k == "KW_BREAK") {
-            advance()
-            rtn new Node(NodeKind.BREAK)
+            var breakTok = advance()
+            rtn new Node(NodeKind.BREAK).at(breakTok)
         }
         if (k == "KW_CONTINUE") {
-            advance()
-            rtn new Node(NodeKind.CONTINUE)
+            var contTok = advance()
+            rtn new Node(NodeKind.CONTINUE).at(contTok)
         }
         if (k == "KW_GOTO") {
             advance()
             // 阶段 28b：`goto` 后面既收普通 IDENT，也收反引号标签名（Kotlin Parser.kt:2068）
             if (check("IDENT") || check("LABEL_NAME")) {
-                var label = advance()
-                rtn new Node(NodeKind.GOTO).put("label", escapeValue(label.text))
+                var gotoKw = prevToken()
+                var gotoTok = advance()
+                rtn new Node(NodeKind.GOTO).put("label", escapeValue(gotoTok.text)).at(gotoKw)
             }
             failAt(peek(), "'goto' 后面缺少标签名")
             rtn errorNode()
@@ -2358,9 +2367,9 @@ public class Parser(tokens : Token[]) {
         var rtnTok = advance()
         var next = peek()
         if (next.kind == "RBRACE" || next.kind == "EOF" || next.kind == "SEMI" || next.line != rtnTok.line) {
-            rtn new Node(NodeKind.RETURN).put("hasValue", "false")
+            rtn new Node(NodeKind.RETURN).put("hasValue", "false").at(rtnTok)
         }
-        var n = new Node(NodeKind.RETURN).put("hasValue", "true")
+        var n = new Node(NodeKind.RETURN).put("hasValue", "true").at(rtnTok)
         n.add(parseExpr())
         rtn n
     }
@@ -2808,7 +2817,8 @@ public class Parser(tokens : Token[]) {
 
     fn binaryNode(op : string, left : Node, right : Node) -> Node {
         var opTok = prevToken()
-        var n = new Node(NodeKind.BINARY).put("op", op).at(opTok)
+        // 运算符的位置不取 `opTok`：Kotlin 侧报错指在**左操作数**起点（c15 期望 2:19 而不是 2:23）
+        var n = new Node(NodeKind.BINARY).put("op", op).atNode(left)
         n.add(left)
         n.add(right)
         rtn n

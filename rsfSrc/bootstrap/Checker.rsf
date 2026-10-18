@@ -22,17 +22,36 @@ public class CheckFailure(detail : string, line : int, col : int) {
 }
 
 // 函数签名（参数类型用文本存，够用；类型运算交给 Types.rsf）
-public class FnSig(name : string, retText : string, paramTexts : string[]) {
+public class FnSig(name : string, retText : string, paramTexts : string[], paramNames : string[]) {
     var name : string = name
     var retText : string = retText
     var paramTexts : string[] = paramTexts
+    var paramNames : string[] = paramNames
     var paramCount : int = paramTexts.length
+
+    // `f(a : int, b : int)`：报「候选有 N 个」时逐条印出来
+    public fn signatureText() -> string {
+        var out = name + "("
+        var i = 0
+        while (i < paramCount) {
+            if (i > 0) { out = out + ", " }
+            out = out + paramNames[i] + " : " + paramTexts[i]
+            i = i + 1
+        }
+        rtn out + ")"
+    }
 }
 
 public class Checker(failure : ?CheckFailure) {
     var failure : ?CheckFailure = failure
     var fns : FnSig[] = new FnSig[8]
     var fnCount : int = 0
+    var curFnName : string = ""
+    var loopDepth : int = 0
+    var labels : string[] = new string[0]
+    var labelCount : int = 0
+    var curRetText : string = "void"
+    var curVoid : bool = true
     var scopes : Scopes = new Scopes()
 
     // ---------------------------------------------------------------- 类型文本
@@ -99,16 +118,19 @@ public class Checker(failure : ?CheckFailure) {
             var fnode = funcs!!.children[i]
             var paramsNode = childNodeOf(fnode, NodeKind.PARAMS)
             var ptexts : string[] = new string[0]
+            var pnames : string[] = new string[0]
             if (paramsNode != null) {
                 ptexts = new string[paramsNode!!.childCount]
+                pnames = new string[paramsNode!!.childCount]
                 var j = 0
                 while (j < paramsNode!!.childCount) {
                     var prm = paramsNode!!.children[j]
                     ptexts[j] = nodeProp(prm, "type")
+                    pnames[j] = nodeProp(prm, "name")
                     j = j + 1
                 }
             }
-            var sig = new FnSig(nodeProp(fnode, "name"), nodeProp(fnode, "retType"), ptexts)
+            var sig = new FnSig(nodeProp(fnode, "name"), nodeProp(fnode, "retType"), ptexts, pnames)
             pushFn(sig)
             i = i + 1
         }
@@ -146,6 +168,9 @@ public class Checker(failure : ?CheckFailure) {
         var i = 0
         while (i < funcs!!.childCount && failure == null) {
             var fnode = funcs!!.children[i]
+            curFnName = nodeProp(fnode, "name")
+            curRetText = nodeProp(fnode, "retType")
+            curVoid = curRetText == "void"
             scopes = new Scopes()
             var paramsNode = childNodeOf(fnode, NodeKind.PARAMS)
             if (paramsNode != null) {
@@ -156,8 +181,20 @@ public class Checker(failure : ?CheckFailure) {
                     j = j + 1
                 }
             }
+            loopDepth = 0
+            collectLabels(fnode)
             var body = childNodeOf(fnode, NodeKind.BLOCK)
-            if (body != null) { checkBlock(body!!) }
+            if (body != null) {
+                checkBlock(body!!)
+                if (failure == null && !curVoid) {
+                    var last = body!!.childCount
+                    var endsWithReturn = false
+                    if (last > 0 && body!!.children[last - 1].kind == NodeKind.RETURN) { endsWithReturn = true }
+                    if (!endsWithReturn) {
+                        failAt("函数 '" + curFnName + "' 声明返回 " + curRetText + "）但存在一条没写 rtn 就走到函数末尾的路径", fnode)
+                    }
+                }
+            }
             i = i + 1
         }
     }
@@ -176,13 +213,60 @@ public class Checker(failure : ?CheckFailure) {
         if (stmt.kind == NodeKind.VAR_DECL) { checkVarDecl(stmt) }
         else if (stmt.kind == NodeKind.EXPR_STMT) { checkExpr(stmt.children[0]) }
         else if (stmt.kind == NodeKind.ASSIGN) { checkAssign(stmt) }
-        else if (stmt.kind == NodeKind.RETURN && stmt.childCount > 0) { checkExpr(stmt.children[0]) }
+        else if (stmt.kind == NodeKind.RETURN) { checkReturn(stmt) }
         else if (stmt.kind == NodeKind.IF || stmt.kind == NodeKind.WHILE || stmt.kind == NodeKind.FOR) {
             checkNested(stmt)
         } else if (stmt.kind == NodeKind.BLOCK) { checkBlock(stmt) }
+        else if (stmt.kind == NodeKind.BREAK) {
+            if (loopDepth == 0) { failAt("'break' 只能用在 while 循环里", stmt) }
+        } else if (stmt.kind == NodeKind.CONTINUE) {
+            if (loopDepth == 0) { failAt("'continue' 只能用在 while 循环里", stmt) }
+        } else if (stmt.kind == NodeKind.GOTO) {
+            var lbl = nodeProp(stmt, "label")
+            if (!hasLabel(lbl)) {
+                failAt("goto 的标签 '" + lbl + "' 在函数 '" + curFnName + "' 里没有定义（标签是函数作用域，不能跨函数跳）", stmt)
+            }
+        } else if (stmt.kind == NodeKind.LABEL) {
+            scopes.declare(symOf(nodeProp(stmt, "name"), "label", "void", stmt.line, stmt.col))
+        }
+    }
+
+    fn collectLabels(n : Node) -> void {
+        labels = new string[0]
+        labelCount = 0
+        labelWalk(n)
+    }
+
+    fn labelWalk(n : Node) -> void {
+        if (n.kind == NodeKind.LABEL) {
+            if (labelCount >= labels.length) {
+                var bigger = new string[labels.length * 2 + 4]
+                var i = 0
+                while (i < labelCount) { bigger[i] = labels[i]; i = i + 1 }
+                labels = bigger
+            }
+            labels[labelCount] = nodeProp(n, "name")
+            labelCount = labelCount + 1
+        }
+        var i = 0
+        while (i < n.childCount) {
+            labelWalk(n.children[i])
+            i = i + 1
+        }
+    }
+
+    fn hasLabel(name : string) -> bool {
+        var i = 0
+        while (i < labelCount) {
+            if (labels[i] == name) { rtn true }
+            i = i + 1
+        }
+        rtn false
     }
 
     fn checkNested(stmt : Node) -> void {
+        var isLoop = stmt.kind == NodeKind.WHILE || stmt.kind == NodeKind.FOR
+        if (isLoop) { loopDepth = loopDepth + 1 }
         var i = 0
         while (i < stmt.childCount && failure == null) {
             var ch = stmt.children[i]
@@ -192,12 +276,36 @@ public class Checker(failure : ?CheckFailure) {
             }
             i = i + 1
         }
+        if (isLoop) { loopDepth = loopDepth - 1 }
+    }
+
+
+    fn checkReturn(stmt : Node) -> void {
+        if (stmt.childCount == 0) {
+            if (!curVoid) {
+                failAt("函数 '" + curFnName + "' 声明返回 " + curRetText + "）但这里 'rtn' 没给值", stmt)
+            }
+            rtn
+        }
+        var got = checkExpr(stmt.children[0])
+        if (failure != null) { rtn }
+        if (curVoid) {
+            failAt("函数 '" + curFnName + "' 是 void 函数，不能 rtn 一个 " + got + " 值（写成 'rtn' 或 'rtn null'）", stmt)
+            rtn
+        }
+        if (!acceptsText(got, curRetText)) {
+            failAt("返回类型不匹配：'" + curFnName + "' 声明返回 " + curRetText + "）实际 rtn 的是 " + got, stmt)
+        }
     }
 
     fn checkVarDecl(stmt : Node) -> void {
         var declared = nodeProp(stmt, "type")
         var typed = nodeProp(stmt, "typed") == "true"
         var initType = checkExpr(stmt.children[0])
+        if (scopes.lookupCurrent(nodeProp(stmt, "name")) != null) {
+            failAt("变量 '" + nodeProp(stmt, "name") + "' 在同一个作用域里重复声明", stmt)
+            rtn
+        }
         if (typeOfText(declared).voidQ()) {
             failAt("变量不能是 void 类型", stmt)
             rtn
@@ -253,19 +361,37 @@ public class Checker(failure : ?CheckFailure) {
     fn checkCall(e : Node) -> string {
         var name = nodeProp(e, "name")
         var args = childNodeOf(e, NodeKind.ARGS)
+        var argc = 0
+        if (args != null) { argc = args!!.childCount }
+        var types : string[] = new string[argc]
         var i = 0
-        if (args != null) {
-            while (i < args!!.childCount) {
-                checkExpr(args!!.children[i])
-                i = i + 1
-            }
+        while (i < argc) {
+            types[i] = checkExpr(args!!.children[i])
+            i = i + 1
         }
+        if (failure != null) { rtn "void" }
         var sig = findFn(name)
         if (sig == null) {
-            // 内置函数：println/print 接一个 string
-            if (name == "println" || name == "print") { rtn "void" }
+            if (name == "println" || name == "print") {
+                if (argc != 1) {
+                    failAt("调用 '" + name + "' 的参数个数不对：实际给了 " + ("" + argc) + " 个，候选有 1 个 —— " + name + "(value : string)", e)
+                }
+                rtn "void"
+            }
             failAt("未定义的函数 '" + name + "'", e)
             rtn "void"
+        }
+        if (argc != sig!!.paramCount) {
+            failAt("调用 '" + name + "' 的参数个数不对：实际给了 " + ("" + argc) + " 个，候选有 1 个 —— " + sig!!.signatureText(), e)
+            rtn "void"
+        }
+        var k = 0
+        while (k < argc) {
+            if (!acceptsText(types[k], sig!!.paramTexts[k])) {
+                failAt("参数类型不匹配：'" + name + "' 的第 " + ("" + (k + 1)) + " 个参数 '" + sig!!.paramNames[k] + "' 需要 " + sig!!.paramTexts[k] + "，实际给人 " + types[k], e)
+                rtn "void"
+            }
+            k = k + 1
         }
         rtn sig!!.retText
     }
@@ -273,10 +399,38 @@ public class Checker(failure : ?CheckFailure) {
     fn checkBinary(e : Node) -> string {
         var left = checkExpr(e.children[0])
         var right = checkExpr(e.children[1])
-        var op = nodeProp(e, "op")
-        if (op == "+" && (left == "string" || right == "string")) { rtn "string" }
+        if (failure != null) { rtn "void" }
+        var op = opText(nodeProp(e, "op"))
         if (op == "==" || op == "!=" || op == "<" || op == ">" || op == "<=" || op == ">=") { rtn "bool" }
+        if (op == "&&" || op == "||") { rtn "bool" }
+        if (op == "+" && (left == "string" || right == "string")) { rtn "string" }
+        if (!isNumeric(left) || !isNumeric(right)) {
+            failAt("运算符 '" + op + "' 需要数值（byte / char / int / long / float / double），实际是 " + left + " 和 " + right + "（字符串拼接只支持 '+'）", e)
+            rtn "void"
+        }
         rtn left
+    }
+
+    // AST 的 `op` 存的是记号种类（`PLUS`），报错与打印要用符号（`+`）
+    fn opText(kind : string) -> string {
+        if (kind == "PLUS") { rtn "+" }
+        if (kind == "MINUS") { rtn "-" }
+        if (kind == "STAR") { rtn "*" }
+        if (kind == "SLASH") { rtn "/" }
+        if (kind == "PERCENT") { rtn "%" }
+        if (kind == "EQ") { rtn "==" }
+        if (kind == "NE") { rtn "!=" }
+        if (kind == "LT") { rtn "<" }
+        if (kind == "GT") { rtn ">" }
+        if (kind == "LE") { rtn "<=" }
+        if (kind == "GE") { rtn ">=" }
+        if (kind == "AND") { rtn "&&" }
+        if (kind == "OR") { rtn "||" }
+        rtn kind
+    }
+
+    fn isNumeric(t : string) -> bool {
+        rtn t == "byte" || t == "char" || t == "int" || t == "long" || t == "float" || t == "double"
     }
 
     fn acceptsText(from : string, to : string) -> bool {
