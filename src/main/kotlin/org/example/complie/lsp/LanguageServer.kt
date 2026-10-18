@@ -20,8 +20,14 @@ import java.net.URLEncoder
  * - 补全：`textDocument/completion`
  * - 跳转定义：`textDocument/definition`（Ctrl+点）
  * - 悬停文档：`textDocument/hover`（RDoc：声明正上方连续的 `///` 行）
+ * - 找引用：`textDocument/references`（Find Usages）
+ * - 重命名：`textDocument/rename`（返回 WorkspaceEdit）
  *
- * **不做**的：引用、重命名、格式化、增量同步。
+ * 同步方式：**增量优先**（阶段 45 起 `textDocumentSync = 2`）——`didChange` 的
+ * 每个 `contentChanges` 元素可以带 `range`，按 range 打补丁；不带 `range` 就整篇替换，
+ * 老客户端（全量同步）照样能用。
+ *
+ * **不做**的：格式化、`workspace/symbol`、跨工程索引。
  *
  * 协议层（分帧、JSON）在 [JsonRpc] / [JsonParser]，这里只管方法分发。
  */
@@ -95,6 +101,8 @@ class LanguageServer(
         "textDocument/completion" -> completion(params)
         "textDocument/definition" -> definition(params)
         "textDocument/hover" -> hover(params)
+        "textDocument/references" -> references(params)
+        "textDocument/rename" -> rename(params)
         "$/cancelRequest", "workspace/didChangeConfiguration", "workspace/didChangeWatchedFiles" -> null
         else -> {
             log.println("[rsf-lsp] 忽略未知方法 $method")
@@ -106,12 +114,14 @@ class LanguageServer(
         linkedMapOf(
             "capabilities" to JsonValue.Obj(
                 linkedMapOf(
-                    "textDocumentSync" to JsonValue.Num(1.0), // 1 = Full：每次发整篇文本，简单可靠
+                    "textDocumentSync" to JsonValue.Num(2.0), // 2 = Incremental：支持 range 补丁，也兼容整篇替换
                     "completionProvider" to JsonValue.Obj(
                         linkedMapOf("triggerCharacters" to JsonValue.Arr(listOf(JsonValue.Str(".")))),
                     ),
                     "definitionProvider" to JsonValue.Bool(true),
                     "hoverProvider" to JsonValue.Bool(true),
+                    "referencesProvider" to JsonValue.Bool(true),
+                    "renameProvider" to JsonValue.Bool(true),
                     "diagnosticProvider" to JsonValue.Obj(
                         linkedMapOf(
                             "interFileDependencies" to JsonValue.Bool(true),
@@ -140,13 +150,48 @@ class LanguageServer(
         publishDiagnostics(uri)
     }
 
+    /**
+     * `didChange`：每个 `contentChanges` 元素要么带 `range`（增量补丁），要么只带 `text`
+     * （整篇替换）。两者可以混着来，按顺序应用。
+     */
     private fun didChange(params: JsonValue) {
         val uri = params.str("textDocument", "uri") ?: return
-        val change = params.arr("contentChanges")?.firstOrNull() ?: return
-        val text = change.str("text") ?: return
         val version = params.obj("textDocument")?.int("version") ?: 0
+        val changes = params.arr("contentChanges") ?: return
+        var text = documents[uri]?.text ?: ""
+        var applied = false
+        for (change in changes) {
+            val replacement = change.str("text") ?: continue
+            val range = change.obj("range")
+            text = if (range == null) replacement else replaceRange(text, range, replacement)
+            applied = true
+        }
+        if (!applied) return
         documents[uri] = Doc(uri, text, version)
         publishDiagnostics(uri)
+    }
+
+    /** 按 LSP 的 range 替换（0 基、UTF-16 码元、`end` 不含）。位置越界就原样返回：宁可不改也不改坏。 */
+    private fun replaceRange(text: String, range: JsonValue, replacement: String): String {
+        val start = offsetOf(text, range.obj("start")) ?: return text
+        val end = offsetOf(text, range.obj("end")) ?: return text
+        if (start > end || end > text.length) return text
+        return text.substring(0, start) + replacement + text.substring(end)
+    }
+
+    private fun offsetOf(text: String, position: JsonValue?): Int? {
+        if (position == null) return null
+        val line = position.int("line") ?: return null
+        val character = position.int("character") ?: 0
+        var offset = 0
+        var current = 0
+        while (current < line) {
+            val next = text.indexOf('\n', offset)
+            if (next < 0) return null
+            offset = next + 1
+            current++
+        }
+        return (offset + character).coerceAtMost(text.length)
     }
 
     // ------------------------------------------------------------------ 诊断
@@ -269,6 +314,81 @@ class LanguageServer(
         )
     }
 
+    /** `textDocument/references`：Find Usages。默认带声明自身（LSP 的 includeDeclaration）。 */
+    fun references(params: JsonValue): JsonValue {
+        val uri = params.str("textDocument", "uri") ?: return JsonValue.Arr(emptyList())
+        val line = params.obj("position")?.int("line") ?: return JsonValue.Arr(emptyList())
+        val character = params.obj("position")?.int("character") ?: 0
+        val includeDeclaration = (params.path("context", "includeDeclaration") as? JsonValue.Bool)?.value ?: true
+        val symbol = symbolAt(uri, line, character) ?: return JsonValue.Arr(emptyList())
+        val locations = usagesOf(uri, symbol, includeDeclaration).map { (owner, usage) ->
+            JsonValue.Obj(
+                linkedMapOf(
+                    "uri" to JsonValue.Str(owner),
+                    "range" to rangeOf(usage.line, usage.column, usage.length),
+                ),
+            )
+        }
+        return JsonValue.Arr(locations)
+    }
+
+    /**
+     * `textDocument/rename`：返回一份 `WorkspaceEdit`（`changes`：uri → TextEdit 数组）。
+     *
+     * 名字先用同一套词法规矩校验；改不了就回 `null`，编辑器会提示「没法重命名」，
+     * 比默默改一半强。v1 只做函数/方法/局部变量/字段，类型改名回 `null`（要连类型引用、
+     * 构造器、JVM 名字一起动，见 DESIGN-45 的缺口）。
+     */
+    fun rename(params: JsonValue): JsonValue {
+        val uri = params.str("textDocument", "uri") ?: return JsonValue.Null
+        val line = params.obj("position")?.int("line") ?: return JsonValue.Null
+        val character = params.obj("position")?.int("character") ?: 0
+        val newName = params.str("newName") ?: return JsonValue.Null
+        if (!IDENTIFIER.matches(newName)) return JsonValue.Null
+        val symbol = symbolAt(uri, line, character) ?: return JsonValue.Null
+        if (symbol.kind == "class" || symbol.kind == "interface" || symbol.kind == "enum" || symbol.kind == "annotation") {
+            return JsonValue.Null
+        }
+        val byFile = LinkedHashMap<String, MutableList<JsonValue>>()
+        for ((owner, usage) in usagesOf(uri, symbol, includeDeclaration = true)) {
+            byFile.getOrPut(owner) { ArrayList() }.add(
+                JsonValue.Obj(
+                    linkedMapOf(
+                        "range" to rangeOf(usage.line, usage.column, usage.length),
+                        "newText" to JsonValue.Str(newName),
+                    ),
+                ),
+            )
+        }
+        if (byFile.isEmpty()) return JsonValue.Null
+        return JsonValue.Obj(
+            linkedMapOf(
+                "changes" to JsonValue.Obj(byFile.mapValues { JsonValue.Arr(it.value) }),
+            ),
+        )
+    }
+
+    /** 加载文档（正文用内存里的）并在其中算符号的引用；引用文件换算成它自己的 URI。 */
+    private fun usagesOf(
+        uri: String,
+        symbol: RsfSymbols.RsfSymbol,
+        includeDeclaration: Boolean,
+    ): List<Pair<String, RsfSymbols.Usage>> {
+        val path = uriToPath(uri) ?: return emptyList()
+        val file = File(path)
+        val baseDir = file.parentFile ?: File(".").absoluteFile
+        return try {
+            val loaded = org.example.complie.Rsf.load(file, baseDir, documents[uri]?.text)
+            RsfSymbols.references(loaded, symbol, includeDeclaration).map { usage ->
+                val owner = if (sameFile(usage.file, path)) uri else pathToUri(usage.file)
+                owner to usage
+            }
+        } catch (e: Exception) {
+            log.println("[rsf-lsp] 找 $uri 的引用时出错：${e.message}")
+            emptyList()
+        }
+    }
+
     /** 光标处解析到一个声明；未保存的缓冲区先落临时文件，解析完把文件名换回文档自己的路径。 */
     private fun symbolAt(uri: String, line0: Int, character0: Int): RsfSymbols.RsfSymbol? {
         val path = uriToPath(uri) ?: return null
@@ -279,7 +399,7 @@ class LanguageServer(
             val loaded = org.example.complie.Rsf.load(file, baseDir, doc?.text)
             val root = loaded.root
             val symbol = RsfSymbols.resolveAt(loaded, root, line0, character0) ?: return null
-            if (symbol.file == root.path || symbol.file == file.canonicalPath) symbol.copy(file = path) else symbol
+            if (sameFile(symbol.file, root.path) || sameFile(symbol.file, file.path)) symbol.copy(file = file.path) else symbol
         } catch (e: Exception) {
             log.println("[rsf-lsp] 解析 $uri 的符号时出错：${e.message}")
             return null
@@ -287,18 +407,22 @@ class LanguageServer(
     }
 
     /** 声明名字的区间（0 基）。 */
-    private fun symbolRange(symbol: RsfSymbols.RsfSymbol): JsonValue = JsonValue.Obj(
+    private fun symbolRange(symbol: RsfSymbols.RsfSymbol): JsonValue =
+        rangeOf(symbol.line, symbol.column, symbol.length)
+
+    /** 1 基（行、列、长度）→ LSP 的 0 基 range。 */
+    private fun rangeOf(line: Int, column: Int, length: Int): JsonValue = JsonValue.Obj(
         linkedMapOf(
             "start" to JsonValue.Obj(
                 linkedMapOf(
-                    "line" to JsonValue.Num((symbol.line - 1).coerceAtLeast(0).toDouble()),
-                    "character" to JsonValue.Num((symbol.column - 1).coerceAtLeast(0).toDouble()),
+                    "line" to JsonValue.Num((line - 1).coerceAtLeast(0).toDouble()),
+                    "character" to JsonValue.Num((column - 1).coerceAtLeast(0).toDouble()),
                 ),
             ),
             "end" to JsonValue.Obj(
                 linkedMapOf(
-                    "line" to JsonValue.Num((symbol.line - 1).coerceAtLeast(0).toDouble()),
-                    "character" to JsonValue.Num((symbol.column - 1 + symbol.length).coerceAtLeast(0).toDouble()),
+                    "line" to JsonValue.Num((line - 1).coerceAtLeast(0).toDouble()),
+                    "character" to JsonValue.Num((column - 1 + length).coerceAtLeast(0).toDouble()),
                 ),
             ),
         ),
@@ -378,6 +502,16 @@ class LanguageServer(
     fun note(text: String) = log.println("[rsf-lsp] $text")
 
     companion object {
+
+        /** 重命名接受的新名字：字母/下划线开头，后接字母、数字、下划线（和词法器同一套）。 */
+        private val IDENTIFIER = Regex("[_\\p{L}][_\\p{L}\\p{N}]*")
+
+        /** 两个路径是不是同一份文件（大小写、分隔符、`.`/`..` 都抹平）。 */
+        fun sameFile(a: String, b: String): Boolean = try {
+            File(a).canonicalPath.equals(File(b).canonicalPath, ignoreCase = true)
+        } catch (_: Exception) {
+            a.equals(b, ignoreCase = true)
+        }
 
         /** `file:///D:/a/b.rsf` ↔ `D:/a/b.rsf`；非 file 协议返回 null。 */
         fun uriToPath(uri: String): String? {

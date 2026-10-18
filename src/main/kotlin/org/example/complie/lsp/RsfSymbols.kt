@@ -15,6 +15,8 @@ import org.example.complie.ast.ForStmt
 import org.example.complie.ast.TryStmt
 import org.example.complie.ast.SwitchStmt
 import org.example.complie.diag.SourceFile
+import org.example.complie.lexing.Lexer
+import org.example.complie.lexing.TokenKind
 import org.example.complie.loading.LoadedProgram
 
 /**
@@ -117,6 +119,48 @@ object RsfSymbols {
         return before.firstOrNull() ?: named.firstOrNull()
     }
 
+    // ------------------------------------------------------------------ 引用
+
+    /** 一处引用（1 基）。 */
+    data class Usage(val file: String, val line: Int, val column: Int, val length: Int)
+
+    /**
+     * 找 [symbol] 的所有引用（Find Usages / 重命名用）。
+     *
+     * 做法是**词法扫描 + 解析复核**：先按词法抓所有同名标识符（注释、字符串、字面量天然不在
+     * 候选里），再让 [resolveAt] 在同一位置解析一次，只有解析到同一个声明才算数。
+     * 这样 `obj.sum()` 和另一个类的 `sum` 不会混。代价是解析不到的位置会被漏掉——
+     * 宁可少给（重命名时少改一处就丢代码），也不改错（把别人的 `sum` 改掉）。
+     *
+     * 声明自身也算一处；调用方要「不含声明」就传 `includeDeclaration = false`。
+     */
+    fun references(
+        loaded: LoadedProgram,
+        symbol: RsfSymbol,
+        includeDeclaration: Boolean = true,
+    ): List<Usage> {
+        val out = ArrayList<Usage>()
+        for (src in loaded.files) {
+            val tokens = try {
+                Lexer(src).tokenize()
+            } catch (_: Exception) {
+                continue
+            }
+            for (tok in tokens) {
+                if (tok.kind != TokenKind.IDENT || tok.lexeme != symbol.name) continue
+                val isDecl = tok.line == symbol.line && tok.column == symbol.column
+                if (isDecl) {
+                    if (includeDeclaration) out.add(Usage(src.path, tok.line, tok.column, tok.lexeme.length))
+                    continue
+                }
+                val hit = resolveAt(loaded, src, tok.line - 1, tok.column - 1) ?: continue
+                if (!sameFile(hit.file, symbol.file) || hit.declLine != symbol.declLine || hit.kind != symbol.kind) continue
+                out.add(Usage(src.path, tok.line, tok.column, tok.lexeme.length))
+            }
+        }
+        return out.distinctBy { Triple(it.file, it.line, it.column) }
+    }
+
     // ------------------------------------------------------------------ 文档
 
     /** 取声明上面连续的 `///` 行；空行会打断（不把上一段的注释认成这段的文档）。 */
@@ -134,6 +178,13 @@ object RsfSymbols {
     }
 
     // ------------------------------------------------------------------ 内部
+
+    /** 两个路径是不是同一份文件（`D:/a` 与 `D:\a` 要算同一个）。 */
+    private fun sameFile(a: String, b: String): Boolean = try {
+        java.io.File(a).canonicalPath.equals(java.io.File(b).canonicalPath, ignoreCase = true)
+    } catch (_: Exception) {
+        a.equals(b, ignoreCase = true)
+    }
 
     private data class Word(val text: String, val start: Int, val end: Int)
 
@@ -198,7 +249,7 @@ object RsfSymbols {
                 RsfSymbol(
                     name = node.name,
                     kind = "variable",
-                    detail = "${if (node.mutable) "var" else "imutvar"} ${node.name} : ${node.declaredType?.name ?: "?"}",
+                    detail = "${if (node.mutable) "var" else "imutvar"} ${node.name} : ${node.declaredType?.display() ?: "?"}",
                     doc = docAt(file, node.at.line),
                     file = file.path,
                     line = node.at.line,
@@ -246,7 +297,7 @@ object RsfSymbols {
         return RsfSymbol(
             name = field.name,
             kind = "field",
-            detail = "${if (field.mutable) "var" else "imutvar"} ${field.name} : ${field.type.name}",
+            detail = "${if (field.mutable) "var" else "imutvar"} ${field.name} : ${field.type.display()}",
             doc = docAt(file, field.at.line),
             file = file.path,
             line = span.first,
@@ -286,10 +337,10 @@ object RsfSymbols {
 
     /** 签名渲染：`add(a : int, b : int) -> int`（和补全条目同一口径）。 */
     fun signature(fn: FuncDecl): String {
-        val ps = fn.params.joinToString(", ") { "${it.name} : ${it.type.name}" }
+        val ps = fn.params.joinToString(", ") { "${it.name} : ${it.type.display()}" }
         val mark = if (fn.ret.mayError) "!" else ""
         val keyword = if (fn.isConstructor) "constructor " else ""
-        return "$keyword${fn.name}($ps) ${fn.ret.style.symbol} $mark${fn.ret.type.name}"
+        return "$keyword${fn.name}($ps) ${fn.ret.style.symbol} $mark${fn.ret.type.display()}"
     }
 
     /** 悬停内容（markdown）：签名代码块 + RDoc + 定义位置。 */

@@ -116,6 +116,60 @@ class RsfLspClientTest {
         }
     }
 
+    @Test
+    fun `连真服务器 增量同步 找引用 重命名`() {
+        val jar = newestCompilerJar()
+        assumeTrue(jar != null, "仓库根没有 build/libs/*.jar，跳过集成用例")
+        val java = javaThatCanRunCompilerJar()
+        assumeTrue(java != null, "找不到能跑 JDK 25 产物的 java，跳过集成用例")
+
+        val workDir = File(".").absoluteFile
+        val command = RsfCommand(
+            executable = java!!.absolutePath,
+            prefix = listOf("-Dstdout.encoding=UTF-8", "-jar", jar!!.absolutePath),
+            description = "测试用 jar",
+        )
+        val client = RsfLspClient.start(command, workDir)
+        assumeTrue(client != null, "服务器没起来（编译器版本是否支持 lsp 子命令？）")
+        try {
+            val target = File(workDir, "build/tmp-lsp-refs")
+            target.mkdirs()
+            val file = File(target, "refs.rsf")
+            file.deleteOnExit()
+            val text = """fn add(a : int, b : int) -> int {
+    rtn a + b
+}
+
+fn main() -> void {
+    var x : int = add(1, 2)
+    var y : int = add(x, 3)
+    rtn
+}
+"""
+            file.writeText(text, Charsets.UTF_8)
+            val uri = RsfLspClient.toUri(file.path)
+
+            assertEquals(0, client!!.diagnose(uri, text).size, "干净文件不该有诊断")
+
+            // 增量：只改一个字符（客户端会发 range 补丁，不是整篇）
+            val edited = text.replace("add(x, 3)", "add(x, 4)")
+            assertEquals(0, client.diagnose(uri, edited).size, "增量补丁后的正文也应该没问题")
+
+            val line = 5
+            val character = edited.lines()[line].indexOf("add")
+            val usages = client.references(uri, edited, line, character)
+            assertEquals(3, usages.size, "声明 1 处 + 调用 2 处：${usages.map { it.path + ":" + it.line }}")
+
+            val edits = client.rename(uri, edited, line, character, "plus")
+            assertTrue(edits != null, "应该能重命名函数")
+            val all = edits!!.values.flatten()
+            assertEquals(3, all.size, "重命名应该改 3 处：$edits")
+            assertTrue(all.all { it.newText == "plus" }, edits.toString())
+        } finally {
+            client?.close()
+        }
+    }
+
     /** 找一台能跑编译器 jar 的 java：JAVA_HOME 优先，其次 PATH；版本不够就当没有。 */
     private fun javaThatCanRunCompilerJar(): File? {
         val candidates = ArrayList<File>()

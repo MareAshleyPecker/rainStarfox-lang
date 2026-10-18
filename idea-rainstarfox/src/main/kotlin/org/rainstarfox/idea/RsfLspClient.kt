@@ -47,8 +47,8 @@ class RsfLspClient private constructor(
     /** 每个文档的版本号：LSP 的 didChange 带版本，递增即可。 */
     private val versions = HashMap<String, Int>()
 
-    /** 已经 didOpen 过的文档，避免重复 Open（编辑器每次重析都会调诊断）。 */
-    private val opened = HashSet<String>()
+    /** 上次发出去的那份正文：didOpen 之后改动用增量补丁（[singleChange]），不再整篇重发。 */
+    private val syncedText = HashMap<String, String>()
 
     init {
         val reader = Thread({ readLoop() }, "rsf-lsp-reader")
@@ -164,23 +164,132 @@ class RsfLspClient private constructor(
         return value.ifEmpty { null }
     }
 
-    /** 光标扫到这儿时把当前缓冲区同步过去（打开/改动都走 didChange）。 */
+    /** 一处文本替换（0 基行列，`end` 不含）。 */
+    data class TextEdit(
+        val startLine: Int,
+        val startCharacter: Int,
+        val endLine: Int,
+        val endCharacter: Int,
+        val newText: String,
+    )
+
+    /** 找引用（Find Usages 的数据源）。位置 0 基；解析不到就是空表。 */
+    fun references(uri: String, text: String, line: Int, character: Int): List<Location> {
+        syncDocument(uri, text)
+        val params = "{\"textDocument\":{\"uri\":${quote(uri)}},\"position\":{\"line\":$line,\"character\":$character}," +
+            "\"context\":{\"includeDeclaration\":true}}"
+        val json = request("textDocument/references", params) ?: return emptyList()
+        val root = RsfJson.parse(json) ?: return emptyList()
+        return maps(root).mapNotNull { item ->
+            val targetUri = RsfJson.string(item, "uri")
+            val start = RsfJson.objectAt(item, "range")?.let { RsfJson.objectAt(it, "start") } ?: return@mapNotNull null
+            if (targetUri.isEmpty()) return@mapNotNull null
+            Location(fromUri(targetUri), RsfJson.int(start, "line", 0), RsfJson.int(start, "character", 0))
+        }
+    }
+
+    /**
+     * 重命名：服务器回 `WorkspaceEdit.changes`（文件 URI → 替换列表）。
+     *
+     * 服务器说改不了（类型改名、非法名字、找不到声明）就回 null——调用方弹通知，不动文件。
+     */
+    fun rename(uri: String, text: String, line: Int, character: Int, newName: String): Map<String, List<TextEdit>>? {
+        syncDocument(uri, text)
+        val params = "{\"textDocument\":{\"uri\":${quote(uri)}},\"position\":{\"line\":$line,\"character\":$character}," +
+            "\"newName\":${quote(newName)}}"
+        val json = request("textDocument/rename", params) ?: return null
+        if (json == "null") return null
+        val root = RsfJson.parse(json) as? Map<String, Any?> ?: return null
+        val changes = RsfJson.objectAt(root, "changes") ?: return null
+        val out = LinkedHashMap<String, List<TextEdit>>()
+        for ((fileUri, value) in changes) {
+            val edits = (value as? List<*>)?.filterIsInstance<Map<String, Any?>>() ?: continue
+            out[fileUri] = edits.mapNotNull { edit ->
+                val range = RsfJson.objectAt(edit, "range") ?: return@mapNotNull null
+                val start = RsfJson.objectAt(range, "start") ?: return@mapNotNull null
+                val end = RsfJson.objectAt(range, "end") ?: return@mapNotNull null
+                TextEdit(
+                    startLine = RsfJson.int(start, "line", 0),
+                    startCharacter = RsfJson.int(start, "character", 0),
+                    endLine = RsfJson.int(end, "line", 0),
+                    endCharacter = RsfJson.int(end, "character", 0),
+                    newText = RsfJson.string(edit, "newText"),
+                )
+            }
+        }
+        return out
+    }
+
+    /** 把一个 JSON 数组读成一组对象（`references` 的结果是裸数组，不是 `{items:…}`）。 */
+    private fun maps(value: Any?): List<Map<String, Any?>> =
+        (value as? List<*>)?.filterIsInstance<Map<String, Any?>>() ?: emptyList()
+
+    /**
+     * 把当前缓冲区同步给服务器：第一次 `didOpen`（整篇），之后每次改动只发**一个** range
+     * 补丁（最长的公共前缀/后缀之间的那段）。LSP 协商的是增量同步，大文件改一个字符时
+     * 不用把整篇再走一遍管道。
+     */
     private fun syncDocument(uri: String, text: String) {
         synchronized(versions) {
             val version = (versions[uri] ?: 0) + 1
             versions[uri] = version
-            if (opened.add(uri)) {
+            val previous = syncedText[uri]
+            syncedText[uri] = text
+            if (previous == null) {
                 notify(
                     "textDocument/didOpen",
                     "{\"textDocument\":{\"uri\":${quote(uri)},\"languageId\":\"rsf\",\"version\":$version,\"text\":${quote(text)}}}",
                 )
-            } else {
-                notify(
-                    "textDocument/didChange",
-                    "{\"textDocument\":{\"uri\":${quote(uri)},\"version\":$version},\"contentChanges\":[{\"text\":${quote(text)}}]}",
-                )
+                return
+            }
+            val change = singleChange(previous, text) ?: return
+            notify(
+                "textDocument/didChange",
+                "{\"textDocument\":{\"uri\":${quote(uri)},\"version\":$version},\"contentChanges\":[{" +
+                    "\"range\":{\"start\":{\"line\":${change.startLine},\"character\":${change.startCharacter}}," +
+                    "\"end\":{\"line\":${change.endLine},\"character\":${change.endCharacter}}}," +
+                    "\"text\":${quote(change.text)}}]}",
+            )
+        }
+    }
+
+    private data class SingleChange(
+        val startLine: Int,
+        val startCharacter: Int,
+        val endLine: Int,
+        val endCharacter: Int,
+        val text: String,
+    )
+
+    /**
+     * 两版正文之间最小的那个「替换一段」：去掉公共前缀和公共后缀，剩下的一对位置 + 新文本。
+     *
+     * 行/列按 UTF-16 码元算（Kotlin 的 String 下标正好是这个口径，LSP 也这么定义）。
+     */
+    private fun singleChange(old: String, new: String): SingleChange? {
+        if (old == new) return null
+        val limit = minOf(old.length, new.length)
+        var prefix = 0
+        while (prefix < limit && old[prefix] == new[prefix]) prefix++
+        var suffix = 0
+        while (suffix < limit - prefix && old[old.length - 1 - suffix] == new[new.length - 1 - suffix]) suffix++
+        val startOffset = prefix
+        val endOffset = old.length - suffix
+        val (startLine, startCharacter) = lineColumn(old, startOffset)
+        val (endLine, endCharacter) = lineColumn(old, endOffset)
+        return SingleChange(startLine, startCharacter, endLine, endCharacter, new.substring(prefix, new.length - suffix))
+    }
+
+    private fun lineColumn(text: String, offset: Int): Pair<Int, Int> {
+        var line = 0
+        var lastNewline = -1
+        for (i in 0 until minOf(offset, text.length)) {
+            if (text[i] == '\n') {
+                line++
+                lastNewline = i
             }
         }
+        return line to (offset - lastNewline - 1)
     }
 
     private fun request(method: String, paramsJson: String, timeoutMs: Long = 10_000): String? {

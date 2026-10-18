@@ -49,9 +49,9 @@ class LanguageServerTest {
     }
 
     @Test
-    fun `initialize 声明全量同步与补全能力`() {
+    fun `initialize 声明增量同步与补全能力`() {
         val result = server().dispatch("initialize", JsonValue.Null)!!
-        assertEquals(1, result.int("capabilities", "textDocumentSync"))
+        assertEquals(2, result.int("capabilities", "textDocumentSync"))
         assertTrue(result.obj("capabilities")?.obj("completionProvider") != null)
         assertEquals("rainStarfox", result.str("serverInfo", "name"))
     }
@@ -278,5 +278,134 @@ fn main() -> void {
         val items = report.arr("items")!!
         assertTrue(items.isNotEmpty(), "内存里的正文应该被检查")
         assertTrue(items.first().str("message")!!.contains("nope"), items.first().render())
+    }
+
+    // ------------------------------------------------------------------ 增量同步 / 引用 / 重命名
+
+    @Test
+    fun `增量 didChange 按 range 打补丁 只改一行也生效`() {
+        val dir = File.createTempFile("rsf-lsp-inc", "").let { it.delete(); it.mkdirs(); it }
+        val file = File(dir, "i.rsf")
+        val text = """fn main() -> void {
+    rtn
+}
+"""
+        file.writeText(text, Charsets.UTF_8)
+        val uri = LanguageServer.pathToUri(file.path)
+
+        val s = server()
+        openText(s, uri, text)
+        // 把第 2 行的 rtn（0 基字符 4..7）换成 nope()，模拟编辑器只发改动区间
+        s.dispatch(
+            "textDocument/didChange",
+            JsonParser.parse(
+                """{"textDocument":{"uri":"$uri","version":2},"contentChanges":[{"range":{"start":{"line":1,"character":4},"end":{"line":1,"character":7}},"text":"nope()"}]}""",
+            ),
+        )
+        val report = s.dispatch("textDocument/diagnostic", JsonParser.parse("""{"textDocument":{"uri":"$uri"}}"""))!!
+        val items = report.arr("items")!!
+        assertTrue(items.isNotEmpty(), "增量补丁后的正文应该被检查")
+        assertTrue(items.first().str("message")!!.contains("未定义的函数"), items.first().render())
+        assertEquals(1, items.first().int("range", "start", "line"))
+    }
+
+    @Test
+    fun `整篇替换的 didChange 仍然兼容`() {
+        val dir = File.createTempFile("rsf-lsp-full", "").let { it.delete(); it.mkdirs(); it }
+        val file = File(dir, "f.rsf")
+        val original = """fn main() -> void {
+    rtn
+}
+"""
+        file.writeText(original, Charsets.UTF_8)
+        val uri = LanguageServer.pathToUri(file.path)
+        val s = server()
+        openText(s, uri, original)
+        val replaced = """fn main() -> void {
+    nope()
+}
+"""
+        s.dispatch(
+            "textDocument/didChange",
+            JsonParser.parse(
+                """{"textDocument":{"uri":"$uri","version":2},"contentChanges":[{"text":${JsonValue.Str(replaced).render()}}]}""",
+            ),
+        )
+        val report = s.dispatch("textDocument/diagnostic", JsonParser.parse("""{"textDocument":{"uri":"$uri"}}"""))!!
+        assertTrue(report.arr("items")!!.isNotEmpty(), "整篇替换后应该报错")
+    }
+
+    @Test
+    fun `找引用 带上声明与调用 跨文件也给对 uri`() {
+        val (_, uri) = project()
+        val s = server()
+        openText(s, uri, mainSource)
+        val line = 3
+        val character = mainSource.lines()[line].indexOf("greet")
+        val result = s.dispatch(
+            "textDocument/references",
+            JsonParser.parse(
+                """{"textDocument":{"uri":"$uri"},"position":{"line":$line,"character":$character},"context":{"includeDeclaration":true}}""",
+            ),
+        )!!
+        val locations = (result as? JsonValue.Arr)?.items ?: emptyList()
+        assertEquals(2, locations.size, result.render())
+        assertTrue(locations.any { it.str("uri")!!.endsWith("lib/greet.rsf") }, result.render())
+        assertTrue(locations.any { it.str("uri")!!.endsWith("main.rsf") }, result.render())
+    }
+
+    @Test
+    fun `找引用 includeDeclaration 为 false 时不带声明`() {
+        val (_, uri) = project()
+        val s = server()
+        openText(s, uri, mainSource)
+        val line = 3
+        val character = mainSource.lines()[line].indexOf("greet")
+        val result = s.dispatch(
+            "textDocument/references",
+            JsonParser.parse(
+                """{"textDocument":{"uri":"$uri"},"position":{"line":$line,"character":$character},"context":{"includeDeclaration":false}}""",
+            ),
+        )!!
+        val locations = (result as? JsonValue.Arr)?.items ?: emptyList()
+        assertEquals(1, locations.size, result.render())
+    }
+
+    @Test
+    fun `重命名 返回两个文件的 TextEdit`() {
+        val (_, uri) = project()
+        val s = server()
+        openText(s, uri, mainSource)
+        val line = 3
+        val character = mainSource.lines()[line].indexOf("greet")
+        val result = s.dispatch(
+            "textDocument/rename",
+            JsonParser.parse(
+                """{"textDocument":{"uri":"$uri"},"position":{"line":$line,"character":$character},"newName":"salute"}""",
+            ),
+        )!!
+        val changes = (result.obj("changes") as? JsonValue.Obj) ?: error("应该返回 changes：${result.render()}")
+        assertEquals(2, changes.fields.size, result.render())
+        val mainEdits = changes.fields.entries.first { it.key.endsWith("main.rsf") }.value as JsonValue.Arr
+        assertEquals(1, mainEdits.items.size)
+        assertEquals("salute", mainEdits.items.first().str("newText"))
+        val libEdits = changes.fields.entries.first { it.key.endsWith("greet.rsf") }.value as JsonValue.Arr
+        assertEquals("salute", libEdits.items.first().str("newText"))
+    }
+
+    @Test
+    fun `重命名拒绝非法名字`() {
+        val (_, uri) = project()
+        val s = server()
+        openText(s, uri, mainSource)
+        val line = 3
+        val character = mainSource.lines()[line].indexOf("greet")
+        val result = s.dispatch(
+            "textDocument/rename",
+            JsonParser.parse(
+                """{"textDocument":{"uri":"$uri"},"position":{"line":$line,"character":$character},"newName":"1 个空格"}""",
+            ),
+        )
+        assertEquals(JsonValue.Null, result)
     }
 }

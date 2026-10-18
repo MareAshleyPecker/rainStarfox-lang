@@ -14,6 +14,8 @@
 | 代码补全 | 关键字、类型、内置函数、跨文件函数、参数、局部变量、`Math.` 这类 JVM 成员 |
 | 跳转 | `Ctrl+点` / `Ctrl+B` 跳到声明（同文件、跨 `imp` 文件都行）；解析不到就原地不动 |
 | 悬停文档 | 鼠标停在符号上显示签名 + **RDoc**（声明正上方连续的 `///` 行）+ 定义位置 |
+| 重命名 | `Shift+F6`：范围由语言服务器算（`textDocument/rename`），跨文件一起改；类型改名暂不支持 |
+| 查找引用 | 编辑器右键 / Tools 菜单「查找 rainStarfox 引用」：弹窗列出所有引用，点一条跳过去 |
 | 样板 | `fn` `lam` `class` `itf` `enum` `main` `for` `while` `switch` `try` 输入缩写后按 `Tab` 展开，占位符可逐个跳改（Settings → Editor → Live Templates → rainStarfox 里可改） |
 | 运行 / 编译 | 右键或 Run 菜单里执行 `rsf run` / `rsf build`，输出进 Run 控制台，**报错行可点击跳转** |
 | 设置 | Setting → Tools → rainStarfox：指定编译器路径、开关实时诊断与补全 |
@@ -21,6 +23,7 @@
 ## 诊断和补全从哪来
 
 走 **LSP**：插件起一个常驻的 `rsf lsp` 进程，通过 stdio 上的 JSON-RPC 说话。
+同步用**增量**：`didOpen` 发整篇，之后每次改动只发一个 range 补丁（最长公共前缀/后缀之间的那段）。
 
 ```
 rsf lsp        # 语言服务器：initialize / didOpen / didChange / diagnostic / completion
@@ -65,7 +68,8 @@ cd idea-rainstarfox
 
 ## 已知边界
 
-- **没有真正的语法树**。解析器是扁平的 token 树，所以 IDEA 的「结构」视图、重命名、跳转定义这类基于 PSI 的重构用不了。高亮、括号配对、注释、诊断、补全、**Ctrl+点跳转**（位置由语言服务器给，不经过 PSI 重构）都不依赖语法树，所以它们照常工作。要做上面那些功能，得往 `RsfParser` 里填真正的语法分析。
+- **没有真正的语法树**。解析器是扁平的 token 树，所以 IDEA 的「结构」视图这类基于 PSI 的功能用不了。高亮、括号配对、注释、诊断、补全、`Ctrl+点`跳转、悬停、重命名都不依赖语法树——位置与范围一律由语言服务器给（`textDocument/*`），插件只负责应用结果。
+- **查找引用是弹窗列表，不是 Find 工具窗**：IDEA 的 Find Usages 要 `PsiReference` 索引，扁平 PSI 没有；插件给一个轻量候选列表，点了就跳。别指望它能「在整个工程里持续跟踪」。
 - **一次只报一个错**。编译器前端是遇错即停的，修掉当前这条才能看到下一条。这是编译器前端的既有设计，插件如实反映。
 - **补全的作用域过滤偏宽松**：同一个函数里在光标之前声明过的变量都会给出，宁可多给几个也不漏。文件没写完（解析失败）时退化成关键字扫描。
 - **`.rsf` 之外的文件不参与**：目前 `import` 进来的其他 JVM 语言（.java/.kt）不会带来补全。
@@ -89,6 +93,8 @@ src/main/kotlin/org/rainstarfox/idea/
     RsfLspClient.kt            LSP 客户端：起 `rsf lsp`、收发 JSON-RPC、连接池
     RsfDiagnostics.kt          诊断对齐（只留本文档 / 去重）
     RsfGotoDeclarationHandler.kt Ctrl+点跳转（`textDocument/definition`）
+    RsfRenameHandler.kt        重命名（`textDocument/rename` → WorkspaceEdit）
+    RsfFindUsagesAction.kt     查找引用（`textDocument/references`，弹窗列表）
     RsfDocumentationProvider.kt 悬停文档（`textDocument/hover`）
     RsfMarkdown.kt             服务器给的 markdown → 文档弹窗的 HTML
     RsfLiveTemplates.kt        样板（/liveTemplates/rainStarfox.xml）

@@ -43,6 +43,9 @@
         <!-- Ctrl+点跳转：问语言服务器要声明位置 -->
         <gotoDeclarationHandler implementation="org.rainstarfox.idea.RsfGotoDeclarationHandler"/>
 
+        <!-- 重命名（Shift+F6）：改哪些地方由语言服务器算（textDocument/rename） -->
+        <renameHandler implementation="org.rainstarfox.idea.RsfRenameHandler"/>
+
         <!-- 悬停文档（RDoc）：声明上方的 /// 行 -->
         <lang.documentationProvider language="rainStarfox"
                                     implementation="org.rainstarfox.idea.RsfDocumentationProvider"/>
@@ -68,6 +71,13 @@
             <add-to-group group-id="RunMenu" anchor="first"/>
             <add-to-group group-id="EditorPopupMenu" anchor="last"/>
             <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
+        </action>
+        <action id="Rsf.FindUsages"
+                class="org.rainstarfox.idea.RsfFindUsagesAction"
+                text="查找 rainStarfox 引用"
+                description="列出光标处声明的所有引用（LSP textDocument/references）">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
         </action>
         <action id="Rsf.BuildFile"
                 class="org.rainstarfox.idea.RsfBuildAction"

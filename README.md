@@ -1379,13 +1379,15 @@ src/test/kotlin/org/example/        测试（359 个：两端一致性、rsf 版
 ### IntelliJ IDEA 插件
 
 `idea-rainstarfox/` 是给 IntelliJ 平台写的插件（文件类型、语法高亮、实时诊断、
-代码补全、一键运行/编译），诊断与补全走常驻的 `rsf lsp`（LSP over stdio）
-两个 CLI 命令——报错和补全全部来自编译器，只有一份语义实现。用本机已装的
+代码补全、`Ctrl+点`跳转、悬停 RDoc、重命名、查找引用、一键运行/编译），
+诊断、补全、跳转、重命名**全部**走常驻的 `rsf lsp`（LSP over stdio）——
+只有一份语义实现。改动用**增量同步**（`textDocumentSync = 2`），大文件改一个字符
+只发一个 range 补丁。用本机已装的
 IDEA 当 SDK 编译，不下载 IDE 分发包：
 
 ```bat
 cd idea-rainstarfox
-gradlew.bat buildPlugin test      :: 产物 build/distributions/idea-rainstarfox-0.1.0.zip
+gradlew.bat buildPlugin test      :: 产物 build/distributions/idea-rainstarfox-0.2.0.zip
 gradlew.bat verifyPlugin          :: 官方校验器静态检查
 ```
 
@@ -1491,7 +1493,7 @@ gradlew.bat verifyPlugin          :: 官方校验器静态检查
 | 8 | `!T` 错误返回 | ✅（阶段 14） |
 | 9 | 用户自定义类/结构体 | ✅（阶段 12） |
 | 10 | 编辑器支持：诊断 + 补全（走 `rsf lsp`，LSP over stdio） | ✅ |
-| 11 | Language Server（增量分析 / 跳转定义 / 悬停类型） | 待做 |
+| 11 | Language Server（增量同步 / 跳转定义 / 悬停 / 找引用 / 重命名） | ✅（阶段 45；还差格式化与 `workspace/symbol`） |
 | 12 | 用户自定义类 + `new` 构造 | ✅ |
 | 13 | 数组类型 `T[]` | ✅ |
 | 14 | `!T` 错误返回 + `try`/`catch` | ✅ |
