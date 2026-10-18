@@ -1,0 +1,21 @@
+import "../../../rsfSrc/core/Vec.rsf"
+import "../../../rsfSrc/core/HashMap.rsf"
+import "../../../rsfSrc/core/Text.rsf"
+
+fn main() -> void {
+    var v : Vec&<string> = new Vec&<string>()
+    v.push("a")
+    v.push("b")
+    v.push("c")
+    println("" + v.size() + " " + v.get(0) + v.get(2) + " " + v.indexOf("b"))
+    v.removeAt(1)
+    println("" + v.size() + " " + v.get(1))
+    var m : HashMap&<int> = new HashMap&<int>()
+    m.put("one", 1)
+    m.put("two", 2)
+    println("" + m.size() + " " + m.get("two") + " " + m.containsKey("zero"))
+    m.remove("one")
+    println("" + m.size() + " " + m.containsKey("one"))
+    println(Text.repeat("ab", 3) + "|" + Text.padLeft("7", 3, '0') + "|" + Text.join(Text.split("x,y,z", ','), "-"))
+    println("" + Text.countOf("banana", 'a') + " " + Text.stripPrefix("rsf: err", "rsf: "))
+}

@@ -1,0 +1,127 @@
+// 阶段 40：核心标准库 · 文本工具 Text
+//
+// 只用内置的字符串基本操作（length / charAt / substring / indexOf / startsWith /
+// endsWith / trim / toUpperCase / toLowerCase / replace），不引 JDK 正则、不做格式化。
+public class Text {
+    public static fn repeat(s : string, times : int) -> string {
+        if (times <= 0) { rtn "" }
+        var out = ""
+        var i = 0
+        while (i < times) {
+            out = out + s
+            i = i + 1
+        }
+        rtn out
+    }
+
+    public static fn padLeft(s : string, width : int, pad : char) -> string {
+        if (s.length() >= width) { rtn s }
+        var need = width - s.length()
+        var out = ""
+        var i = 0
+        while (i < need) {
+            out = out + pad
+            i = i + 1
+        }
+        rtn out + s
+    }
+
+    public static fn padRight(s : string, width : int, pad : char) -> string {
+        if (s.length() >= width) { rtn s }
+        var need = width - s.length()
+        var out = s
+        var i = 0
+        while (i < need) {
+            out = out + pad
+            i = i + 1
+        }
+        rtn out
+    }
+
+    public static fn isBlank(s : string) -> bool
+        { rtn s.trim().length() == 0 }
+
+    // 把 s 按 sep 切开（简单的顺序扫描；连续分隔符会产生空段，与 JDK split 不同）
+    public static fn split(s : string, sep : char) -> string[] {
+        var out : string[] = new string[8]
+        var n = 0
+        var start = 0
+        var i = 0
+        while (i < s.length()) {
+            if (s.charAt(i) == sep) {
+                var piece = s.substring(start, i)
+                if (n == out.length) {
+                    var bigger : string[] = new string[out.length * 2]
+                    var k = 0
+                    while (k < n) { bigger[k] = out[k]; k = k + 1 }
+                    out = bigger
+                }
+                out[n] = piece
+                n = n + 1
+                start = i + 1
+            }
+            i = i + 1
+        }
+        var tail = s.substring(start, s.length())
+        if (n == out.length) {
+            var bigger2 : string[] = new string[out.length * 2]
+            var k2 = 0
+            while (k2 < n) { bigger2[k2] = out[k2]; k2 = k2 + 1 }
+            out = bigger2
+        }
+        out[n] = tail
+        n = n + 1
+        var exact : string[] = new string[n]
+        var j = 0
+        while (j < n) { exact[j] = out[j]; j = j + 1 }
+        rtn exact
+    }
+
+    public static fn join(parts : string[], sep : string) -> string {
+        var out = ""
+        var i = 0
+        while (i < parts.length) {
+            if (i > 0) { out = out + sep }
+            out = out + parts[i]
+            i = i + 1
+        }
+        rtn out
+    }
+
+    // 从左往右数第 n 次出现的下标；找不到给 -1
+    public static fn nthIndexOf(s : string, ch : char, n : int) -> int {
+        var seen = 0
+        var i = 0
+        while (i < s.length()) {
+            if (s.charAt(i) == ch) {
+                seen = seen + 1
+                if (seen == n) { rtn i }
+            }
+            i = i + 1
+        }
+        rtn -1
+    }
+
+    public static fn countOf(s : string, ch : char) -> int {
+        var c = 0
+        var i = 0
+        while (i < s.length()) {
+            if (s.charAt(i) == ch) { c = c + 1 }
+            i = i + 1
+        }
+        rtn c
+    }
+
+    // 前缀/后缀剥离（不匹配就原样返回）
+    public static fn stripPrefix(s : string, prefix : string) -> string {
+        if (s.startsWith(prefix)) { rtn s.substring(prefix.length(), s.length()) }
+        rtn s
+    }
+
+    public static fn stripSuffix(s : string, suffix : string) -> string {
+        if (suffix.length() > 0 && s.endsWith(suffix)) {
+            rtn s.substring(0, s.length() - suffix.length())
+        }
+        rtn s
+    }
+}

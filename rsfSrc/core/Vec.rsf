@@ -1,0 +1,80 @@
+// 阶段 40：核心标准库 · 动态数组 Vec<T>
+//
+// 口径：只用两端（Kotlin 编译器 / 自举链）都认的语法，不依赖 JDK 集合。
+// 容量按 2 倍增长；`T[]` 在 JVM 上擦成 `Object[]`，所以元素只能是引用类型或自动装箱的基本类型。
+public class Vec&<T> {
+    var items : T[] = new T[4]
+    var n : int = 0
+
+    public fn size() -> int { rtn n }
+
+    public fn isEmpty() -> bool { rtn n == 0 }
+
+    public fn get(i : int) -> T { rtn items[i] }
+
+    public fn set(i : int, x : T) -> void { items[i] = x }
+
+    public fn push(x : T) -> void {
+        if (n == items.length) { grow() }
+        items[n] = x
+        n = n + 1
+    }
+
+    // 弹出最后一个；空表时返回 null 由调用方自己判
+    public fn pop() -> ?T {
+        if (n == 0) { rtn null }
+        n = n - 1
+        var v : ?T = items[n]
+        rtn v
+    }
+
+    public fn last() -> ?T {
+        if (n == 0) { rtn null }
+        rtn items[n - 1]
+    }
+
+    public fn clear() -> void { n = 0 }
+
+    public fn indexOf(x : T) -> int {
+        var i = 0
+        while (i < n) {
+            if (items[i] == x) { rtn i }
+            i = i + 1
+        }
+        rtn -1
+    }
+
+    public fn contains(x : T) -> bool { rtn indexOf(x) >= 0 }
+
+    // 把 [from, n) 段左移一格删掉下标 i
+    public fn removeAt(i : int) -> void {
+        if (i < 0 || i >= n) { rtn }
+        var k = i
+        while (k + 1 < n) {
+            items[k] = items[k + 1]
+            k = k + 1
+        }
+        n = n - 1
+    }
+
+    public fn grow() -> void {
+        var bigger : T[] = new T[items.length * 2]
+        var i = 0
+        while (i < n) {
+            bigger[i] = items[i]
+            i = i + 1
+        }
+        items = bigger
+    }
+
+    // 只读快照（原生数组长度等于 n），方便 for 循环与对拍
+    public fn toArray() -> T[] {
+        var out : T[] = new T[n]
+        var i = 0
+        while (i < n) {
+            out[i] = items[i]
+            i = i + 1
+        }
+        rtn out
+    }
+}
