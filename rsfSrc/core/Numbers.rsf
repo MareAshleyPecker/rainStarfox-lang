@@ -1,0 +1,130 @@
+// 阶段 48：核心标准库 · 数字工具 Numbers
+//
+// 只做「算术层面能确定的东西」：取绝对值、夹取、最大公约数、素数判断、整数幂，
+// 以及一个**不抛错**的整数解析（内置 `parseInt` 返回 `!int`，核心库里到处 try 太吵）。
+// 浮点格式化/舍入没放进来：rsf 没有格式化原语，硬做只能得到一串近似值。
+pub class Numbers {
+
+    pub stc fn abs(x : int) -> int {
+        if (x < 0) { rtn -x }
+        rtn x
+    }
+
+    pub stc fn min(a : int, b : int) -> int {
+        if (a < b) { rtn a }
+        rtn b
+    }
+
+    pub stc fn max(a : int, b : int) -> int {
+        if (a > b) { rtn a }
+        rtn b
+    }
+
+    pub stc fn clamp(x : int, lo : int, hi : int) -> int {
+        if (x < lo) { rtn lo }
+        if (x > hi) { rtn hi }
+        rtn x
+    }
+
+    pub stc fn sign(x : int) -> int {
+        if (x < 0) { rtn -1 }
+        if (x > 0) { rtn 1 }
+        rtn 0
+    }
+
+    pub stc fn isEven(n : int) -> bool { rtn n % 2 == 0 }
+
+    pub stc fn isOdd(n : int) -> bool { rtn n % 2 != 0 }
+
+    // 辗转相除；结果永远非负
+    pub stc fn gcd(a : int, b : int) -> int {
+        var x = abs(a)
+        var y = abs(b)
+        while (y != 0) {
+            var t = y
+            y = x % y
+            x = t
+        }
+        rtn x
+    }
+
+    pub stc fn lcm(a : int, b : int) -> int {
+        if (a == 0 || b == 0) { rtn 0 }
+        var g = gcd(a, b)
+        rtn abs(a / g * b)
+    }
+
+    // 整数幂；exp < 0 按 0 处理（没有分数结果可给）
+    pub stc fn pow(base : int, exp : int) -> int {
+        if (exp < 0) { rtn 0 }
+        var out = 1
+        var i = 0
+        while (i < exp) {
+            out = out * base
+            i = i + 1
+        }
+        rtn out
+    }
+
+    // 试除到 sqrt(n)；n < 2 一律 false
+    pub stc fn isPrime(n : int) -> bool {
+        if (n < 2) { rtn false }
+        if (n < 4) { rtn true }
+        if (n % 2 == 0) { rtn false }
+        var i = 3
+        while (i <= n / i) {
+            if (n % i == 0) { rtn false }
+            i = i + 2
+        }
+        rtn true
+    }
+
+    // 十进制整数解析：允许前导 + / -，不接受空白与其它字符；越界返回 null
+    pub stc fn tryParse(s : string) -> ?int {
+        if (s.length() == 0) { rtn null }
+        var i = 0
+        var neg = false
+        if (s.charAt(0) == '-') {
+            neg = true
+            i = 1
+        } else {
+            if (s.charAt(0) == '+') { i = 1 }
+        }
+        if (i >= s.length()) { rtn null }
+        var acc = 0
+        var limit = 214748364
+        while (i < s.length()) {
+            var c = s.charAt(i)
+            if (!isDigit(c)) { rtn null }
+            var d = charToInt(c) - 48
+            if (acc > limit) { rtn null }
+            if (acc == limit) {
+                if (neg) {
+                    if (d > 8) { rtn null }
+                } else {
+                    if (d > 7) { rtn null }
+                }
+            }
+            acc = acc * 10 + d
+            i = i + 1
+        }
+        if (neg) { rtn 0 - acc }
+        rtn acc
+    }
+
+    pub stc fn parseOr(s : string, fallback : int) -> int {
+        var v = tryParse(s)
+        rtn v ?: fallback
+    }
+
+    // 十进制位数（0 算 1 位）
+    pub stc fn digits(n : int) -> int {
+        var x = abs(n)
+        var c = 1
+        while (x >= 10) {
+            x = x / 10
+            c = c + 1
+        }
+        rtn c
+    }
+}

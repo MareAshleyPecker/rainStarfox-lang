@@ -70,4 +70,138 @@ pub class Sorts {
         }
         rtn out
     }
+
+    // ---- 字符串 / long 的排序（v1 没有通用比较协议，只能按类型各来一份）----
+
+    // 字典序比较：<0 表示 a 在前，>0 表示 b 在前，0 相等
+    pub stc fn compareStrings(a : string, b : string) -> int {
+        var n = a.length()
+        if (b.length() < n) { n = b.length() }
+        var i = 0
+        while (i < n) {
+            var ca = charToInt(a.charAt(i))
+            var cb = charToInt(b.charAt(i))
+            if (ca < cb) { rtn -1 }
+            if (ca > cb) { rtn 1 }
+            i = i + 1
+        }
+        if (a.length() < b.length()) { rtn -1 }
+        if (a.length() > b.length()) { rtn 1 }
+        rtn 0
+    }
+
+    pub stc fn strings(a : string[]) -> string[] {
+        if (a.length <= 1) { rtn a }
+        var mid : int = a.length / 2
+        var left = new string[mid]
+        var right = new string[a.length - mid]
+        var i = 0
+        while (i < mid) {
+            left[i] = a[i]
+            i = i + 1
+        }
+        var j = 0
+        while (j < right.length) {
+            right[j] = a[mid + j]
+            j = j + 1
+        }
+        rtn mergeStrings(strings(left), strings(right))
+    }
+
+    stc fn mergeStrings(a : string[], b : string[]) -> string[] {
+        var out = new string[a.length + b.length]
+        var i = 0
+        var j = 0
+        var k = 0
+        while (i < a.length && j < b.length) {
+            if (compareStrings(a[i], b[j]) <= 0) {
+                out[k] = a[i]
+                i = i + 1
+            } else {
+                out[k] = b[j]
+                j = j + 1
+            }
+            k = k + 1
+        }
+        while (i < a.length) {
+            out[k] = a[i]
+            i = i + 1
+            k = k + 1
+        }
+        while (j < b.length) {
+            out[k] = b[j]
+            j = j + 1
+            k = k + 1
+        }
+        rtn out
+    }
+
+    pub stc fn binarySearchStrings(a : string[], x : string) -> int {
+        var lo = 0
+        var hi = a.length - 1
+        while (lo <= hi) {
+            var mid : int = (lo + hi) / 2
+            var c = compareStrings(a[mid], x)
+            if (c == 0) { rtn mid }
+            if (c < 0) { lo = mid + 1 } else { hi = mid - 1 }
+        }
+        rtn -1
+    }
+
+    pub stc fn longs(a : long[]) -> long[] {
+        if (a.length <= 1) { rtn a }
+        var mid : int = a.length / 2
+        var left = new long[mid]
+        var right = new long[a.length - mid]
+        var i = 0
+        while (i < mid) {
+            left[i] = a[i]
+            i = i + 1
+        }
+        var j = 0
+        while (j < right.length) {
+            right[j] = a[mid + j]
+            j = j + 1
+        }
+        rtn mergeLongs(longs(left), longs(right))
+    }
+
+    stc fn mergeLongs(a : long[], b : long[]) -> long[] {
+        var out = new long[a.length + b.length]
+        var i = 0
+        var j = 0
+        var k = 0
+        while (i < a.length && j < b.length) {
+            if (a[i] <= b[j]) {
+                out[k] = a[i]
+                i = i + 1
+            } else {
+                out[k] = b[j]
+                j = j + 1
+            }
+            k = k + 1
+        }
+        while (i < a.length) {
+            out[k] = a[i]
+            i = i + 1
+            k = k + 1
+        }
+        while (j < b.length) {
+            out[k] = b[j]
+            j = j + 1
+            k = k + 1
+        }
+        rtn out
+    }
+
+    pub stc fn binarySearchLongs(a : long[], x : long) -> int {
+        var lo = 0
+        var hi = a.length - 1
+        while (lo <= hi) {
+            var mid : int = (lo + hi) / 2
+            if (a[mid] == x) { rtn mid }
+            if (a[mid] < x) { lo = mid + 1 } else { hi = mid - 1 }
+        }
+        rtn -1
+    }
 }

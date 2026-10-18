@@ -177,4 +177,164 @@ pub class Bits {
         }
         rtn out
     }
+
+    // ---------------------------------------------------------------- 64 位
+
+    // 2 的 n 次方（long）；n >= 63 时回绕成负数，调用方自己保证 0..62
+    pub stc fn pow2Long(n : int) -> long {
+        var p : long = 1L
+        var i = 0
+        while (i < n) {
+            p = p * 2L
+            i = i + 1
+        }
+        rtn p
+    }
+
+    // 第 i 位（0 是最低位）；unsigned 口径，负数高位算 1
+    pub stc fn bitAtLong(x : long, i : int) -> int {
+        if (i >= 63) {
+            if (x < 0L) { rtn 1 }
+            rtn 0
+        }
+        if (i < 0) { rtn 0 }
+        var d : long = pow2Long(i)
+        var q : long = x / d
+        if (x < 0L && q * d != x) { q = q - 1L }
+        var r : long = q % 2L
+        if (r < 0L) { r = r + 2L }
+        if (r == 0L) { rtn 0 }
+        rtn 1
+    }
+
+    pub stc fn shlLong(x : long, n : int) -> long {
+        if (n <= 0) { rtn x }
+        if (n >= 64) { rtn 0L }
+        if (n == 63) {
+            if (x % 2L == 0L) { rtn 0L }
+            rtn -9223372036854775807L - 1L
+        }
+        rtn x * pow2Long(n)
+    }
+
+    // 算术右移（负数补 1）
+    pub stc fn shrLong(x : long, n : int) -> long {
+        if (n <= 0) { rtn x }
+        if (n >= 63) {
+            if (x < 0L) { rtn -1L }
+            rtn 0L
+        }
+        var d : long = pow2Long(n)
+        var q : long = x / d
+        if (x < 0L && q * d != x) { q = q - 1L }
+        rtn q
+    }
+
+    // 逻辑右移（负数当无符号数看）
+    pub stc fn ushrLong(x : long, n : int) -> long {
+        if (n <= 0) { rtn x }
+        if (n >= 64) { rtn 0L }
+        if (n == 63) {
+            if (x < 0L) { rtn 1L }
+            rtn 0L
+        }
+        var d : long = pow2Long(n)
+        var q : long = x / d
+        if (x < 0L && q * d != x) { q = q - 1L }
+        if (x < 0L) { q = q + pow2Long(64 - n) }
+        rtn q
+    }
+
+    pub stc fn andLong(a : long, b : long) -> long {
+        var out : long = 0L
+        var p : long = 1L
+        var i = 0
+        while (i < 64) {
+            if (bitAtLong(a, i) == 1 && bitAtLong(b, i) == 1) { out = out + p }
+            p = p * 2L
+            i = i + 1
+        }
+        rtn out
+    }
+
+    pub stc fn orLong(a : long, b : long) -> long {
+        var out : long = 0L
+        var p : long = 1L
+        var i = 0
+        while (i < 64) {
+            if (bitAtLong(a, i) == 1 || bitAtLong(b, i) == 1) { out = out + p }
+            p = p * 2L
+            i = i + 1
+        }
+        rtn out
+    }
+
+    pub stc fn xorLong(a : long, b : long) -> long {
+        var out : long = 0L
+        var p : long = 1L
+        var i = 0
+        while (i < 64) {
+            var ba = bitAtLong(a, i)
+            var bb = bitAtLong(b, i)
+            if (ba != bb) { out = out + p }
+            p = p * 2L
+            i = i + 1
+        }
+        rtn out
+    }
+
+    // ~x == -1L - x
+    pub stc fn notLong(x : long) -> long { rtn -1L - x }
+
+    pub stc fn popCountLong(x : long) -> int {
+        var c = 0
+        var i = 0
+        while (i < 64) {
+            c = c + bitAtLong(x, i)
+            i = i + 1
+        }
+        rtn c
+    }
+
+    pub stc fn isPow2Long(x : long) -> bool {
+        if (x <= 0L) { rtn false }
+        rtn andLong(x, x - 1L) == 0L
+    }
+
+    pub stc fn lowestBitLong(x : long) -> long {
+        if (x == 0L) { rtn 0L }
+        rtn andLong(x, -x)
+    }
+
+    pub stc fn highestBitLong(x : long) -> long {
+        var i = 63
+        while (i >= 0) {
+            if (bitAtLong(x, i) == 1) { rtn pow2Long(i) }
+            i = i - 1
+        }
+        rtn 0L
+    }
+
+    // 固定 64 位二进制串
+    pub stc fn toBinaryLong(x : long) -> string {
+        var out = ""
+        var i = 63
+        while (i >= 0) {
+            if (bitAtLong(x, i) == 1) { out = out + '1' } else { out = out + '0' }
+            i = i - 1
+        }
+        rtn out
+    }
+
+    // 固定 16 位十六进制串（小写）
+    pub stc fn toHexLong(x : long) -> string {
+        var out = ""
+        var i = 15
+        while (i >= 0) {
+            var v = bitAtLong(x, i * 4) + bitAtLong(x, i * 4 + 1) * 2 + bitAtLong(x, i * 4 + 2) * 4 + bitAtLong(x, i * 4 + 3) * 8
+            if (v < 10) { out = out + toChar(48 + v) } else { out = out + toChar(97 + v - 10) }
+            i = i - 1
+        }
+        rtn out
+    }
 }

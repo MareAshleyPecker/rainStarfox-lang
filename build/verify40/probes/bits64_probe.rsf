@@ -1,0 +1,12 @@
+import "../../../rsfSrc/core/Bits.rsf"
+
+fn main() -> void {
+    println(Bits.toHexLong(-1L) + " " + Bits.toHexLong(255L) + " " + Bits.toHexLong(-559038737L))
+    println("" + Bits.popCountLong(-1L) + " " + Bits.popCountLong(255L) + " " + Bits.popCountLong(0L))
+    println(Bits.toBinaryLong(5L))
+    println(Bits.toBinaryLong(-1L))
+    println("" + Bits.shlLong(1L, 40) + " " + Bits.shrLong(-8L, 2) + " " + Bits.ushrLong(-8L, 2))
+    println("" + Bits.andLong(12L, 10L) + " " + Bits.orLong(12L, 10L) + " " + Bits.xorLong(12L, 10L) + " " + Bits.notLong(5L))
+    println("" + Bits.lowestBitLong(40L) + " " + Bits.highestBitLong(40L) + " " + Bits.lowestBitLong(0L) + " " + Bits.highestBitLong(0L))
+    println("" + Bits.isPow2Long(1024L) + " " + Bits.isPow2Long(1000L) + " " + Bits.bitAtLong(-1L, 63) + " " + Bits.bitAtLong(1L, 63))
+}

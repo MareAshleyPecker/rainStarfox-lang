@@ -1,0 +1,14 @@
+import "../../../rsfSrc/core/Numbers.rsf"
+
+fn main() -> void {
+    println("" + Numbers.abs(-7) + " " + Numbers.abs(7) + " " + Numbers.sign(-3) + " " + Numbers.sign(0))
+    println("" + Numbers.min(3, 9) + " " + Numbers.max(3, 9) + " " + Numbers.clamp(15, 0, 10) + " " + Numbers.clamp(-5, 0, 10))
+    println("" + Numbers.gcd(48, 18) + " " + Numbers.lcm(4, 6) + " " + Numbers.gcd(-12, 18))
+    println("" + Numbers.pow(2, 10) + " " + Numbers.pow(5, 0) + " " + Numbers.pow(3, 4))
+    println("" + Numbers.isPrime(2) + " " + Numbers.isPrime(97) + " " + Numbers.isPrime(91) + " " + Numbers.isPrime(1))
+    println("" + Numbers.isEven(10) + " " + Numbers.isOdd(10) + " " + Numbers.digits(0) + " " + Numbers.digits(1234))
+    println("" + (Numbers.tryParse("42") ?: -1) + " " + (Numbers.tryParse("-7") ?: -1) + " " + (Numbers.tryParse("+13") ?: -1))
+    println("" + (Numbers.tryParse("abc") ?: -1) + " " + (Numbers.tryParse("") ?: -1) + " " + (Numbers.tryParse("12x") ?: -1))
+    println("" + (Numbers.tryParse("2147483647") ?: -1) + " " + (Numbers.tryParse("2147483648") ?: -1))
+    println("" + (Numbers.tryParse("-2147483648") ?: 0) + " " + Numbers.parseOr("nope", 9))
+}
