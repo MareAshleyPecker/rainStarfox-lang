@@ -1,21 +1,21 @@
 public interface Base {
-    fun id() -> int
+    fn id() -> int
 }
 
 public interface Named : Base {
-    fun name() -> string
+    fn name() -> string
 }
 
 class Dog : Named {
-    public fun id() -> int {
+    public fn id() -> int {
         rtn 7
     }
-    public fun name() -> string {
+    public fn name() -> string {
         rtn "rex"
     }
 }
 
-fun main() -> void {
+fn main() -> void {
     var d : Named = new Dog()
     println(intToString(d.id()) + "/" + d.name())
     rtn

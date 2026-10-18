@@ -143,7 +143,7 @@ class AnnotationSyntaxTest {
             """
             annotation M {
                 companion entity Impl {
-                    fun run() -> void { rtn }
+                    fn run() -> void { rtn }
                 }
             }
             """.trimIndent(),
@@ -163,7 +163,7 @@ class AnnotationSyntaxTest {
             """
             annotation M {
                 companion entity : Runnable {
-                    fun run() -> void { rtn }
+                    fn run() -> void { rtn }
                 }
             }
             """.trimIndent(),
@@ -182,7 +182,7 @@ class AnnotationSyntaxTest {
             """
             annotation M {
                 companion entity Impl : Runnable, Comparable {
-                    fun run() -> void { rtn }
+                    fn run() -> void { rtn }
                 }
             }
             annotation N {
@@ -211,8 +211,8 @@ class AnnotationSyntaxTest {
                     var hits : int = 0
                     imutvar name : string = "m"
                     constructor(tag : string) { }
-                    fun describe() -> string { rtn "Marker" }
-                    fun run() -> void { rtn }
+                    fn describe() -> string { rtn "Marker" }
+                    fn run() -> void { rtn }
                 }
             }
             """.trimIndent(),
@@ -246,7 +246,7 @@ class AnnotationSyntaxTest {
             """
             annotation A { }
             public annotation B(value : int = 1) { }
-            fun helper() -> void { rtn }
+            fn helper() -> void { rtn }
             annotation C { }
             """.trimIndent(),
         )
@@ -341,7 +341,7 @@ class AnnotationSyntaxTest {
             @OnInterface
             interface Greeter {
                 @OnMethod
-                fun greet() -> void
+                fn greet() -> void
             }
             class C {
                 @OnField
@@ -360,14 +360,14 @@ class AnnotationSyntaxTest {
         val program = parse(
             """
             interface I {
-                fun run() -> void
+                fn run() -> void
             }
             class C : I {
-                @M public static fun a() -> void { rtn }
-                public @M static fun b() -> void { rtn }
-                public static @M fun c() -> void { rtn }
-                @M override fun run() -> void { rtn }
-                override @M fun other() -> void { rtn }
+                @M public static fn a() -> void { rtn }
+                public @M static fn b() -> void { rtn }
+                public static @M fn c() -> void { rtn }
+                @M override fn run() -> void { rtn }
+                override @M fn other() -> void { rtn }
             }
             """.trimIndent(),
         )
@@ -400,10 +400,10 @@ class AnnotationSyntaxTest {
         val program = parse(
             """
             @outer.M
-            fun top() -> void { rtn }
+            fn top() -> void { rtn }
 
             @Outer::Inner
-            fun another() -> void { rtn }
+            fn another() -> void { rtn }
             """.trimIndent(),
         )
         assertEquals(listOf("outer.M"), program.functions[0].annotations.map { it.name })
@@ -435,8 +435,8 @@ class AnnotationSyntaxTest {
         val program = parse(
             """
             annotation Marker { }
-            fun make(x : Marker::Impl) -> Marker::Impl { rtn x }
-            fun direct() -> void {
+            fn make(x : Marker::Impl) -> Marker::Impl { rtn x }
+            fn direct() -> void {
                 var v : Marker::Impl = new Marker::Impl()
             }
             """.trimIndent(),
@@ -458,8 +458,8 @@ class AnnotationSyntaxTest {
             public annotation Marker(value : string = "x", count : int = 0) {
                 companion entity Impl : Runnable {
                     var hits : int = 0
-                    fun describe() -> string { rtn "Marker(" + value + "," + count + ")" }
-                    fun run() -> void { rtn }
+                    fn describe() -> string { rtn "Marker(" + value + "," + count + ")" }
+                    fn run() -> void { rtn }
                 }
             }
 
@@ -468,7 +468,7 @@ class AnnotationSyntaxTest {
                 @Marker("field")
                 var spot : Marker::Impl = null
                 @Marker
-                fun go() -> void { rtn }
+                fn go() -> void { rtn }
             }
             """.trimIndent(),
         )
@@ -521,7 +521,7 @@ class AnnotationSyntaxTest {
             parse(
                 """
                 annotation M {
-                    fun run() -> void { rtn }
+                    fn run() -> void { rtn }
                 }
                 """.trimIndent(),
             )
@@ -604,13 +604,13 @@ class AnnotationSyntaxTest {
         val e = assertFailsWith<RsfError> {
             parse(
                 """
-                fun bad() :: int { rtn 0 }
+                fn bad() :: int { rtn 0 }
                 """.trimIndent(),
             )
         }
         assertEquals("parser", e.phase)
         assertEquals(
-            "返回类型子句不再接受 '::'：请用 '->' 或者 ':'，例如 fun bad() -> int { ... }。" +
+            "返回类型子句不再接受 '::'：请用 '->' 或者 ':'，例如 fn bad() -> int { ... }。" +
                 "（'::' 现在留给 xxx::xx 这种嵌套写法，例如 Marker::Impl）",
             e.message,
         )
@@ -695,7 +695,7 @@ class AnnotationSyntaxTest {
         val e = assertFailsWith<RsfError> {
             parse(
                 """
-                fun f(@M x : int) -> void { rtn }
+                fn f(@M x : int) -> void { rtn }
                 """.trimIndent(),
             )
         }
@@ -709,7 +709,7 @@ class AnnotationSyntaxTest {
         val e = assertFailsWith<RsfError> {
             parse(
                 """
-                fun f() -> void {
+                fn f() -> void {
                     @M var x : int = 1
                 }
                 """.trimIndent(),

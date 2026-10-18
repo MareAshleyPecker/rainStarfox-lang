@@ -24,14 +24,14 @@
 
 // 注意名字：阶段 16 起 `parseInt` 已经是内置函数了（`parseInt(string) -> !int`），
 // 内置函数名不允许被用户函数占用，所以这里用另一个名字自己写一个 !T 函数。
-fun readNumber(s : string) -> !int {
+fn readNumber(s : string) -> !int {
     if (s.length() == 0) {
         fail "空字符串没法转数字"
     }
     rtn 42
 }
 
-fun lookup(id : int) -> !string {
+fn lookup(id : int) -> !string {
     if (id < 0) {
         fail "编号不能是负数：" + id      // 消息可以拼出来，不限于字面量
     }
@@ -39,12 +39,12 @@ fun lookup(id : int) -> !string {
 }
 
 // (c) 用 `!!` 把 lookup 的错误往上抛 —— 所以 describe 自己也必须是 !T
-fun describe(id : int) -> !string {
+fn describe(id : int) -> !string {
     rtn "查询结果：" + lookup(id)!!
 }
 
 // `!void`：不带值的 rtn 也只允许出现在这里
-fun check(n : int) -> !void {
+fn check(n : int) -> !void {
     if (n < 0) {
         fail "check 只接受非负数，实际是 " + n
     }
@@ -54,7 +54,7 @@ fun check(n : int) -> !void {
 
 // ---------------------------------------------------------------- 入口
 
-fun main() -> void {
+fn main() -> void {
     // (a) try / catch：catch 变量是 string，就是 fail 的那条消息
     println("== (a) try / catch ==")
     try {

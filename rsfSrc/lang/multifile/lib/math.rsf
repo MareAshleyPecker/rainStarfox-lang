@@ -1,8 +1,8 @@
 // 同一个目录下可以有多个 .rsf，各自提供函数
-fun add(a : int, b : int) -> int {
+fn add(a : int, b : int) -> int {
     rtn a + b
 }
 
-fun square(n : int) -> int {
+fn square(n : int) -> int {
     rtn n * n
 }

@@ -77,16 +77,16 @@ import java.io.File
 // 直接依赖：`try { ... } catch (e : string) { println(e) }` 打出来的就是这些串。
 
 // ArrayRuntime
-public fun arrayIndexFailure(length : int, index : int) -> string {
+public fn arrayIndexFailure(length : int, index : int) -> string {
     rtn "数组下标越界：长度 " + length + "，下标 " + index
 }
 
-public fun arrayLengthFailure(length : int) -> string {
+public fn arrayLengthFailure(length : int) -> string {
     rtn "数组长度不能是负数：" + length
 }
 
 // EnumRuntime
-public fun switchNoMatchFailure(enumName : string) -> string {
+public fn switchNoMatchFailure(enumName : string) -> string {
     rtn "switch 没匹配到任何分支：" + enumName + " 的常量都不是 null，" +
         "所以被分派的值只能是 null（数组元素的默认值、泛型容器取出来的空槽都会是 null）。" +
         "给这个 switch 加一支 'else : ...' 就能兜住它"
@@ -94,13 +94,13 @@ public fun switchNoMatchFailure(enumName : string) -> string {
 
 // Builtins.parseIntFailure —— 消息本身由 rsf 内置的 `parseInt` 抛出来，那条路径已经一致；
 // 这里只是把「解释器自己也要能给出同一条」写下来，供 `?:` 那条路复核。
-public fun parseIntFailure(text : string) -> string {
+public fn parseIntFailure(text : string) -> string {
     rtn "parseInt: 不是合法的整数：'" + text + "'"
 }
 
 // 17c 解释器自己的「暂不支持」前缀。凡是没实现的语法/语义**一律走这里**，
 // 绝不允许静默算错（静默算错是对拍测试唯一抓不住的东西）。
-public fun unsupported(what : string) -> string {
+public fn unsupported(what : string) -> string {
     rtn "17c 解释器暂不支持：" + what
 }
 
@@ -108,26 +108,26 @@ public fun unsupported(what : string) -> string {
 //
 // 见文件头。`toChar(1)` 是运行期算出来的，源码里不出现这个控制字符。
 
-fun sigMark() -> string {
+fn sigMark() -> string {
     rtn "" + toChar(1)
 }
 
-public fun makeSignal(kind : string, payload : string) -> string {
+public fn makeSignal(kind : string, payload : string) -> string {
     rtn sigMark() + kind + ":" + payload
 }
 
-public fun isSignal(m : string) -> bool {
+public fn isSignal(m : string) -> bool {
     if (m.length() == 0) { rtn false }
     rtn m.charAt(0) == toChar(1)
 }
 
-public fun signalKind(m : string) -> string {
+public fn signalKind(m : string) -> string {
     if (!isSignal(m)) { rtn "" }
     if (m.length() < 2) { rtn "" }
     rtn m.substring(1, 2)
 }
 
-public fun signalPayload(m : string) -> string {
+public fn signalPayload(m : string) -> string {
     if (!isSignal(m)) { rtn "" }
     if (m.length() < 3) { rtn "" }
     rtn m.substring(3, m.length())
@@ -138,7 +138,7 @@ public fun signalPayload(m : string) -> string {
 // Parser.rsf 把「这一层的属性」拼成了一个形如 `name=foo mutable=true` 的串（值里的
 // 空格/换行都转义过，所以按空格切无歧义）。这里把它读回来。
 
-fun hexCharValue(c : char) -> int {
+fn hexCharValue(c : char) -> int {
     var n = charToInt(c)
     if (n >= 48 && n <= 57) { rtn n - 48 }
     if (n >= 97 && n <= 102) { rtn n - 87 }
@@ -147,7 +147,7 @@ fun hexCharValue(c : char) -> int {
 }
 
 // escapeValue 的逆（Parser.escapeValue 那张转义表）
-public fun unescapeValue(s : string) -> string {
+public fn unescapeValue(s : string) -> string {
     var out = ""
     var i = 0
     var len = s.length()
@@ -188,7 +188,7 @@ public fun unescapeValue(s : string) -> string {
 }
 
 // 取一个属性；没有就返回空串
-public fun attr(n : Node, key : string) -> string {
+public fn attr(n : Node, key : string) -> string {
     var t = n.text
     var i = 0
     var len = t.length()
@@ -206,23 +206,23 @@ public fun attr(n : Node, key : string) -> string {
     rtn ""
 }
 
-fun attrBool(n : Node, key : string) -> bool {
+fn attrBool(n : Node, key : string) -> bool {
     rtn attr(n, key) == "true"
 }
 
-fun attrInt(n : Node, key : string) -> int {
+fn attrInt(n : Node, key : string) -> int {
     var raw = attr(n, key)
     if (raw.length() == 0) { rtn 0 }
     rtn parseInt(raw) ?: 0
 }
 
 // 孩子按位置取（越界给一个 ERROR 占位节点，调用方不必到处判长度）
-fun kid(n : Node, index : int) -> Node {
+fn kid(n : Node, index : int) -> Node {
     if (index < 0 || index >= n.childCount) { rtn new Node(NodeKind.ERROR) }
     rtn n.children[index]
 }
 
-fun isErrorNode(n : Node) -> bool {
+fn isErrorNode(n : Node) -> bool {
     rtn n.kind == NodeKind.ERROR
 }
 
@@ -243,7 +243,7 @@ public enum Kind {
 }
 
 // 数值提升的档位（和 RsfBase.rank 同一张表：byte/char 与 int 同档，先提升成 int）
-fun kindRank(k : Kind) -> int {
+fn kindRank(k : Kind) -> int {
     switch (k) {
         Kind.BYTEV : rtn 0
         Kind.CHARV : rtn 0
@@ -258,7 +258,7 @@ fun kindRank(k : Kind) -> int {
     rtn -1
 }
 
-fun isNumericKind(k : Kind) -> bool {
+fn isNumericKind(k : Kind) -> bool {
     rtn kindRank(k) >= 0
 }
 
@@ -281,78 +281,78 @@ public class Val(kind : Kind) {
     var cname : string = ""
 }
 
-public fun vNull() -> Val {
+public fn vNull() -> Val {
     rtn new Val(Kind.NULLV)
 }
 
-public fun vInt(n : int) -> Val {
+public fn vInt(n : int) -> Val {
     var v = new Val(Kind.INTV)
     v.iv = n
     rtn v
 }
 
-public fun vLong(n : long) -> Val {
+public fn vLong(n : long) -> Val {
     var v = new Val(Kind.LONGV)
     v.lv = n
     rtn v
 }
 
-public fun vFloat(n : float) -> Val {
+public fn vFloat(n : float) -> Val {
     var v = new Val(Kind.FLOATV)
     v.fv = n
     rtn v
 }
 
-public fun vDouble(n : double) -> Val {
+public fn vDouble(n : double) -> Val {
     var v = new Val(Kind.DOUBLEV)
     v.dv = n
     rtn v
 }
 
-public fun vBool(b : bool) -> Val {
+public fn vBool(b : bool) -> Val {
     var v = new Val(Kind.BOOLV)
     v.bv = b
     rtn v
 }
 
-public fun vChar(c : char) -> Val {
+public fn vChar(c : char) -> Val {
     var v = new Val(Kind.CHARV)
     v.cv = c
     rtn v
 }
 
-public fun vByte(b : byte) -> Val {
+public fn vByte(b : byte) -> Val {
     var v = new Val(Kind.BYTEV)
     v.yv = b
     rtn v
 }
 
-public fun vStr(s : string) -> Val {
+public fn vStr(s : string) -> Val {
     var v = new Val(Kind.STRV)
     v.sv = s
     rtn v
 }
 
-public fun vEnum(enumName : string, valueName : string) -> Val {
+public fn vEnum(enumName : string, valueName : string) -> Val {
     var v = new Val(Kind.ENUMV)
     v.en = enumName
     v.sv = valueName
     rtn v
 }
 
-public fun vObj(o : Obj) -> Val {
+public fn vObj(o : Obj) -> Val {
     var v = new Val(Kind.OBJV)
     v.ov = o
     rtn v
 }
 
-public fun vArr(a : Arr) -> Val {
+public fn vArr(a : Arr) -> Val {
     var v = new Val(Kind.ARRV)
     v.av = a
     rtn v
 }
 
-public fun vList(l : JList) -> Val {
+public fn vList(l : JList) -> Val {
     var v = new Val(Kind.LISTV)
     v.lsv = l
     rtn v
@@ -360,7 +360,7 @@ public fun vList(l : JList) -> Val {
 
 // 类名当接收者（`Point.origin()` 里的 `Point`）。它不是一个真的值，
 // 只在「静态成员访问」这条路上出现。
-public fun vCType(name : string) -> Val {
+public fn vCType(name : string) -> Val {
     var v = new Val(Kind.CTYPEV)
     v.cname = name
     rtn v
@@ -368,7 +368,7 @@ public fun vCType(name : string) -> Val {
 
 // java.io.File 的替身：只装一个路径（真正的文件操作由外部那几个函数代劳）。
 // 见 17c 报告：跨语言互操作这一块**只做示例用到的那几个**，其余显式报「暂不支持」。
-public fun vFile(path : string) -> Val {
+public fn vFile(path : string) -> Val {
     var v = new Val(Kind.FILEV)
     v.sv = path
     rtn v
@@ -417,7 +417,7 @@ public class Env(p : ?Env) {
     var vals : Val[] = new Val[8]
     var n : int = 0
 
-    public fun define(name : string, v : Val) -> void {
+    public fn define(name : string, v : Val) -> void {
         if (n >= names.length) {
             var size = names.length * 2
             var nn : string[] = new string[size]
@@ -437,7 +437,7 @@ public class Env(p : ?Env) {
         rtn
     }
 
-    public fun find(name : string) -> ?Val {
+    public fn find(name : string) -> ?Val {
         var i = n - 1
         while (i >= 0) {
             if (names[i] == name) { rtn vals[i] }
@@ -447,7 +447,7 @@ public class Env(p : ?Env) {
     }
 
     // 一路往上找
-    public fun lookup(name : string) -> ?Val {
+    public fn lookup(name : string) -> ?Val {
         var e : ?Env = this
         while (e != null) {
             var hit = e!!.find(name)
@@ -457,7 +457,7 @@ public class Env(p : ?Env) {
         rtn null
     }
 
-    public fun assign(name : string, v : Val) -> bool {
+    public fn assign(name : string, v : Val) -> bool {
         var e : ?Env = this
         while (e != null) {
             var i = e!!.n - 1
@@ -474,7 +474,7 @@ public class Env(p : ?Env) {
     }
 
     // 当前 this（沿链找）
-    public fun thisObj() -> ?Obj {
+    public fn thisObj() -> ?Obj {
         var e : ?Env = this
         while (e != null) {
             if (e!!.me != null) { rtn e!!.me }
@@ -484,7 +484,7 @@ public class Env(p : ?Env) {
     }
 
     // 当前所在的类（沿链找）
-    public fun curClass() -> ?Cls {
+    public fn curClass() -> ?Cls {
         var e : ?Env = this
         while (e != null) {
             if (e!!.cl != null) { rtn e!!.cl }
@@ -494,7 +494,7 @@ public class Env(p : ?Env) {
     }
 
     // 当前方法**声明**在哪个类（沿链找）—— `super.f()` 的解析起点用它，不用 curClass()
-    public fun declClass() -> ?Cls {
+    public fn declClass() -> ?Cls {
         var e : ?Env = this
         while (e != null) {
             if (e!!.dc != null) { rtn e!!.dc }
@@ -553,7 +553,7 @@ public class Cls(nm : string) {
     // 类头上的 `abstract`（只有写了才挂 ABSTRACT 节点，所以默认 false）
     var isAbstract : bool = false
 
-    public fun addSuper(nm2 : string) -> void {
+    public fn addSuper(nm2 : string) -> void {
         var i = 0
         while (i < scount) {
             if (supers[i] == nm2) { rtn }
@@ -565,7 +565,7 @@ public class Cls(nm : string) {
     }
 
     // 这个接口自己声明的、**带体**的默认方法（接口抽象方法只有 PARAMS 一个孩子）。
-    public fun defaultNamed(nm2 : string, argc : int) -> ?Fn {
+    public fn defaultNamed(nm2 : string, argc : int) -> ?Fn {
         var i = 0
         while (i < mcount) {
             var m = methods[i]
@@ -576,7 +576,7 @@ public class Cls(nm : string) {
     }
 
     // 接口里任意一个同名同形的方法（抽象也算）—— 静态类型是接口时用
-    public fun anyNamed(nm2 : string, argc : int) -> ?Fn {
+    public fn anyNamed(nm2 : string, argc : int) -> ?Fn {
         var i = 0
         while (i < mcount) {
             var m = methods[i]
@@ -586,7 +586,7 @@ public class Cls(nm : string) {
         rtn null
     }
 
-    public fun fieldIndex(nm2 : string) -> int {
+    public fn fieldIndex(nm2 : string) -> int {
         var i = 0
         while (i < fcount) {
             if (fnames[i] == nm2) { rtn i }
@@ -595,7 +595,7 @@ public class Cls(nm : string) {
         rtn -1
     }
 
-    public fun methodNamed(nm2 : string) -> ?Fn {
+    public fn methodNamed(nm2 : string) -> ?Fn {
         var i = 0
         while (i < mcount) {
             if (methods[i].name == nm2) { rtn methods[i] }
@@ -607,7 +607,7 @@ public class Cls(nm : string) {
     // 阶段 25 K5c：本类**自己声明**的方法，按「名字 + 实参个数」查（不含构造器）——
     // 与 K5b 的 `methOf(nm, argc)` 同口径。接口的默认方法走 defaultNamed（还要看有没有体）。
     // 沿类链的查找在 Interp.methInChain 里做。
-    public fun methNamed(nm2 : string, argc : int) -> ?Fn {
+    public fn methNamed(nm2 : string, argc : int) -> ?Fn {
         var i = 0
         while (i < mcount) {
             var m = methods[i]
@@ -624,7 +624,7 @@ public class Enm(nm : string) {
     var vcount : int = 0
     var cached : Val[] = new Val[0]
 
-    public fun has(v : string) -> bool {
+    public fn has(v : string) -> bool {
         var i = 0
         while (i < vcount) {
             if (values[i] == v) { rtn true }
@@ -635,7 +635,7 @@ public class Enm(nm : string) {
 
     // 枚举值是**单例**：同一个 `枚举名.值名` 永远返回同一个 Val 对象，
     // `==` 的引用相等才成立（和 Kotlin 版 enumCache 同一个理由）
-    public fun valueOf(v : string) -> ?Val {
+    public fn valueOf(v : string) -> ?Val {
         var i = 0
         while (i < vcount) {
             if (values[i] == v) { rtn cached[i] }
@@ -650,7 +650,7 @@ public class Enm(nm : string) {
 // 和 Parser.rsf 的 `Node.add` 一个套路：满了翻倍。解释器只在**装载**阶段用这几条，
 // 运行期不会碰（所以不心疼）。
 
-fun growFn(a : Fn[], used : int, add : Fn) -> Fn[] {
+fn growFn(a : Fn[], used : int, add : Fn) -> Fn[] {
     if (used < a.length) {
         a[used] = add
         rtn a
@@ -667,7 +667,7 @@ fun growFn(a : Fn[], used : int, add : Fn) -> Fn[] {
     rtn bigger
 }
 
-fun growCls(a : Cls[], used : int, add : Cls) -> Cls[] {
+fn growCls(a : Cls[], used : int, add : Cls) -> Cls[] {
     if (used < a.length) {
         a[used] = add
         rtn a
@@ -684,7 +684,7 @@ fun growCls(a : Cls[], used : int, add : Cls) -> Cls[] {
     rtn bigger
 }
 
-fun growEnm(a : Enm[], used : int, add : Enm) -> Enm[] {
+fn growEnm(a : Enm[], used : int, add : Enm) -> Enm[] {
     if (used < a.length) {
         a[used] = add
         rtn a
@@ -701,7 +701,7 @@ fun growEnm(a : Enm[], used : int, add : Enm) -> Enm[] {
     rtn bigger
 }
 
-fun growVal(a : Val[], used : int, add : Val) -> Val[] {
+fn growVal(a : Val[], used : int, add : Val) -> Val[] {
     if (used < a.length) {
         a[used] = add
         rtn a
@@ -718,7 +718,7 @@ fun growVal(a : Val[], used : int, add : Val) -> Val[] {
     rtn bigger
 }
 
-fun growText(a : string[], used : int, add : string) -> string[] {
+fn growText(a : string[], used : int, add : string) -> string[] {
     if (used < a.length) {
         a[used] = add
         rtn a
@@ -735,7 +735,7 @@ fun growText(a : string[], used : int, add : string) -> string[] {
     rtn bigger
 }
 // 类型文本上的小工具：找字符 / 找子串（rsf 的 string 没有 indexOf）
-fun indexOfCharIn(s : string, want : char) -> int {
+fn indexOfCharIn(s : string, want : char) -> int {
     var i = 0
     while (i < s.length()) {
         if (s.charAt(i) == want) { rtn i }
@@ -744,7 +744,7 @@ fun indexOfCharIn(s : string, want : char) -> int {
     rtn -1
 }
 
-fun indexOfTextIn(s : string, want : string) -> int {
+fn indexOfTextIn(s : string, want : string) -> int {
     if (want.length() == 0) { rtn 0 }
     var i = 0
     var last = s.length() - want.length()
@@ -761,27 +761,27 @@ fun indexOfTextIn(s : string, want : string) -> int {
 // **直接交给 JVM 的 java.io.File 做**（自己拼分隔符迟早会在某个平台上错），
 // 解释器这边只负责把结果搬来搬去。
 
-fun fileJoinPath(parent : string, child : string) -> string {
+fn fileJoinPath(parent : string, child : string) -> string {
     var f = new File(parent, child)
     rtn f.getAbsolutePath()
 }
 
-fun fileAbsolutePath(path : string) -> string {
+fn fileAbsolutePath(path : string) -> string {
     var f = new File(path)
     rtn f.getAbsolutePath()
 }
 
-fun fileBaseName(path : string) -> string {
+fn fileBaseName(path : string) -> string {
     var f = new File(path)
     rtn f.getName()
 }
 
-fun fileDeletePath(path : string) -> bool {
+fn fileDeletePath(path : string) -> bool {
     var f = new File(path)
     rtn f.delete()
 }
 
-fun fileExistsPath(path : string) -> bool {
+fn fileExistsPath(path : string) -> bool {
     var f = new File(path)
     rtn f.exists()
 }
@@ -819,7 +819,7 @@ public class Interp(prog : Node) {
 
     // ------------------------------------------------------------------ 装载
 
-    public fun load() -> void {
+    public fn load() -> void {
         var i = 0
         while (i < p.childCount) {
             var c = p.children[i]
@@ -833,7 +833,7 @@ public class Interp(prog : Node) {
         rtn
     }
 
-    fun makeFn(node : Node) -> Fn {
+    fn makeFn(node : Node) -> Fn {
         var f = new Fn(attr(node, "name"))
         // 阶段 25：FUNC 的孩子里 FINAL **只在写了时才挂**，而且挂在 PARAMS **前面**
         // （Parser.rsf:1814-1815），所以参数表与函数体都必须**按 kind 找**，不能按下标 ——
@@ -869,7 +869,7 @@ public class Interp(prog : Node) {
         rtn f
     }
 
-    fun loadFuncs(fs : Node) -> void {
+    fn loadFuncs(fs : Node) -> void {
         var i = 0
         while (i < fs.childCount) {
             funcs = growFn(funcs, fcount, makeFn(fs.children[i]))
@@ -879,7 +879,7 @@ public class Interp(prog : Node) {
         rtn
     }
 
-    fun loadClasses(cs : Node) -> void {
+    fn loadClasses(cs : Node) -> void {
         var i = 0
         while (i < cs.childCount) {
             var cn = cs.children[i]
@@ -908,14 +908,14 @@ public class Interp(prog : Node) {
     // 阶段 25 K5c：类头父类子句 `: 父类(实参)`。`SUPER_CLASS.name` 是**简单名**（与
     // `findCls` 同一套命名），唯一孩子是那个实参表（`ARGS`）；父类本身在装载后被
     // `validate()` 检查 —— 不在本程序里就是 JDK 父类，**响亮报错**（这一刀不做 JDK 父类）。
-    fun loadBase(c : Cls, part : Node) -> void {
+    fn loadBase(c : Cls, part : Node) -> void {
         c.baseName = attr(part, "name")
         c.hasBase = c.baseName.length() > 0
         c.baseArgs = kid(part, 0)
         rtn
     }
 
-    fun loadIfaces(cs : Node) -> void {
+    fn loadIfaces(cs : Node) -> void {
         var i = 0
         while (i < cs.childCount) {
             var cn = cs.children[i]
@@ -941,7 +941,7 @@ public class Interp(prog : Node) {
     // `Marker$Impl` / 匿名时 `Marker$companion`）。这里把伴生类**按注解名**登记进
     // classes —— 运行期类名、`findCls`、`evNew`、`objMember` 就全部复用既有路径；
     // 元素 = 前 elemCount 个字段（元素的默认值就是该字段的初值表达式）。
-    fun loadAnns(cs : Node) -> void {
+    fn loadAnns(cs : Node) -> void {
         var i = 0
         while (i < cs.childCount) {
             var an = cs.children[i]
@@ -963,7 +963,7 @@ public class Interp(prog : Node) {
 
     // 元素表 → 字段表。**没有默认值**的元素没有孩子，`kid` 越界给 ERROR 节点；
     // 构造时按类型零值填（对齐 Kotlin `fillElementDefaults` 的 `getOrElse(index){INT}`）。
-    fun loadElemFields(c : Cls, els : Node) -> void {
+    fn loadElemFields(c : Cls, els : Node) -> void {
         var n = els.childCount
         var nms : string[] = new string[n]
         var tys : string[] = new string[n]
@@ -986,7 +986,7 @@ public class Interp(prog : Node) {
 
     // 伴生体：孩子顺序 SUPERS → FIELDS → METHODS。字段**追加在元素之后**（元素先装），
     // 方法名与构造器装载完全复用 loadMethods / loadSupers。
-    fun loadCompanion(c : Cls, cm : Node) -> void {
+    fn loadCompanion(c : Cls, cm : Node) -> void {
         var j = 0
         while (j < cm.childCount) {
             var part = cm.children[j]
@@ -998,7 +998,7 @@ public class Interp(prog : Node) {
         rtn
     }
 
-    fun appendFields(c : Cls, fields : Node) -> void {
+    fn appendFields(c : Cls, fields : Node) -> void {
         var n = fields.childCount
         if (n == 0) { rtn }
         var total = c.fcount + n
@@ -1030,7 +1030,7 @@ public class Interp(prog : Node) {
     // 父类型子句：`SUPERS` 的孩子是 `SUPER`，`name` 属性是**简单名**（与 `findCls`
     // 同一套命名）。JDK 接口不在表里，`findIface` 自然跳过（对齐 Kotlin
     // `findInterfaceDefault` 里 `sup.fromClassPath` 那条 continue）。
-    fun loadSupers(c : Cls, part : Node) -> void {
+    fn loadSupers(c : Cls, part : Node) -> void {
         var i = 0
         while (i < part.childCount) {
             c.addSuper(attr(part.children[i], "name"))
@@ -1039,7 +1039,7 @@ public class Interp(prog : Node) {
         rtn
     }
 
-    fun loadFields(c : Cls, fields : Node) -> void {
+    fn loadFields(c : Cls, fields : Node) -> void {
         var n = fields.childCount
         var nms : string[] = new string[n]
         var tys : string[] = new string[n]
@@ -1059,7 +1059,7 @@ public class Interp(prog : Node) {
         rtn
     }
 
-    fun loadMethods(c : Cls, ms : Node) -> void {
+    fn loadMethods(c : Cls, ms : Node) -> void {
         var k = 0
         while (k < ms.childCount) {
             var f = makeFn(ms.children[k])
@@ -1078,7 +1078,7 @@ public class Interp(prog : Node) {
         rtn
     }
 
-    fun loadEnums(es : Node) -> void {
+    fn loadEnums(es : Node) -> void {
         var i = 0
         while (i < es.childCount) {
             var en = es.children[i]
@@ -1105,7 +1105,7 @@ public class Interp(prog : Node) {
 
     // ------------------------------------------------------------------ 查表
 
-    public fun findFunc(nm : string) -> ?Fn {
+    public fn findFunc(nm : string) -> ?Fn {
         var i = 0
         while (i < fcount) {
             if (funcs[i].name == nm) { rtn funcs[i] }
@@ -1114,7 +1114,7 @@ public class Interp(prog : Node) {
         rtn null
     }
 
-    public fun findCls(nm : string) -> ?Cls {
+    public fn findCls(nm : string) -> ?Cls {
         var i = 0
         while (i < ccount) {
             if (classes[i].name == nm) { rtn classes[i] }
@@ -1123,7 +1123,7 @@ public class Interp(prog : Node) {
         rtn null
     }
 
-    public fun findEnum(nm : string) -> ?Enm {
+    public fn findEnum(nm : string) -> ?Enm {
         var i = 0
         while (i < ecount) {
             if (enums[i].name == nm) { rtn enums[i] }
@@ -1134,7 +1134,7 @@ public class Interp(prog : Node) {
 
     // ------------------------------------------------------------ 接口分派（阶段 20）
 
-    public fun findIface(nm : string) -> ?Cls {
+    public fn findIface(nm : string) -> ?Cls {
         var i = 0
         while (i < icount) {
             if (ifcs[i].name == nm) { rtn ifcs[i] }
@@ -1150,7 +1150,7 @@ public class Interp(prog : Node) {
     // 对象数组 = 整条父链的字段拼接；每一层在自己那一段里的下标从 `baseOf` 起算。
 
     // 类 c 的字段段在对象数组里的起始下标（= 它所有祖先的字段总数）
-    public fun baseOf(c : Cls) -> int {
+    public fn baseOf(c : Cls) -> int {
         if (!c.hasBase) { rtn 0 }
         var b = findCls(c.baseName)
         if (b == null) { rtn 0 }
@@ -1158,12 +1158,12 @@ public class Interp(prog : Node) {
     }
 
     // 类 c 的对象数组总长（自己那一段 + 全部祖先）
-    public fun totalOf(c : Cls) -> int {
+    public fn totalOf(c : Cls) -> int {
         rtn baseOf(c) + c.fcount
     }
 
     // 类链（**父类在前、自己在最后**）—— 与 Kotlin `fieldChainOf` 的顺序一致
-    fun chainArray(root : string) -> Cls[] {
+    fn chainArray(root : string) -> Cls[] {
         var rev : Cls[] = new Cls[0]
         var n = 0
         var c = findCls(root)
@@ -1183,7 +1183,7 @@ public class Interp(prog : Node) {
     }
 
     // 声明该字段的类：沿类父链找，**最近的类优先**（子类同名字段遮蔽父类的）
-    public fun fieldOwnerInChain(root : string, nm : string) -> ?Cls {
+    public fn fieldOwnerInChain(root : string, nm : string) -> ?Cls {
         var c = findCls(root)
         while (c != null) {
             if (c!!.fieldIndex(nm) >= 0) { rtn c!! }
@@ -1194,7 +1194,7 @@ public class Interp(prog : Node) {
     }
 
     // 字段在对象数组里的**绝对**下标（-1 = 整条链上都没有这个字段）
-    public fun fieldIndexInChain(root : string, nm : string) -> int {
+    public fn fieldIndexInChain(root : string, nm : string) -> int {
         var o = fieldOwnerInChain(root, nm)
         if (o == null) { rtn -1 }
         rtn baseOf(o!!) + o!!.fieldIndex(nm)
@@ -1203,7 +1203,7 @@ public class Interp(prog : Node) {
     // 沿类父链（含 root 自己）找「名字 + 实参个数」都对的方法声明（不含构造器）——
     // **最近的类优先**，也就是虚分派该跑的那一份（Kotlin classChainOf + findClassImplementation）。
     // 个数对不上时退一步只按名字找（`anyMethInChain`），那是给「只知道名字」的地方用的。
-    public fun methInChain(root : string, nm : string, argc : int) -> ?Fn {
+    public fn methInChain(root : string, nm : string, argc : int) -> ?Fn {
         var c = findCls(root)
         while (c != null) {
             var m = c!!.methNamed(nm, argc)
@@ -1215,7 +1215,7 @@ public class Interp(prog : Node) {
     }
 
     // 同上，但返回**声明那个方法的类**（帧的类 / `super` 的解析起点都用它）
-    public fun methOwnerInChain(root : string, nm : string, argc : int) -> ?Cls {
+    public fn methOwnerInChain(root : string, nm : string, argc : int) -> ?Cls {
         var c = findCls(root)
         while (c != null) {
             if (c!!.methNamed(nm, argc) != null) { rtn c!! }
@@ -1226,7 +1226,7 @@ public class Interp(prog : Node) {
     }
 
     // 沿类父链按**名字**找（不看实参个数）—— 给 `isErrorCapable` 这类只知道名字的地方用
-    fun anyMethInChain(root : string, nm : string) -> ?Fn {
+    fn anyMethInChain(root : string, nm : string) -> ?Fn {
         var c = findCls(root)
         while (c != null) {
             var m = c!!.methodNamed(nm)
@@ -1243,7 +1243,7 @@ public class Interp(prog : Node) {
     //      都会让「两端对拍」在某一份语料上悄悄分叉，所以宁可当场报错。
     //   ② 非抽象类不许把父链上的抽象方法留着不实现（Kotlin 侧是 Checker 报的；自举
     //      解释器没有独立的检查期，就在装载完统一报）。
-    public fun validate() -> !int {
+    public fn validate() -> !int {
         var i = 0
         while (i < ccount) {
             var c = classes[i]
@@ -1267,7 +1267,7 @@ public class Interp(prog : Node) {
     // 类链上有没有「声明了但没落地」的抽象方法。`abstract fun f()` 在树上**没有 BLOCK 孩子**
     // （Parser.rsf:1784-1815），所以判据是 `body.kind == NodeKind.BLOCK` —— 与 `defaultNamed`
     // 同一个判据。沿链逐层看抽象声明，再看「最近的实现」有没有把它接住。
-    fun firstUnimplemented(c : Cls) -> ?Fn {
+    fn firstUnimplemented(c : Cls) -> ?Fn {
         var cur = c
         while (cur.hasBase) {
             var b = findCls(cur.baseName)
@@ -1291,7 +1291,7 @@ public class Interp(prog : Node) {
     // （visited 按名字）、JDK 接口跳过（findIface 找不到就跳过）。
     // 命中写进 ifaceHit / ifaceHitCount：>1 就是歧义（两份默认方法并列），
     // 调用方**必须报错**，绝不能按声明顺序挑一个（对齐 Kotlin Checker 的重载歧义判定）。
-    public fun ifaceDefaultScan(root : string, nm : string, argc : int) -> void {
+    public fn ifaceDefaultScan(root : string, nm : string, argc : int) -> void {
         ifaceHit = null
         ifaceHitCount = 0
         // 没有接口就整条路都不用走（自举的 9 个源都没有接口，这条守卫让它们零开销）
@@ -1351,7 +1351,7 @@ public class Interp(prog : Node) {
     }
 
     // 运行期真实类 / 接口链上的默认方法：命中唯一才返回，0 或 ≥2 交给调用方报错。
-    fun ifaceDefaultOf(root : string, nm : string, argc : int) -> ?Fn {
+    fn ifaceDefaultOf(root : string, nm : string, argc : int) -> ?Fn {
         ifaceDefaultScan(root, nm, argc)
         if (ifaceHitCount == 1) { rtn ifaceHit }
         rtn null
@@ -1362,7 +1362,7 @@ public class Interp(prog : Node) {
     // 类型在树上是**文本**（`int` / `?string` / `Point` / `int[]` / `Box&<int>`）。
     // 解释器只需要「基础名」这一个信息来做运行期收敛，所以这里把修饰全部剥掉。
 
-    public fun baseTypeName(typeText : string) -> string {
+    public fn baseTypeName(typeText : string) -> string {
         var t = typeText
         if (t.length() > 0 && t.charAt(0) == '?') { t = t.substring(1, t.length()) }
         var amp = indexOfCharIn(t, '&')
@@ -1372,7 +1372,7 @@ public class Interp(prog : Node) {
         rtn t
     }
 
-    fun isPrimitiveName(nm : string) -> bool {
+    fn isPrimitiveName(nm : string) -> bool {
         if (nm == "int") { rtn true }
         if (nm == "long") { rtn true }
         if (nm == "float") { rtn true }
@@ -1405,7 +1405,7 @@ public class Interp(prog : Node) {
     // 类型文本末尾 `[]` 的层数：`A`→0、`A[]`→1、`int[][]`→2。
     // 形状由 `TypeInfo.text()` 定死（`[]` 永远在最外、`&<...>` 在它里侧，见
     // Parser.rsf:291-297），所以从**尾部**剥就不会误伤泛型实参里的 `[]`（`Box&<int[]>`）。
-    fun arrayDepthOfText(typeText : string) -> int {
+    fn arrayDepthOfText(typeText : string) -> int {
         var t = typeText
         var dep = 0
         while (t.length() >= 2 && t.endsWith("[]")) {
@@ -1416,7 +1416,7 @@ public class Interp(prog : Node) {
     }
 
     // 剥掉末尾所有 `[]` 之后的**元素**类型文本（擦形之前，可能还带 `&<...>` / `::` / `?`）
-    fun elemTextOfArray(typeText : string) -> string {
+    fn elemTextOfArray(typeText : string) -> string {
         var t = typeText
         while (t.length() >= 2 && t.endsWith("[]")) {
             t = t.substring(0, t.length() - 2)
@@ -1425,13 +1425,13 @@ public class Interp(prog : Node) {
     }
 
     // 去掉类型文本里的可空标记（前导 `?`）——判型和取名都不看它（`A?` 与 `A` 同义）
-    fun dropNullableMark(nm : string) -> string {
+    fn dropNullableMark(nm : string) -> string {
         if (nm.length() > 0 && nm.charAt(0) == '?') { rtn nm.substring(1, nm.length()) }
         rtn nm
     }
 
     // `s` 重复 `n` 次（拼 `[`×depth 用；rsf 没有字符串乘法）
-    fun repeatStr(s : string, n : int) -> string {
+    fn repeatStr(s : string, n : int) -> string {
         var out = ""
         var i = 0
         while (i < n) {
@@ -1443,7 +1443,7 @@ public class Interp(prog : Node) {
 
     // 类名 → `Class.getName()` 的写法：擦掉泛型实参（`&<...>`）与 `[]`、去掉 `?`，
     // 嵌套类型的 `::` 换成 `$`（class 文件里就是 `A$Nested`）。
-    fun jvmDottedNameOf(nm : string) -> string {
+    fn jvmDottedNameOf(nm : string) -> string {
         var t = baseTypeName(nm)
         var i = indexOfTextIn(t, "::")
         if (i < 0) { rtn t }
@@ -1451,7 +1451,7 @@ public class Interp(prog : Node) {
     }
 
     // 类名 → JVM **内部**名（数组描述符里用）：`::`→`$`、包分隔 `.`→`/`
-    fun jvmInternalNameOf(nm : string) -> string {
+    fn jvmInternalNameOf(nm : string) -> string {
         var t = jvmDottedNameOf(nm)
         var out = ""
         var i = 0
@@ -1469,7 +1469,7 @@ public class Interp(prog : Node) {
 
     // 元素类型文本 → JVM 描述符里的**元素段**：int→`I` … byte→`B`、
     // string→`Ljava/lang/String;`、用户类→`L<内部名>;`。`[`×depth 由调用方补。
-    fun elemDescriptorOf(elemText : string) -> string {
+    fn elemDescriptorOf(elemText : string) -> string {
         var t = baseTypeName(dropNullableMark(elemText))
         if (t == "int") { rtn "I" }
         if (t == "long") { rtn "J" }
@@ -1486,7 +1486,7 @@ public class Interp(prog : Node) {
     //   数组 → `[`×depth + 元素段（元素先擦泛型、擦 `?`）；
     //   string → `java.lang.String`；其余基础类型按描述符（Kotlin 侧同口径）；
     //   类名 → 原样（泛型实参擦掉、`::`→`$`）。
-    fun jvmTypeNameOf(typeText : string) -> string {
+    fn jvmTypeNameOf(typeText : string) -> string {
         var depth = arrayDepthOfText(typeText)
         if (depth > 0) {
             rtn repeatStr("[", depth) + elemDescriptorOf(elemTextOfArray(typeText))
@@ -1498,7 +1498,7 @@ public class Interp(prog : Node) {
     }
 
     // 一个值在运行期的 JVM 名（`runtimeNameOfValue` 的自举版）
-    fun runtimeNameOfVal(v : Val) -> !string {
+    fn runtimeNameOfVal(v : Val) -> !string {
         switch (v.k) {
             Kind.NULLV : rtn "null"
             Kind.STRV : rtn "java.lang.String"
@@ -1520,7 +1520,7 @@ public class Interp(prog : Node) {
     }
 
     // 对象值的运行期类名（OBJV 的载荷一定在；不在说明内部状态坏了，响亮报错）
-    fun objClsOf(v : Val) -> !string {
+    fn objClsOf(v : Val) -> !string {
         var o = v.ov
         if (o == null) { fail unsupported("类型名：对象值没有载荷") }
         rtn jvmDottedNameOf(o!!.cls)
@@ -1530,14 +1530,14 @@ public class Interp(prog : Node) {
     // 声明类型记在 `Arr.depth` / `Arr.elemType` 上（`makeArray` 装的），正是 Kotlin 侧
     // `arrayTypes` 那张表的自举版——JVM 上用户对象数组的载体分不出 `B[]` 和 `C[]`，
     // 所以这里只能问这两个槽。
-    fun arrNameOf(v : Val) -> !string {
+    fn arrNameOf(v : Val) -> !string {
         var a = v.av
         if (a == null) { fail unsupported("类型名：数组值没有载荷") }
         rtn repeatStr("[", a!!.depth) + elemDescriptorOf(a!!.elemType)
     }
 
     // 工单 §2.7 的逐字文案（`as` 失败必须走 `fail`，让 rsf 的 `try` 接得住）
-    fun castFailure(v : Val, typeText : string) -> !string {
+    fn castFailure(v : Val, typeText : string) -> !string {
         rtn "rsf: 不能把 " + runtimeNameOfVal(v)!! + " 当成 " + jvmTypeNameOf(typeText)
     }
 
@@ -1548,7 +1548,7 @@ public class Interp(prog : Node) {
     // （`Interp.rsf:989-999`）——所以 `Marker::Impl` 这个类型在解释器里的身份就是 `Marker`。
     // 判型时必须认这一条，否则 `x is Marker::Impl` 会静默给 false（Kotlin 侧给 true）。
     // Parser/Checker 保证 `::` 只出现在注解伴生类上，所以「取 `::` 前面那段」不会误伤别的类型。
-    fun nestedOwnerOf(typeText : string) -> string {
+    fn nestedOwnerOf(typeText : string) -> string {
         var t = baseTypeName(dropNullableMark(typeText))
         var i = indexOfTextIn(t, "::")
         if (i < 0) { rtn "" }
@@ -1558,7 +1558,7 @@ public class Interp(prog : Node) {
     // `[className]`（含它链上每一层）能不能当成 [want]：先比类链上的名字，
     // 再认「注解伴生类 `A::B` 的身份是 `A`」，最后对每一层走接口闭包
     // （Kotlin `rsfTypeIs` :1789-1794 同口径）。
-    fun rsfTypeIsName(className : string, want : string) -> bool {
+    fn rsfTypeIsName(className : string, want : string) -> bool {
         var chain = chainArray(className)
         var wk = jvmDottedNameOf(want)
         var owner = nestedOwnerOf(want)
@@ -1580,7 +1580,7 @@ public class Interp(prog : Node) {
     // 规模也只有个位数）。起点同样两处：`findCls(startName).supers`（类声明的父类型）
     // 与 `findIface(startName).supers`（接口自己继承的父接口）——与 Kotlin
     // `interfaceClosureContains` :1801-1812 从 `superInterfacesOf` 出发同义。
-    fun ifaceClosureHas(startName : string, want : string) -> bool {
+    fn ifaceClosureHas(startName : string, want : string) -> bool {
         var seen : string[] = new string[4]
         var sn = 0
         var queue : string[] = new string[8]
@@ -1634,7 +1634,7 @@ public class Interp(prog : Node) {
     // 数组**元素层**的赋值兼容（Kotlin `elementIsInstance` :1773-1786）：
     // 擦形后同名直接相容（`Box&<int>` 与 `Box&<string>` 都擦成 `Box`）；
     // 任一边是基础类型就**不协变**（`int[]` 不是 `long[]`）；其余按类链/接口闭包判。
-    fun elemIsInstance(actual : string, target : string) -> bool {
+    fn elemIsInstance(actual : string, target : string) -> bool {
         var ab = baseTypeName(dropNullableMark(actual))
         var tb = baseTypeName(dropNullableMark(target))
         if (ab == tb) { rtn true }
@@ -1644,7 +1644,7 @@ public class Interp(prog : Node) {
 
     // `v` 能不能当成类型文本 [typeText]（`A` / `A[]` / `int[][]` / `Box&<int>` / `A::Nested`）。
     // 不认识的**值种类**一律 `fail`（工单 §2.4 / 17c 铁律：绝不许兜底 false 或静默降级）。
-    public fun isInstanceOf(v : Val, typeText : string) -> !bool {
+    public fn isInstanceOf(v : Val, typeText : string) -> !bool {
         var depth = arrayDepthOfText(typeText)
         if (depth > 0) {
             if (v.k != Kind.ARRV) { rtn false }
@@ -1688,7 +1688,7 @@ public class Interp(prog : Node) {
     // 注意：rsf 的数值转换**只允许加宽**（没有 (int) 这种强转），所以每个函数
     // 只列它真能接住的来源；接不住的档位在合法程序里根本不会出现（Checker 管着），
     // 真碰上就返回 0——不会静默算错一个「看起来像」的值。
-    fun intOf(v : Val) -> int {
+    fn intOf(v : Val) -> int {
         switch (v.k) {
             Kind.INTV : rtn v.iv
             Kind.BYTEV : rtn v.yv
@@ -1698,7 +1698,7 @@ public class Interp(prog : Node) {
         rtn 0
     }
 
-    fun longOf(v : Val) -> long {
+    fn longOf(v : Val) -> long {
         switch (v.k) {
             Kind.INTV : rtn v.iv
             Kind.BYTEV : rtn v.yv
@@ -1709,7 +1709,7 @@ public class Interp(prog : Node) {
         rtn 0L
     }
 
-    fun floatOf(v : Val) -> float {
+    fn floatOf(v : Val) -> float {
         switch (v.k) {
             Kind.INTV : rtn v.iv
             Kind.BYTEV : rtn v.yv
@@ -1721,7 +1721,7 @@ public class Interp(prog : Node) {
         rtn 0.0f
     }
 
-    fun doubleOf(v : Val) -> double {
+    fn doubleOf(v : Val) -> double {
         switch (v.k) {
             Kind.INTV : rtn v.iv
             Kind.BYTEV : rtn v.yv
@@ -1736,7 +1736,7 @@ public class Interp(prog : Node) {
 
     // 运行期收敛到声明的静态类型。**只在加宽方向生效**（rsf 的语义本来也不允许反向），
     // 非数值（string / 对象 / 数组 / 枚举 / null）原样放行。
-    public fun coerceTo(typeText : string, v : Val) -> Val {
+    public fn coerceTo(typeText : string, v : Val) -> Val {
         var base = baseTypeName(typeText)
         if (!isPrimitiveName(base)) { rtn v }
         var r = kindRank(v.k)
@@ -1766,7 +1766,7 @@ public class Interp(prog : Node) {
     }
 
     // 数组元素的默认值（和 JVM 的 new 数组规则一致：数值 0、bool false、引用 null）
-    public fun defaultOf(typeText : string) -> Val {
+    public fn defaultOf(typeText : string) -> Val {
         var base = baseTypeName(typeText)
         if (base == "int") { rtn vInt(0) }
         if (base == "long") { rtn vLong(0L) }
@@ -1778,7 +1778,7 @@ public class Interp(prog : Node) {
         rtn vNull()
     }
 
-    fun truth(v : Val) -> !bool {
+    fn truth(v : Val) -> !bool {
         if (v.k == Kind.BOOLV) { rtn v.bv }
         fail unsupported("条件位置上的 " + ("" + v.k) + "（要求 bool）")
         rtn false
@@ -1789,7 +1789,7 @@ public class Interp(prog : Node) {
     // 与 Kotlin 版 `render(v, t)` / `ObjectFormat.valueText` 对齐：静态类型是 string
     // 的原样给，null 给 "null"，其余走 JVM 的 toString（这里就是 `"" + 值`）。
 
-    public fun render(v : Val) -> !string {
+    public fn render(v : Val) -> !string {
         switch (v.k) {
             Kind.NULLV : rtn "null"
             Kind.INTV : rtn "" + v.iv
@@ -1812,14 +1812,14 @@ public class Interp(prog : Node) {
 
     // 数组直接打印是 Kotlin 版检查期就拦掉的事（身份哈希两端没法一致），
     // 解释器这条路上也拦住，别静默打出一串没意义的东西。
-    fun renderArray(a : Arr) -> !string {
+    fn renderArray(a : Arr) -> !string {
         fail "数组不能直接打印或拼进字符串：JVM 上打出来的是身份哈希（像 [I@1b6d3586），" +
             "每次运行都不同，两端没法保证一致。要看清内容就按下标逐个取，比如 a[0]、a.length，或者用循环"
         rtn ""
     }
 
     // java.util.AbstractCollection.toString 的格式：`[a, b]`
-    fun renderList(l : JList) -> !string {
+    fn renderList(l : JList) -> !string {
         var out = "["
         var i = 0
         while (i < l.n) {
@@ -1834,7 +1834,7 @@ public class Interp(prog : Node) {
     // 只有「基础类型 / string / 可空基础类型 / 枚举」的字段真的打值，数组与对象字段一律 `...`。
     // 阶段 25 K5c：字段沿**整条父链**渲染、**父类字段在前**（与 Kotlin 的
     // `ObjectFormat.render` + `fieldChainOf` 同口径；p11_tostr_chain 对的就是这一条）。
-    fun renderObj(o : Obj) -> !string {
+    fn renderObj(o : Obj) -> !string {
         var c = findCls(o.cls)
         if (c == null) { rtn o.cls + "()" }
         var out = o.cls + "("
@@ -1863,7 +1863,7 @@ public class Interp(prog : Node) {
 
     // 整条父链的字段先按类型零值铺一遍（父类在前）—— 没写构造器 / 没写初值的字段
     // 也要有确定的值，与 Kotlin 构造前的 fillDefaults 同一个用意。
-    fun fillChainDefaults(root : string, o : Obj) -> void {
+    fn fillChainDefaults(root : string, o : Obj) -> void {
         var chain = chainArray(root)
         var i = 0
         while (i < chain.length) {
@@ -1879,7 +1879,7 @@ public class Interp(prog : Node) {
         rtn
     }
 
-    fun isDisplayableField(typeText : string) -> bool {
+    fn isDisplayableField(typeText : string) -> bool {
         if (indexOfTextIn(typeText, "[]") >= 0) { rtn false }
         var base = baseTypeName(typeText)
         if (base == "string") { rtn true }
@@ -1888,7 +1888,7 @@ public class Interp(prog : Node) {
         rtn findEnum(base) != null
     }
 
-    fun renderFieldValue(v : Val, typeText : string) -> !string {
+    fn renderFieldValue(v : Val, typeText : string) -> !string {
         if (v.k == Kind.NULLV) { rtn "null" }
         if (findEnum(baseTypeName(typeText)) != null) { rtn v.sv }
         rtn render(v)!!
@@ -1900,7 +1900,7 @@ public class Interp(prog : Node) {
     // 结果取两边更高的那一档。**int 档一定用 int 运算**——溢出的回绕行为
     // 只有这样才和 JVM 的 IADD/IMUL 一致（用 long 算再截是另一回事）。
 
-    fun intOp(op : string, a : int, b : int) -> !int {
+    fn intOp(op : string, a : int, b : int) -> !int {
         if (op == "PLUS") { rtn a + b }
         if (op == "MINUS") { rtn a - b }
         if (op == "STAR") { rtn a * b }
@@ -1916,7 +1916,7 @@ public class Interp(prog : Node) {
         rtn 0
     }
 
-    fun longOp(op : string, a : long, b : long) -> !long {
+    fn longOp(op : string, a : long, b : long) -> !long {
         if (op == "PLUS") { rtn a + b }
         if (op == "MINUS") { rtn a - b }
         if (op == "STAR") { rtn a * b }
@@ -1932,7 +1932,7 @@ public class Interp(prog : Node) {
         rtn 0L
     }
 
-    fun floatOp(op : string, a : float, b : float) -> !float {
+    fn floatOp(op : string, a : float, b : float) -> !float {
         if (op == "PLUS") { rtn a + b }
         if (op == "MINUS") { rtn a - b }
         if (op == "STAR") { rtn a * b }
@@ -1942,7 +1942,7 @@ public class Interp(prog : Node) {
         rtn 0.0f
     }
 
-    fun doubleOp(op : string, a : double, b : double) -> !double {
+    fn doubleOp(op : string, a : double, b : double) -> !double {
         if (op == "PLUS") { rtn a + b }
         if (op == "MINUS") { rtn a - b }
         if (op == "STAR") { rtn a * b }
@@ -1952,7 +1952,7 @@ public class Interp(prog : Node) {
         rtn 0.0
     }
 
-    public fun arithOp(op : string, a : Val, b : Val) -> !Val {
+    public fn arithOp(op : string, a : Val, b : Val) -> !Val {
         var ra = kindRank(a.k)
         var rb = kindRank(b.k)
         if (ra < 0 || rb < 0) {
@@ -1966,25 +1966,25 @@ public class Interp(prog : Node) {
         rtn vDouble(doubleOp(op, doubleOf(a), doubleOf(b))!!)
     }
 
-    fun cmpInt(a : int, b : int) -> int {
+    fn cmpInt(a : int, b : int) -> int {
         if (a < b) { rtn -1 }
         if (a > b) { rtn 1 }
         rtn 0
     }
 
-    fun cmpLong(a : long, b : long) -> int {
+    fn cmpLong(a : long, b : long) -> int {
         if (a < b) { rtn -1 }
         if (a > b) { rtn 1 }
         rtn 0
     }
 
-    fun cmpFloat(a : float, b : float) -> int {
+    fn cmpFloat(a : float, b : float) -> int {
         if (a < b) { rtn -1 }
         if (a > b) { rtn 1 }
         rtn 0
     }
 
-    fun cmpDouble(a : double, b : double) -> int {
+    fn cmpDouble(a : double, b : double) -> int {
         if (a < b) { rtn -1 }
         if (a > b) { rtn 1 }
         rtn 0
@@ -1992,7 +1992,7 @@ public class Interp(prog : Node) {
 
     // 非数值的比较：字符串按内容，对象/数组/枚举按**引用相等**——和 Kotlin 版
     // 统一走 `a == b`（Object.equals）是同一件事。
-    fun valuesEqual(a : Val, b : Val) -> bool {
+    fn valuesEqual(a : Val, b : Val) -> bool {
         if (a.k == Kind.NULLV || b.k == Kind.NULLV) {
             rtn a.k == Kind.NULLV && b.k == Kind.NULLV
         }
@@ -2005,7 +2005,7 @@ public class Interp(prog : Node) {
         rtn false
     }
 
-    public fun compareOp(op : string, a : Val, b : Val) -> !Val {
+    public fn compareOp(op : string, a : Val, b : Val) -> !Val {
         var ra = kindRank(a.k)
         var rb = kindRank(b.k)
         if (ra >= 0 && rb >= 0) {
@@ -2038,14 +2038,14 @@ public class Interp(prog : Node) {
 
     // 返回 `!int` 而不是 `!void`：rsf 的 `!void` 取不出值、因此写不了 `!!`，
     // 调用点就得各包一层 try。恒返回 0 只是为了让调用点能一行写完。
-    public fun checkIndex(length : int, index : int) -> !int {
+    public fn checkIndex(length : int, index : int) -> !int {
         if (index < 0 || index >= length) {
             fail arrayIndexFailure(length, index)
         }
         rtn 0
     }
 
-    public fun makeArray(elemText : string, dims : int[], at : int) -> Arr {
+    public fn makeArray(elemText : string, dims : int[], at : int) -> Arr {
         var left = dims.length - at
         var a = new Arr(left)
         a.elemType = elemText
@@ -2070,7 +2070,7 @@ public class Interp(prog : Node) {
 
     // ------------------------------------------------------------------ 表达式求值
 
-    public fun evalArgs(argsNode : Node, env : Env) -> !Val[] {
+    public fn evalArgs(argsNode : Node, env : Env) -> !Val[] {
         var cnt = argsNode.childCount
         var out : Val[] = new Val[cnt]
         var i = 0
@@ -2081,7 +2081,7 @@ public class Interp(prog : Node) {
         rtn out
     }
 
-    public fun ev(n : Node, env : Env) -> !Val {
+    public fn ev(n : Node, env : Env) -> !Val {
         switch (n.kind) {
             NodeKind.INT_LIT : rtn vInt(parseInt(attr(n, "value")) ?: 0)
             NodeKind.LONG_LIT : rtn vLong(Long.parseLong(attr(n, "value")))
@@ -2118,7 +2118,7 @@ public class Interp(prog : Node) {
     // 阶段 24d：`x as A` / `x ?as A`（工单 §2.6）。判型成功**原样**给值（不改值、不改引用，
     // 与 Kotlin `coerce(value, model.typeOf(expr))` 同义，收敛交给声明处）；`?as` 失败给 null；
     // `as` 失败走 `fail` —— rsf 的 `try` 只接 `fail` 的消息，抛 JVM 异常接不住。
-    public fun evAs(n : Node, env : Env) -> !Val {
+    public fn evAs(n : Node, env : Env) -> !Val {
         var v = ev(kid(n, 0), env)!!
         var target = attr(kid(n, 1), "type")
         if (isInstanceOf(v, target)!!) { rtn v }
@@ -2129,7 +2129,7 @@ public class Interp(prog : Node) {
     }
 
     // 阶段 24d：`x is A` / `x !is A` —— 恒 `bool`（v1 不做智能转换），否定就是取反
-    public fun evIs(n : Node, env : Env) -> !Val {
+    public fn evIs(n : Node, env : Env) -> !Val {
         var v = ev(kid(n, 0), env)!!
         var r = isInstanceOf(v, attr(kid(n, 1), "type"))!!
         if (attrBool(n, "negated")) { r = !r }
@@ -2137,19 +2137,19 @@ public class Interp(prog : Node) {
     }
 
     // `super` 表达式本身语义上就是 this（哪一份实现在 evSuperMember 里挑）
-    public fun evSuper(n : Node, env : Env) -> !Val {
+    public fn evSuper(n : Node, env : Env) -> !Val {
         var o = env.thisObj()
         if (o == null) { fail "K5c：super 只能用在类的方法或构造器里（这里没有 this）" }
         rtn vObj(o!!)
     }
 
     // 字符字面量的值在树上是**字符串**（`'a'` 是 "a"，`'\n'` 是真的换行符）
-    fun charOfLiteral(s : string) -> char {
+    fn charOfLiteral(s : string) -> char {
         if (s.length() == 0) { rtn toChar(0) }
         rtn s.charAt(0)
     }
 
-    public fun evVar(n : Node, env : Env) -> !Val {
+    public fn evVar(n : Node, env : Env) -> !Val {
         var nm = attr(n, "name")
         var v = env.lookup(nm)
         if (v != null) { rtn v!! }
@@ -2173,13 +2173,13 @@ public class Interp(prog : Node) {
         rtn vNull()
     }
 
-    public fun evThis(n : Node, env : Env) -> !Val {
+    public fn evThis(n : Node, env : Env) -> !Val {
         var o = env.thisObj()
         if (o == null) { fail "17c 解释器：这里没有 this" }
         rtn vObj(o!!)
     }
 
-    public fun evIfExpr(n : Node, env : Env) -> !Val {
+    public fn evIfExpr(n : Node, env : Env) -> !Val {
         var c = ev(kid(n, 0), env)!!
         if (truth(c)!!) { rtn ev(kid(n, 1), env)!! }
         rtn ev(kid(n, 2), env)!!
@@ -2187,13 +2187,13 @@ public class Interp(prog : Node) {
 
     // `!!`：Kotlin 版这里抛的是 NullPointerException，而解释器的 `try` 只接 rsf 自己的
     // 错误——所以走**不可接**的信号 `X`，语义上才是同构的。
-    public fun evForce(n : Node, env : Env) -> !Val {
+    public fn evForce(n : Node, env : Env) -> !Val {
         var v = ev(kid(n, 0), env)!!
         if (v.k == Kind.NULLV) { fail makeSignal("X", "rsf: 对 null 使用了 '!!'") }
         rtn v
     }
 
-    public fun evUnary(n : Node, env : Env) -> !Val {
+    public fn evUnary(n : Node, env : Env) -> !Val {
         var op = attr(n, "op")
         var v = ev(kid(n, 0), env)!!
         if (op == "BANG") {
@@ -2219,7 +2219,7 @@ public class Interp(prog : Node) {
         rtn vNull()
     }
 
-    public fun evBinary(n : Node, env : Env) -> !Val {
+    public fn evBinary(n : Node, env : Env) -> !Val {
         var op = attr(n, "op")
         var ln = kid(n, 0)
         var rn = kid(n, 1)
@@ -2250,7 +2250,7 @@ public class Interp(prog : Node) {
         rtn arithOp(op, a, b)!!
     }
 
-    public fun evIndex(n : Node, env : Env) -> !Val {
+    public fn evIndex(n : Node, env : Env) -> !Val {
         var a = ev(kid(n, 0), env)!!
         var iv = ev(kid(n, 1), env)!!
         if (a.k != Kind.ARRV) { fail unsupported("下标访问用在 " + ("" + a.k) + " 上") }
@@ -2259,7 +2259,7 @@ public class Interp(prog : Node) {
         rtn a.av!!.es[idx]
     }
 
-    public fun evNewArray(n : Node, env : Env) -> !Val {
+    public fn evNewArray(n : Node, env : Env) -> !Val {
         var elemText = attr(n, "elem")
         var dimsNode = kid(n, 0)
         var cnt = dimsNode.childCount
@@ -2276,7 +2276,7 @@ public class Interp(prog : Node) {
 
     // ------------------------------------------------------------------ 构造
 
-    public fun evNew(n : Node, env : Env) -> !Val {
+    public fn evNew(n : Node, env : Env) -> !Val {
         var raw = attr(n, "class")
         var base = baseTypeName(raw)
         var args = evalArgs(kid(n, 0), env)!!
@@ -2293,7 +2293,7 @@ public class Interp(prog : Node) {
         rtn vNull()
     }
 
-    public fun constructUser(c : Cls, args : Val[]) -> !Val {
+    public fn constructUser(c : Cls, args : Val[]) -> !Val {
         // 阶段 25 K5c：抽象类不能 new（Kotlin 侧由 Checker 拦，自举解释器在这里拦）。
         // 允许它会构造出「抽象成员没有实现」的对象，后面的调用只能靠运行期报错兜着 ——
         // 与其那样，不如在这里就响亮报错。
@@ -2347,7 +2347,7 @@ public class Interp(prog : Node) {
     }
 
     // 构造器重载按「个数 + 类型契合度」挑，和 Checker 的口径一致（个数优先、精确优先）
-    public fun pickCtor(c : Cls, args : Val[]) -> ?Fn {
+    public fn pickCtor(c : Cls, args : Val[]) -> ?Fn {
         var best : ?Fn = null
         var bestScore = 2147483647
         var i = 0
@@ -2369,7 +2369,7 @@ public class Interp(prog : Node) {
         rtn best
     }
 
-    fun typeMatches(typeText : string, v : Val) -> bool {
+    fn typeMatches(typeText : string, v : Val) -> bool {
         var base = baseTypeName(typeText)
         if (base == "int") { rtn kindRank(v.k) == 0 }
         if (base == "long" || base == "float" || base == "double") { rtn kindRank(v.k) >= 0 }
@@ -2382,7 +2382,7 @@ public class Interp(prog : Node) {
 
     // 构造器体里有没有 `this(...)` 委托：只有链的**根**跑字段初值（和 JVM 同一个道理）。
     // 只看顶层语句——委托必须是首句，这是语法层面的约定。
-    fun hasThisCall(bodyNode : Node) -> bool {
+    fn hasThisCall(bodyNode : Node) -> bool {
         var i = 0
         while (i < bodyNode.childCount) {
             if (bodyNode.children[i].kind == NodeKind.THIS_CALL) { rtn true }
@@ -2391,7 +2391,7 @@ public class Interp(prog : Node) {
         rtn false
     }
 
-    public fun runFieldInits(c : Cls, o : Obj, env : Env) -> !int {
+    public fn runFieldInits(c : Cls, o : Obj, env : Env) -> !int {
         // 阶段 25 K5c：只写**本类那一段**（父类的字段由父类那一跳或父类自己的构造写）
         var base = baseOf(c)
         var i = 0
@@ -2404,7 +2404,7 @@ public class Interp(prog : Node) {
 
     // 构造体**第一句**的 `super(实参)`（`SUPER_CALL` 的唯一孩子就是 ARGS，Parser.rsf:2352-2367）；
     // 没写就给 null。语法层保证它只可能出现在第一句（Checker :1201-1239 是这么校验的）。
-    fun superCallArgs(bodyNode : Node) -> ?Node {
+    fn superCallArgs(bodyNode : Node) -> ?Node {
         var i = 0
         while (i < bodyNode.childCount) {
             if (bodyNode.children[i].kind == NodeKind.SUPER_CALL) { rtn kid(bodyNode.children[i], 0) }
@@ -2418,7 +2418,7 @@ public class Interp(prog : Node) {
     // 父类一个构造器都没写时递归到父类的父类 + 父类字段初值（Kotlin implicitSuperDelegationOf）。
     // 只有**叶子类**会跑到这里：父类的构造体在它自己的 runCtor 里跑（K3 的 runConstructor 口径：
     // 父类构造器 → 自己字段初值 → 构造体）。
-    public fun runSuperDelegation(c : Cls, o : Obj, env : Env, argsNode : ?Node) -> !int {
+    public fn runSuperDelegation(c : Cls, o : Obj, env : Env, argsNode : ?Node) -> !int {
         if (!c.hasBase) { rtn 0 }
         var parent = findCls(c.baseName)
         if (parent == null) {
@@ -2440,7 +2440,7 @@ public class Interp(prog : Node) {
         rtn 0
     }
 
-    public fun runCtor(c : Cls, f : Fn, o : Obj, args : Val[]) -> !int {
+    public fn runCtor(c : Cls, f : Fn, o : Obj, args : Val[]) -> !int {
         var env = new Env(globals)
         env.me = o
         env.cl = c
@@ -2482,7 +2482,7 @@ public class Interp(prog : Node) {
     // 元素字段在 `constructUser` 里已经填好（实参优先、否则元素默认值），形参槽直接取字段值；
     // **不能再跑 `runFieldInits`** —— 那会把实参填好的元素字段冲回默认值。
     // 对齐 Kotlin `runConstructor`：fillElementDefaults 填形参槽 → runFieldInitializers → 构造器体。
-    public fun runAnnCtor(c : Cls, f : Fn, o : Obj, args : Val[]) -> !int {
+    public fn runAnnCtor(c : Cls, f : Fn, o : Obj, args : Val[]) -> !int {
         var env = new Env(globals)
         env.me = o
         env.cl = c
@@ -2506,7 +2506,7 @@ public class Interp(prog : Node) {
 
     // ------------------------------------------------------------------ 调用
 
-    public fun callFn(f : Fn, self : ?Obj, c : ?Cls, args : Val[]) -> !Val {
+    public fn callFn(f : Fn, self : ?Obj, c : ?Cls, args : Val[]) -> !Val {
         var env = new Env(globals)
         env.me = self
         env.cl = c
@@ -2529,7 +2529,7 @@ public class Interp(prog : Node) {
     // 帧的类 = 真正执行的那份方法的**声明类** —— 这样方法体里的裸字段名按声明类的归属解析
     // （子类同名遮蔽父类时才落在正确的那一段），`super.f()` 也从这个类往上找一层。
     // `static` 方法不参与分派（K5b 的 methOf/fieldOwnerInChain 也只沿类链找**非静态**的）。
-    public fun invokeInstance(m : Fn, self : ?Obj, declC : Cls, args : Val[]) -> !Val {
+    public fn invokeInstance(m : Fn, self : ?Obj, declC : Cls, args : Val[]) -> !Val {
         if (self == null) { rtn callFn(m, null, declC, args)!! }
         if (m.isStatic) { rtn callFn(m, null, declC, args)!! }
         var rc = self!!.cls
@@ -2540,7 +2540,7 @@ public class Interp(prog : Node) {
         rtn callFn(tf!!, self, tc!!, args)!!
     }
 
-    public fun execFnBody(f : Fn, env : Env) -> !Val {
+    public fn execFnBody(f : Fn, env : Env) -> !Val {
         depth = depth + 1
         if (depth > 2000) {
             depth = depth - 1
@@ -2558,12 +2558,12 @@ public class Interp(prog : Node) {
         rtn out
     }
 
-    public fun evCall(n : Node, env : Env) -> !Val {
+    public fn evCall(n : Node, env : Env) -> !Val {
         var args = evalArgs(kid(n, 0), env)!!
         rtn invokeCall(attr(n, "name"), args, env)!!
     }
 
-    public fun isBuiltinName(nm : string) -> bool {
+    public fn isBuiltinName(nm : string) -> bool {
         if (nm == "toByte" || nm == "toChar" || nm == "charToInt") { rtn true }
         if (nm == "intToString" || nm == "parseInt") { rtn true }
         if (nm == "isDigit" || nm == "isLetter" || nm == "isWhitespace") { rtn true }
@@ -2574,7 +2574,7 @@ public class Interp(prog : Node) {
     }
 
     // 可能失败的内置函数（`?:` 要按这个判断「左边这次调用自己会不会失败」）
-    public fun isErrorBuiltin(nm : string) -> bool {
+    public fn isErrorBuiltin(nm : string) -> bool {
         if (nm == "parseInt") { rtn true }
         if (nm == "readText" || nm == "readBytes") { rtn true }
         if (nm == "writeText" || nm == "writeBytes") { rtn true }
@@ -2582,14 +2582,14 @@ public class Interp(prog : Node) {
     }
 
     // JVM 互操作里可以被当成「类名」用的名字
-    public fun isInteropClassName(nm : string) -> bool {
+    public fn isInteropClassName(nm : string) -> bool {
         if (nm == "System" || nm == "File") { rtn true }
         if (nm == "ArrayList") { rtn true }
         rtn false
     }
 
     // `readBytes` 给回来的是 rsf 的 `byte[]`，解释器里用「元素类型是 byte 的数组」接住
-    public fun bytesToArray(raw : byte[]) -> Arr {
+    public fn bytesToArray(raw : byte[]) -> Arr {
         var a = new Arr(1)
         a.elemType = "byte"
         a.es = new Val[raw.length]
@@ -2601,7 +2601,7 @@ public class Interp(prog : Node) {
         rtn a
     }
 
-    public fun arrayToBytes(a : Arr) -> byte[] {
+    public fn arrayToBytes(a : Arr) -> byte[] {
         var raw : byte[] = new byte[a.es.length]
         var i = 0
         while (i < a.es.length) {
@@ -2611,7 +2611,7 @@ public class Interp(prog : Node) {
         rtn raw
     }
 
-    public fun callBuiltin(nm : string, args : Val[]) -> !Val {
+    public fn callBuiltin(nm : string, args : Val[]) -> !Val {
         if (args.length == 0) { fail unsupported("内置函数 '" + nm + "' 没有实参") }
         var a0 = args[0]
         if (nm == "toByte") { rtn vByte(toByte(intOf(a0))) }
@@ -2658,7 +2658,7 @@ public class Interp(prog : Node) {
         rtn vNull()
     }
 
-    public fun invokeCall(nm : string, args : Val[], env : Env) -> !Val {
+    public fn invokeCall(nm : string, args : Val[], env : Env) -> !Val {
         if (nm == "print" || nm == "println") {
             if (args.length == 0) {
                 if (nm == "println") { println() }
@@ -2704,7 +2704,7 @@ public class Interp(prog : Node) {
 
     // ------------------------------------------------------------------ 成员访问
 
-    public fun evMember(n : Node, env : Env) -> !Val {
+    public fn evMember(n : Node, env : Env) -> !Val {
         var recvNode = kid(n, 0)
         var nm = attr(n, "name")
         var isCall = attrBool(n, "call")
@@ -2754,7 +2754,7 @@ public class Interp(prog : Node) {
 
     // `super.f(...)` / `super(接口名).f(...)`：**非虚**地跑指定的一份声明。
     // 裸 super 的 target 是字面量 "-"（Parser.rsf:2365/2374），其余是接口名。
-    public fun evSuperMember(n : Node, env : Env) -> !Val {
+    public fn evSuperMember(n : Node, env : Env) -> !Val {
         var sup = kid(n, 0)
         var nm = attr(n, "name")
         var starget = attr(sup, "target")
@@ -2788,7 +2788,7 @@ public class Interp(prog : Node) {
         rtn callFn(m!!, self, owner!!, args)!!
     }
 
-    public fun invokeMember(recv : Val, nm : string, args : Val[], env : Env) -> !Val {
+    public fn invokeMember(recv : Val, nm : string, args : Val[], env : Env) -> !Val {
         if (recv.k == Kind.STRV) { rtn stringMember(recv.sv, nm, args)!! }
         if (recv.k == Kind.LISTV) { rtn listMember(recv.lsv!!, nm, args, env)!! }
         if (recv.k == Kind.CTYPEV) { rtn staticMember(recv.cname, nm, args, env)!! }
@@ -2799,7 +2799,7 @@ public class Interp(prog : Node) {
     }
 
     // java.io.File 的替身（只做 files.rsf 用到的那几个）
-    public fun fileMember(path : string, nm : string, args : Val[]) -> !Val {
+    public fn fileMember(path : string, nm : string, args : Val[]) -> !Val {
         if (nm == "getAbsolutePath") { rtn vStr(fileAbsolutePath(path)) }
         if (nm == "getPath") { rtn vStr(path) }
         if (nm == "getName") { rtn vStr(fileBaseName(path)) }
@@ -2811,7 +2811,7 @@ public class Interp(prog : Node) {
 
     // string 的三个方法（length / charAt / substring）在 Kotlin 版里走 JVM 反射，
     // 这里直接实现；多出来的几个（contains 之类）是为了 files.rsf 那类程序。
-    public fun stringMember(s : string, nm : string, args : Val[]) -> !Val {
+    public fn stringMember(s : string, nm : string, args : Val[]) -> !Val {
         if (nm == "length") { rtn vInt(s.length()) }
         if (nm == "charAt") { rtn vChar(s.charAt(intOf(args[0]))) }
         if (nm == "substring") { rtn vStr(s.substring(intOf(args[0]), intOf(args[1]))) }
@@ -2828,7 +2828,7 @@ public class Interp(prog : Node) {
         rtn vNull()
     }
 
-    public fun listMember(l : JList, nm : string, args : Val[], env : Env) -> !Val {
+    public fn listMember(l : JList, nm : string, args : Val[], env : Env) -> !Val {
         if (nm == "size") { rtn vInt(l.n) }
         if (nm == "isEmpty") { rtn vBool(l.n == 0) }
         if (nm == "clear") {
@@ -2884,7 +2884,7 @@ public class Interp(prog : Node) {
         rtn vNull()
     }
 
-    public fun objMember(o : Obj, nm : string, args : Val[], env : Env) -> !Val {
+    public fn objMember(o : Obj, nm : string, args : Val[], env : Env) -> !Val {
         var c = findCls(o.cls)
         if (c == null) { fail "17c 解释器：类 '" + o.cls + "' 不在本程序里" }
         // 阶段 25 K5c：先沿**类父链**找（继承来的方法也要能调），再按运行期真实类虚分派。
@@ -2924,7 +2924,7 @@ public class Interp(prog : Node) {
     // （那时候 `methInChain` 先命中，走不到这里）。
     // 返回 `!Val`：这一族**可能失败**（hashCode/getClass 响亮报错）。命中给值，
     // 没命中给 `vNull()`（这一族没有一个方法会返回真 null，所以哨兵没有歧义）。
-    fun objectFamily(o : Obj, nm : string, args : Val[]) -> !Val {
+    fn objectFamily(o : Obj, nm : string, args : Val[]) -> !Val {
         if (args.length == 0 && nm == "toString") { rtn vStr(renderObj(o)!!) }
         if (args.length == 1 && nm == "equals") {
             if (args[0].k != Kind.OBJV) { rtn vBool(false) }
@@ -2939,7 +2939,7 @@ public class Interp(prog : Node) {
         rtn vNull()
     }
 
-    public fun staticMember(clsName : string, nm : string, args : Val[], env : Env) -> !Val {
+    public fn staticMember(clsName : string, nm : string, args : Val[], env : Env) -> !Val {
         var c = findCls(clsName)
         if (c != null) {
             var m = c!!.methodNamed(nm)
@@ -2960,7 +2960,7 @@ public class Interp(prog : Node) {
     // ------------------------------------------------------------------ `?:`
 
     // 左边这次调用「自己可能失败」吗？（!T 函数 / !T 方法 / parseInt）
-    fun isErrorCapable(ln : Node, env : Env) -> bool {
+    fn isErrorCapable(ln : Node, env : Env) -> bool {
         if (ln.kind == NodeKind.CALL) {
             var nm = attr(ln, "name")
             if (isErrorBuiltin(nm)) { rtn true }
@@ -2997,7 +2997,7 @@ public class Interp(prog : Node) {
     // 只把**目标调用本身**包进保护范围：实参求值时的失败要继续往外传
     // （Kotlin 版那边靠 failure.frames 的第一个是不是目标函数来区分，效果相同）。
     // 接住了就返回哨兵 caughtVal。
-    public fun tryCallProtected(ln : Node, env : Env) -> !Val {
+    public fn tryCallProtected(ln : Node, env : Env) -> !Val {
         if (ln.kind == NodeKind.MEMBER) {
             var recv = ev(kid(ln, 0), env)!!
             var args = evalArgs(kid(ln, 1), env)!!
@@ -3025,7 +3025,7 @@ public class Interp(prog : Node) {
         rtn got2
     }
 
-    public fun evElvis(n : Node, env : Env) -> !Val {
+    public fn evElvis(n : Node, env : Env) -> !Val {
         var ln = kid(n, 0)
         var rn = kid(n, 1)
         if (isErrorCapable(ln, env)) {
@@ -3045,7 +3045,7 @@ public class Interp(prog : Node) {
     // 每个 BLOCK 自成一个作用域（和 rsf 的大括号语义一致）；函数体不额外开一层
     // （参数与函数体顶层共用作用域，这一点和 Checker 的口径对齐）。
 
-    public fun blk(b : Node, env : Env) -> !int {
+    public fn blk(b : Node, env : Env) -> !int {
         var pc = 0
         var cnt = b.childCount
         while (pc < cnt) {
@@ -3073,7 +3073,7 @@ public class Interp(prog : Node) {
         rtn 0
     }
 
-    fun labelIndex(b : Node, nm : string) -> int {
+    fn labelIndex(b : Node, nm : string) -> int {
         var i = 0
         while (i < b.childCount) {
             var s = b.children[i]
@@ -3083,7 +3083,7 @@ public class Interp(prog : Node) {
         rtn -1
     }
 
-    public fun st(n : Node, env : Env) -> !int {
+    public fn st(n : Node, env : Env) -> !int {
         switch (n.kind) {
             NodeKind.BLOCK : rtn blk(n, new Env(env))!!
             NodeKind.VAR_DECL : rtn stVarDecl(n, env)!!
@@ -3111,14 +3111,14 @@ public class Interp(prog : Node) {
         rtn 0
     }
 
-    public fun stVarDecl(n : Node, env : Env) -> !int {
+    public fn stVarDecl(n : Node, env : Env) -> !int {
         var v = ev(kid(n, 0), env)!!
         env.define(attr(n, "name"), coerceTo(attr(n, "type"), v))
         rtn 0
     }
 
     // 裸名字赋值：局部/参数优先，其次才是当前类的字段（与 Checker 的解析顺序一致）
-    public fun stAssign(n : Node, env : Env) -> !int {
+    public fn stAssign(n : Node, env : Env) -> !int {
         var nm = attr(n, "name")
         var v = ev(kid(n, 0), env)!!
         if (env.assign(nm, v)) { rtn 0 }
@@ -3139,7 +3139,7 @@ public class Interp(prog : Node) {
         rtn 0
     }
 
-    fun evalReceiverObj(recvNode : Node, env : Env) -> !Obj {
+    fn evalReceiverObj(recvNode : Node, env : Env) -> !Obj {
         if (recvNode.kind == NodeKind.THIS) {
             var self = env.thisObj()
             if (self == null) { fail "17c 解释器：这里没有 this" }
@@ -3152,7 +3152,7 @@ public class Interp(prog : Node) {
     }
 
     // `p.x = 1`：接收者先求值，再求右值（和 Kotlin 版一致）
-    public fun stMemberAssign(n : Node, env : Env) -> !int {
+    public fn stMemberAssign(n : Node, env : Env) -> !int {
         var m = kid(n, 0)
         var nm = attr(m, "name")
         var o = evalReceiverObj(kid(m, 0), env)!!
@@ -3168,7 +3168,7 @@ public class Interp(prog : Node) {
 
     // `a[i] = v`：求值顺序 = 接收者 → 下标 → **越界检查** → 右值。
     // 右值放在检查之后，越界时它里面的副作用一次都不会发生（两端输出才不会分叉）。
-    public fun stIndexAssign(n : Node, env : Env) -> !int {
+    public fn stIndexAssign(n : Node, env : Env) -> !int {
         var ix = kid(n, 0)
         var a = ev(kid(ix, 0), env)!!
         var iv = ev(kid(ix, 1), env)!!
@@ -3181,7 +3181,7 @@ public class Interp(prog : Node) {
         rtn 0
     }
 
-    public fun stReturn(n : Node, env : Env) -> !int {
+    public fn stReturn(n : Node, env : Env) -> !int {
         var v = vNull()
         if (attrBool(n, "hasValue") && n.childCount > 0) {
             v = ev(n.children[0], env)!!
@@ -3191,39 +3191,39 @@ public class Interp(prog : Node) {
         rtn 0
     }
 
-    public fun stExpr(n : Node, env : Env) -> !int {
+    public fn stExpr(n : Node, env : Env) -> !int {
         ev(kid(n, 0), env)!!
         rtn 0
     }
 
-    public fun stGoto(n : Node) -> !int {
+    public fn stGoto(n : Node) -> !int {
         fail makeSignal("G", attr(n, "label"))
         rtn 0
     }
 
-    public fun stBreak() -> !int {
+    public fn stBreak() -> !int {
         fail makeSignal("B", "")
         rtn 0
     }
 
-    public fun stContinue() -> !int {
+    public fn stContinue() -> !int {
         fail makeSignal("C", "")
         rtn 0
     }
 
-    public fun stFail(n : Node, env : Env) -> !int {
+    public fn stFail(n : Node, env : Env) -> !int {
         var v = ev(kid(n, 0), env)!!
         fail render(v)!!
         rtn 0
     }
 
-    public fun stIf(n : Node, env : Env) -> !int {
+    public fn stIf(n : Node, env : Env) -> !int {
         if (truth(ev(kid(n, 0), env)!!)!!) { rtn blk(kid(n, 1), new Env(env))!! }
         if (n.childCount > 2) { rtn blk(kid(n, 2), new Env(env))!! }
         rtn 0
     }
 
-    public fun stWhile(n : Node, env : Env) -> !int {
+    public fn stWhile(n : Node, env : Env) -> !int {
         var cond = kid(n, 0)
         var bodyNode = kid(n, 1)
         while (true) {
@@ -3247,7 +3247,7 @@ public class Interp(prog : Node) {
     // `for`：孩子按「条件? 更新? 体」排列（有没有靠 hasCond / hasStep 说）。
     // `continue` 在 for 里要**把更新跑一遍**再进下一轮（while 里直接进下一轮），
     // 这是两种循环在降级后唯一的行为差别。
-    public fun stFor(n : Node, env : Env) -> !int {
+    public fn stFor(n : Node, env : Env) -> !int {
         var hasCond = attrBool(n, "hasCond")
         var hasStep = attrBool(n, "hasStep")
         var idx = 0
@@ -3286,7 +3286,7 @@ public class Interp(prog : Node) {
     // `switch`：被分派的值只求一次，按声明顺序跟枚举常量比**引用相等**
     // （枚举值是单例，见 Enm.valueOf），一个都没命中就走 else；没写 else 且穷尽时
     // 唯一到得了这里的只有 null——消息与 Kotlin 版一字不差。
-    public fun stSwitch(n : Node, env : Env) -> !int {
+    public fn stSwitch(n : Node, env : Env) -> !int {
         var subject = ev(kid(n, 0), env)!!
         var cases = kid(n, 1)
         var i = 0
@@ -3310,7 +3310,7 @@ public class Interp(prog : Node) {
 
     // `try` / `catch`：接住的**只有真错误**，控制流信号一律原样往上传
     // （否则 `try { rtn 5 } catch ...` 会把 return 吃掉）
-    public fun stTry(n : Node, env : Env) -> !int {
+    public fn stTry(n : Node, env : Env) -> !int {
         var sig = ""
         var bad = false
         var msg = ""
@@ -3333,7 +3333,7 @@ public class Interp(prog : Node) {
         rtn 0
     }
 
-    public fun stThisCall(n : Node, env : Env) -> !int {
+    public fn stThisCall(n : Node, env : Env) -> !int {
         var c = env.curClass()
         var o = env.thisObj()
         if (c == null || o == null) { fail "17c 解释器：this(...) 不在构造器里" }
@@ -3345,9 +3345,9 @@ public class Interp(prog : Node) {
 
     // ------------------------------------------------------------------ 入口
 
-    public fun runMain() -> !int {
+    public fn runMain() -> !int {
         var m = findFunc("main")
-        if (m == null) { fail "找不到入口函数：需要 fun main() -> void { ... }" }
+        if (m == null) { fail "找不到入口函数：需要 fn main() -> void { ... }" }
         if (m!!.pcount != 0) {
             fail "入口函数 main 不能有参数：JVM 只认 main(String[])，rsf 里也没有地方给它传参"
         }
@@ -3362,7 +3362,7 @@ public class Interp(prog : Node) {
 // 解析失败时 `fail`（和 Kotlin 版 `rsf run` 遇错抛 RsfError 是同一条路）。
 //
 // 返回 `!int`（恒 0）而不是 `!void`：rsf 的 `!void` 写不出 `!!`，调用点会很难看。
-public fun runSource(source : string) -> !int {
+public fn runSource(source : string) -> !int {
     var ast = parseSource(source)
     if (ast.kind == NodeKind.ERROR) {
         fail "解析失败：" + attr(ast, "message")
@@ -3376,7 +3376,7 @@ public fun runSource(source : string) -> !int {
 }
 
 // 已经有树时直接跑（测试与入口都用得上：一次解析、多次跑）
-public fun runProgram(ast : Node) -> !int {
+public fn runProgram(ast : Node) -> !int {
     if (ast.kind == NodeKind.ERROR) {
         fail "解析失败：" + attr(ast, "message")
     }

@@ -1,4 +1,4 @@
-fun bigger(a : int, b : int) -> int {
+fn bigger(a : int, b : int) -> int {
     if (a > b) {
         rtn a
     } else {
@@ -6,7 +6,7 @@ fun bigger(a : int, b : int) -> int {
     }
 }
 
-fun main() -> void {
+fn main() -> void {
     var i : int = 0
     while (i < 3) {
         println("i = " + i)

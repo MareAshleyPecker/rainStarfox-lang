@@ -47,7 +47,7 @@ class InteropTest {
     @Test
     fun `byte 与 char 上的一元负号三条路都一致`() {
         val program = """
-            fun main() -> void {
+            fn main() -> void {
                 var b : byte = 5
                 var c : char = 'A'
                 println(-b)
@@ -88,7 +88,7 @@ class InteropTest {
     @Test
     fun `基础类型的一元与二元运算三条路都一致`() {
         val program = """
-            fun main() -> void {
+            fn main() -> void {
                 var b : byte = 5
                 var c : char = 'A'
                 var i : int = 7
@@ -176,7 +176,7 @@ class InteropTest {
         val program = """
             import java.util.HashMap
 
-            fun main() -> void {
+            fn main() -> void {
                 var m : HashMap&<string, int> = new HashMap&<string, int>()
                 m.put("a", 7)
                 m.put("b", 9)
@@ -230,7 +230,7 @@ class InteropTest {
         val program = """
             import java.util.HashMap
 
-            fun main() -> void {
+            fn main() -> void {
                 var m : HashMap&<string, int> = new HashMap&<string, int>()
                 m.put("a", 1)
                 m.put("a", 2)
@@ -278,11 +278,11 @@ class InteropTest {
                     this(null, "root")
                 }
 
-                public fun define(name : string, value : Val) -> void {
+                public fn define(name : string, value : Val) -> void {
                     table.put(name, value)
                 }
 
-                public fun lookup(name : string) -> ?Val {
+                public fn lookup(name : string) -> ?Val {
                     var e : ?Env = this
                     while (e != null) {
                         var hit : ?Val = e!!.table.get(name)
@@ -294,16 +294,16 @@ class InteropTest {
                     rtn null
                 }
 
-                public fun has(name : string) -> bool {
+                public fn has(name : string) -> bool {
                     rtn table.containsKey(name)
                 }
 
-                public fun count() -> int {
+                public fn count() -> int {
                     rtn table.size()
                 }
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var global = new Env()
                 global.define("x", new Val("int"))
                 global.define("y", new Val("string"))
@@ -348,7 +348,7 @@ class InteropTest {
                 var kind : string = k
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var strict : HashMap&<string, Val> = new HashMap&<string, Val>()
                 strict.put("only", new Val("bool"))
                 println("kind = " + strict.get("only").kind)
@@ -372,7 +372,7 @@ class InteropTest {
         val e = runCatching {
             Rsf.analyze(
                 source(
-                    "import java.util.HashMap\n\nfun main() -> void {\n" +
+                    "import java.util.HashMap\n\nfn main() -> void {\n" +
                         "    var m : HashMap&<string> = new HashMap&<string>()\n    rtn\n}\n",
                 ),
             )
@@ -397,7 +397,7 @@ class InteropTest {
             import java.io.File
             import java.util.ArrayList
 
-            fun main() -> void {
+            fn main() -> void {
                 var f = new File("one")
                 println("f = " + f.getName())
 
@@ -445,7 +445,7 @@ class InteropTest {
         val program = """
             import java.util.ArrayList
 
-            fun main() -> void {
+            fn main() -> void {
                 var l = new ArrayList&<string>()
                 l.add("hi")
                 var it = l.iterator()
@@ -480,7 +480,7 @@ class InteropTest {
         val program = """
             import java.util.ArrayList
 
-            fun main() -> void {
+            fn main() -> void {
                 var s0 = new StringBuilder()
                 var s1 = new StringBuilder(16)
                 var s2 = new StringBuilder("seed")
@@ -518,12 +518,12 @@ class InteropTest {
                 var x : int = x0
                 var y : int = y0
 
-                public fun sum() -> int {
+                public fn sum() -> int {
                     rtn x + y
                 }
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var p = new Point(1, 2)
                 println("sum = " + p.sum())
 
@@ -564,7 +564,7 @@ class InteropTest {
     @Test
     fun `从包私有父类继承的 JDK 方法两端一致`() {
         val program = """
-            fun main() -> void {
+            fn main() -> void {
                 var sb = new StringBuilder("seed")
                 println("len = " + sb.length())
                 println("charAt = " + sb.charAt(1))
@@ -605,7 +605,7 @@ class InteropTest {
             import org.objectweb.asm.ClassWriter
             import org.objectweb.asm.Opcodes
 
-            fun main() -> void {
+            fn main() -> void {
                 var cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES)
                 cw.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC, "AsmProbe", null, "java/lang/Object", null)
                 var mv = cw.visitMethod(Opcodes.ACC_PUBLIC + Opcodes.ACC_STATIC, "main", "([Ljava/lang/String;)V", null, null)
@@ -641,7 +641,7 @@ class InteropTest {
             import org.objectweb.asm.ClassWriter
             import org.objectweb.asm.Opcodes
 
-            fun emit() -> byte[] {
+            fn emit() -> byte[] {
                 var cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES)
                 cw.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC, "RsfMadeClass", null, "java/lang/Object", null)
                 var mv = cw.visitMethod(Opcodes.ACC_PUBLIC + Opcodes.ACC_STATIC, "answer", "()I", null, null)
@@ -654,7 +654,7 @@ class InteropTest {
                 rtn cw.toByteArray()
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var bytes : byte[] = emit()
                 println("bytes = " + bytes.length)
                 println("magic ok = " + (bytes[0] == toByte(-54)))

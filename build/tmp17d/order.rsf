@@ -1,9 +1,9 @@
 public class Holder {
-    public fun value() -> int { rtn 7 }
+    public fn value() -> int { rtn 7 }
     constructor(x : int) { }
 }
 
-public fun main() -> void {
+public fn main() -> void {
     var h = new Holder(1)
     println("x = " + h.value())
 }

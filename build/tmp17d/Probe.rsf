@@ -4,11 +4,11 @@ import org.objectweb.asm.ClassWriter
 import org.objectweb.asm.Label
 import org.objectweb.asm.Handle
 
-fun recipe() -> string {
+fn recipe() -> string {
     rtn "" + toChar(1) + toChar(1)
 }
 
-fun buildGen() -> byte[] {
+fn buildGen() -> byte[] {
     var cw = new ClassWriter(3)
     cw.visit(61, 49, "Gen", null, "java/lang/Object", null)
     cw.visitSource("Gen.rsf", null)
@@ -63,7 +63,7 @@ fun buildGen() -> byte[] {
     rtn cw.toByteArray()
 }
 
-fun main() -> void {
+fn main() -> void {
     var bytes = buildGen()
     println("len = " + bytes.length)
     try {

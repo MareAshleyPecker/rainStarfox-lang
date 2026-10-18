@@ -39,14 +39,14 @@ class OverrideTest {
         val program =
             """
             public interface Greeter {
-                fun greet(n : string) -> string
+                fn greet(n : string) -> string
             }
             class Dog : Greeter {
-                public fun greet(n : string) -> string {
+                public fn greet(n : string) -> string {
                     rtn "woof"
                 }
             }
-            fun main() -> void {
+            fn main() -> void {
                 var g : Greeter = new Dog()
                 println(g.greet("a"))
                 rtn
@@ -64,15 +64,15 @@ class OverrideTest {
     fun `override 与权限修饰词两种顺序都收`() {
         val text =
             "public interface Greeter {\n" +
-                "    fun greet(n : string) -> string\n" +
+                "    fn greet(n : string) -> string\n" +
                 "}\n" +
                 "class DogA : Greeter {\n" +
-                "    override public fun greet(n : string) -> string {\n" +
+                "    override public fn greet(n : string) -> string {\n" +
                 "        rtn \"a\"\n" +
                 "    }\n" +
                 "}\n" +
                 "class DogB : Greeter {\n" +
-                "    public override fun greet(n : string) -> string {\n" +
+                "    public override fn greet(n : string) -> string {\n" +
                 "        rtn \"b\"\n" +
                 "    }\n" +
                 "}\n"
@@ -97,17 +97,17 @@ class OverrideTest {
         val program =
             """
             public interface Greeter {
-                fun greet(n : string) -> string
-                fun shout(n : string) -> string {
+                fn greet(n : string) -> string
+                fn shout(n : string) -> string {
                     rtn greet(n) + "!"
                 }
             }
             class Dog : Greeter {
-                public override fun greet(n : string) -> string {
+                public override fn greet(n : string) -> string {
                     rtn "woof-" + n
                 }
             }
-            fun main() -> void {
+            fn main() -> void {
                 var g : Greeter = new Dog()
                 println(g.greet("a"))
                 println(g.shout("b"))
@@ -125,7 +125,7 @@ class OverrideTest {
         val text =
             "import java.lang.Runnable\n" +
                 "class Robot : Runnable {\n" +
-                "    public override fun run() -> void {\n" +
+                "    public override fn run() -> void {\n" +
                 "        rtn\n" +
                 "    }\n" +
                 "}\n"
@@ -139,13 +139,13 @@ class OverrideTest {
     fun `类里 override 覆盖不到父接口方法就报错`() {
         val text =
             "public interface Greeter {\n" +
-                "    fun greet(n : string) -> string\n" +
+                "    fn greet(n : string) -> string\n" +
                 "}\n" +
                 "class Dog : Greeter {\n" +
-                "    public fun greet(n : string) -> string {\n" +
+                "    public fn greet(n : string) -> string {\n" +
                 "        rtn \"woof\"\n" +
                 "    }\n" +
-                "    public override fun shout(n : string) -> string {\n" +
+                "    public override fn shout(n : string) -> string {\n" +
                 "        rtn \"x\"\n" +
                 "    }\n" +
                 "}\n"
@@ -164,10 +164,10 @@ class OverrideTest {
         val text =
             "import java.lang.Runnable\n" +
                 "class Robot : Runnable {\n" +
-                "    public fun run() -> void {\n" +
+                "    public fn run() -> void {\n" +
                 "        rtn\n" +
                 "    }\n" +
-                "    public override fun walk() -> void {\n" +
+                "    public override fn walk() -> void {\n" +
                 "        rtn\n" +
                 "    }\n" +
                 "}\n"
@@ -187,7 +187,7 @@ class OverrideTest {
     fun `类里一个接口都没实现时 override 也报错`() {
         val text =
             "class Plain {\n" +
-                "    public override fun f() -> int {\n" +
+                "    public override fn f() -> int {\n" +
                 "        rtn 1\n" +
                 "    }\n" +
                 "}\n"
@@ -206,19 +206,19 @@ class OverrideTest {
     fun `接口里 override 覆盖父接口方法能过`() {
         val text =
             "public interface Named {\n" +
-                "    fun name() -> string\n" +
-                "    fun tag() -> string {\n" +
+                "    fn name() -> string\n" +
+                "    fn tag() -> string {\n" +
                 "        rtn \"named\"\n" +
                 "    }\n" +
                 "}\n" +
                 "public interface Person : Named {\n" +
-                "    override public fun name() -> string\n" +
-                "    public override fun tag() -> string {\n" +
+                "    override public fn name() -> string\n" +
+                "    public override fn tag() -> string {\n" +
                 "        rtn \"person\"\n" +
                 "    }\n" +
                 "}\n" +
                 "class Emp : Person {\n" +
-                "    public fun name() -> string {\n" +
+                "    public fn name() -> string {\n" +
                 "        rtn \"emp\"\n" +
                 "    }\n" +
                 "}\n"
@@ -230,7 +230,7 @@ class OverrideTest {
     fun `接口里 override 没有父接口可覆盖就报错`() {
         val text =
             "public interface Person {\n" +
-                "    override public fun name() -> string\n" +
+                "    override public fn name() -> string\n" +
                 "}\n"
         val e = assertFailsWith<RsfError> { Rsf.analyze(source(text)) }
         assertEquals("checker", e.phase)
@@ -246,7 +246,7 @@ class OverrideTest {
     @Test
     fun `顶层函数写 override 当场报错`() {
         val text =
-            "override fun f() -> void {\n" +
+            "override fn f() -> void {\n" +
                 "    rtn\n" +
                 "}\n"
         val e = assertFailsWith<RsfError> { Rsf.analyze(source(text)) }
@@ -281,7 +281,7 @@ class OverrideTest {
         assertEquals("parser", e.phase)
         assertTrue(e.detail.contains("实际读到 'var'"), e.detail)
         // 通用文案看不出是哪个词的问题，Parser 会在 override 这一支上补一句专说的
-        assertTrue(e.detail.contains("'override' 只能写在方法前面（fun 前）"), e.detail)
+        assertTrue(e.detail.contains("'override' 只能写在方法前面（fn 前）"), e.detail)
     }
 
     // ================================================================== helper

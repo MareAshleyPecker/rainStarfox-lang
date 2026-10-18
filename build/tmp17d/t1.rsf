@@ -1,4 +1,4 @@
-fun main() -> void {
+fn main() -> void {
     var x : int = 1 + 2
     println("x = " + x)
     rtn

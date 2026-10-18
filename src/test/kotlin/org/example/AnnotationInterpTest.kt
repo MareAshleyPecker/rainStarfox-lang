@@ -47,7 +47,7 @@ class AnnotationInterpTest {
                 }
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var m : Marker = new Marker("hi", 3)
                 println(m.value)
                 println(m.count)
@@ -68,7 +68,7 @@ class AnnotationInterpTest {
                 }
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var all : Marker = new Marker()
                 println(all.value + "/" + all.count)
                 var one : Marker = new Marker("q")
@@ -90,7 +90,7 @@ class AnnotationInterpTest {
                 }
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var m : Marker = new Marker("hi", 3)
                 println(m.value)
                 println(m.value())
@@ -113,7 +113,7 @@ class AnnotationInterpTest {
                 }
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var m : Marker = new Marker("hi")
                 println(m.value() + m.value())
                 println(m.value)
@@ -131,14 +131,14 @@ class AnnotationInterpTest {
             annotation Meta(tags : string[], flag : bool = true, big : long = 9L,
                             d : double = 1.5, b : byte = 2, ch : char = 'z') {
                 companion entity Impl {
-                    fun describe() -> string {
+                    fn describe() -> string {
                         return "tags=" + tags[0] + "," + tags.length + " flag=" + flag +
                             " big=" + big + " d=" + d + " b=" + b + " ch=" + ch
                     }
                 }
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var ts : string[] = new string[2]
                 ts[0] = "aa"
                 var m : Meta = new Meta(ts, false)
@@ -172,17 +172,17 @@ class AnnotationInterpTest {
             annotation Marker(value : string = "d", count : int = 0) {
                 companion entity Impl {
                     var hits : int = 0
-                    fun describe() -> string {
+                    fn describe() -> string {
                         return value + "/" + count
                     }
-                    fun bump() -> int {
+                    fn bump() -> int {
                         hits = hits + 1
                         return hits
                     }
                 }
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var c : Marker::Impl = new Marker("hi", 3)
                 println(c.describe())
                 println(c.bump())
@@ -200,18 +200,18 @@ class AnnotationInterpTest {
         parity(
             """
             interface Namer {
-                fun name() -> string
+                fn name() -> string
             }
 
             annotation Marker(value : string = "d") {
                 companion entity Impl : Namer {
-                    fun name() -> string {
+                    fn name() -> string {
                         return "n:" + value
                     }
                 }
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var c : Marker::Impl = new Marker("hi")
                 var n : Namer = c
                 println(n.name())
@@ -231,16 +231,16 @@ class AnnotationInterpTest {
             """
             annotation Marker(value : string = "d", count : int = 0) {
                 companion entity Impl {
-                    fun describe() -> string {
+                    fn describe() -> string {
                         return value + "/" + count
                     }
-                    fun onlyValue() -> string {
+                    fn onlyValue() -> string {
                         return value
                     }
                 }
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var c : Marker::Impl = new Marker("hi", 3)
                 println(c.describe())
                 println(c.onlyValue())
@@ -257,16 +257,16 @@ class AnnotationInterpTest {
             """
             annotation Marker(value : string = "d", count : int = 0) {
                 companion entity Impl {
-                    fun viaAccessor() -> string {
+                    fn viaAccessor() -> string {
                         return value() + "/" + count()
                     }
-                    fun mixed() -> string {
+                    fn mixed() -> string {
                         return value + "/" + count()
                     }
                 }
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var c : Marker::Impl = new Marker("hi", 3)
                 println(c.viaAccessor())
                 println(c.mixed())
@@ -285,13 +285,13 @@ class AnnotationInterpTest {
             """
             annotation Marker(value : string = "d", count : int = 0) {
                 companion entity Impl {
-                    fun describe() -> string {
+                    fn describe() -> string {
                         return value + "/" + count
                     }
                 }
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var a : Marker::Impl = new Marker::Impl("hi", 3)
                 var b : Marker::Impl = new Marker("hi", 3)
                 println(a.describe())
@@ -314,13 +314,13 @@ class AnnotationInterpTest {
                     """
                     annotation Marker(value : string = "d") {
                         companion entity Impl {
-                            fun describe() -> string {
+                            fn describe() -> string {
                                 return value
                             }
                         }
                     }
 
-                    fun main() -> void {
+                    fn main() -> void {
                         var m : Marker = new Marker("hi")
                         println(m.describe())
                     }
@@ -341,7 +341,7 @@ class AnnotationInterpTest {
                     """
                     annotation Plain(v : string = "d")
 
-                    fun main() -> void {
+                    fn main() -> void {
                         var p : Plain = new Plain()
                         println(p.v)
                     }
@@ -361,13 +361,13 @@ class AnnotationInterpTest {
                 companion entity Impl {
                     constructor(value : string, count : int) {
                     }
-                    fun describe() -> string {
+                    fn describe() -> string {
                         return value + "/" + count
                     }
                 }
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var c : Marker::Impl = new Marker("hi", 3)
                 println(c.describe())
                 println(c.value)
@@ -385,13 +385,13 @@ class AnnotationInterpTest {
             """
             annotation Marker(tags : string[]) {
                 companion entity Impl {
-                    fun first() -> string {
+                    fn first() -> string {
                         return tags[0]
                     }
                 }
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var ts : string[] = new string[2]
                 ts[0] = "aa"
                 ts[1] = "bb"
@@ -426,13 +426,13 @@ class AnnotationInterpTest {
                 var name : string = "n"
 
                 @Marker(count = 1)
-                public fun hello() -> string {
+                public fn hello() -> string {
                     var m : Marker = new Marker("hi", 3)
                     return m.value() + "/" + m.count()
                 }
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var t : Tagged = new Tagged()
                 println(t.hello())
                 println(t.name)
@@ -451,13 +451,13 @@ class AnnotationInterpTest {
                 var name : string = "n"
 
                 @Marker("1")
-                public fun hello() -> string {
+                public fn hello() -> string {
                     var m : Marker = new Marker("hi", 3)
                     return m.value() + "/" + m.count()
                 }
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var t : Tagged = new Tagged()
                 println(t.hello())
                 println(t.name)
@@ -485,7 +485,7 @@ class AnnotationInterpTest {
                         }
                     }
 
-                    fun main() -> void {
+                    fn main() -> void {
                         var m : Marker = new Marker(value = "hi")
                         println(m.value)
                     }
@@ -502,17 +502,17 @@ class AnnotationInterpTest {
         parity(
             """
             interface Greeter {
-                fun greet(n : string) -> string
+                fn greet(n : string) -> string
             }
 
             class Dog : Greeter {
                 var name : string = "d"
-                fun greet(n : string) -> string {
+                fn greet(n : string) -> string {
                     return "woof:" + n
                 }
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var d : Dog = new Dog()
                 println(d.greet("a"))
             }

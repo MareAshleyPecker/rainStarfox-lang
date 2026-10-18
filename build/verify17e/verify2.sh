@@ -10,14 +10,14 @@ M=$ROOT/multi
 echo "=== 1) 多文件 SOURCE_IMPORT 端到端：Kotlin 装载器 vs rsf 装载器 ==="
 rm -rf "$M"; mkdir -p "$M"
 cat > "$M/lib.rsf" <<'EOF'
-public fun twice(x : int) -> int {
+public fn twice(x : int) -> int {
     rtn x * 2
 }
 
 public class Point(int x0, int y0) {
     imutvar x : int = x0
     imutvar y : int = y0
-    public fun sum() -> int {
+    public fn sum() -> int {
         rtn x + y
     }
 }
@@ -25,7 +25,7 @@ EOF
 cat > "$M/App.rsf" <<'EOF'
 import "lib.rsf"
 
-public fun main() {
+public fn main() {
     var p = Point(3, 4)
     println("sum=" + intToString(p.sum()))
     println("twice=" + intToString(twice(21)))

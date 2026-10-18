@@ -14,7 +14,7 @@ enum class TokenKind(val text: String) {
     IDENT("标识符"),
 
     // ---- 关键字 ----
-    KW_FUN("fun"),
+    KW_FUN("fn"),
     KW_RTN("rtn"),
     KW_RETURN("return"),
     KW_IMPORT("import"),
@@ -40,7 +40,7 @@ enum class TokenKind(val text: String) {
     KW_OVERRIDE("override"),
     /**
      * `final` 修饰词（阶段 25，语义在阶段 27 反转）：**收窄**默认开放的类或方法——
-     * `final class` 不可被继承，`final fun` 不可被覆盖。
+     * `final class` 不可被继承，`final fn` 不可被覆盖。
      *
      * 阶段 27 删掉了 `open`（旧法「默认 final」的记录见 DESIGN-25 §4 与 DESIGN-27）。
      */
@@ -63,7 +63,7 @@ enum class TokenKind(val text: String) {
      */
     KW_ENUM("enum"),
     /**
-     * 接口声明（阶段 20）：`public interface Greeter { fun greet(name: string) -> string }`。
+     * 接口声明（阶段 20）：`public interface Greeter { fn greet(name: string) -> string }`。
      *
      * 注意与阶段 21 的 `@interface`（注解类型，JVM 侧 `ACC_ANNOTATION|ACC_INTERFACE`）
      * 是**两回事**：那是个带 `@` 前缀的独立记号/独立节点，别把这条关键字复用过去。
@@ -116,7 +116,7 @@ enum class TokenKind(val text: String) {
      * `super`（阶段 25）：父类接收者。两种写法 `super.方法()` / `super(接口).方法()`。
      *
      * 它是**表达式起始词**，所以不进 [isModifierKeyword]——否则 `modifierRun()`
-     * 会把它当成排在 `fun` 前面的修饰词数进去，`super(1)` 这种构造委托会被
+     * 会把它当成排在 `fn` 前面的修饰词数进去，`super(1)` 这种构造委托会被
      * 误判成「修饰词后面写了个 '('」。
      */
     KW_SUPER("super"),
@@ -195,7 +195,7 @@ enum class TokenKind(val text: String) {
      * 写法固定是「`@` 写在被标注的声明前面」，和 `public` / `static` / `override`
      * 这些修饰词**顺序任意、可连写多个**；v1 的可标注位置是类 / 接口 / 注解声明 /
      * 方法 / 字段，参数与局部变量上写 `@` 会在语法阶段报错。
-     * 注意它不参与返回子句：`fun f() :: int` 仍然报旧错（`::` 只留给 `A::B` 嵌套类型）。
+     * 注意它不参与返回子句：`fn f() :: int` 仍然报旧错（`::` 只留给 `A::B` 嵌套类型）。
      */
     AT("@"),
     QUESTION("?"),
@@ -266,7 +266,7 @@ enum class TokenKind(val text: String) {
             this == KW_DOUBLE || this == KW_STRING || this == KW_BOOL ||
             this == KW_BYTE || this == KW_CHAR
 
-    /** 函数定义关键字（目前只有 fun 一个）。 */
+    /** 函数定义关键字（目前只有 fn 一个）。 */
     val isFunKeyword: Boolean
         get() = this == KW_FUN
 
@@ -283,25 +283,25 @@ enum class TokenKind(val text: String) {
         get() = this == KW_PUBLIC || this == KW_PRIVATE || this == KW_PROTECTED
 
     /**
-     * 静态修饰符（<static>），写在 <ControlType> 和 fun 之间。 */
+     * 静态修饰符（<static>），写在 <ControlType> 和 fn 之间。 */
     val isStaticKeyword: Boolean
         get() = this == KW_STATIC
 
     /**
      * 继承修饰词（阶段 25；阶段 27 起只剩 `final` / `abstract`）。
      *
-     * 两者都是**声明级**的修饰词（写在 `class` / `fun` / 字段前面），
+     * 两者都是**声明级**的修饰词（写在 `class` / `fn` / 字段前面），
      * 语义见 [KW_FINAL] / [KW_ABSTRACT]。
      */
     val isInheritKeyword: Boolean
         get() = this == KW_FINAL || this == KW_ABSTRACT
 
     /**
-     * 方法修饰词：`fun` 前面那串能按**任意顺序**写的词
+     * 方法修饰词：`fn` 前面那串能按**任意顺序**写的词
      * （`public` / `private` / `protected` / `static` / `override` / `final` / `abstract`）。
      *
-     * 拿来「数一数 fun 前面到底排了几个修饰词」，好让 Parser 在
-     * `override public fun` 和 `public override fun` 两种写法上看到同一个 `fun`。
+     * 拿来「数一数 fn 前面到底排了几个修饰词」，好让 Parser 在
+     * `override public fn` 和 `public override fn` 两种写法上看到同一个 `fn`。
      */
     val isModifierKeyword: Boolean
         get() = isControlKeyword || isStaticKeyword || isInheritKeyword || this == KW_OVERRIDE

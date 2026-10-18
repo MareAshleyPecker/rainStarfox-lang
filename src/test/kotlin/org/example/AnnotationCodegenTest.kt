@@ -62,7 +62,7 @@ class AnnotationCodegenTest {
                 }
             }
 
-            fun main() -> void { println("ok") }
+            fn main() -> void { println("ok") }
             """,
             "RsfAnnHead",
         )
@@ -96,7 +96,7 @@ class AnnotationCodegenTest {
 
             enum Level { LOW, HIGH }
 
-            fun main() -> void { println("ok") }
+            fn main() -> void { println("ok") }
             """,
             "RsfAnnDefault",
         )
@@ -128,7 +128,7 @@ class AnnotationCodegenTest {
             @Marker("cls")
             class Demo { }
 
-            fun main() -> void { println("ok") }
+            fn main() -> void { println("ok") }
             """,
             "RsfAnnRetention",
         )
@@ -169,7 +169,7 @@ class AnnotationCodegenTest {
             @Marker(name = "cls", n = 7, flag = true, ratio = 1.5, letter = 'z', small = 3, big = 9)
             class Demo { }
 
-            fun main() -> void { println("ok") }
+            fn main() -> void { println("ok") }
             """,
             "RsfAnnClassUse",
         )
@@ -201,10 +201,10 @@ class AnnotationCodegenTest {
 
             class Demo {
                 @Marker("method")
-                fun greet() -> string { rtn "hi" }
+                fn greet() -> string { rtn "hi" }
             }
 
-            fun main() -> void { println("ok") }
+            fn main() -> void { println("ok") }
             """,
             "RsfAnnMethodUse",
         )
@@ -236,7 +236,7 @@ class AnnotationCodegenTest {
                 var tag : string = "t"
             }
 
-            fun main() -> void { println("ok") }
+            fn main() -> void { println("ok") }
             """,
             "RsfAnnFieldUse",
         )
@@ -262,10 +262,10 @@ class AnnotationCodegenTest {
 
             @Marker("iface")
             interface Named {
-                fun name() -> string
+                fn name() -> string
             }
 
-            fun main() -> void { println("ok") }
+            fn main() -> void { println("ok") }
             """,
             "RsfAnnIfaceUse",
         )
@@ -287,7 +287,7 @@ class AnnotationCodegenTest {
             @Marker("meta")
             annotation Other(text : string = "o")
 
-            fun main() -> void { println("ok") }
+            fn main() -> void { println("ok") }
             """,
             "RsfAnnMetaUse",
         )
@@ -320,7 +320,7 @@ class AnnotationCodegenTest {
             @Marker(level = Level.HIGH)
             class Demo { }
 
-            fun main() -> void { println("ok") }
+            fn main() -> void { println("ok") }
             """,
             "RsfAnnEnumValue",
         )
@@ -361,12 +361,12 @@ class AnnotationCodegenTest {
             annotation Marker(value : string = "x") {
                 companion entity Impl : Runnable {
                     var hits : int = 0
-                    fun run() -> void { hits = hits + 1 }
-                    fun describe() -> string { rtn value }
+                    fn run() -> void { hits = hits + 1 }
+                    fn describe() -> string { rtn value }
                 }
             }
 
-            fun main() -> void { println("ok") }
+            fn main() -> void { println("ok") }
             """,
             "RsfAnnCompanion",
         )
@@ -411,11 +411,11 @@ class AnnotationCodegenTest {
             annotation Marker(value : string = "x", count : int = 0, level : Level, ratio : double = 0.0) {
                 companion entity Impl {
                     var hits : int = 0
-                    fun describe() -> string { rtn value + "/" + count }
+                    fn describe() -> string { rtn value + "/" + count }
                 }
             }
 
-            fun main() -> void { println("ok") }
+            fn main() -> void { println("ok") }
             """,
             "RsfAnnCompanionCtor",
         )
@@ -445,7 +445,7 @@ class AnnotationCodegenTest {
                 }
             }
 
-            fun main() -> void { println("ok") }
+            fn main() -> void { println("ok") }
             """,
             "RsfAnnAnnotationType",
         )
@@ -475,7 +475,7 @@ class AnnotationCodegenTest {
             @Marker(value = "cls", count = 7)
             class Demo { }
 
-            fun main() -> void { println("ok") }
+            fn main() -> void { println("ok") }
             """,
             "RsfAnnTypeAccessor",
         )
@@ -516,10 +516,10 @@ class AnnotationCodegenTest {
                 var tag : string = "t"
 
                 @Marker("method")
-                fun greet() -> string { rtn "hi" }
+                fn greet() -> string { rtn "hi" }
             }
 
-            fun main() -> void { println("ok") }
+            fn main() -> void { println("ok") }
             """,
             "RsfAnnMemberAccessor",
         )
@@ -562,17 +562,17 @@ class AnnotationCodegenTest {
 
             @Marker("iface")
             interface Named {
-                fun name() -> string
+                fn name() -> string
             }
 
             @Marker("meta")
             annotation Doc(note : string = "n")
 
             class N : Named {
-                fun name() -> string { rtn "n" }
+                fn name() -> string { rtn "n" }
             }
 
-            fun main() -> void { println(new N().name()) }
+            fn main() -> void { println(new N().name()) }
             """,
             "RsfAnnIfaceHost",
         )
@@ -611,7 +611,7 @@ class AnnotationCodegenTest {
             @Marker("only")
             class Demo { }
 
-            fun main() -> void { println("ok") }
+            fn main() -> void { println("ok") }
             """,
             "RsfAnnAccessorDefault",
         )
@@ -645,7 +645,7 @@ class AnnotationCodegenTest {
             @Bbb("onB")
             class Demo { }
 
-            fun main() -> void { println("ok") }
+            fn main() -> void { println("ok") }
             """,
             "RsfAnnTwoAccessors",
         )
@@ -672,7 +672,7 @@ class AnnotationCodegenTest {
                 }
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var m : Marker = new Marker("hi")
                 println(m.value())
                 println(m.value)
@@ -713,7 +713,7 @@ class AnnotationCodegenTest {
                 @Marker(xs = new int[3])
                 class Demo { }
 
-                fun main() -> void { println("ok") }
+                fn main() -> void { println("ok") }
                 """,
                 "RsfAnnArrayValue",
             )
@@ -737,7 +737,7 @@ class AnnotationCodegenTest {
                 @Marker("a" + "b")
                 class Demo { }
 
-                fun main() -> void { println("ok") }
+                fn main() -> void { println("ok") }
                 """,
                 "RsfAnnNonConst",
             )
@@ -754,15 +754,15 @@ class AnnotationCodegenTest {
         val c = compile(
             """
             interface Greeter {
-                fun greet(n : string) -> string
+                fn greet(n : string) -> string
             }
 
             class Dog : Greeter {
                 var name : string = "d"
-                fun greet(n : string) -> string { rtn "woof" }
+                fn greet(n : string) -> string { rtn "woof" }
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var d : Dog = new Dog()
                 println(d.greet("a"))
             }
@@ -800,7 +800,7 @@ class AnnotationCodegenTest {
             @Marker("cls", 2)
             class Demo { }
 
-            fun main() -> void { println("ok") }
+            fn main() -> void { println("ok") }
             """,
             "RsfAnnNoCompanion",
         )
@@ -820,11 +820,11 @@ class AnnotationCodegenTest {
             """
             annotation Plain(v : string = "d", n : int = 1) {
                 companion entity Impl {
-                    fun describe() -> string { rtn v + "/" + n }
+                    fn describe() -> string { rtn v + "/" + n }
                 }
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var p : Plain::Impl = new Plain()
                 println(p.describe())
                 var q : Plain::Impl = new Plain("q")
@@ -853,7 +853,7 @@ class AnnotationCodegenTest {
             @Marker("cls")
             class Demo { }
 
-            fun main() -> void { println("ok") }
+            fn main() -> void { println("ok") }
             """,
             "RsfAnnPkg",
         )

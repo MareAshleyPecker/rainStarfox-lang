@@ -27,18 +27,18 @@
 // 拼错一个 kind 要等对拍测试报「第 N 条不一样」才会发现。对拍测试因此格外重要。
 
 public class TokenKind {
-    public static fun eof() -> string { rtn "EOF" }
-    public static fun ident() -> string { rtn "IDENT" }
+    public static fn eof() -> string { rtn "EOF" }
+    public static fn ident() -> string { rtn "IDENT" }
     // 阶段 28b：反引号标签名（`` `名字` ``）。Kotlin 版是 TokenKind.LABEL_NAME
-    public static fun labelName() -> string { rtn "LABEL_NAME" }
-    public static fun intLit() -> string { rtn "INT_LIT" }
-    public static fun longLit() -> string { rtn "LONG_LIT" }
-    public static fun floatLit() -> string { rtn "FLOAT_LIT" }
-    public static fun doubleLit() -> string { rtn "DOUBLE_LIT" }
-    public static fun stringLit() -> string { rtn "STRING_LIT" }
-    public static fun charLit() -> string { rtn "CHAR_LIT" }
+    public static fn labelName() -> string { rtn "LABEL_NAME" }
+    public static fn intLit() -> string { rtn "INT_LIT" }
+    public static fn longLit() -> string { rtn "LONG_LIT" }
+    public static fn floatLit() -> string { rtn "FLOAT_LIT" }
+    public static fn doubleLit() -> string { rtn "DOUBLE_LIT" }
+    public static fn stringLit() -> string { rtn "STRING_LIT" }
+    public static fn charLit() -> string { rtn "CHAR_LIT" }
     // 只在 lexSafe 里出现：Kotlin 版遇到这种输入是抛 RsfError，rsf 版没有异常可抛（见文件末尾说明）
-    public static fun illegal() -> string { rtn "ILLEGAL" }
+    public static fn illegal() -> string { rtn "ILLEGAL" }
 }
 
 // ---------------------------------------------------------------- 一个 token
@@ -54,10 +54,10 @@ public class Token(kind : string, text : string, line : int, col : int) {
     var line : int = line
     var col : int = col
 
-    public fun kindName() -> string { rtn kind }
+    public fn kindName() -> string { rtn kind }
 
     // 关键字 true / false 的 literal 是 Boolean，别的关键字是 null（不打印）。
-    public fun literalType() -> string {
+    public fn literalType() -> string {
         if (kind == TokenKind.intLit()) { rtn "Int" }
         if (kind == TokenKind.longLit()) { rtn "Long" }
         if (kind == TokenKind.floatLit()) { rtn "Float" }
@@ -74,7 +74,7 @@ public class Token(kind : string, text : string, line : int, col : int) {
     // 数字字面量**要去掉宽度后缀**：源码写 `9000000000L`，token 文本是 `9000000000l`，
     // 但 Kotlin 版的 literal 是 Long 9000000000 —— `rsf lex` 打的是后者。
     // Float / Double 还要按 JVM 的显示规则补 `.0`（`7d` 的值是 `7.0`）。
-    public fun literalValue() -> string {
+    public fn literalValue() -> string {
         if (kind == TokenKind.charLit()) { rtn charLiteralValue(text) }
         if (kind == TokenKind.longLit()) { rtn dropLast(text) }
         if (kind == TokenKind.floatLit()) { rtn decimalText(dropLast(text)) }
@@ -86,7 +86,7 @@ public class Token(kind : string, text : string, line : int, col : int) {
         rtn text
     }
 
-    public fun hasLiteral() -> bool {
+    public fn hasLiteral() -> bool {
         if (kind == TokenKind.stringLit()) { rtn true }
         if (kind == TokenKind.charLit()) { rtn true }
         if (kind == TokenKind.intLit()) { rtn true }
@@ -105,7 +105,7 @@ public class Token(kind : string, text : string, line : int, col : int) {
 // ---------------------------------------------------------------- 小工具
 
 // 源码里第 i 个字符；越界时回一个不可能出现在源码里的 '?'，用 peekAt(i) 先判边界
-fun charAtOr(s : string, i : int) -> char {
+fn charAtOr(s : string, i : int) -> char {
     if (i < 0) { rtn '?' }
     if (i >= s.length()) { rtn '?' }
     rtn s.charAt(i)
@@ -114,7 +114,7 @@ fun charAtOr(s : string, i : int) -> char {
 // 空格 / 制表 / 换行 / 回车 —— 与 Kotlin 版 skipTrivia 里那四个判断**逐字对应**：
 // 这里**不能**用 isWhitespace，那个还认垂直制表符 \u000B、换页 \u000C 之类，
 // 而 Kotlin 版会把它当成「不认识的字符」报错。差别很小，但对拍会抓到。
-fun isTriviaChar(c : char) -> bool {
+fn isTriviaChar(c : char) -> bool {
     if (c == ' ') { rtn true }
     if (charToInt(c) == 9) { rtn true }
     if (charToInt(c) == 10) { rtn true }
@@ -123,7 +123,7 @@ fun isTriviaChar(c : char) -> bool {
 }
 
 // Kotlin 版：c.isLetter() || c == '_'
-fun isIdentStart(c : char) -> bool {
+fn isIdentStart(c : char) -> bool {
     if (isLetter(c)) { rtn true }
     if (charToInt(c) == 95) { rtn true }
     rtn false
@@ -131,14 +131,14 @@ fun isIdentStart(c : char) -> bool {
 
 // Kotlin 版：c.isLetterOrDigit() || c == '_'
 // （Kotlin 的 Char.isLetterOrDigit 就是 Character.isLetterOrDigit，与内置的 isLetter + isDigit 等价）
-fun isIdentPart(c : char) -> bool {
+fn isIdentPart(c : char) -> bool {
     if (isLetter(c)) { rtn true }
     if (isDigit(c)) { rtn true }
     if (charToInt(c) == 95) { rtn true }
     rtn false
 }
 
-fun isAsciiDigit(c : char) -> bool {
+fn isAsciiDigit(c : char) -> bool {
     if (charToInt(c) < 48) { rtn false }
     if (charToInt(c) > 57) { rtn false }
     rtn true
@@ -146,7 +146,7 @@ fun isAsciiDigit(c : char) -> bool {
 
 // 是不是 ASCII 字母 a..z / A..Z
 // （用 charToInt 直接比码点：rsf 的 isLetter 认 Unicode 字母，这里只要 ASCII 那两段）
-fun isAsciiLetter(c : char) -> bool {
+fn isAsciiLetter(c : char) -> bool {
     var n = charToInt(c)
     if (n >= 97) {
         if (n <= 122) { rtn true }
@@ -159,13 +159,13 @@ fun isAsciiLetter(c : char) -> bool {
 }
 
 // 去掉最后一个字符（`9000000000l` -> `9000000000`）
-fun dropLast(s : string) -> string {
+fn dropLast(s : string) -> string {
     if (s.length() == 0) { rtn s }
     rtn s.substring(0, s.length() - 1)
 }
 
 // 有没有小数点（判断 f / d 后缀的数字该不该补 ".0"）
-fun hasDot(s : string) -> bool {
+fn hasDot(s : string) -> bool {
     for (var i = 0; i < s.length(); i = i + 1) {
         if (s.charAt(i) == '.') { rtn true }
     }
@@ -175,20 +175,20 @@ fun hasDot(s : string) -> bool {
 // Double / Float 的显示：JVM 的 Double.toString 对整数值也是 "7.0" 而不是 "7"。
 // 源码写 `7d` / `7f` 时文本里没有小数点，得补一个 —— 不补的话 `rsf lex` 的
 // `= 7 (Double)` 与它的 `= 7.0 (Double)` 就对不上了（实测就是这么发现的）。
-fun decimalText(s : string) -> string {
+fn decimalText(s : string) -> string {
     if (hasDot(s)) { rtn s }
     rtn s + ".0"
 }
 
 // 最后一个字符是不是那个后缀字母（大小写都算）
-fun endsWithLetter(s : string, want : char) -> bool {
+fn endsWithLetter(s : string, want : char) -> bool {
     if (s.length() == 0) { rtn false }
     var last = s.charAt(s.length() - 1)
     if (last == want) { rtn true }
     rtn false
 }
 
-fun isHexDigit(c : char) -> bool {
+fn isHexDigit(c : char) -> bool {
     if (isAsciiDigit(c)) { rtn true }
     var lower = toLower(c)
     if (charToInt(lower) >= 97) {
@@ -198,14 +198,14 @@ fun isHexDigit(c : char) -> bool {
 }
 
 // 十六进制一位的值（调用前要确保 isHexDigit 为真）
-fun hexDigitValue(c : char) -> int {
+fn hexDigitValue(c : char) -> int {
     if (isAsciiDigit(c)) { rtn charToInt(c) - 48 }
     var lower = toLower(c)
     rtn charToInt(lower) - 87
 }
 
 // 数字字面量的「去下划线」：Kotlin 版 raw 是 `sb.toString().replace("_", "")`
-fun stripUnderscore(s : string) -> string {
+fn stripUnderscore(s : string) -> string {
     var out = ""
     for (var i = 0; i < s.length(); i = i + 1) {
         var c = s.charAt(i)
@@ -217,7 +217,7 @@ fun stripUnderscore(s : string) -> string {
 }
 
 // 数字宽度（long）后缀：l / L / f / F / d / D，统一成小写；没有就返回 '?'
-fun numberSuffix(c : char) -> char {
+fn numberSuffix(c : char) -> char {
     var lower = toLower(c)
     if (lower == 'l') { rtn 'l' }
     if (lower == 'f') { rtn 'f' }
@@ -225,7 +225,7 @@ fun numberSuffix(c : char) -> char {
     rtn '?'
 }
 
-fun isNumberSuffix(c : char) -> bool {
+fn isNumberSuffix(c : char) -> bool {
     if (numberSuffix(c) == '?') { rtn false }
     rtn true
 }
@@ -256,9 +256,14 @@ fun isNumberSuffix(c : char) -> bool {
 // 与 Kotlin 版 Lexer.kt:89-90 的两个 put 对齐。它们是**后缀运算符关键字**
 // （`x as A` / `x ?as A` / `x is A` / `x !is A`），不是修饰词、也不是类型关键字：
 // 别把这两个塞进 isTypeKeyword —— parseCastTarget 找的是它们**后面**那个类型。
+//
+// 2026-10-18（阶段 29，关键字改名）：`fun` → `fn`。**不是加词、也不是删词**，表仍是
+// 56 项，只是 `KW_FUN` 那一项的字面量换成 `fn`；记号名 `KW_FUN` 按工单要求保持不动。
+// 旧词 `fun` 从这一刻起落在表外，由 readIdentOrKeyword 里那条独立判断拦下并给逐字文案
+// （与 Kotlin 版 Lexer.kt 的 LEGACY_FUN_MESSAGE 一字不差）。
 
-fun keywordKind(word : string) -> string {
-    if (word == "fun") { rtn "KW_FUN" }
+fn keywordKind(word : string) -> string {
+    if (word == "fn") { rtn "KW_FUN" }
     if (word == "rtn") { rtn "KW_RTN" }
     if (word == "return") { rtn "KW_RETURN" }
     if (word == "import") { rtn "KW_IMPORT" }
@@ -330,11 +335,20 @@ fun keywordKind(word : string) -> string {
     rtn ""
 }
 
-// 老写法 `varis` 的统一文案：**不在这张关键字表里**（表要跟 Kotlin 版逐条对齐，57 项不变），
+// 老写法 `varis` 的统一文案：**不在这张关键字表里**（表要跟 Kotlin 版逐条对齐，56 项不变），
 // 拦截改在 readIdentOrKeyword 里单独做一次。文案与 Kotlin 版 Lexer.kt 的
 // LEGACY_VAR_MESSAGE **逐字相同**——差分测试里有一条把两边取出来比。
-fun legacyVarMessage() -> string {
+fn legacyVarMessage() -> string {
     rtn "'varis' 已改名为 'var'：请写成 'var x : int = 0'"
+}
+
+// 老写法 `fun` 的统一文案（2026-10-18 阶段 29 改名为 `fn`）：同样**不在这张关键字表里**
+// （表仍是 56 项，只是 KW_FUN 那一项的字面量换成了 `fn`），拦截同样在
+// readIdentOrKeyword 里单独做一次。文案与 Kotlin 版 Lexer.kt 的 LEGACY_FUN_MESSAGE
+// **逐字相同**（没有自动化对拍，靠 grep 逐字核对 + build/verify29/run-probes.sh 的
+// n1 负例验 rsf 侧，Kotlin 侧由 RsfTest 兜住）。
+fn legacyFnMessage() -> string {
+    rtn "'fun' 已改名为 'fn'：请写成 'fn main() { … }'"
 }
 
 // 单字符标点的 kind（Kotlin 版 readPunct 的 one(...) 那批）
@@ -342,7 +356,7 @@ fun legacyVarMessage() -> string {
 // 注意 `&` 不在这里走到：17b 起 readPunct 自己先看第二个字符是不是 `&`
 // （两个就是 ANDAND，一个才是 AMP），所以下面那条 `&` 分支只是**保底**，
 // 留着是为了万一以后有人把那段前置判断挪走时不会静默少一个记号。
-fun punctKind(c : char) -> string {
+fn punctKind(c : char) -> string {
     if (c == '(') { rtn "LPAREN" }
     if (c == ')') { rtn "RPAREN" }
     if (c == '{') { rtn "LBRACE" }
@@ -387,17 +401,17 @@ public class Lexer(source : string) {
 
     // ------------------------------------------------------------ 字符级
 
-    fun atEnd() -> bool {
+    fn atEnd() -> bool {
         if (pos >= src.length()) { rtn true }
         rtn false
     }
 
-    fun peekAt(offset : int) -> char {
+    fn peekAt(offset : int) -> char {
         rtn charAtOr(src, pos + offset)
     }
 
     // Kotlin 版 advance()：换行会把列号归 1，其余一律列号 +1
-    fun advance() -> char {
+    fn advance() -> char {
         var c = src.charAt(pos)
         pos = pos + 1
         if (charToInt(c) == 10) {
@@ -416,7 +430,7 @@ public class Lexer(source : string) {
     //   * `lexSafe()`  — 记下错误，再落一个 ILLEGAL token 继续往下切
     // 两种模式都走 `markFail`，位置消息因此完全一致。
 
-    fun markFail(message : string, atLine : int, atCol : int) -> void {
+    fn markFail(message : string, atLine : int, atCol : int) -> void {
         if (failed) { rtn }
         failed = true
         failLine = atLine
@@ -425,18 +439,18 @@ public class Lexer(source : string) {
     }
 
     // 出错位置就是当前位置（Kotlin 版那几个「走到一半发现不对」的分支都是这样报的）
-    fun failHere(message : string) -> void {
+    fn failHere(message : string) -> void {
         markFail(message, line, column)
     }
 
     // Kotlin 版这里抛异常；safe 模式下记一个 ILLEGAL token 继续走
-    fun addErrorToken(message : string, atLine : int, atCol : int) -> void {
+    fn addErrorToken(message : string, atLine : int, atCol : int) -> void {
         markFail(message, atLine, atCol)
         pushToken(new Token(TokenKind.illegal(), message, atLine, atCol))
     }
 
     // 一个位置的错误：按模式分流（每处错误只写一遍这段判断）
-    fun reportError(message : string, atLine : int, atCol : int) -> void {
+    fn reportError(message : string, atLine : int, atCol : int) -> void {
         if (safe) {
             addErrorToken(message, atLine, atCol)
         } else {
@@ -450,7 +464,7 @@ public class Lexer(source : string) {
 
     // ------------------------------------------------------------ 输出
 
-    fun pushToken(t : Token) -> void {
+    fn pushToken(t : Token) -> void {
         if (outCount >= out.length) {
             var bigger : Token[] = new Token[out.length * 2]
             for (var i = 0; i < outCount; i = i + 1) {
@@ -462,13 +476,13 @@ public class Lexer(source : string) {
         outCount = outCount + 1
     }
 
-    fun add(kind : string, text : string, startLine : int, startCol : int) -> void {
+    fn add(kind : string, text : string, startLine : int, startCol : int) -> void {
         pushToken(new Token(kind, text, startLine, startCol))
     }
 
     // ------------------------------------------------------------ 空白与注释
 
-    fun skipSpace() -> void {
+    fn skipSpace() -> void {
         var going = true
         while (going) {
             if (atEnd()) { rtn }
@@ -497,7 +511,7 @@ public class Lexer(source : string) {
         }
     }
 
-    fun skipBlockComment() -> void {
+    fn skipBlockComment() -> void {
         var startLine = line
         var startCol = column
         advance()
@@ -522,7 +536,7 @@ public class Lexer(source : string) {
 
     // ------------------------------------------------------------ 各种 token
 
-    fun readIdentOrKeyword() -> void {
+    fn readIdentOrKeyword() -> void {
         var startLine = line
         var startCol = column
         var word = ""
@@ -531,11 +545,15 @@ public class Lexer(source : string) {
             if (!isIdentPart(c)) { break }
             word = word + advance()
         }
-        // 老写法 `varis`（2026-10-11 改名为 `var`）：与 Kotlin 版 Lexer.kt 的
-        // readIdentOrKeyword 里那条判断**一一对应**。它**不在**关键字表里
-        // （keywordKind 里的 57 项要跟 Kotlin 版逐条对齐，不能多一项），
+        // 老写法 `fun`（2026-10-18 改名为 `fn`）与老写法 `varis`（2026-10-11 改名为 `var`）：
+        // 与 Kotlin 版 Lexer.kt 的 readIdentOrKeyword 里那两条判断**一一对应**。它们
+        // **不在**关键字表里（keywordKind 里的 56 项要跟 Kotlin 版逐条对齐，不能多一项），
         // 所以单独拦一次；文案也跟 Kotlin 版逐字相同（有差分测试守着）。
         // 位置取这个词的开头，与 Kotlin 版 `RsfError(.., at.line, at.column, ..)` 同口径。
+        if (word == "fun") {
+            reportError(legacyFnMessage(), startLine, startCol)
+            rtn
+        }
         if (word == "varis") {
             reportError(legacyVarMessage(), startLine, startCol)
             rtn
@@ -551,7 +569,7 @@ public class Lexer(source : string) {
     // 十进制 / long / float / double。
     // 注意两处 Kotlin 版的边界：`.` 后面**必须跟数字**才算小数点（所以 `1..5` 是
     // 1 / .. / 5 三个 token），后缀 l/L/f/F/d/D 只在最后吃一个。
-    fun readNumber() -> void {
+    fn readNumber() -> void {
         var startLine = line
         var startCol = column
         var raw = ""
@@ -611,7 +629,7 @@ public class Lexer(source : string) {
 
     // 字符串字面量：**允许跨行**（Kotlin 版为了 Go 风格 import 路径特意放开）。
     // 未识别的转义按「字面反斜杠 + 那个字符」算（Windows 路径 `.\a\b.rsf` 就靠这条）。
-    fun readString() -> void {
+    fn readString() -> void {
         var startLine = line
         var startCol = column
         advance()   // 开引号
@@ -651,7 +669,7 @@ public class Lexer(source : string) {
         add(TokenKind.stringLit(), value, startLine, startCol)
     }
 
-    fun stringEscape(e : char) -> string {
+    fn stringEscape(e : char) -> string {
         if (e == 'n') { rtn "\n" }
         if (e == 't') { rtn "\t" }
         if (e == 'r') { rtn "\r" }
@@ -665,7 +683,7 @@ public class Lexer(source : string) {
 
     // 字符字面量（阶段 16）：单引号里正好一个字符，且**不能跨行**。
     // lexeme 存的是源码原文（`'\n'` 而不是那个真换行），与 Kotlin 版一致。
-    fun readCharLiteral() -> void {
+    fn readCharLiteral() -> void {
         var startLine = line
         var startCol = column
         var startPos = pos
@@ -714,7 +732,7 @@ public class Lexer(source : string) {
     }
 
     // 返回 false 表示已经报错收工
-    fun readCharEscape(startLine : int, startCol : int) -> bool {
+    fn readCharEscape(startLine : int, startCol : int) -> bool {
         if (atEnd()) {
             charError("字符字面量没有闭合（缺少 '）", startLine, startCol)
             rtn false
@@ -739,7 +757,7 @@ public class Lexer(source : string) {
     }
 
     // `'\u0041'`：必须正好四位十六进制，少一位 / 夹别的字符都算错
-    fun readCharUnicodeEscape(startLine : int, startCol : int) -> bool {
+    fn readCharUnicodeEscape(startLine : int, startCol : int) -> bool {
         var i = 0
         while (i < 4) {
             if (!atEnd()) {
@@ -769,7 +787,7 @@ public class Lexer(source : string) {
         rtn true
     }
 
-    fun charError(message : string, startLine : int, startCol : int) -> void {
+    fn charError(message : string, startLine : int, startCol : int) -> void {
         reportError(message, startLine, startCol)
     }
 
@@ -778,7 +796,7 @@ public class Lexer(source : string) {
     // Kotlin 版 Lexer.readLabelName（:182-205）：从开引号一直吃到**同一行**的下一个
     // 反引号，中间字符一个都不解释（没有转义，也不查标识符字符集），token 文本去掉引号。
     // 三种错与 Kotlin 版逐字一致；出错位置都指向**开引号**（与 readCharLiteral 同一套）。
-    fun readLabelName() -> void {
+    fn readLabelName() -> void {
         var startLine = line
         var startCol = column
         advance()   // 开引号
@@ -813,13 +831,13 @@ public class Lexer(source : string) {
     }
 
     // 引号内换行也按「没有收尾」报——同一句文案，与 Kotlin unclosedLabelError 一致
-    fun labelUnclosed(startLine : int, startCol : int) -> void {
+    fn labelUnclosed(startLine : int, startCol : int) -> void {
         reportError("反引号标签名没有收尾（标签名要写成 `名字:`，收尾的 '`' 不能漏、也不能跨行）", startLine, startCol)
     }
 
     // ------------------------------------------------------------ 标点与运算符
 
-    fun readPunct() -> void {
+    fn readPunct() -> void {
         var startLine = line
         var startCol = column
         var c = advance()
@@ -943,7 +961,7 @@ public class Lexer(source : string) {
 
     // ------------------------------------------------------------ 主循环
 
-    fun run() -> void {
+    fn run() -> void {
         var going = true
         while (going) {
             skipSpace()
@@ -978,7 +996,7 @@ public class Lexer(source : string) {
         }
     }
 
-    fun result() -> Token[] {
+    fn result() -> Token[] {
         var n = outCount
         if (failed) {
             // 出错时 Kotlin 版根本没有 token 流可给；rsf 版返回空数组，出错信息在 failMessage 里
@@ -991,16 +1009,16 @@ public class Lexer(source : string) {
         rtn copy
     }
 
-    public fun errorMessage() -> string { rtn failMessage }
+    public fn errorMessage() -> string { rtn failMessage }
 
-    public fun hasError() -> bool { rtn failed }
+    public fn hasError() -> bool { rtn failed }
 }
 
 // ---------------------------------------------------------------- 对外接口
 
 // 切一份源码。**与 Kotlin 版 Lexer.tokenize() 对等**：输入是合法源码时逐条相同。
 // 输入非法时 Kotlin 版抛 RsfError，这里返回空数组（rsf 侧没有异常，见 lexSafe）。
-public fun lex(source : string) -> Token[] {
+public fn lex(source : string) -> Token[] {
     var l = new Lexer(source)
     l.run()
     rtn l.result()
@@ -1008,21 +1026,21 @@ public fun lex(source : string) -> Token[] {
 
 // 容错版：输入非法时不置空，而是把错误落成一个 ILLEGAL token 继续往下切。
 // 用它才能观察「rsf 版在非法输入下怎么走」——对拍测试里有一条专门钉住它。
-public fun lexSafe(source : string) -> Token[] {
+public fn lexSafe(source : string) -> Token[] {
     var l = new Lexer(source, true)
     l.run()
     rtn l.result()
 }
 
 // 分词 + 出错信息（!string 为 null 表示没出错）
-public fun lexError(source : string) -> string {
+public fn lexError(source : string) -> string {
     var l = new Lexer(source)
     l.run()
     rtn l.errorMessage()
 }
 
 // 读文件再切（路径用 / 分隔；这里不写死任何绝对路径）
-public fun lexFile(path : string) -> !Token[] {
+public fn lexFile(path : string) -> !Token[] {
     var text = readText(path)!!
     rtn lex(text)
 }
@@ -1040,7 +1058,7 @@ public fun lexFile(path : string) -> !Token[] {
 // 注意 `'${t.lexeme}'` 外面套的那层单引号：字符串字面量里本来带 ' 时，
 // 打出来是 `''It''` 这种样子 —— 对拍要的就是这个（不是我们美化过的版本）。
 
-fun padLeft(s : string, width : int) -> string {
+fn padLeft(s : string, width : int) -> string {
     var out = s
     while (out.length() < width) {
         out = " " + out
@@ -1048,7 +1066,7 @@ fun padLeft(s : string, width : int) -> string {
     rtn out
 }
 
-fun padRight(s : string, width : int) -> string {
+fn padRight(s : string, width : int) -> string {
     var out = s
     while (out.length() < width) {
         out = out + " "
@@ -1056,7 +1074,7 @@ fun padRight(s : string, width : int) -> string {
     rtn out
 }
 
-public fun dumpToken(t : Token) -> string {
+public fn dumpToken(t : Token) -> string {
     var head = padLeft(intToString(t.line), 4) + ":" + padRight(intToString(t.col), 4) +
         " " + padRight(t.kindName(), 12) + " '" + t.text + "'"
     if (t.hasLiteral()) {
@@ -1065,14 +1083,14 @@ public fun dumpToken(t : Token) -> string {
     rtn head
 }
 
-public fun dumpTokens(tokens : Token[]) -> void {
+public fn dumpTokens(tokens : Token[]) -> void {
     for (var i = 0; i < tokens.length; i = i + 1) {
         println(dumpToken(tokens[i]))
     }
 }
 
 // 字符字面量的「值」：`'a'` -> a，`'\n'` -> 真换行，`'\u0041'` -> A
-fun charLiteralValue(text : string) -> string {
+fn charLiteralValue(text : string) -> string {
     if (text.length() < 3) { rtn text }
     var inner = text.substring(1, text.length() - 1)
     if (inner.length() == 1) { rtn inner }

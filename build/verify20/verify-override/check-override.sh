@@ -16,19 +16,19 @@ no()   { FAIL=$((FAIL+1)); echo "  FAIL  $1"; echo "        $2"; }
 # ---------- 探针源 ----------
 cat > "$SRC/p_class.rsf" <<'EOF'
 public interface Greeter {
-    fun greet(name : string) -> string
-    fun shout(name : string) -> string {
+    fn greet(name : string) -> string
+    fn shout(name : string) -> string {
         rtn greet(name) + "!"
     }
 }
 
 class Dog(name : string) : Greeter {
-    override public fun greet(n : string) -> string {
+    override public fn greet(n : string) -> string {
         rtn "woof " + n
     }
 }
 
-fun main() -> void {
+fn main() -> void {
     var g : Greeter = new Dog("rex")
     println(g.greet("bob"))
     println(g.shout("bob"))
@@ -38,11 +38,11 @@ EOF
 
 cat > "$SRC/p_iface.rsf" <<'EOF'
 public interface Named {
-    fun name() -> string
+    fn name() -> string
 }
 
 public interface Person : Named {
-    override public fun name() -> string {
+    override public fn name() -> string {
         rtn "p"
     }
 }
@@ -50,7 +50,7 @@ public interface Person : Named {
 class P : Person {
 }
 
-fun main() -> void {
+fn main() -> void {
     var n : Named = new P()
     println(n.name())
     rtn
@@ -59,16 +59,16 @@ EOF
 
 cat > "$SRC/p_order1.rsf" <<'EOF'
 public interface Greeter {
-    fun greet(name : string) -> string
+    fn greet(name : string) -> string
 }
 
 class Dog : Greeter {
-    override public fun greet(name : string) -> string {
+    override public fn greet(name : string) -> string {
         rtn "woof " + name
     }
 }
 
-fun main() -> void {
+fn main() -> void {
     println(new Dog().greet("bob"))
     rtn
 }
@@ -76,16 +76,16 @@ EOF
 
 cat > "$SRC/p_order2.rsf" <<'EOF'
 public interface Greeter {
-    fun greet(name : string) -> string
+    fn greet(name : string) -> string
 }
 
 class Dog : Greeter {
-    public override fun greet(name : string) -> string {
+    public override fn greet(name : string) -> string {
         rtn "woof " + name
     }
 }
 
-fun main() -> void {
+fn main() -> void {
     println(new Dog().greet("bob"))
     rtn
 }
@@ -93,16 +93,16 @@ EOF
 
 cat > "$SRC/p_nokw.rsf" <<'EOF'
 public interface Greeter {
-    fun greet(name : string) -> string
+    fn greet(name : string) -> string
 }
 
 class Dog : Greeter {
-    public fun greet(name : string) -> string {
+    public fn greet(name : string) -> string {
         rtn "woof " + name
     }
 }
 
-fun main() -> void {
+fn main() -> void {
     var g : Greeter = new Dog()
     println(g.greet("bob"))
     rtn
@@ -113,12 +113,12 @@ cat > "$SRC/p_jdk.rsf" <<'EOF'
 import java.lang.Runnable
 
 class Robot : Runnable {
-    override public fun run() -> void {
+    override public fn run() -> void {
         println("running")
     }
 }
 
-fun main() -> void {
+fn main() -> void {
     var r : Runnable = new Robot()
     r.run()
     rtn
@@ -126,7 +126,7 @@ fun main() -> void {
 EOF
 
 cat > "$SRC/n_toplevel.rsf" <<'EOF'
-override fun f() -> void {
+override fn f() -> void {
     rtn
 }
 EOF
@@ -147,14 +147,14 @@ EOF
 
 cat > "$SRC/n_nocover_class.rsf" <<'EOF'
 public interface Greeter {
-    fun greet(name : string) -> string
+    fn greet(name : string) -> string
 }
 
 class Dog : Greeter {
-    public fun greet(name : string) -> string {
+    public fn greet(name : string) -> string {
         rtn "woof"
     }
-    override public fun bark() -> void {
+    override public fn bark() -> void {
         rtn
     }
 }
@@ -162,11 +162,11 @@ EOF
 
 cat > "$SRC/n_nocover_iface.rsf" <<'EOF'
 public interface Named {
-    fun name() -> string
+    fn name() -> string
 }
 
 public interface Person : Named {
-    override fun age() -> int {
+    override fn age() -> int {
         rtn 1
     }
 }
@@ -176,10 +176,10 @@ cat > "$SRC/n_nocover_jdk.rsf" <<'EOF'
 import java.lang.Runnable
 
 class Robot : Runnable {
-    public fun run() -> void {
+    public fn run() -> void {
         rtn
     }
-    override public fun walk() -> void {
+    override public fn walk() -> void {
         rtn
     }
 }
@@ -235,21 +235,21 @@ echo "== override 擦除性（同名源、只差关键字，三个 .class 必须
 mkdir -p "$DIR/e1" "$DIR/e2"
 cat > "$DIR/e1/OverrideErasure.rsf" <<'EOF'
 public interface Greeter {
-    fun greet(name : string) -> string
+    fn greet(name : string) -> string
 }
 
 class Dog : Greeter {
-    override public fun greet(name : string) -> string {
+    override public fn greet(name : string) -> string {
         rtn "woof " + name
     }
 }
 
-fun main() -> void {
+fn main() -> void {
     println(new Dog().greet("bob"))
     rtn
 }
 EOF
-sed 's/override public fun greet/public fun greet/' "$DIR/e1/OverrideErasure.rsf" > "$DIR/e2/OverrideErasure.rsf"
+sed 's/override public fn greet/public fn greet/' "$DIR/e1/OverrideErasure.rsf" > "$DIR/e2/OverrideErasure.rsf"
 java "${JF[@]}" -jar "$JAR" build "$DIR/e1/OverrideErasure.rsf" -o "$DIR/e1/out" -n OverrideErasure >/dev/null 2>&1
 java "${JF[@]}" -jar "$JAR" build "$DIR/e2/OverrideErasure.rsf" -o "$DIR/e2/out" -n OverrideErasure >/dev/null 2>&1
 diff -r "$DIR/e1/out" "$DIR/e2/out" > "$DIR/erasure.diff" 2>&1

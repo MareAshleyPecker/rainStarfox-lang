@@ -325,7 +325,7 @@ class Completer(
 
     private companion object {
         val KEYWORDS = listOf(
-            "fun", "rtn", "return", "var", "imutvar", "if", "else", "while", "for",
+            "fn", "rtn", "return", "var", "imutvar", "if", "else", "while", "for",
             "in", "step", "break", "continue", "goto", "true", "false", "null",
             // pkg（阶段 6a）一直漏在补全表外：关键字表要同步——
             // 这里和 idea 插件的 RsfKeywords 一起改（由 EditorKeywordParityTest 守着）。

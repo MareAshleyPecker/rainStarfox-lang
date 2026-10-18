@@ -51,64 +51,64 @@ import org.objectweb.asm.Type
 // ============================================================ 常量（与 Kotlin 侧同一张表）
 
 // Builtins / ArrayRuntime / FileRuntime / EnumRuntime 里的消息，逐字复刻。
-fun parseIntPrefix() -> string { rtn "parseInt: 不是合法的整数：'" }
-fun parseIntSuffix() -> string { rtn "'" }
-fun arrayIndexPrefix() -> string { rtn "数组下标越界：长度 " }
-fun arrayIndexMid() -> string { rtn "，下标 " }
-fun arrayLengthPrefix() -> string { rtn "数组长度不能是负数：" }
-fun filePrefixTail() -> string { rtn ": 文件操作失败 '" }
-fun filePathTail() -> string { rtn "'：" }
+fn parseIntPrefix() -> string { rtn "parseInt: 不是合法的整数：'" }
+fn parseIntSuffix() -> string { rtn "'" }
+fn arrayIndexPrefix() -> string { rtn "数组下标越界：长度 " }
+fn arrayIndexMid() -> string { rtn "，下标 " }
+fn arrayLengthPrefix() -> string { rtn "数组长度不能是负数：" }
+fn filePrefixTail() -> string { rtn ": 文件操作失败 '" }
+fn filePathTail() -> string { rtn "'：" }
 
-fun parseIntHelperName() -> string { rtn "__rsf_parseInt$rt" }
-fun parseIntHelperDesc() -> string { rtn "(Ljava/lang/String;)I" }
-fun arrayIndexHelperName() -> string { rtn "__rsf_arrayIndex$rt" }
-fun arrayIndexHelperDesc() -> string { rtn "(II)I" }
-fun arrayLengthHelperName() -> string { rtn "__rsf_arrayLength$rt" }
-fun arrayLengthHelperDesc() -> string { rtn "(I)I" }
+fn parseIntHelperName() -> string { rtn "__rsf_parseInt$rt" }
+fn parseIntHelperDesc() -> string { rtn "(Ljava/lang/String;)I" }
+fn arrayIndexHelperName() -> string { rtn "__rsf_arrayIndex$rt" }
+fn arrayIndexHelperDesc() -> string { rtn "(II)I" }
+fn arrayLengthHelperName() -> string { rtn "__rsf_arrayLength$rt" }
+fn arrayLengthHelperDesc() -> string { rtn "(I)I" }
 
 // 阶段 24：`as` 的判型/抛错辅助方法（与 Kotlin `BytecodeCompiler.CAST_HELPER` 同名同签名）
-fun castHelperName() -> string { rtn "__rsf_cast" }
-fun castHelperDesc() -> string {
+fn castHelperName() -> string { rtn "__rsf_cast" }
+fn castHelperDesc() -> string {
     rtn "(Ljava/lang/Object;Ljava/lang/Class;Ljava/lang/String;)Ljava/lang/Object;"
 }
-fun castNullPrefix() -> string { rtn "rsf: 不能把 null 当成 " }
-fun castPrefix() -> string { rtn "rsf: 不能把 " }
-fun castMid() -> string { rtn " 当成 " }
+fn castNullPrefix() -> string { rtn "rsf: 不能把 null 当成 " }
+fn castPrefix() -> string { rtn "rsf: 不能把 " }
+fn castMid() -> string { rtn " 当成 " }
 
-fun readTextHelperName() -> string { rtn "__rsf_readText$rt" }
-fun readTextHelperDesc() -> string { rtn "(Ljava/lang/String;)Ljava/lang/String;" }
-fun writeTextHelperName() -> string { rtn "__rsf_writeText$rt" }
-fun writeTextHelperDesc() -> string { rtn "(Ljava/lang/String;Ljava/lang/String;)V" }
-fun readBytesHelperName() -> string { rtn "__rsf_readBytes$rt" }
-fun readBytesHelperDesc() -> string { rtn "(Ljava/lang/String;)[B" }
-fun writeBytesHelperName() -> string { rtn "__rsf_writeBytes$rt" }
-fun writeBytesHelperDesc() -> string { rtn "(Ljava/lang/String;[B)V" }
+fn readTextHelperName() -> string { rtn "__rsf_readText$rt" }
+fn readTextHelperDesc() -> string { rtn "(Ljava/lang/String;)Ljava/lang/String;" }
+fn writeTextHelperName() -> string { rtn "__rsf_writeText$rt" }
+fn writeTextHelperDesc() -> string { rtn "(Ljava/lang/String;Ljava/lang/String;)V" }
+fn readBytesHelperName() -> string { rtn "__rsf_readBytes$rt" }
+fn readBytesHelperDesc() -> string { rtn "(Ljava/lang/String;)[B" }
+fn writeBytesHelperName() -> string { rtn "__rsf_writeBytes$rt" }
+fn writeBytesHelperDesc() -> string { rtn "(Ljava/lang/String;[B)V" }
 
 // ASM 里用到的常量（Opcodes 的值）
-fun accPublic() -> int { rtn 1 }
-fun accPrivate() -> int { rtn 2 }
-fun accProtected() -> int { rtn 4 }
-fun accStatic() -> int { rtn 8 }
-fun accSuper() -> int { rtn 32 }
-fun v17() -> int { rtn 61 }
-fun computeAll() -> int { rtn 3 }
+fn accPublic() -> int { rtn 1 }
+fn accPrivate() -> int { rtn 2 }
+fn accProtected() -> int { rtn 4 }
+fn accStatic() -> int { rtn 8 }
+fn accSuper() -> int { rtn 32 }
+fn v17() -> int { rtn 61 }
+fn computeAll() -> int { rtn 3 }
 // 阶段 20：接口类头 = ACC_PUBLIC | ACC_INTERFACE | ACC_ABSTRACT = 1 | 512 | 1024 = 1537
-fun accInterface() -> int { rtn 512 }
-fun accAbstract() -> int { rtn 1024 }
+fn accInterface() -> int { rtn 512 }
+fn accAbstract() -> int { rtn 1024 }
 // 阶段 21：注解接口类头还要加上 ACC_ANNOTATION（0x2000 = 8192）
 // → 1 | 512 | 1024 | 8192 = 9729。父接口固定写死 `java/lang/annotation/Annotation`。
-fun accAnnotation() -> int { rtn 8192 }
+fn accAnnotation() -> int { rtn 8192 }
 // 访问器方法的同步位 ACC_SYNCHRONIZED。**它的值和 accSuper() 一模一样（都是 32）**，
 // 但两者语义毫无关系：host 是类时访问器带 32（1|8|32 = 0x29），
 // host 是接口/注解时**绝不能带** —— 否则加载期
 // `ClassFormatError: Method X in class Y has illegal modifiers: 0x29`。
 // 单开一个函数就是为了让读者一眼看出这里加的是同步位而不是某个「super 标志」。
-fun accSync() -> int { rtn 32 }
+fn accSync() -> int { rtn 32 }
 
 // ============================================================ 字符串数组工具
 
 // rsf 没有 List/Set，接口链的「已访问」「待访问」队列都只能手写扩容数组。
-fun strArrHas(a : string[], n : int, s : string) -> bool {
+fn strArrHas(a : string[], n : int, s : string) -> bool {
     var i = 0
     while (i < n) {
         if (a[i] == s) { rtn true }
@@ -118,7 +118,7 @@ fun strArrHas(a : string[], n : int, s : string) -> bool {
 }
 
 // 追加一个元素，满了翻倍。返回值必须重新赋回原变量。
-fun strArrPush(a : string[], n : int, s : string) -> string[] {
+fn strArrPush(a : string[], n : int, s : string) -> string[] {
     var b = a
     if (n >= a.length) {
         var cap = 4
@@ -137,7 +137,7 @@ fun strArrPush(a : string[], n : int, s : string) -> string[] {
 // ============================================================ 属性读取
 
 // 与 Interp.rsf 的 attr 同一套（属性串是 "k=v k=v"，值已转义）
-public fun prop(n : Node, key : string) -> string {
+public fn prop(n : Node, key : string) -> string {
     var t = n.text
     var i = 0
     var len = t.length()
@@ -155,11 +155,11 @@ public fun prop(n : Node, key : string) -> string {
     rtn ""
 }
 
-public fun propBool(n : Node, key : string) -> bool {
+public fn propBool(n : Node, key : string) -> bool {
     rtn prop(n, key) == "true"
 }
 
-public fun propInt(n : Node, key : string) -> int {
+public fn propInt(n : Node, key : string) -> int {
     var raw = prop(n, key)
     if (raw.length() == 0) { rtn 0 }
     rtn parseInt(raw) ?: 0
@@ -173,36 +173,36 @@ public fun propInt(n : Node, key : string) -> int {
 // 也失效了 —— 会把它当抽象方法发出去，运行期
 // `AbstractMethodError: Receiver class X does not define or inherit an
 // implementation of the resolved method 'abstract ...'`。改成扫一遍找 BLOCK。
-fun hasBodyNode(fn : Node) -> bool {
+fn hasBodyNode(fnNode : Node) -> bool {
     var i = 0
-    while (i < fn.childCount) {
-        if (fn.children[i].kind == NodeKind.BLOCK) { rtn true }
+    while (i < fnNode.childCount) {
+        if (fnNode.children[i].kind == NodeKind.BLOCK) { rtn true }
         i = i + 1
     }
     rtn false
 }
 
 // 方法（FUNC）的形参表 —— 同上，不能假定下标是 0。
-fun paramsOf(fn : Node) -> Node {
+fn paramsOf(fnNode : Node) -> Node {
     var i = 0
-    while (i < fn.childCount) {
-        if (fn.children[i].kind == NodeKind.PARAMS) { rtn fn.children[i] }
+    while (i < fnNode.childCount) {
+        if (fnNode.children[i].kind == NodeKind.PARAMS) { rtn fnNode.children[i] }
         i = i + 1
     }
     rtn new Node(NodeKind.PARAMS)
 }
 
 // 方法（FUNC）的函数体 —— 同上，不能假定下标是 1。
-fun bodyOf(fn : Node) -> Node {
+fn bodyOf(fnNode : Node) -> Node {
     var i = 0
-    while (i < fn.childCount) {
-        if (fn.children[i].kind == NodeKind.BLOCK) { rtn fn.children[i] }
+    while (i < fnNode.childCount) {
+        if (fnNode.children[i].kind == NodeKind.BLOCK) { rtn fnNode.children[i] }
         i = i + 1
     }
     rtn new Node(NodeKind.BLOCK)
 }
 
-fun hexValue(c : char) -> int {
+fn hexValue(c : char) -> int {
     if (c >= '0' && c <= '9') { rtn charToInt(c) - 48 }
     if (c >= 'a' && c <= 'f') { rtn charToInt(c) - 87 }
     if (c >= 'A' && c <= 'F') { rtn charToInt(c) - 55 }
@@ -210,7 +210,7 @@ fun hexValue(c : char) -> int {
 }
 
 // Parser.escapeValue 的逆
-fun unesc(s : string) -> string {
+fn unesc(s : string) -> string {
     var out = ""
     var i = 0
     var len = s.length()
@@ -260,11 +260,11 @@ public class Subst(names : string[], vals : BType[], n : int) {
     var used : bool[] = new bool[names.length]
 }
 
-public fun substEmpty(names : string[]) -> Subst {
+public fn substEmpty(names : string[]) -> Subst {
     rtn new Subst(names, new BType[names.length], 0)
 }
 
-public fun substIndexOf(s : Subst, nm : string) -> int {
+public fn substIndexOf(s : Subst, nm : string) -> int {
     if (s.n == 0) { rtn -1 }
     var i = 0
     while (i < s.n) {
@@ -274,20 +274,20 @@ public fun substIndexOf(s : Subst, nm : string) -> int {
     rtn -1
 }
 
-public fun substHas(s : Subst, nm : string) -> bool {
+public fn substHas(s : Subst, nm : string) -> bool {
     var i = substIndexOf(s, nm)
     if (i < 0) { rtn false }
     rtn s.used[i]
 }
 
-public fun substMark(s : Subst, nm : string) -> void {
+public fn substMark(s : Subst, nm : string) -> void {
     var i = substIndexOf(s, nm)
     if (i < 0) { rtn }
     s.used[i] = true
 }
 
 // 实参表（`&<int, Box&<int>>` 那句里的部分）挂到形式参数名上
-public fun substOf(ta : BType[], names : string[]) -> Subst {
+public fn substOf(ta : BType[], names : string[]) -> Subst {
     var s = new Subst(names, new BType[names.length], 0)
     var i = 0
     while (i < names.length && i < ta.length) {
@@ -301,7 +301,7 @@ public fun substOf(ta : BType[], names : string[]) -> Subst {
 
 // 把 [t] 里的类型参数（`T` / `T[]`）按 [s] 换成实参；`T` 的落点是
 // `external java/lang/Object`（和 Kotlin 的 `TYPE_PARAM → Ljava/lang/Object;` 对齐）
-public fun substApply(t : BType, s : Subst) -> BType {
+public fn substApply(t : BType, s : Subst) -> BType {
     if (t.tpName != "") {
         var i = substIndexOf(s, t.tpName)
         // 注意方向：substTypeParam 把 this 当**占位符**（要它的 depth/nullable），
@@ -332,31 +332,31 @@ public class BType(base : string, name : string, nullable : bool, depth : int) {
     }
 
     // 带上_已擦除_类型实参的副本（`Box&<int>`）——泛型实参只在编译期起作用
-    public fun withArgs(args : BType[]) -> BType {
+    public fn withArgs(args : BType[]) -> BType {
         var t = new BType(base, name, nullable, depth)
         t.extraArgs = args
         t.tpName = tpName
         rtn t
     }
 
-    public fun argAt(i : int) -> ?BType {
+    public fn argAt(i : int) -> ?BType {
         if (i < 0 || i >= extraArgs.length) { rtn null }
         rtn extraArgs[i]
     }
 
-    public fun argCount() -> int { rtn extraArgs.length }
+    public fn argCount() -> int { rtn extraArgs.length }
 
     // 类型参数（还没被接收者实参替换掉的 `T`）在解析时统一落成 Object，
     // 所以「擦除后就是 Object 且没有实参」= 这个位置是类型变量的落点。
-    public fun isErasedObject() -> bool {
+    public fn isErasedObject() -> bool {
         rtn base == "external" && name == "java/lang/Object" && depth == 0 && extraArgs.length == 0
     }
 
     // 这就是 `T`（还没换成实参的类型变量）—— 对应 Kotlin 的 RsfType.isTypeParam
-    public fun isTypeParam() -> bool { rtn tpName != "" }
+    public fn isTypeParam() -> bool { rtn tpName != "" }
 
     // 把 `T`（或 `T[]`）换成 [actual]；不是类型参数就原样返回
-    public fun substTypeParam(actual : BType) -> BType {
+    public fn substTypeParam(actual : BType) -> BType {
         var t = new BType(actual.base, actual.name, actual.nullable, actual.depth + depth)
         t.extraArgs = actual.extraArgs
         if (nullable) { rtn t.withNullable(true) }
@@ -364,7 +364,7 @@ public class BType(base : string, name : string, nullable : bool, depth : int) {
     }
 
     // 递归：类型实参表里的类型参数也要换（`Box&<Box&<T>>`）
-    public fun substAll(subst : Subst) -> BType {
+    public fn substAll(subst : Subst) -> BType {
         var t = new BType(base, name, nullable, depth)
         t.tpName = tpName
         if (extraArgs.length > 0) {
@@ -379,11 +379,11 @@ public class BType(base : string, name : string, nullable : bool, depth : int) {
         rtn t
     }
 
-    public fun isArray() -> bool { rtn depth > 0 }
+    public fn isArray() -> bool { rtn depth > 0 }
 
     // JVM 的基本类型（栈上按值传）：数组与可空基本类型都不算
     // —— RsfType.isPrimitive = arrayDepth == 0 && !nullable && base.isPrimitive
-    public fun isPrimitive() -> bool {
+    public fn isPrimitive() -> bool {
         if (depth > 0) { rtn false }
         if (nullable) { rtn false }
         if (base == "bool") { rtn true }
@@ -396,7 +396,7 @@ public class BType(base : string, name : string, nullable : bool, depth : int) {
         rtn false
     }
 
-    public fun isNum() -> bool {
+    public fn isNum() -> bool {
         if (depth > 0 || nullable) { rtn false }
         if (base == "int") { rtn true }
         if (base == "long") { rtn true }
@@ -405,7 +405,7 @@ public class BType(base : string, name : string, nullable : bool, depth : int) {
     }
 
     // isArithmetic = isNumeric || byte || char（RsfBase.isArithmetic），且非空非数组
-    public fun isArith() -> bool {
+    public fn isArith() -> bool {
         if (depth > 0 || nullable) { rtn false }
         if (isNum()) { rtn true }
         if (base == "byte") { rtn true }
@@ -413,9 +413,9 @@ public class BType(base : string, name : string, nullable : bool, depth : int) {
     }
 
     // 可空基本类型（装箱形态）
-    public fun isBoxed() -> bool { rtn depth == 0 && nullable && baseIsPrimitive() }
+    public fn isBoxed() -> bool { rtn depth == 0 && nullable && baseIsPrimitive() }
 
-    public fun baseIsPrimitive() -> bool {
+    public fn baseIsPrimitive() -> bool {
         if (base == "bool") { rtn true }
         if (base == "byte") { rtn true }
         if (base == "char") { rtn true }
@@ -425,11 +425,11 @@ public class BType(base : string, name : string, nullable : bool, depth : int) {
         rtn base == "double"
     }
 
-    public fun isVoid() -> bool { rtn base == "void" }
+    public fn isVoid() -> bool { rtn base == "void" }
 
-    public fun isNullLit() -> bool { rtn base == "null" }
+    public fn isNullLit() -> bool { rtn base == "null" }
 
-    public fun element() -> BType {
+    public fn element() -> BType {
         var t = new BType(base, name, nullable, depth - 1)
         t.extraArgs = extraArgs
         t.tpName = tpName
@@ -438,7 +438,7 @@ public class BType(base : string, name : string, nullable : bool, depth : int) {
 
     // 改可空性时**必须**把类型实参和类型参数名带上：`b.get()` 的接收者 `b : Box&<int>`
     // 常常要过一次 withNullable，丢了实参就退化成 Object（`b.get() + b.get()` 会报算术运算不支持）
-    public fun withNullable(v : bool) -> BType {
+    public fn withNullable(v : bool) -> BType {
         var t = new BType(base, name, v, depth)
         t.extraArgs = extraArgs
         t.tpName = tpName
@@ -446,7 +446,7 @@ public class BType(base : string, name : string, nullable : bool, depth : int) {
     }
 
     // 装几个槽（long/double 两格；数组与可空基本类型是一格引用）
-    public fun slots() -> int {
+    public fn slots() -> int {
         if (base == "void") { rtn 0 }
         if (isArray()) { rtn 1 }
         if (nullable && baseIsPrimitive()) { rtn 1 }
@@ -455,7 +455,7 @@ public class BType(base : string, name : string, nullable : bool, depth : int) {
         rtn 1
     }
 
-    public fun desc() -> string {
+    public fn desc() -> string {
         if (depth > 0) { rtn "[" + element().desc() }
         if (base == "void") { rtn "V" }
         if (base == "bool") {
@@ -491,19 +491,19 @@ public class BType(base : string, name : string, nullable : bool, depth : int) {
     }
 }
 
-fun tVoid() -> BType { rtn new BType("void") }
-fun tBool() -> BType { rtn new BType("bool") }
-fun tByte() -> BType { rtn new BType("byte") }
-fun tChar() -> BType { rtn new BType("char") }
-fun tInt() -> BType { rtn new BType("int") }
-fun tLong() -> BType { rtn new BType("long") }
-fun tFloat() -> BType { rtn new BType("float") }
-fun tDouble() -> BType { rtn new BType("double") }
-fun tString() -> BType { rtn new BType("string") }
-fun tNull() -> BType { rtn new BType("null") }
-fun tExternal(name : string) -> BType { rtn new BType("external", name, false, 0) }
+fn tVoid() -> BType { rtn new BType("void") }
+fn tBool() -> BType { rtn new BType("bool") }
+fn tByte() -> BType { rtn new BType("byte") }
+fn tChar() -> BType { rtn new BType("char") }
+fn tInt() -> BType { rtn new BType("int") }
+fn tLong() -> BType { rtn new BType("long") }
+fn tFloat() -> BType { rtn new BType("float") }
+fn tDouble() -> BType { rtn new BType("double") }
+fn tString() -> BType { rtn new BType("string") }
+fn tNull() -> BType { rtn new BType("null") }
+fn tExternal(name : string) -> BType { rtn new BType("external", name, false, 0) }
 
-fun sameType(a : BType, b : BType) -> bool {
+fn sameType(a : BType, b : BType) -> bool {
     if (a.base != b.base) { rtn false }
     if (a.name != b.name) { rtn false }
     if (a.nullable != b.nullable) { rtn false }
@@ -511,13 +511,13 @@ fun sameType(a : BType, b : BType) -> bool {
 }
 
 // byte/char 一律提升成 int，其余是自己
-fun promotedBase(base : string) -> string {
+fn promotedBase(base : string) -> string {
     if (base == "byte") { rtn "int" }
     if (base == "char") { rtn "int" }
     rtn base
 }
 
-fun rankOf(base : string) -> int {
+fn rankOf(base : string) -> int {
     if (base == "byte" || base == "char" || base == "int") { rtn 0 }
     if (base == "long") { rtn 1 }
     if (base == "float") { rtn 2 }
@@ -526,7 +526,7 @@ fun rankOf(base : string) -> int {
 }
 
 // RsfType.widenTargets：隐式加宽表（char 不跟任何数值互转）
-fun canWiden(fromBase : string, toBase : string) -> bool {
+fn canWiden(fromBase : string, toBase : string) -> bool {
     if (fromBase == toBase) { rtn true }
     if (fromBase == "byte") {
         if (toBase == "int" || toBase == "long" || toBase == "float" || toBase == "double") { rtn true }
@@ -542,7 +542,7 @@ fun canWiden(fromBase : string, toBase : string) -> bool {
 }
 
 // RsfType.accepts
-fun accepts(target : BType, source : BType) -> bool {
+fn accepts(target : BType, source : BType) -> bool {
     if (target.base == "void") { rtn false }
     if (source.base == "null") { rtn target.nullable || target.base == "external" }
     if (sameType(target, source)) { rtn true }
@@ -559,7 +559,7 @@ fun accepts(target : BType, source : BType) -> bool {
 
 // Checker.byteRangeLiteral：**直接写出来的**整数字面量（可带一个一元负号）落在
 // byte 范围内时，可以直接赋给 byte（`var b : byte = 100`）。变量与表达式一律不认。
-fun byteRangeLiteral(e : Node) -> bool {
+fn byteRangeLiteral(e : Node) -> bool {
     var n = 0
     var ok = false
     if (e.kind == NodeKind.INT_LIT) {
@@ -576,7 +576,7 @@ fun byteRangeLiteral(e : Node) -> bool {
 // Checker.acceptsValue：accepts 之外，只对 byte + 字面量开一个口子。
 // 阶段 20 起还要认「接口子类型」——`var g : Greeter = new Dog()` 里的 Dog → Greeter，
 // 数据源在 `Gen.isSubtypeName`（类 → 接口、接口 → 父接口）。
-fun acceptsValue(g : Gen, target : BType, value : Node, source : BType) -> bool {
+fn acceptsValue(g : Gen, target : BType, value : Node, source : BType) -> bool {
     if (accepts(target, source)) { rtn true }
     // 阶段 24：数组是**协变**的（`B[]` 能当 `A[]` 用），与 JVM 的 CHECKCAST/INSTANCEOF
     // 一致——`var as1 : A[] = bs` 这种写法必须能过，否则 `as B[]` 那类探针连第一行都
@@ -595,7 +595,7 @@ fun acceptsValue(g : Gen, target : BType, value : Node, source : BType) -> bool 
 // - 基本类型数组**不**协变（`int[]` 不是 `long[]`，JVM 也不让）；
 // - 引用元素走类链/接口链（`C[]` 不是 `B[]`）；
 // - 类型参数擦除到 Object：`T[]` 与 `Object[]` 互相放得下。
-fun isArraySubtype(g : Gen, want : BType, value : BType) -> bool {
+fn isArraySubtype(g : Gen, want : BType, value : BType) -> bool {
     if (!want.isArray() || !value.isArray()) { rtn false }
     if (want.depth != value.depth) { rtn false }
     // 可空只能往更宽的地方走，和引用类型的老规矩一致
@@ -611,7 +611,7 @@ fun isArraySubtype(g : Gen, want : BType, value : BType) -> bool {
 
 // 引用元素那一层：数组继续递归，其余只能是 external 走名字链（string 元素不放行，
 // 与 Kotlin `isSourceSubtype` 一样）。
-fun isRefSubtype(g : Gen, want : BType, value : BType) -> bool {
+fn isRefSubtype(g : Gen, want : BType, value : BType) -> bool {
     if (want.isArray() || value.isArray()) { rtn isArraySubtype(g, want, value) }
     if (want.base != "external" || value.base != "external") { rtn false }
     if (value.nullable && !want.nullable) { rtn false }
@@ -619,7 +619,7 @@ fun isRefSubtype(g : Gen, want : BType, value : BType) -> bool {
 }
 
 // RsfType.promote：三目 / ?: 两边合并。推不出来返回 null（调用方报「不支持」）
-fun promoteTypes(a : BType, b : BType) -> ?BType {
+fn promoteTypes(a : BType, b : BType) -> ?BType {
     if (a.base == "null" && b.base == "null") { rtn a }
     if (a.base == "null") {
         if (b.isVoid()) { rtn null }
@@ -646,7 +646,7 @@ fun promoteTypes(a : BType, b : BType) -> ?BType {
 }
 
 // RsfType.arithmetic
-fun arithTypes(a : BType, b : BType) -> ?BType {
+fn arithTypes(a : BType, b : BType) -> ?BType {
     if (!a.isArith() || !b.isArith()) { rtn null }
     var pa = promotedBase(a.base)
     var pb = promotedBase(b.base)
@@ -678,7 +678,7 @@ public class Scope(parent : ?Scope) {
     var slots : int[] = new int[4]
     var count : int = 0
 
-    public fun add(name : string, t : BType, slot : int) -> void {
+    public fn add(name : string, t : BType, slot : int) -> void {
         if (count >= names.length) {
             var nn : string[] = new string[names.length * 2]
             var tt : BType[] = new BType[types.length * 2]
@@ -698,7 +698,7 @@ public class Scope(parent : ?Scope) {
         count = count + 1
     }
 
-    public fun findType(name : string) -> ?BType {
+    public fn findType(name : string) -> ?BType {
         var cur : ?Scope = this
         while (cur != null) {
             var s = cur!!
@@ -712,7 +712,7 @@ public class Scope(parent : ?Scope) {
         rtn null
     }
 
-    public fun findSlot(name : string) -> int {
+    public fn findSlot(name : string) -> int {
         var cur : ?Scope = this
         while (cur != null) {
             var s = cur!!
@@ -850,7 +850,7 @@ public class Gen(owner : string) {
     var lvtStart : Label = new Label()
 
     // 换一个新的 ClassWriter（每个类一个；同时登记输出名，供 BackendCli 落盘）
-    public fun newWriter(name : string) -> ClassWriter {
+    public fn newWriter(name : string) -> ClassWriter {
         var c = new ClassWriter(computeAll())
         if (cwCount >= cws.length) {
             var a : ClassWriter[] = new ClassWriter[cws.length * 2]
@@ -869,7 +869,7 @@ public class Gen(owner : string) {
         rtn c
     }
 
-    public fun addClass(c : CInfo) -> void {
+    public fn addClass(c : CInfo) -> void {
         if (ciCount >= cis.length) {
             var b : CInfo[] = new CInfo[cis.length * 2]
             for (var i = 0; i < ciCount; i = i + 1) { b[i] = cis[i] }
@@ -879,7 +879,7 @@ public class Gen(owner : string) {
         ciCount = ciCount + 1
     }
 
-    public fun addIface(c : CInfo) -> void {
+    public fn addIface(c : CInfo) -> void {
         if (iiCount >= iis.length) {
             var b : CInfo[] = new CInfo[iis.length * 2]
             for (var i = 0; i < iiCount; i = i + 1) { b[i] = iis[i] }
@@ -889,7 +889,7 @@ public class Gen(owner : string) {
         iiCount = iiCount + 1
     }
 
-    public fun findIface(nm : string) -> ?CInfo {
+    public fn findIface(nm : string) -> ?CInfo {
         var i = 0
         while (i < iiCount) {
             if (iis[i].name == nm || iis[i].internal == nm) { rtn iis[i] }
@@ -900,7 +900,7 @@ public class Gen(owner : string) {
 
     // ---- 阶段 21：注解表 ----
     // 第 5 刀：伴生类内部名的预表（见 `annComps` 的注释）。
-    public fun addAnnComp(nm : string) -> void {
+    public fn addAnnComp(nm : string) -> void {
         if (annCompCount >= annComps.length) {
             var b : string[] = new string[annComps.length * 2]
             for (var i = 0; i < annCompCount; i = i + 1) { b[i] = annComps[i] }
@@ -910,7 +910,7 @@ public class Gen(owner : string) {
         annCompCount = annCompCount + 1
     }
 
-    public fun hasAnnComp(nm : string) -> bool {
+    public fn hasAnnComp(nm : string) -> bool {
         var i = 0
         while (i < annCompCount) {
             if (annComps[i] == nm) { rtn true }
@@ -919,7 +919,7 @@ public class Gen(owner : string) {
         rtn false
     }
 
-    public fun addAnn(a : AnnInfo) -> void {
+    public fn addAnn(a : AnnInfo) -> void {
         if (aiCount >= ains.length) {
             var b : AnnInfo[] = new AnnInfo[ains.length * 2]
             for (var i = 0; i < aiCount; i = i + 1) { b[i] = ains[i] }
@@ -929,7 +929,7 @@ public class Gen(owner : string) {
         aiCount = aiCount + 1
     }
 
-    public fun findAnn(nm : string) -> ?AnnInfo {
+    public fn findAnn(nm : string) -> ?AnnInfo {
         var i = 0
         while (i < aiCount) {
             if (ains[i].name == nm) { rtn ains[i] }
@@ -938,7 +938,7 @@ public class Gen(owner : string) {
         rtn null
     }
 
-    public fun addAcc(a : AccInfo) -> void {
+    public fn addAcc(a : AccInfo) -> void {
         if (accCount >= accs.length) {
             var b : AccInfo[] = new AccInfo[accs.length * 2]
             for (var i = 0; i < accCount; i = i + 1) { b[i] = accs[i] }
@@ -949,12 +949,12 @@ public class Gen(owner : string) {
     }
 
     // 内部名是不是 rsf 接口（`?:` 合成方法里的 INVOKESTATIC 末位布尔要用它）
-    public fun isIfaceInternal(nm : string) -> bool {
+    public fn isIfaceInternal(nm : string) -> bool {
         rtn findIface(nm) != null
     }
 
     // 一个**简单名**是不是 rsf 接口（父类型子句里写的就是简单名）
-    public fun isIfaceName(nm : string) -> bool {
+    public fn isIfaceName(nm : string) -> bool {
         rtn findIface(nm) != null
     }
 
@@ -965,7 +965,7 @@ public class Gen(owner : string) {
     //                       （类接收者那条路，对齐 Kotlin `checkInheritedInterfaceDefault`）。
     // 结果走 ifaceHit / ifaceHitOwner / ifaceHitCount 三个字段：命中 >1 个不同接口就是歧义，
     // 调用方必须报错（对齐 Kotlin 的重载歧义判定），绝不能按声明顺序挑一个。
-    public fun ifaceLookup(root : string, nm : string, argc : int, includeSelf : bool, bodyOnly : bool) -> void {
+    public fn ifaceLookup(root : string, nm : string, argc : int, includeSelf : bool, bodyOnly : bool) -> void {
         ifaceHit = null
         ifaceHitOwner = null
         ifaceHitCount = 0
@@ -1024,7 +1024,7 @@ public class Gen(owner : string) {
         }
     }
 
-    public fun scanIfaceHit(ic : CInfo, nm : string, argc : int, bodyOnly : bool) -> void {
+    public fn scanIfaceHit(ic : CInfo, nm : string, argc : int, bodyOnly : bool) -> void {
         var m = ic.ifaceMethOf(nm, argc, bodyOnly)
         if (m != null) {
             ifaceHitCount = ifaceHitCount + 1
@@ -1035,7 +1035,7 @@ public class Gen(owner : string) {
 
     // sub 是不是 sup 的子类型（接口实现 / 父接口，以及阶段 25 起的**类父链**）。
     // 两边都是**内部名**。用来给 acceptsValue 补上「Dog 可以赋给 Greeter」「B 可以赋给 A」。
-    public fun isSubtypeName(sub : string, sup : string) -> bool {
+    public fn isSubtypeName(sub : string, sup : string) -> bool {
         if (sub == sup) { rtn true }
         if (sup == "java/lang/Object") { rtn true }
         var visited : string[] = new string[4]
@@ -1090,7 +1090,7 @@ public class Gen(owner : string) {
         rtn false
     }
 
-    public fun addEnum(e : EInfo) -> void {
+    public fn addEnum(e : EInfo) -> void {
         if (eiCount >= eis.length) {
             var b : EInfo[] = new EInfo[eis.length * 2]
             for (var i = 0; i < eiCount; i = i + 1) { b[i] = eis[i] }
@@ -1100,7 +1100,7 @@ public class Gen(owner : string) {
         eiCount = eiCount + 1
     }
 
-    public fun addImport(simple : string, internal : string) -> void {
+    public fn addImport(simple : string, internal : string) -> void {
         if (importCount >= imports.length) {
             var a : string[] = new string[imports.length * 2]
             var b : string[] = new string[importVals.length * 2]
@@ -1118,7 +1118,7 @@ public class Gen(owner : string) {
 
     // 类导入：简单名 → 内部名（没有就 null）。`import java.io.File` 这条路径
     // 是 rsf 里的 `File` 唯一能变成 `java/io/File` 的来源。
-    public fun findImport(simple : string) -> ?string {
+    public fn findImport(simple : string) -> ?string {
         var i = 0
         while (i < importCount) {
             if (imports[i] == simple) { rtn importVals[i] }
@@ -1129,7 +1129,7 @@ public class Gen(owner : string) {
 
     // 查类：先按**简单名**（源码里写的 / 按类名调 static 方法时写的），
     // 再按**内部名**（BType.name 里记的 `a/b/Point`；`rt.name` 反查就是走这一路）。
-    public fun findClass(nm : string) -> ?CInfo {
+    public fn findClass(nm : string) -> ?CInfo {
         var i = 0
         while (i < ciCount) {
             if (cis[i].name == nm) { rtn cis[i] }
@@ -1143,7 +1143,7 @@ public class Gen(owner : string) {
         rtn null
     }
 
-    public fun findEnum(nm : string) -> ?EInfo {
+    public fn findEnum(nm : string) -> ?EInfo {
         var i = 0
         while (i < eiCount) {
             if (eis[i].name == nm) { rtn eis[i] }
@@ -1158,13 +1158,13 @@ public class Gen(owner : string) {
     }
 
     // 是不是「用户类型」（类或枚举）——决定接收者是类名还是表达式
-    public fun isUserType(nm : string) -> bool {
+    public fn isUserType(nm : string) -> bool {
         if (findClass(nm) != null) { rtn true }
         if (findEnum(nm) != null) { rtn true }
         rtn false
     }
 
-    public fun putFld(n : Node, f : FieldRef) -> void {
+    public fn putFld(n : Node, f : FieldRef) -> void {
         if (fldCount >= fldNodes.length) {
             var a : Node[] = new Node[fldNodes.length * 2]
             var b : FieldRef[] = new FieldRef[fldVals.length * 2]
@@ -1180,7 +1180,7 @@ public class Gen(owner : string) {
         fldCount = fldCount + 1
     }
 
-    public fun fldOf(n : Node) -> ?FieldRef {
+    public fn fldOf(n : Node) -> ?FieldRef {
         var i = 0
         while (i < fldCount) {
             if (fldNodes[i] == n) { rtn fldVals[i] }
@@ -1189,7 +1189,7 @@ public class Gen(owner : string) {
         rtn null
     }
 
-    public fun putNew(n : Node, r : NewRef) -> void {
+    public fn putNew(n : Node, r : NewRef) -> void {
         if (newCount >= newNodes.length) {
             var a : Node[] = new Node[newNodes.length * 2]
             var b : NewRef[] = new NewRef[newVals.length * 2]
@@ -1205,7 +1205,7 @@ public class Gen(owner : string) {
         newCount = newCount + 1
     }
 
-    public fun newOf(n : Node) -> ?NewRef {
+    public fn newOf(n : Node) -> ?NewRef {
         var i = 0
         while (i < newCount) {
             if (newNodes[i] == n) { rtn newVals[i] }
@@ -1214,7 +1214,7 @@ public class Gen(owner : string) {
         rtn null
     }
 
-    public fun putSw(n : Node, s : SwInfo) -> void {
+    public fn putSw(n : Node, s : SwInfo) -> void {
         if (swCount >= swNodes.length) {
             var a : Node[] = new Node[swNodes.length * 2]
             var b : SwInfo[] = new SwInfo[swVals.length * 2]
@@ -1230,7 +1230,7 @@ public class Gen(owner : string) {
         swCount = swCount + 1
     }
 
-    public fun swOf(n : Node) -> ?SwInfo {
+    public fn swOf(n : Node) -> ?SwInfo {
         var i = 0
         while (i < swCount) {
             if (swNodes[i] == n) { rtn swVals[i] }
@@ -1239,18 +1239,18 @@ public class Gen(owner : string) {
         rtn null
     }
 
-    public fun setFailed(msg : string) -> void {
+    public fn setFailed(msg : string) -> void {
         if (!failed) {
             failed = true
             message = msg
         }
     }
 
-    public fun bad(what : string) -> void {
+    public fn bad(what : string) -> void {
         setFailed("17d 后端暂不支持：" + what)
     }
 
-    public fun addParam(t : BType) -> int {
+    public fn addParam(t : BType) -> int {
         if (paramTop >= paramPool.length) {
             var bigger : BType[] = new BType[paramPool.length * 2]
             for (var i = 0; i < paramTop; i = i + 1) { bigger[i] = paramPool[i] }
@@ -1261,7 +1261,7 @@ public class Gen(owner : string) {
         rtn paramTop - 1
     }
 
-    public fun addSig(s : Sig) -> void {
+    public fn addSig(s : Sig) -> void {
         if (sigCount >= sigs.length) {
             var bigger : Sig[] = new Sig[sigs.length * 2]
             for (var i = 0; i < sigCount; i = i + 1) { bigger[i] = sigs[i] }
@@ -1271,11 +1271,11 @@ public class Gen(owner : string) {
         sigCount = sigCount + 1
     }
 
-    public fun paramOf(s : Sig, i : int) -> BType {
+    public fn paramOf(s : Sig, i : int) -> BType {
         rtn paramPool[s.start + i]
     }
 
-    public fun findSig(name : string, argc : int) -> ?Sig {
+    public fn findSig(name : string, argc : int) -> ?Sig {
         var i = 0
         while (i < sigCount) {
             if (sigs[i].name == name && sigs[i].count == argc) { rtn sigs[i] }
@@ -1284,7 +1284,7 @@ public class Gen(owner : string) {
         rtn null
     }
 
-    public fun hasSig(name : string) -> bool {
+    public fn hasSig(name : string) -> bool {
         var i = 0
         while (i < sigCount) {
             if (sigs[i].name == name) { rtn true }
@@ -1293,7 +1293,7 @@ public class Gen(owner : string) {
         rtn false
     }
 
-    public fun putBind(n : Node, t : BType, slot : int) -> void {
+    public fn putBind(n : Node, t : BType, slot : int) -> void {
         if (bindCount >= bindNodes.length) {
             var bn : Node[] = new Node[bindNodes.length * 2]
             var bt : BType[] = new BType[bindTypes.length * 2]
@@ -1313,7 +1313,7 @@ public class Gen(owner : string) {
         bindCount = bindCount + 1
     }
 
-    public fun findBind(n : Node) -> int {
+    public fn findBind(n : Node) -> int {
         var i = bindCount - 1
         while (i >= 0) {
             if (bindNodes[i] == n) { rtn i }
@@ -1322,7 +1322,7 @@ public class Gen(owner : string) {
         rtn -1
     }
 
-    public fun putType(n : Node, t : BType) -> void {
+    public fn putType(n : Node, t : BType) -> void {
         if (typeCount >= typeNodes.length) {
             var tn : Node[] = new Node[typeNodes.length * 2]
             var tv : BType[] = new BType[typeVals.length * 2]
@@ -1338,7 +1338,7 @@ public class Gen(owner : string) {
         typeCount = typeCount + 1
     }
 
-    public fun findType(n : Node) -> int {
+    public fn findType(n : Node) -> int {
         var i = typeCount - 1
         while (i >= 0) {
             if (typeNodes[i] == n) { rtn i }
@@ -1347,7 +1347,7 @@ public class Gen(owner : string) {
         rtn -1
     }
 
-    public fun putMem(n : Node, m : Mem2) -> void {
+    public fn putMem(n : Node, m : Mem2) -> void {
         if (memCount >= memNodes.length) {
             var mn : Node[] = new Node[memNodes.length * 2]
             var mv : Mem2[] = new Mem2[memVals.length * 2]
@@ -1363,7 +1363,7 @@ public class Gen(owner : string) {
         memCount = memCount + 1
     }
 
-    public fun memOf(n : Node) -> ?Mem2 {
+    public fn memOf(n : Node) -> ?Mem2 {
         var i = memCount - 1
         while (i >= 0) {
             if (memNodes[i] == n) { rtn memVals[i] }
@@ -1372,7 +1372,7 @@ public class Gen(owner : string) {
         rtn null
     }
 
-    public fun addOrElse(opcode : int, owner : string, target : string, targetDesc : string, params : BType[], result : BType, entryArg : bool) -> OrElse {
+    public fn addOrElse(opcode : int, owner : string, target : string, targetDesc : string, params : BType[], result : BType, entryArg : bool) -> OrElse {
         var name = "__rsf_orelse$" + intToString(orSeq)
         orSeq = orSeq + 1
         var spec = new OrElse(name, orElseDesc(params), opcode, owner, target, targetDesc, params, result, entryArg)
@@ -1386,7 +1386,7 @@ public class Gen(owner : string) {
         rtn spec
     }
 
-    public fun fresh(kind : string) -> string {
+    public fn fresh(kind : string) -> string {
         labelSeq = labelSeq + 1
         rtn kind + "#" + intToString(labelSeq)
     }
@@ -1394,7 +1394,7 @@ public class Gen(owner : string) {
 
 // ============================================================ 类型文本 → BType
 
-fun canonicalBase(text : string) -> string {
+fn canonicalBase(text : string) -> string {
     if (text == "void") { rtn "void" }
     if (text == "bool" || text == "boolean") { rtn "bool" }
     if (text == "byte") { rtn "byte" }
@@ -1408,7 +1408,7 @@ fun canonicalBase(text : string) -> string {
 }
 
 // "?string" / "int[]" / "Box&<int>" → BType。**推不出来就报不支持，绝不猜。**
-fun typeOfText(g : Gen, text : string) -> ?BType {
+fn typeOfText(g : Gen, text : string) -> ?BType {
     if (text.length() == 0) {
         g.bad("空类型")
         rtn null
@@ -1570,11 +1570,11 @@ public class TypeArgs(items : BType[], n : int) {
     var items : BType[] = items
     var n : int = n
 
-    public fun at(i : int) -> BType { rtn items[i] }
-    public fun count() -> int { rtn n }
+    public fn at(i : int) -> BType { rtn items[i] }
+    public fn count() -> int { rtn n }
 }
 
-fun parseTypeArgList(g : Gen, text : string) -> ?TypeArgs {
+fn parseTypeArgList(g : Gen, text : string) -> ?TypeArgs {
     var out : BType[] = new BType[4]
     var n = 0
     var cur = ""
@@ -1616,7 +1616,7 @@ fun parseTypeArgList(g : Gen, text : string) -> ?TypeArgs {
     rtn new TypeArgs(res, n)
 }
 
-fun taOf(t : ?TypeArgs) -> BType[] {
+fn taOf(t : ?TypeArgs) -> BType[] {
     if (t == null) { rtn new BType[0] }
     var a : BType[] = new BType[t!!.count()]
     var i = 0
@@ -1627,7 +1627,7 @@ fun taOf(t : ?TypeArgs) -> BType[] {
     rtn a
 }
 
-fun growTypes(a : BType[]) -> BType[] {
+fn growTypes(a : BType[]) -> BType[] {
     var b : BType[] = new BType[a.length * 2]
     var i = 0
     while (i < a.length) {
@@ -1637,13 +1637,13 @@ fun growTypes(a : BType[]) -> BType[] {
     rtn b
 }
 
-fun parseOneTypeArg(g : Gen, text : string) -> ?BType {
+fn parseOneTypeArg(g : Gen, text : string) -> ?BType {
     var s = trimText(text)
     if (s.length() == 0) { rtn null }
     rtn typeOfText(g, s)
 }
 
-fun trimText(s : string) -> string {
+fn trimText(s : string) -> string {
     var a = 0
     var b = s.length()
     while (a < b && isSpaceChar(s.charAt(a))) { a = a + 1 }
@@ -1651,12 +1651,12 @@ fun trimText(s : string) -> string {
     rtn s.substring(a, b)
 }
 
-fun isSpaceChar(c : char) -> bool {
+fn isSpaceChar(c : char) -> bool {
     rtn c == ' ' || c == '\t' || c == '\n' || c == '\r'
 }
 
 // `Box&<int>` 里的 `int` 那一段（不含最外层的 `&<` `>`）；格式不对给 null
-fun typeArgText(rest : string, amp : int) -> ?string {
+fn typeArgText(rest : string, amp : int) -> ?string {
     var i = amp + 1
     if (i >= rest.length() || rest.charAt(i) != '<') { rtn null }
     i = i + 1
@@ -1677,7 +1677,7 @@ fun typeArgText(rest : string, amp : int) -> ?string {
     rtn null
 }
 
-fun jvmInternalName(simple : string) -> string {
+fn jvmInternalName(simple : string) -> string {
     if (simple == "String") { rtn "java/lang/String" }
     if (simple == "Object") { rtn "java/lang/Object" }
     if (simple == "StringBuilder") { rtn "java/lang/StringBuilder" }
@@ -1689,7 +1689,7 @@ fun jvmInternalName(simple : string) -> string {
 }
 
 // JDK 类的内部名（接收者是类名时用）：先查类导入，再查内置几个
-fun jdkClassInternal(g : Gen, simple : string) -> ?string {
+fn jdkClassInternal(g : Gen, simple : string) -> ?string {
     var imp = g.findImport(simple)
     if (imp != null) { rtn imp }
     if (simple == "System") { rtn "java/lang/System" }
@@ -1700,7 +1700,7 @@ fun jdkClassInternal(g : Gen, simple : string) -> ?string {
 }
 
 // JDK 构造器（rsf 侧没有反射，只能手写表）
-fun jdkNewRef(internal : string, argc : int) -> ?NewRef {
+fn jdkNewRef(internal : string, argc : int) -> ?NewRef {
     if (internal == "java/io/File") {
         if (argc == 1) { rtn new NewRef("java/io/File", "(Ljava/lang/String;)V", memP1(tString())) }
         if (argc == 2) { rtn new NewRef("java/io/File", "(Ljava/lang/String;Ljava/lang/String;)V", memP2(tString(), tString())) }
@@ -1735,27 +1735,27 @@ fun jdkNewRef(internal : string, argc : int) -> ?NewRef {
 }
 
 // 静态方法表项：统一发 INVOKESTATIC（184）
-fun staticM(owner : string, nm : string, desc : string, ret : BType, params : BType[]) -> Mem2 {
+fn staticM(owner : string, nm : string, desc : string, ret : BType, params : BType[]) -> Mem2 {
     var m = new Mem2(owner, nm, desc, ret, params, true)
     m.opcode = 184
     rtn m
 }
 
 // 包装类：`Integer.valueOf` → `Ljava/lang/Integer;` 这类返回类型
-fun wrapType(base : string) -> BType {
+fn wrapType(base : string) -> BType {
     rtn tExternal(boxWrap(base))
 }
 
 // 实参的静态类型（只取 base 名）。调用点查表前已经把实参 walk 过一遍，
 // 类型表里一定有记录，所以这里能安全地问 `tOf`。
-fun argBase(g : Gen, argv : Node, i : int) -> string {
+fn argBase(g : Gen, argv : Node, i : int) -> string {
     if (i >= argv.childCount) { rtn "" }
     rtn tOf(g, argv.children[i]).base
 }
 
 // 一组实参里最宽的数值类型：4=double 3=float 2=long 1=int/byte/char/bool 0=其它。
 // `Math.max(...)` 这类**只看实参类型选重载**的 JDK 方法靠它选行。
-fun argNumericRank(g : Gen, argv : Node) -> int {
+fn argNumericRank(g : Gen, argv : Node) -> int {
     var r = 0
     var i = 0
     while (i < argv.childCount) {
@@ -1772,7 +1772,7 @@ fun argNumericRank(g : Gen, argv : Node) -> int {
 // JDK 静态成员：接收者写成类名的调用（`System.getProperty(...)`）。
 // `argv` 是**实参表节点**而不是个数：`Math.max(1, 2)` 与 `Math.max(1.5, 2.5)` 名字、个数
 // 都一样，只有实参类型能区分，所以查表必须带上实参。
-fun jdkStatic(g : Gen, owner : string, nm : string, argv : Node) -> ?Mem2 {
+fn jdkStatic(g : Gen, owner : string, nm : string, argv : Node) -> ?Mem2 {
     var argc = argv.childCount
     var rank = argNumericRank(g, argv)
     var a0 = argBase(g, argv, 0)
@@ -1893,7 +1893,7 @@ fun jdkStatic(g : Gen, owner : string, nm : string, argv : Node) -> ?Mem2 {
 
 // JDK 静态**字段**（`System.err`）。写成类名的成员访问且不是调用时走这张表：
 // 命中就返回一个 isStatic 的 FieldRef，交给 emitExpr 的 MEMBER 分支发 GETSTATIC。
-fun jdkStaticField(owner : string, nm : string) -> ?FieldRef {
+fn jdkStaticField(owner : string, nm : string) -> ?FieldRef {
     if (owner == "java/lang/System") {
         if (nm == "out" || nm == "err") {
             rtn new FieldRef("java/lang/System", nm, "Ljava/io/PrintStream;", tExternal("java/io/PrintStream"), true)
@@ -1911,14 +1911,14 @@ fun jdkStaticField(owner : string, nm : string) -> ?FieldRef {
 }
 
 // `java.lang.String.valueOf` 这种静态调用要不要发，取决于类型是不是引用
-fun isRefType(t : BType) -> bool {
+fn isRefType(t : BType) -> bool {
     if (t.isArray()) { rtn true }
     if (t.nullable) { rtn true }
     rtn !t.baseIsPrimitive()
 }
 
 // 用户类/数组/可空类型在 printDescriptor 里的写法
-fun printDesc(t : BType) -> string {
+fn printDesc(t : BType) -> string {
     if (t.base == "external" || t.isArray()) { rtn "(Ljava/lang/Object;)V" }
     if (t.base == "byte" && !t.nullable) { rtn "(I)V" }
     rtn "(" + t.desc() + ")V"
@@ -1926,11 +1926,11 @@ fun printDesc(t : BType) -> string {
 
 // ============================================================ 字节码小工具
 
-fun recipeText() -> string {
+fn recipeText() -> string {
     rtn "" + toChar(1) + toChar(1)
 }
 
-fun bsmHandle() -> Handle {
+fn bsmHandle() -> Handle {
     rtn new Handle(
         6,
         "java/lang/invoke/StringConcatFactory",
@@ -1940,7 +1940,7 @@ fun bsmHandle() -> Handle {
     )
 }
 
-fun eConcat(mv : MethodVisitor) -> void {
+fn eConcat(mv : MethodVisitor) -> void {
     var args : Object[] = new Object[1]
     args[0] = recipeText()
     mv.visitInvokeDynamicInsn(
@@ -1951,21 +1951,21 @@ fun eConcat(mv : MethodVisitor) -> void {
     )
 }
 
-fun eStringValueOfInt(mv : MethodVisitor) -> void {
+fn eStringValueOfInt(mv : MethodVisitor) -> void {
     mv.visitMethodInsn(184, "java/lang/String", "valueOf", "(I)Ljava/lang/String;", false)
 }
 
-fun eRuntimeExceptionHeader(mv : MethodVisitor) -> void {
+fn eRuntimeExceptionHeader(mv : MethodVisitor) -> void {
     mv.visitTypeInsn(187, "java/lang/RuntimeException")
     mv.visitInsn(89)
 }
 
-fun eRuntimeExceptionThrow(mv : MethodVisitor) -> void {
+fn eRuntimeExceptionThrow(mv : MethodVisitor) -> void {
     mv.visitMethodInsn(183, "java/lang/RuntimeException", "<init>", "(Ljava/lang/String;)V", false)
     mv.visitInsn(191)
 }
 
-fun pushInt(mv : MethodVisitor, v : int) -> void {
+fn pushInt(mv : MethodVisitor, v : int) -> void {
     if (v >= -1 && v <= 5) {
         mv.visitInsn(3 + v)
         rtn
@@ -1982,7 +1982,7 @@ fun pushInt(mv : MethodVisitor, v : int) -> void {
 }
 
 // widenInsn：from → to 的数值转换指令（byte/char → int 是空操作）
-fun widenInsnOf(fromBase : string, toBase : string) -> int {
+fn widenInsnOf(fromBase : string, toBase : string) -> int {
     // byte/char 在 JVM 栈上就是 int，但 Kotlin 侧这里返回 NOP **并真的发一条 nop**
     // （`BytecodeCompiler.widenInsn` 的对应分支返回 Opcodes.NOP），所以这里也返回 0 而不是 -1，
     // 好让调用点照常 `visitInsn(0)`——少发这一条会让方法内所有偏移错位。
@@ -2007,7 +2007,7 @@ fun widenInsnOf(fromBase : string, toBase : string) -> int {
     rtn -2
 }
 
-fun boxWrap(base : string) -> string {
+fn boxWrap(base : string) -> string {
     if (base == "bool") { rtn "java/lang/Boolean" }
     if (base == "byte") { rtn "java/lang/Byte" }
     if (base == "char") { rtn "java/lang/Character" }
@@ -2017,7 +2017,7 @@ fun boxWrap(base : string) -> string {
     rtn "java/lang/Double"
 }
 
-fun baseDesc(base : string) -> string {
+fn baseDesc(base : string) -> string {
     if (base == "bool") { rtn "Z" }
     if (base == "byte") { rtn "B" }
     if (base == "char") { rtn "C" }
@@ -2027,7 +2027,7 @@ fun baseDesc(base : string) -> string {
     rtn "D"
 }
 
-fun boxedDesc(base : string) -> string {
+fn boxedDesc(base : string) -> string {
     if (base == "bool") { rtn "Ljava/lang/Boolean;" }
     if (base == "byte") { rtn "Ljava/lang/Byte;" }
     if (base == "char") { rtn "Ljava/lang/Character;" }
@@ -2037,14 +2037,14 @@ fun boxedDesc(base : string) -> string {
     rtn "Ljava/lang/Double;"
 }
 
-fun eBox(mv : MethodVisitor, base : string) -> void {
+fn eBox(mv : MethodVisitor, base : string) -> void {
     mv.visitMethodInsn(
         184, boxWrap(base), "valueOf",
         "(" + baseDesc(base) + ")" + boxedDesc(base), false
     )
 }
 
-fun eUnbox(mv : MethodVisitor, base : string) -> void {
+fn eUnbox(mv : MethodVisitor, base : string) -> void {
     if (base == "bool") { mv.visitMethodInsn(182, "java/lang/Boolean", "booleanValue", "()Z", false); rtn }
     if (base == "byte") { mv.visitMethodInsn(182, "java/lang/Byte", "byteValue", "()B", false); rtn }
     if (base == "char") { mv.visitMethodInsn(182, "java/lang/Character", "charValue", "()C", false); rtn }
@@ -2054,7 +2054,7 @@ fun eUnbox(mv : MethodVisitor, base : string) -> void {
     mv.visitMethodInsn(182, "java/lang/Double", "doubleValue", "()D", false)
 }
 
-fun eLoadSlot(mv : MethodVisitor, t : BType, slot : int) -> void {
+fn eLoadSlot(mv : MethodVisitor, t : BType, slot : int) -> void {
     if (t.isArray() || t.isBoxed()) {
         mv.visitVarInsn(25, slot)
         rtn
@@ -2078,7 +2078,7 @@ fun eLoadSlot(mv : MethodVisitor, t : BType, slot : int) -> void {
     mv.visitVarInsn(25, slot)
 }
 
-fun eStoreSlot(mv : MethodVisitor, t : BType, slot : int) -> void {
+fn eStoreSlot(mv : MethodVisitor, t : BType, slot : int) -> void {
     if (t.isArray() || t.isBoxed()) {
         mv.visitVarInsn(58, slot)
         rtn
@@ -2102,7 +2102,7 @@ fun eStoreSlot(mv : MethodVisitor, t : BType, slot : int) -> void {
     mv.visitVarInsn(58, slot)
 }
 
-fun eReturnInsn(mv : MethodVisitor, t : BType) -> void {
+fn eReturnInsn(mv : MethodVisitor, t : BType) -> void {
     if (t.isVoid()) {
         mv.visitInsn(177)
         rtn
@@ -2130,7 +2130,7 @@ fun eReturnInsn(mv : MethodVisitor, t : BType) -> void {
     mv.visitInsn(176)
 }
 
-fun arrayLoadOpcode(t : BType) -> int {
+fn arrayLoadOpcode(t : BType) -> int {
     if (t.isArray() || !t.isPrimitive() || t.nullable) { rtn 50 }
     if (t.base == "bool" || t.base == "byte") { rtn 51 }
     if (t.base == "char") { rtn 52 }
@@ -2140,7 +2140,7 @@ fun arrayLoadOpcode(t : BType) -> int {
     rtn 49
 }
 
-fun arrayStoreOpcode(t : BType) -> int {
+fn arrayStoreOpcode(t : BType) -> int {
     if (t.isArray() || !t.isPrimitive() || t.nullable) { rtn 83 }
     if (t.base == "bool" || t.base == "byte") { rtn 84 }
     if (t.base == "char") { rtn 85 }
@@ -2150,7 +2150,7 @@ fun arrayStoreOpcode(t : BType) -> int {
     rtn 82
 }
 
-fun primitiveArrayType(base : string) -> int {
+fn primitiveArrayType(base : string) -> int {
     if (base == "bool") { rtn 4 }
     if (base == "char") { rtn 5 }
     if (base == "float") { rtn 6 }
@@ -2256,7 +2256,7 @@ public class CMeth(node : Node, name : string, params : BType[], paramNames : st
     var synth : bool = false
 
     // 构造器描述符（用户类构造器一律返回 void）
-    public fun desc() -> string {
+    public fn desc() -> string {
         var d = "("
         var i = 0
         while (i < params.length) {
@@ -2267,7 +2267,7 @@ public class CMeth(node : Node, name : string, params : BType[], paramNames : st
     }
 
     // 普通方法的描述符
-    public fun mdesc() -> string {
+    public fn mdesc() -> string {
         var d = "("
         var i = 0
         while (i < params.length) {
@@ -2277,7 +2277,7 @@ public class CMeth(node : Node, name : string, params : BType[], paramNames : st
         rtn d + ")" + ret.desc()
     }
 
-    public fun opcode() -> int {
+    public fn opcode() -> int {
         if (isStatic) { rtn 184 }
         if (control == "PRIVATE") { rtn 183 }
         rtn 182
@@ -2318,7 +2318,7 @@ public class CInfo(name : string, internal : string) {
     // 阶段 21：注解接口的伴生类内部名（`LDoc$Impl;` 的中段）。也是缓存字段的描述符。
     var annCompInternal : string = ""
 
-    public fun addSuper(nm2 : string) -> void {
+    public fn addSuper(nm2 : string) -> void {
         if (nm2.length() == 0) { rtn }
         var i = 0
         while (i < scount) {
@@ -2341,7 +2341,7 @@ public class CInfo(name : string, internal : string) {
     // 阶段 25：字段 / 方法查找沿**类父链**走，返回**声明那一层**的 CInfo ——
     // GETFIELD / PUTFIELD / INVOKEVIRTUAL 的 owner 要用它（对齐 Kotlin member.className）。
     // 没有继承时第一轮就命中自己，与旧行为逐字节一致。
-    public fun fieldOwnerInChain(nm2 : string) -> ?CInfo {
+    public fn fieldOwnerInChain(nm2 : string) -> ?CInfo {
         var cur : ?CInfo = null
         cur = this
         while (cur != null) {
@@ -2351,7 +2351,7 @@ public class CInfo(name : string, internal : string) {
         rtn null
     }
 
-    public fun methOwnerInChain(nm2 : string, argc : int) -> ?CInfo {
+    public fn methOwnerInChain(nm2 : string, argc : int) -> ?CInfo {
         var cur : ?CInfo = null
         cur = this
         while (cur != null) {
@@ -2363,7 +2363,7 @@ public class CInfo(name : string, internal : string) {
 
     // 接口方法：名字 + 实参个数相同。bodyOnly=true 时只认带体的默认方法
     // （类接收者的那条路：抽象方法不算被继承）；false 时抽象方法也算（接口接收者）。
-    public fun ifaceMethOf(nm2 : string, argc : int, bodyOnly : bool) -> ?CMeth {
+    public fn ifaceMethOf(nm2 : string, argc : int, bodyOnly : bool) -> ?CMeth {
         var i = 0
         while (i < methCount) {
             var m = meths[i]
@@ -2376,7 +2376,7 @@ public class CInfo(name : string, internal : string) {
         rtn null
     }
 
-    public fun addTypeParam(nm : string) -> void {
+    public fn addTypeParam(nm : string) -> void {
         if (typeParamCount >= typeParams.length) {
             var b : string[] = new string[typeParams.length * 2]
             var i = 0
@@ -2390,7 +2390,7 @@ public class CInfo(name : string, internal : string) {
         typeParamCount = typeParamCount + 1
     }
 
-    public fun typeParamIndex(nm : string) -> int {
+    public fn typeParamIndex(nm : string) -> int {
         var i = 0
         while (i < typeParamCount) {
             if (typeParams[i] == nm) { rtn i }
@@ -2399,9 +2399,9 @@ public class CInfo(name : string, internal : string) {
         rtn -1
     }
 
-    public fun typeParamCount() -> int { rtn typeParamCount }
+    public fn typeParamCount() -> int { rtn typeParamCount }
 
-    public fun addField(f : CField) -> void {
+    public fn addField(f : CField) -> void {
         if (fieldCount >= fields.length) {
             var b : CField[] = new CField[fields.length * 2]
             var i = 0
@@ -2415,7 +2415,7 @@ public class CInfo(name : string, internal : string) {
         fieldCount = fieldCount + 1
     }
 
-    public fun addMeth(m : CMeth) -> void {
+    public fn addMeth(m : CMeth) -> void {
         if (methCount >= meths.length) {
             var b : CMeth[] = new CMeth[meths.length * 2]
             var i = 0
@@ -2429,7 +2429,7 @@ public class CInfo(name : string, internal : string) {
         methCount = methCount + 1
     }
 
-    public fun fieldOf(nm : string) -> ?CField {
+    public fn fieldOf(nm : string) -> ?CField {
         var i = 0
         while (i < fieldCount) {
             if (fields[i].name == nm) { rtn fields[i] }
@@ -2438,7 +2438,7 @@ public class CInfo(name : string, internal : string) {
         rtn null
     }
 
-    public fun fieldIndex(nm : string) -> int {
+    public fn fieldIndex(nm : string) -> int {
         var i = 0
         while (i < fieldCount) {
             if (fields[i].name == nm) { rtn i }
@@ -2448,7 +2448,7 @@ public class CInfo(name : string, internal : string) {
     }
 
     // 普通方法（不含构造器）按名字 + 实参个数找
-    public fun methOf(nm : string, argc : int) -> ?CMeth {
+    public fn methOf(nm : string, argc : int) -> ?CMeth {
         var i = 0
         while (i < methCount) {
             var m = meths[i]
@@ -2458,7 +2458,7 @@ public class CInfo(name : string, internal : string) {
         rtn null
     }
 
-    public fun hasMeth(nm : string) -> bool {
+    public fn hasMeth(nm : string) -> bool {
         var i = 0
         while (i < methCount) {
             if (!meths[i].ctor && meths[i].name == nm) { rtn true }
@@ -2467,7 +2467,7 @@ public class CInfo(name : string, internal : string) {
         rtn false
     }
 
-    public fun ctorCount() -> int {
+    public fn ctorCount() -> int {
         var n = 0
         var i = 0
         while (i < methCount) {
@@ -2478,7 +2478,7 @@ public class CInfo(name : string, internal : string) {
     }
 
     // 构造器按实参个数找（本阶段只按个数重载）
-    public fun ctorOf(argc : int) -> ?CMeth {
+    public fn ctorOf(argc : int) -> ?CMeth {
         var i = 0
         while (i < methCount) {
             var m = meths[i]
@@ -2488,7 +2488,7 @@ public class CInfo(name : string, internal : string) {
         rtn null
     }
 
-    public fun hasToString() -> bool {
+    public fn hasToString() -> bool {
         var i = 0
         while (i < methCount) {
             var m = meths[i]
@@ -2506,7 +2506,7 @@ public class EInfo(name : string, internal : string, values : string[], valueCou
     var values : string[] = values
     var valueCount : int = valueCount
 
-    public fun has(nm : string) -> bool {
+    public fn has(nm : string) -> bool {
         var i = 0
         while (i < valueCount) {
             if (values[i] == nm) { rtn true }
@@ -2526,15 +2526,15 @@ public class NewRef(internal : string, desc : string, params : BType[]) {
     var annAI : ?AnnInfo = null
 }
 
-fun memP0() -> BType[] { rtn new BType[0] }
+fn memP0() -> BType[] { rtn new BType[0] }
 
-fun memP1(a : BType) -> BType[] {
+fn memP1(a : BType) -> BType[] {
     var r : BType[] = new BType[1]
     r[0] = a
     rtn r
 }
 
-fun memP2(a : BType, b : BType) -> BType[] {
+fn memP2(a : BType, b : BType) -> BType[] {
     var r : BType[] = new BType[2]
     r[0] = a
     r[1] = b
@@ -2542,7 +2542,7 @@ fun memP2(a : BType, b : BType) -> BType[] {
 }
 
 // 17e：ASM 互操作表要用到 3~6 个形参（rsf 没有变参，只能一个个拼）
-fun memP3(a : BType, b : BType, c : BType) -> BType[] {
+fn memP3(a : BType, b : BType, c : BType) -> BType[] {
     var r : BType[] = new BType[3]
     r[0] = a
     r[1] = b
@@ -2550,7 +2550,7 @@ fun memP3(a : BType, b : BType, c : BType) -> BType[] {
     rtn r
 }
 
-fun memP4(a : BType, b : BType, c : BType, d : BType) -> BType[] {
+fn memP4(a : BType, b : BType, c : BType, d : BType) -> BType[] {
     var r : BType[] = new BType[4]
     r[0] = a
     r[1] = b
@@ -2559,7 +2559,7 @@ fun memP4(a : BType, b : BType, c : BType, d : BType) -> BType[] {
     rtn r
 }
 
-fun memP5(a : BType, b : BType, c : BType, d : BType, e : BType) -> BType[] {
+fn memP5(a : BType, b : BType, c : BType, d : BType, e : BType) -> BType[] {
     var r : BType[] = new BType[5]
     r[0] = a
     r[1] = b
@@ -2569,7 +2569,7 @@ fun memP5(a : BType, b : BType, c : BType, d : BType, e : BType) -> BType[] {
     rtn r
 }
 
-fun memP6(a : BType, b : BType, c : BType, d : BType, e : BType, f : BType) -> BType[] {
+fn memP6(a : BType, b : BType, c : BType, d : BType, e : BType, f : BType) -> BType[] {
     var r : BType[] = new BType[6]
     r[0] = a
     r[1] = b
@@ -2583,12 +2583,12 @@ fun memP6(a : BType, b : BType, c : BType, d : BType, e : BType, f : BType) -> B
 // 数组类型：`byte[]` / `Object[]` / `String[]`。typeOfText 对 `byte[]` 给的是
 // `BType("byte","",false,1)`，对 `Object[]` 给的是 `BType("external","java/lang/Object",false,1)`
 // —— 这里按同样的形状造，好让描述符与调用点的静态类型完全一致。
-fun arrOf(elem : BType) -> BType {
+fn arrOf(elem : BType) -> BType {
     rtn new BType(elem.base, elem.name, false, elem.depth + 1)
 }
 
 // string 的成员（与 Interp.rsf 的 stringMember 是同一批）
-fun stringMember(nm : string, argc : int) -> ?Mem2 {
+fn stringMember(nm : string, argc : int) -> ?Mem2 {
     if (nm == "length" && argc == 0) { rtn new Mem2("java/lang/String", "length", "()I", tInt(), memP0(), false) }
     if (nm == "isEmpty" && argc == 0) { rtn new Mem2("java/lang/String", "isEmpty", "()Z", tBool(), memP0(), false) }
     if (nm == "toUpperCase" && argc == 0) { rtn new Mem2("java/lang/String", "toUpperCase", "()Ljava/lang/String;", tString(), memP0(), false) }
@@ -2627,17 +2627,17 @@ public class AsmMem(owner : string, name : string, argc : int, desc : string, re
 }
 
 // 往表里压一行，返回下一格下标（rsf 没有变参，这样写表最省行）
-fun asmRow(t : AsmMem[], i : int, owner : string, nm : string, argc : int, desc : string, ret : BType, params : BType[]) -> int {
+fn asmRow(t : AsmMem[], i : int, owner : string, nm : string, argc : int, desc : string, ret : BType, params : BType[]) -> int {
     t[i] = new AsmMem(owner, nm, argc, desc, ret, params)
     rtn i + 1
 }
 
-fun asmLabel() -> BType { rtn tExternal("org/objectweb/asm/Label") }
+fn asmLabel() -> BType { rtn tExternal("org/objectweb/asm/Label") }
 
 // 表的内容严格对齐 `org.objectweb.asm` 的真实签名（阶段 21 起 33 条里的 30 条成员；
 // 三条构造器 <init>(I)V / Label.<init>()V / Handle.<init>(...) 在 jdkNewRef 里；
 // 第 26 刀补第 31 条 `MethodVisitor.visitLocalVariable`）。
-fun asmTable() -> AsmMem[] {
+fn asmTable() -> AsmMem[] {
     var t : AsmMem[] = new AsmMem[32]
     var i = 0
 
@@ -2742,7 +2742,7 @@ fun asmTable() -> AsmMem[] {
 
 // ASM 成员查找：按 (owner, 名字, 实参个数) 精确匹配，**扫完整张表**。
 // 同三元组出现两行 → 显式报错并返回 null（调用点会因此中止编译、一个 .class 都不写）。
-fun asmLookup(g : Gen, owner : string, nm : string, argc : int) -> ?Mem2 {
+fn asmLookup(g : Gen, owner : string, nm : string, argc : int) -> ?Mem2 {
     var t = asmTable()
     var hit : ?AsmMem = null
     var i = 0
@@ -2761,7 +2761,7 @@ fun asmLookup(g : Gen, owner : string, nm : string, argc : int) -> ?Mem2 {
     rtn new Mem2(hit!!.owner, hit!!.name, hit!!.desc, hit!!.ret, hit!!.params, false)
 }
 
-fun jdkMember(g : Gen, recv : BType, nm : string, argc : int) -> ?Mem2 {
+fn jdkMember(g : Gen, recv : BType, nm : string, argc : int) -> ?Mem2 {
     if (recv.base == "string" && !recv.isArray()) { rtn stringMember(nm, argc) }
     if (recv.base == "external") {
         if (recv.name == "java/io/File") {
@@ -2823,7 +2823,7 @@ fun jdkMember(g : Gen, recv : BType, nm : string, argc : int) -> ?Mem2 {
 
 // ============================================================ 表达式类型（侧表）
 
-fun tOf(g : Gen, n : Node) -> BType {
+fn tOf(g : Gen, n : Node) -> BType {
     var i = g.findType(n)
     if (i < 0) {
         g.setFailed("内部错误：表达式缺少类型（" + kindName(n.kind) + "）")
@@ -2843,7 +2843,7 @@ public class Builtin2(name : string, params : BType[], ret : BType, helper : str
     var helperDesc : string = helperDesc
 }
 
-fun builtinOf(name : string) -> ?Builtin2 {
+fn builtinOf(name : string) -> ?Builtin2 {
     var one : BType[] = new BType[1]
     var two : BType[] = new BType[2]
     if (name == "toByte") {
@@ -2907,7 +2907,7 @@ fun builtinOf(name : string) -> ?Builtin2 {
     rtn null
 }
 
-fun isPrintLike(name : string) -> bool {
+fn isPrintLike(name : string) -> bool {
     if (name == "print") { rtn true }
     rtn name == "println"
 }
@@ -2927,7 +2927,7 @@ public class Walker(g : Gen) {
     var hHandlerIdx : int[] = new int[4]
     var hCount : int = 0
 
-    public fun addHandler(start : Label, end : Label, handler : Label, startIdx : int, endIdx : int, handlerIdx : int) -> void {
+    public fn addHandler(start : Label, end : Label, handler : Label, startIdx : int, endIdx : int, handlerIdx : int) -> void {
         if (hCount >= hStarts.length) {
             var s2 : Label[] = new Label[hCount * 2]
             var e2 : Label[] = new Label[hCount * 2]
@@ -2959,7 +2959,7 @@ public class Walker(g : Gen) {
         hCount = hCount + 1
     }
 
-    public fun emit(ins : Ins) -> void {
+    public fn emit(ins : Ins) -> void {
         // 行号在这里兜底：控制流的 branch/goto/label 也不单独带节点，取「当前语句」的行号
         if (ins.line < 1) { ins.line = curLine }
         if (outCount >= out.length) {
@@ -2988,12 +2988,12 @@ public class Walker(g : Gen) {
     var declLabels : string[] = new string[4]
     var declCount : int = 0
 
-    public fun resetLabels() -> void {
+    public fn resetLabels() -> void {
         labCount = 0
         declCount = 0
     }
 
-    public fun labelFor(name : string) -> Label {
+    public fn labelFor(name : string) -> Label {
         var i = 0
         while (i < labCount) {
             if (labNames[i] == name) { rtn labVals[i] }
@@ -3018,7 +3018,7 @@ public class Walker(g : Gen) {
 
     // ---------------------------------------------------------- 语句
 
-    public fun walkBlock(blk : Node, sc : Scope) -> void {
+    public fn walkBlock(blk : Node, sc : Scope) -> void {
         var inner = new Scope(sc)
         var i = 0
         while (i < blk.childCount) {
@@ -3032,14 +3032,14 @@ public class Walker(g : Gen) {
     var curLine : int = 1
 
     // 行号用**包装**而不是在每个 `rtn` 前恢复：walkStmtInner 里到处是提前返回
-    public fun walkStmt(st : Node, sc : Scope) -> void {
+    public fn walkStmt(st : Node, sc : Scope) -> void {
         var save = curLine
         if (st.line > 0) { curLine = st.line }
         walkStmtInner(st, sc)
         curLine = save
     }
 
-    public fun walkStmtInner(st : Node, sc : Scope) -> void {
+    public fn walkStmtInner(st : Node, sc : Scope) -> void {
         if (g.failed) { rtn }
         var k = st.kind
         if (k == NodeKind.BLOCK) {
@@ -3567,7 +3567,7 @@ public class Walker(g : Gen) {
     var loopContinue : Label[] = new Label[4]
     var loopTop : int = 0
 
-    public fun pushLoop(cont : Label, brk : Label) -> void {
+    public fn pushLoop(cont : Label, brk : Label) -> void {
         if (loopTop >= loopBreak.length) {
             var b1 : Label[] = new Label[loopBreak.length * 2]
             var b2 : Label[] = new Label[loopContinue.length * 2]
@@ -3583,23 +3583,23 @@ public class Walker(g : Gen) {
         loopTop = loopTop + 1
     }
 
-    public fun popLoop() -> void {
+    public fn popLoop() -> void {
         loopTop = loopTop - 1
     }
 
-    public fun topBreak() -> ?Label {
+    public fn topBreak() -> ?Label {
         if (loopTop == 0) { rtn null }
         rtn loopBreak[loopTop - 1]
     }
 
-    public fun topContinue() -> ?Label {
+    public fn topContinue() -> ?Label {
         if (loopTop == 0) { rtn null }
         rtn loopContinue[loopTop - 1]
     }
 
     // ---------------------------------------------------------- 表达式
 
-    public fun walkExpr(e : Node, sc : Scope) -> BType {
+    public fn walkExpr(e : Node, sc : Scope) -> BType {
         if (g.failed) { rtn tVoid() }
         var k = e.kind
         var t : BType = tVoid()
@@ -4110,7 +4110,7 @@ public class Walker(g : Gen) {
         rtn t
     }
 
-    public fun walkNewArray(e : Node, sc : Scope) -> BType {
+    public fn walkNewArray(e : Node, sc : Scope) -> BType {
         var elemText = prop(e, "elem")
         var et = typeOfText(g, elemText)
         if (et == null) { rtn tVoid() }
@@ -4126,7 +4126,7 @@ public class Walker(g : Gen) {
     // 阶段 25：类头父类子句的实参表（`class IntHolder(...) : Holder&<int>(v0)` 里的
     // `int`）。Parser 只给了 `display` 那段文本（`Holder&<int>`），类名在 `name` 里
     // 是不带泛型的 —— 所以实参只能在**用的时候**从 display 里切出来再解析。
-    public fun superArgsOf(ci : CInfo) -> BType[] {
+    public fn superArgsOf(ci : CInfo) -> BType[] {
         var disp = ci.parentDisplay
         var amp = disp.indexOf("&<")
         if (amp < 0 || disp.length() <= amp + 3) { rtn new BType[0] }
@@ -4137,7 +4137,7 @@ public class Walker(g : Gen) {
     // 同层（from 就是 decl）时退化成 `substOf(fromArgs, decl.typeParams)` —— 与旧行为一致；
     // 跨层时逐级把父类子句的实参代入，`class IntHolder : Holder&<int>` 就能把
     // `Holder.get()->T` 里的 T 换成 int（`intToString(h.get())` 靠这个才对得上）。
-    public fun chainSubst(from : CInfo, fromArgs : BType[], decl : CInfo) -> Subst {
+    public fn chainSubst(from : CInfo, fromArgs : BType[], decl : CInfo) -> Subst {
         var s = substOf(fromArgs, from.typeParams)
         var cur : ?CInfo = null
         cur = from
@@ -4160,21 +4160,21 @@ public class Walker(g : Gen) {
 
     // `new X(...)`（含省略 new 的构造）——用户类 / 枚举走 findClass，
     // JDK 类走类导入表 + jdkNewRef 手写表。
-    public fun walkNew(e : Node, sc : Scope) -> BType {
+    public fn walkNew(e : Node, sc : Scope) -> BType {
         rtn walkConstruction(e, prop(e, "class"), typeArgsFrom(g, prop(e, "typeArgs")), e.children[0], sc)
     }
 
     // `&<int, Box&<int>>` 那段文本 → 已擦除的实参表（没有就返回空表）。
     // 注意 Parser 存进 `typeArgs` 的是**尖括号里面**那段（`int`、`string,Box&<int>`），
     // 前面没有 `&`；`argsOrDash()` 那条路径没实参时给的是 "-"
-    public fun typeArgsFrom(g : Gen, text : string) -> BType[] {
+    public fn typeArgsFrom(g : Gen, text : string) -> BType[] {
         if (text.length() == 0 || text == "-") { rtn new BType[0] }
         var parsed = parseTypeArgList(g, text)
         rtn taOf(parsed)
     }
 
     // 显式 `new X(...)` 与省掉 new 的 `X(...)` 共用这一段（与 Kotlin 的 checkConstruction 同构）
-    public fun walkConstruction(e : Node, clsName : string, ta : BType[], argNode : Node, sc : Scope) -> BType {
+    public fn walkConstruction(e : Node, clsName : string, ta : BType[], argNode : Node, sc : Scope) -> BType {
         var i = 0
         while (i < argNode.childCount) {
             walkExpr(argNode.children[i], sc)
@@ -4282,7 +4282,7 @@ public class Walker(g : Gen) {
         rtn new BType("external", jc!!, false, 0)
     }
 
-    public fun walkCall(e : Node, sc : Scope) -> BType {
+    public fn walkCall(e : Node, sc : Scope) -> BType {
         var name = prop(e, "name")
         var args = e.children[0]
         var i = 0
@@ -4374,7 +4374,7 @@ public class Walker(g : Gen) {
         rtn s!!.ret
     }
 
-    public fun walkBinary(e : Node, sc : Scope) -> BType {
+    public fn walkBinary(e : Node, sc : Scope) -> BType {
         var op = prop(e, "op")
         var a = walkExpr(e.children[0], sc)
         var b = walkExpr(e.children[1], sc)
@@ -4394,7 +4394,7 @@ public class Walker(g : Gen) {
     }
 
     // 裸字段 / this 必须在实例方法里（照抄 Kotlin 的 requireInstanceScope）
-    public fun requireInstanceScope(what : string) -> bool {
+    public fn requireInstanceScope(what : string) -> bool {
         var ci = g.cur
         if (ci == null) {
             g.bad(what + "（不在类里）")
@@ -4408,7 +4408,7 @@ public class Walker(g : Gen) {
     }
 
     // 循环体的 break 是否属于本层（照抄 Lowering.containsBreak）
-    public fun containsBreak(blk : Node) -> bool {
+    public fn containsBreak(blk : Node) -> bool {
         var i = 0
         while (i < blk.childCount) {
             var st = blk.children[i]
@@ -4439,7 +4439,7 @@ public class Walker(g : Gen) {
         rtn false
     }
 
-    public fun canExitLoop(st : Node) -> bool {
+    public fn canExitLoop(st : Node) -> bool {
         var cond = st.children[0]
         if (cond.kind != NodeKind.BOOL_LIT) { rtn true }
         if (prop(cond, "value") != "true") { rtn true }
@@ -4449,7 +4449,7 @@ public class Walker(g : Gen) {
 
 // ============================================================ 跳转回填 + 可达性
 
-fun linkTargets(w : Walker) -> void {
+fn linkTargets(w : Walker) -> void {
     var i = 0
     while (i < w.outCount) {
         var k = w.out[i].kind
@@ -4469,7 +4469,7 @@ fun linkTargets(w : Walker) -> void {
     }
 }
 
-fun labelIndexOf(w : Walker, lbl : Label) -> int {
+fn labelIndexOf(w : Walker, lbl : Label) -> int {
     var j = 0
     while (j < w.outCount) {
         if (w.out[j].kind == "label" && w.out[j].lbl == lbl) { rtn j }
@@ -4479,7 +4479,7 @@ fun labelIndexOf(w : Walker, lbl : Label) -> int {
 }
 
 // switch 落空时的消息（与 sema/Builtins.kt 的 EnumRuntime.noMatchFailure 逐字一致）
-public fun switchNoMatchMessage(enumName : string) -> string {
+public fn switchNoMatchMessage(enumName : string) -> string {
     var simple = enumName
     var slash = simple.lastIndexOf("/")
     if (slash >= 0) { simple = simple.substring(slash + 1, simple.length()) }
@@ -4488,7 +4488,7 @@ public fun switchNoMatchMessage(enumName : string) -> string {
 
 // 与 Lowering.ControlFlow.reachable 同一套：IReturn/IFail 无后继，IGoto 只有目标，
 // IBranch 有 [下一条, 目标]。索引 outCount 是「函数出口」。
-fun computeReach(w : Walker) -> bool[] {
+fn computeReach(w : Walker) -> bool[] {
     var n = w.outCount
     var reach = new bool[n + 2]
     var cap = n * 4 + 16
@@ -4566,9 +4566,9 @@ fun computeReach(w : Walker) -> bool[] {
 
 // ============================================================ 发射
 
-fun tObject() -> BType { rtn new BType("external", "java/lang/Object", false, 0) }
+fn tObject() -> BType { rtn new BType("external", "java/lang/Object", false, 0) }
 
-fun internalNameOf(t : BType) -> string {    if (t.isArray()) { rtn t.desc() }
+fn internalNameOf(t : BType) -> string {    if (t.isArray()) { rtn t.desc() }
     if (t.base == "string" || t.base == "null") { rtn "java/lang/String" }
     if (t.base == "external") { rtn t.name }
     if (t.isBoxed()) { rtn boxWrap(t.base) }
@@ -4580,7 +4580,7 @@ fun internalNameOf(t : BType) -> string {    if (t.isArray()) { rtn t.desc() }
 // 内部名 → 点分名。只换 '/'，其余原样（`Marker$Impl` 的 '$' 必须留着 —— 那就是
 // `Class.getName()` 打出来的样子）。rsf 的 `String.replace` 收的是 CharSequence，
 // 这里走 indexOf/substring 自己拼，不依赖隐式上转。
-fun dottedName(internal : string) -> string {
+fn dottedName(internal : string) -> string {
     var out = ""
     var rest = internal
     var i = rest.indexOf("/")
@@ -4597,13 +4597,13 @@ fun dottedName(internal : string) -> string {
 // （`B[]` → `[LB;`、`int[][]` → `[[I`、`A[]` → `[LA;`），非数组写点分类名
 // （`demo/B` → `demo.B`、`java/lang/String` → `java.lang.String`）。擦除后的类型参数
 // 是 `java/lang/Object` → `java.lang.Object`。`as` 失败时的文案印的就是它。
-fun runtimeNameOf(t : BType) -> string {
+fn runtimeNameOf(t : BType) -> string {
     if (t.isArray()) { rtn "[" + runtimeElemNameOf(t.element()) }
     rtn runtimeClassOnly(t)
 }
 
 // 数组**一层**元素在 Class.getName() 里的写法：多维再套 '['
-fun runtimeElemNameOf(el : BType) -> string {
+fn runtimeElemNameOf(el : BType) -> string {
     if (el.isArray()) { rtn "[" + runtimeElemNameOf(el.element()) }
     if (el.isPrimitive()) { rtn el.desc() }
     rtn "L" + runtimeClassOnly(el) + ";"
@@ -4611,7 +4611,7 @@ fun runtimeElemNameOf(el : BType) -> string {
 
 // 非数组类型的点分类名：external 直接用 name 换掉 '/'，
 // 其余看描述符（`Ljava/lang/String;` → `java.lang.String`、`I` → `I`）。
-fun runtimeClassOnly(t : BType) -> string {
+fn runtimeClassOnly(t : BType) -> string {
     if (t.base == "external") { rtn dottedName(t.name) }
     var d = t.desc()
     if (d.length() > 0 && d.charAt(0) == 'L') {
@@ -4620,14 +4620,14 @@ fun runtimeClassOnly(t : BType) -> string {
     rtn d
 }
 
-fun accessOf(fn : Node) -> int {
-    var c = prop(fn, "control")
+fn accessOf(fnNode : Node) -> int {
+    var c = prop(fnNode, "control")
     if (c == "PRIVATE") { rtn accPrivate() }
     if (c == "PROTECTED") { rtn accProtected() }
     rtn accPublic()
 }
 
-fun descriptorOfSig(g : Gen, s : Sig, entry : bool) -> string {
+fn descriptorOfSig(g : Gen, s : Sig, entry : bool) -> string {
     var d = "("
     if (entry) { d = d + "[Ljava/lang/String;" }
     var i = 0
@@ -4638,7 +4638,7 @@ fun descriptorOfSig(g : Gen, s : Sig, entry : bool) -> string {
     rtn d + ")" + s.ret.desc()
 }
 
-fun findSigNode(g : Gen, n : Node) -> ?Sig {
+fn findSigNode(g : Gen, n : Node) -> ?Sig {
     var i = 0
     while (i < g.sigCount) {
         if (g.sigs[i].node == n) { rtn g.sigs[i] }
@@ -4649,7 +4649,7 @@ fun findSigNode(g : Gen, n : Node) -> ?Sig {
 
 // ------------------------------------------------------------ 固定辅助方法
 
-fun emitDefaultCtor(g : Gen) -> void {
+fn emitDefaultCtor(g : Gen) -> void {
     var mv = g.cw.visitMethod(accPublic(), "<init>", "()V", null, null)
     mv.visitCode()
     // 程序类的隐式无参构造器：LVT 只有 0 号槽的 this
@@ -4662,7 +4662,7 @@ fun emitDefaultCtor(g : Gen) -> void {
     mv.visitEnd()
 }
 
-fun emitParseIntHelper(g : Gen) -> void {
+fn emitParseIntHelper(g : Gen) -> void {
     var mv = g.cw.visitMethod(
         accPublic() + accStatic(), parseIntHelperName(), parseIntHelperDesc(), null, null
     )
@@ -4695,7 +4695,7 @@ fun emitParseIntHelper(g : Gen) -> void {
 //                                   + v.getClass().getName() + " 当成 " + name);
 //   return v;
 // 不发 LVT 条目（Kotlin 侧这个辅助方法就没有 LocalVariableTable）。
-fun emitCastHelper(g : Gen) -> void {
+fn emitCastHelper(g : Gen) -> void {
     var mv = g.cw.visitMethod(accPublic() + accStatic(), castHelperName(), castHelperDesc(), null, null)
     mv.visitCode()
     // if (v == null) throw ...
@@ -4733,7 +4733,7 @@ fun emitCastHelper(g : Gen) -> void {
     mv.visitEnd()
 }
 
-fun ePathFromArg0(mv : MethodVisitor) -> void {
+fn ePathFromArg0(mv : MethodVisitor) -> void {
     mv.visitVarInsn(25, 0)
     mv.visitInsn(3)
     mv.visitTypeInsn(189, "java/lang/String")
@@ -4743,13 +4743,13 @@ fun ePathFromArg0(mv : MethodVisitor) -> void {
     )
 }
 
-fun eEmptyOptionArray(mv : MethodVisitor) -> void {
+fn eEmptyOptionArray(mv : MethodVisitor) -> void {
     mv.visitInsn(3)
     mv.visitTypeInsn(189, "java/nio/file/OpenOption")
 }
 
 // core：1=readText 2=writeText 3=readBytes 4=writeBytes
-fun emitFileHelper(
+fn emitFileHelper(
     g : Gen, name : string, desc : string, msgName : string,
     exSlot : int, isVoid : bool, core : int
 ) -> void {
@@ -4796,14 +4796,14 @@ fun emitFileHelper(
     mv.visitEnd()
 }
 
-fun emitFileHelpers(g : Gen) -> void {
+fn emitFileHelpers(g : Gen) -> void {
     emitFileHelper(g, readTextHelperName(), readTextHelperDesc(), "readText", 1, false, 1)
     emitFileHelper(g, writeTextHelperName(), writeTextHelperDesc(), "writeText", 2, true, 2)
     emitFileHelper(g, readBytesHelperName(), readBytesHelperDesc(), "readBytes", 1, false, 3)
     emitFileHelper(g, writeBytesHelperName(), writeBytesHelperDesc(), "writeBytes", 2, true, 4)
 }
 
-fun emitArrayHelpers(g : Gen) -> void {
+fn emitArrayHelpers(g : Gen) -> void {
     var mv = g.cw.visitMethod(
         accPublic() + accStatic(), arrayIndexHelperName(), arrayIndexHelperDesc(), null, null
     )
@@ -4853,7 +4853,7 @@ fun emitArrayHelpers(g : Gen) -> void {
 
 // ------------------------------------------------------------ 表达式
 
-fun emitWiden(g : Gen, mv : MethodVisitor, from : BType, to : BType) -> void {
+fn emitWiden(g : Gen, mv : MethodVisitor, from : BType, to : BType) -> void {
     if (sameType(from, to)) { rtn }
     if (from.isNullLit()) { rtn }
     // 1) 目标是引用类型（string / external / typeparam 等），来源是基本类型 → 装箱
@@ -4893,7 +4893,7 @@ fun emitWiden(g : Gen, mv : MethodVisitor, from : BType, to : BType) -> void {
     mv.visitInsn(op)
 }
 
-fun emitToString(g : Gen, mv : MethodVisitor, t : BType) -> void {
+fn emitToString(g : Gen, mv : MethodVisitor, t : BType) -> void {
     if (t.base == "string") { rtn }
     if (t.isNullLit()) { rtn }
     if (!t.isPrimitive()) {
@@ -4905,7 +4905,7 @@ fun emitToString(g : Gen, mv : MethodVisitor, t : BType) -> void {
     mv.visitMethodInsn(184, "java/lang/String", "valueOf", desc, false)
 }
 
-fun cmpJumpOf(op : string) -> int {
+fn cmpJumpOf(op : string) -> int {
     if (op == "EQ") { rtn 153 }
     if (op == "NE") { rtn 154 }
     if (op == "LT") { rtn 155 }
@@ -4914,7 +4914,7 @@ fun cmpJumpOf(op : string) -> int {
     rtn 158
 }
 
-fun emitComparison(
+fn emitComparison(
     g : Gen, mv : MethodVisitor, e : Node, op : string, lt : BType, rt : BType, off : int
 ) -> void {
     var trueLabel = new Label()
@@ -4970,7 +4970,7 @@ fun emitComparison(
     mv.visitLabel(end)
 }
 
-fun emitBinary(g : Gen, mv : MethodVisitor, e : Node, off : int) -> void {
+fn emitBinary(g : Gen, mv : MethodVisitor, e : Node, off : int) -> void {
     var op = prop(e, "op")
     var lt = tOf(g, e.children[0])
     var rt = tOf(g, e.children[1])
@@ -5016,7 +5016,7 @@ fun emitBinary(g : Gen, mv : MethodVisitor, e : Node, off : int) -> void {
     mv.visitInsn(opcode)
 }
 
-fun emitBuiltin(g : Gen, mv : MethodVisitor, b : Builtin2) -> void {
+fn emitBuiltin(g : Gen, mv : MethodVisitor, b : Builtin2) -> void {
     var n = b.name
     if (n == "toByte") {
         mv.visitInsn(145)
@@ -5048,7 +5048,7 @@ fun emitBuiltin(g : Gen, mv : MethodVisitor, b : Builtin2) -> void {
     mv.visitMethodInsn(184, g.owner, b.helper, b.helperDesc, false)
 }
 
-fun emitCall(g : Gen, mv : MethodVisitor, e : Node, off : int) -> void {
+fn emitCall(g : Gen, mv : MethodVisitor, e : Node, off : int) -> void {
     var name = prop(e, "name")
     var args = e.children[0]
     if (isPrintLike(name)) {
@@ -5130,11 +5130,11 @@ public class OrElse(name : string, desc : string, opcode : int, owner : string, 
 }
 
 // 这个表达式是不是一次「可能失败」的调用（`!T` 函数 / 内置的 mayError 函数）
-fun isEntrySig(s : Sig) -> bool { rtn s.name == "main" && s.count == 0 }
+fn isEntrySig(s : Sig) -> bool { rtn s.name == "main" && s.count == 0 }
 
 // 接口链查找命中（`Gen.ifaceLookup`）之后包一个 Mem2：owner 是**声明它**的那个接口，
 // 指令固定 INVOKEINTERFACE(185)，且 `visitMethodInsn` 的末位布尔为 true。
-fun ifaceMem2(g : Gen, rt : BType) -> Mem2 {
+fn ifaceMem2(g : Gen, rt : BType) -> Mem2 {
     var hm = g.ifaceHit!!
     var ho = g.ifaceHitOwner!!
     var mi = new Mem2(ho.internal, hm.name, hm.mdesc(), hm.ret, hm.params, false)
@@ -5146,7 +5146,7 @@ fun ifaceMem2(g : Gen, rt : BType) -> Mem2 {
     rtn mi
 }
 
-fun isErrorCallExpr(g : Gen, e : Node) -> bool {
+fn isErrorCallExpr(g : Gen, e : Node) -> bool {
     // `对象.方法()!!`：按接收者的类型找出那个类的同名方法，看它是不是 `!T`
     // （Kotlin 侧对应 `model.classModel.members[expr] as? UserMember.Method`）。
     if (e.kind == NodeKind.MEMBER) {
@@ -5208,7 +5208,7 @@ fun isErrorCallExpr(g : Gen, e : Node) -> bool {
 }
 
 // descriptorOfType 的 rsf 版：一个形参列表 → "(...)Ljava/lang/Object;"
-fun orElseDesc(params : BType[]) -> string {
+fn orElseDesc(params : BType[]) -> string {
     var s = "("
     var i = 0
     while (i < params.length) {
@@ -5218,7 +5218,7 @@ fun orElseDesc(params : BType[]) -> string {
     rtn s + ")Ljava/lang/Object;"
 }
 
-fun emitElvis(g : Gen, mv : MethodVisitor, e : Node, off : int) -> void {
+fn emitElvis(g : Gen, mv : MethodVisitor, e : Node, off : int) -> void {
     if (isErrorCallExpr(g, e.children[0])) {
         emitErrorCallElvis(g, mv, e, off)
         rtn
@@ -5249,7 +5249,7 @@ fun emitElvis(g : Gen, mv : MethodVisitor, e : Node, off : int) -> void {
 // 返回值按静态类型收敛（Object → 具体类型）。
 // `declared` 是**声明**（擦除后）的返回类型，`want` 是调用点按类型实参算出来的静态类型。
 // 与 Kotlin 的 BytecodeCompiler.emitResultCast 一一对应。
-fun emitResultCast(g : Gen, mv : MethodVisitor, declared : BType, want : BType) -> void {
+fn emitResultCast(g : Gen, mv : MethodVisitor, declared : BType, want : BType) -> void {
     if (sameType(declared, want)) { rtn }
     if (want.isVoid() || want.isNullLit()) { rtn }
     // 类体内部：`T` 本来就是 Object，不需要转。但 `T[]` **要**转——
@@ -5272,7 +5272,7 @@ fun emitResultCast(g : Gen, mv : MethodVisitor, declared : BType, want : BType) 
 // 方法里），与 Kotlin 版一致；调用点的求值顺序仍是「先接收者后实参」。
 // 实参类型照 `walkExpr` 给 `Mem2` 登记的解析结果走：优先 declParams（声明里擦除
 // 后的类型，也就是 `mi.desc` 写的那套），没登记才退回 params。**不按名字猜目标**。
-fun orElseOfMemberCall(g : Gen, mv : MethodVisitor, left : Node, mi : Mem2, off : int) -> OrElse {
+fn orElseOfMemberCall(g : Gen, mv : MethodVisitor, left : Node, mi : Mem2, off : int) -> OrElse {
     var args = left.children[1]
     var base = 0
     if (mi.opcode != 184) { base = 1 }
@@ -5298,7 +5298,7 @@ fun orElseOfMemberCall(g : Gen, mv : MethodVisitor, left : Node, mi : Mem2, off 
 // `?:` 左边的**类内隐式调用**（`f() ?: v`，f 是本类 / 隐式 this 的方法）：静态方法
 // 没有接收者，实例方法要在调用点压 this —— 与 `emitCall` 的 `mi0.opcode != 184`
 // 判断一致。
-fun orElseOfImplicitCall(g : Gen, mv : MethodVisitor, left : Node, mi : Mem2, off : int) -> OrElse {
+fn orElseOfImplicitCall(g : Gen, mv : MethodVisitor, left : Node, mi : Mem2, off : int) -> OrElse {
     var args = left.children[0]
     var base = 0
     if (mi.opcode != 184) { base = 1 }
@@ -5324,12 +5324,12 @@ fun orElseOfImplicitCall(g : Gen, mv : MethodVisitor, left : Node, mi : Mem2, of
 // 合成方法体里要不要装箱，看**声明**（擦除后）的返回类型，所以优先 `origRet`；
 // 按类名调 static 方法与手写互操作表直接造的 `Mem2` 没登记 `origRet`（默认 tVoid），
 // 那时退回 `ret`。
-fun orElseResultType(mi : Mem2) -> BType {
+fn orElseResultType(mi : Mem2) -> BType {
     if (!mi.origRet.isVoid()) { rtn mi.origRet }
     rtn mi.ret
 }
 
-fun emitErrorCallElvis(g : Gen, mv : MethodVisitor, e : Node, off : int) -> void {
+fn emitErrorCallElvis(g : Gen, mv : MethodVisitor, e : Node, off : int) -> void {
     var left = e.children[0]
     var res = tOf(g, e)
     var nm = prop(left, "name")
@@ -5419,7 +5419,7 @@ fun emitErrorCallElvis(g : Gen, mv : MethodVisitor, e : Node, off : int) -> void
     mv.visitLabel(done)
 }
 
-fun emitForce(g : Gen, mv : MethodVisitor, e : Node, off : int) -> void {
+fn emitForce(g : Gen, mv : MethodVisitor, e : Node, off : int) -> void {
     var operand = e.children[0]
     var res = tOf(g, e)
     if (isErrorCallExpr(g, operand)) {
@@ -5443,7 +5443,7 @@ fun emitForce(g : Gen, mv : MethodVisitor, e : Node, off : int) -> void {
 
 // `x is A` / `x !is A`（阶段 24）。`INSTANCEOF` 对 null 本身就回 0（= false），
 // 正好对上「`null is A` 恒为 false」；`!is` 再把结果取反（ICONST_1 + IXOR）。
-fun emitIsTest(g : Gen, mv : MethodVisitor, e : Node, off : int) -> void {
+fn emitIsTest(g : Gen, mv : MethodVisitor, e : Node, off : int) -> void {
     var target = castTargetOf(g, e, "is")
     if (target == null) { rtn }
     emitExpr(g, mv, e.children[0], off)
@@ -5458,7 +5458,7 @@ fun emitIsTest(g : Gen, mv : MethodVisitor, e : Node, off : int) -> void {
 // 求值操作数、压目标类常量、压目标 JVM 名、INVOKESTATIC + CHECKCAST。
 // **不内联** if + throw：调用点常常在表达式中间（栈上还压着别的值），
 // 一进异常处理器栈就只剩异常对象，类会以 VerifyError 报废。
-fun emitCheckedCast(g : Gen, mv : MethodVisitor, e : Node, off : int) -> void {
+fn emitCheckedCast(g : Gen, mv : MethodVisitor, e : Node, off : int) -> void {
     var target = castTargetOf(g, e, "as")
     if (target == null) { rtn }
     var internal = internalNameOf(target!!)
@@ -5471,7 +5471,7 @@ fun emitCheckedCast(g : Gen, mv : MethodVisitor, e : Node, off : int) -> void {
 
 // `x ?as A`（阶段 24）：判型失败那一支把值换成 null，不抛。两支都是纯粹的「值替换」，
 // 没有 try/catch 保护范围，可以内联。
-fun emitSafeCast(g : Gen, mv : MethodVisitor, e : Node, off : int) -> void {
+fn emitSafeCast(g : Gen, mv : MethodVisitor, e : Node, off : int) -> void {
     var target = castTargetOf(g, e, "?as")
     if (target == null) { rtn }
     var internal = internalNameOf(target!!)
@@ -5491,7 +5491,7 @@ fun emitSafeCast(g : Gen, mv : MethodVisitor, e : Node, off : int) -> void {
 
 // 三种发码共用的目标类型解析（TARGET 节点的 `type` 文本 → BType）。
 // walkExpr 已经把这类错误拦过一遍了，这里是兜底。
-fun castTargetOf(g : Gen, e : Node, opText : string) -> ?BType {
+fn castTargetOf(g : Gen, e : Node, opText : string) -> ?BType {
     var t = typeOfText(g, prop(e.children[1], "type"))
     if (t == null) {
         g.setFailed("内部错误：" + opText + " 的目标类型没解析出来")
@@ -5501,7 +5501,7 @@ fun castTargetOf(g : Gen, e : Node, opText : string) -> ?BType {
 }
 
 // 合成方法写进当前类（每个类生成完写一次，顺序=登记顺序）
-fun emitOrElseMethods(g : Gen) -> void {
+fn emitOrElseMethods(g : Gen) -> void {
     var i = 0
     while (i < g.orCount) {
         var m = g.ors[i]
@@ -5535,7 +5535,7 @@ fun emitOrElseMethods(g : Gen) -> void {
 
 // 构造对象的发码：`new X(...)` 与省掉 new 的 `X(...)` 共用（两侧都在 walk 阶段
 // 把结果登记进 `g.putNew(e, ...)`，节点就是那个表达式节点）。
-fun emitConstruction(g : Gen, mv : MethodVisitor, e : Node, off : int) -> void {
+fn emitConstruction(g : Gen, mv : MethodVisitor, e : Node, off : int) -> void {
     var no = g.newOf(e)
     if (no == null) {
         g.setFailed("内部错误：new 没有解析结果")
@@ -5565,7 +5565,7 @@ fun emitConstruction(g : Gen, mv : MethodVisitor, e : Node, off : int) -> void {
     mv.visitMethodInsn(183, nr.internal, "<init>", nr.desc, false)
 }
 
-fun emitExpr(g : Gen, mv : MethodVisitor, e : Node, off : int) -> void {
+fn emitExpr(g : Gen, mv : MethodVisitor, e : Node, off : int) -> void {
     // 「结果会被丢弃」只对**这一个**表达式成立：Kotlin 的 `emitExpr(expr, discard)` 里
     // `discard` 不会传给子表达式（`println(m.put(k, v))` 的实参不是被丢弃的）。
     // 所以进来先取走这个标记并清空，嵌套调用看到的就是 false。
@@ -5805,7 +5805,7 @@ fun emitExpr(g : Gen, mv : MethodVisitor, e : Node, off : int) -> void {
 
 // ------------------------------------------------------------ 指令
 
-fun emitIns(g : Gen, w : Walker, mv : MethodVisitor, i : int, off : int) -> void {
+fn emitIns(g : Gen, w : Walker, mv : MethodVisitor, i : int, off : int) -> void {
     var ins = w.out[i]
     var k = ins.kind
     if (k == "label") {
@@ -5981,7 +5981,7 @@ fun emitIns(g : Gen, w : Walker, mv : MethodVisitor, i : int, off : int) -> void
 // 起点标签存进 `g.lvtStart`：`lvtEnd` 发完结束标签后，两条标签一起交给
 // `visitLocalVariable`。`off` 是入口 main 的槽位偏移（前面那个 `String[]`），
 // 只有 `emitFunction` 会传非 0。
-fun lvtBegin(g : Gen, mv : MethodVisitor, thisInternal : string) -> void {
+fn lvtBegin(g : Gen, mv : MethodVisitor, thisInternal : string) -> void {
     g.lvtCount = 0
     g.lvtStart = new Label()
     mv.visitLabel(g.lvtStart)
@@ -5989,7 +5989,7 @@ fun lvtBegin(g : Gen, mv : MethodVisitor, thisInternal : string) -> void {
     if (thisInternal.length() > 0) { lvtAdd(g, "this", tExternal(thisInternal), 0) }
 }
 
-fun lvtAdd(g : Gen, name : string, t : BType, slot : int) -> void {
+fn lvtAdd(g : Gen, name : string, t : BType, slot : int) -> void {
     if (g.lvtCount >= g.lvtNames.length) {
         var nn : string[] = new string[g.lvtNames.length * 2]
         var tt : BType[] = new BType[g.lvtTypes.length * 2]
@@ -6011,7 +6011,7 @@ fun lvtAdd(g : Gen, name : string, t : BType, slot : int) -> void {
     g.lvtCount = g.lvtCount + 1
 }
 
-fun lvtEnd(g : Gen, mv : MethodVisitor, off : int) -> void {
+fn lvtEnd(g : Gen, mv : MethodVisitor, off : int) -> void {
     var end = new Label()
     mv.visitLabel(end)
     var ord : int[] = new int[g.lvtCount]
@@ -6042,10 +6042,10 @@ fun lvtEnd(g : Gen, mv : MethodVisitor, off : int) -> void {
     }
 }
 
-fun registerFunc(g : Gen, fn : Node) -> void {
-    var params = fn.children[0]
-    var name = prop(fn, "name")
-    var ret = typeOfText(g, prop(fn, "retType"))
+fn registerFunc(g : Gen, fnNode : Node) -> void {
+    var params = fnNode.children[0]
+    var name = prop(fnNode, "name")
+    var ret = typeOfText(g, prop(fnNode, "retType"))
     if (ret == null) { rtn }
     var start = g.paramTop
     var cnt = 0
@@ -6057,25 +6057,25 @@ fun registerFunc(g : Gen, fn : Node) -> void {
         cnt = cnt + 1
         i = i + 1
     }
-    g.addSig(new Sig(name, fn, ret!!, start, cnt))
+    g.addSig(new Sig(name, fnNode, ret!!, start, cnt))
 }
 
-fun emitFunction(g : Gen, fn : Node) -> void {
-    var s = findSigNode(g, fn)
+fn emitFunction(g : Gen, fnNode : Node) -> void {
+    var s = findSigNode(g, fnNode)
     if (s == null) {
-        g.bad("函数 " + prop(fn, "name"))
+        g.bad("函数 " + prop(fnNode, "name"))
         rtn
     }
     var sg = s!!
-    var name = prop(fn, "name")
+    var name = prop(fnNode, "name")
     g.curLabel = name
     var entry = sg.name == "main" && sg.count == 0
     var off = 0
     if (entry) { off = 1 }
-    var mv = g.cw.visitMethod(accessOf(fn) + accStatic(), name, descriptorOfSig(g, sg, entry), null, null)
+    var mv = g.cw.visitMethod(accessOf(fnNode) + accStatic(), name, descriptorOfSig(g, sg, entry), null, null)
     // 顶层函数上的注解使用点：也在 visitCode() 之前（Kotlin :1678）。
     // 宿主是 null（顶层函数当不了方案 B 宿主），所以只发使用点、不发访问器。
-    emitAnnSitesM(g, annUsesOf(fn), mv)
+    emitAnnSitesM(g, annUsesOf(fnNode), mv)
     if (g.failed) { rtn }
     mv.visitCode()
 
@@ -6085,7 +6085,7 @@ fun emitFunction(g : Gen, fn : Node) -> void {
     // 一项（Kotlin 那边也一样），所以它不进 LVT —— 那个位置由 flushBody 的 `off` 让开。
     lvtBegin(g, mv, "")
     var root = new Scope(null)
-    var params = fn.children[0]
+    var params = fnNode.children[0]
     var i = 0
     while (i < params.childCount) {
         var pt = g.paramOf(sg, i)
@@ -6097,7 +6097,7 @@ fun emitFunction(g : Gen, fn : Node) -> void {
     // 阶段 28b：顶层函数体开始编译前清标签状态（见 prepBody 里的说明）
     var w = new Walker(g)
     w.resetLabels()
-    w.walkBlock(fn.children[1], root)
+    w.walkBlock(fnNode.children[1], root)
     if (g.failed) { rtn }
 
     linkTargets(w)
@@ -6110,7 +6110,7 @@ fun emitFunction(g : Gen, fn : Node) -> void {
 // ------------------------------------------------------------ 用户类 / 枚举
 
 // 收集类导入：`import java.io.File` → 简单名 File → 内部名 java/io/File
-fun collectImports(g : Gen, imps : Node) -> void {
+fn collectImports(g : Gen, imps : Node) -> void {
     var i = 0
     while (i < imps.childCount) {
         var im = imps.children[i]
@@ -6141,7 +6141,7 @@ fun collectImports(g : Gen, imps : Node) -> void {
 }
 
 // 收集类与枚举（必须在注册函数之前调用：函数的参数类型可能就是用户类）
-fun collectClasses(g : Gen, classes : Node, enums : Node) -> void {
+fn collectClasses(g : Gen, classes : Node, enums : Node) -> void {
     // 先登记枚举（类的字段/方法可能引用枚举类型）
     var ei = 0
     while (ei < enums.childCount) {
@@ -6249,7 +6249,7 @@ public class Prep(w : Walker, reach : bool[]) {
     var reach : bool[] = reach
 }
 
-fun prepBody(g : Gen, body : Node, firstSlot : int, pTypes : BType[], pNames : string[], ret : BType) -> ?Prep {
+fn prepBody(g : Gen, body : Node, firstSlot : int, pTypes : BType[], pNames : string[], ret : BType) -> ?Prep {
     // 阶段 28b：每个函数/方法体开始编译前清空标签状态（名字 → Label 表 + 声明顺序表）。
     // Walker 本来就是「一次函数体编译」的容器（labNames 等都在它身上），prepBody 每次都
     // new 一个，所以两个方法的同名标签（例如都叫 `loop`）天然不共用 ASM Label；
@@ -6273,7 +6273,7 @@ fun prepBody(g : Gen, body : Node, firstSlot : int, pTypes : BType[], pNames : s
     rtn new Prep(w, computeReach(w))
 }
 
-fun flushBody(g : Gen, mv : MethodVisitor, p : Prep, off : int, ret : BType, tailName : string) -> void {
+fn flushBody(g : Gen, mv : MethodVisitor, p : Prep, off : int, ret : BType, tailName : string) -> void {
     var w = p.w
     var reach = p.reach
     var hi = 0
@@ -6345,7 +6345,7 @@ fun flushBody(g : Gen, mv : MethodVisitor, p : Prep, off : int, ret : BType, tai
 }
 
 // 字段初值（所有非委托构造器的序言里都要重发一遍，和 Kotlin 一致）
-fun emitFieldInits(g : Gen, mv : MethodVisitor, ci : CInfo, m : ?CMeth) -> void {
+fn emitFieldInits(g : Gen, mv : MethodVisitor, ci : CInfo, m : ?CMeth) -> void {
     // 伴生类的前 `annElemCount` 个字段是注解元素字段：它们的值来自构造器形参，
     // **不是**声明里那个占位初值（对齐 Kotlin BytecodeCompiler.kt:1447-1464）。
     var slot = 1
@@ -6366,7 +6366,7 @@ fun emitFieldInits(g : Gen, mv : MethodVisitor, ci : CInfo, m : ?CMeth) -> void 
     }
 }
 
-fun emitUserCtor(g : Gen, ci : CInfo, m : ?CMeth) -> void {
+fn emitUserCtor(g : Gen, ci : CInfo, m : ?CMeth) -> void {
     var params : BType[] = new BType[0]
     var pnames : string[] = new string[0]
     var desc = "()V"
@@ -6469,7 +6469,7 @@ fun emitUserCtor(g : Gen, ci : CInfo, m : ?CMeth) -> void {
     }
 }
 
-fun emitUserMethod(g : Gen, ci : CInfo, m : CMeth) -> void {
+fn emitUserMethod(g : Gen, ci : CInfo, m : CMeth) -> void {
     var access = accessOf(m.node)
     if (m.isStatic) { access = access + accStatic() }
     if (!hasBodyNode(m.node)) {
@@ -6504,14 +6504,14 @@ fun emitUserMethod(g : Gen, ci : CInfo, m : CMeth) -> void {
 }
 
 // ObjectFormat（sema/Builtins.kt）的规则：可显示才 append，否则写 "..."
-fun objDisplayable(t : BType, isEnum : bool) -> bool {
+fn objDisplayable(t : BType, isEnum : bool) -> bool {
     if (isEnum) { rtn true }
     if (t.isArray()) { rtn false }
     if (t.base == "string") { rtn true }
     rtn t.baseIsPrimitive()
 }
 
-fun objAppendDesc(t : BType, isEnum : bool) -> ?string {
+fn objAppendDesc(t : BType, isEnum : bool) -> ?string {
     if (!objDisplayable(t, isEnum)) { rtn null }
     if (isEnum) { rtn "(Ljava/lang/Object;)Ljava/lang/StringBuilder;" }
     if (t.base == "string") { rtn "(Ljava/lang/String;)Ljava/lang/StringBuilder;" }
@@ -6526,12 +6526,12 @@ fun objAppendDesc(t : BType, isEnum : bool) -> ?string {
     rtn null
 }
 
-fun sbAppendText(mv : MethodVisitor, text : string) -> void {
+fn sbAppendText(mv : MethodVisitor, text : string) -> void {
     mv.visitLdcInsn(text)
     mv.visitMethodInsn(182, "java/lang/StringBuilder", "append", "(Ljava/lang/String;)Ljava/lang/StringBuilder;", false)
 }
 
-fun emitUserToString(g : Gen, ci : CInfo) -> void {
+fn emitUserToString(g : Gen, ci : CInfo) -> void {
     var mv = g.cw.visitMethod(accPublic(), "toString", "()Ljava/lang/String;", null, null)
     mv.visitCode()
     // 生成出来的 toString 是实例方法：LVT 只有 this（体里没有 rsf 变量）
@@ -6592,7 +6592,7 @@ fun emitUserToString(g : Gen, ci : CInfo) -> void {
 }
 
 // 只发射 [from, to) 区间里的 `?:` 合成方法（每个类只带自己那批）
-fun emitOrElseRange(g : Gen, from : int, to : int) -> void {
+fn emitOrElseRange(g : Gen, from : int, to : int) -> void {
     var i = from
     while (i < to) {
         var m = g.ors[i]
@@ -6626,14 +6626,14 @@ fun emitOrElseRange(g : Gen, from : int, to : int) -> void {
 
 // 阶段 25：类头的 superName —— 有类父就写它的内部名，否则 java/lang/Object。
 // （JDK 父类在 collectSuperClass 就被拒了，这里不可能拿到 JDK 内部名。）
-fun superNameOf(ci : CInfo) -> string {
+fn superNameOf(ci : CInfo) -> string {
     if (ci.parent != null) { rtn ci.parent!!.internal }
     rtn "java/lang/Object"
 }
 
 // 阶段 25：类头访问标志 —— `abstract class` 加 ACC_ABSTRACT（Kotlin :770），
 // 其余一律 ACC_PUBLIC | ACC_SUPER。
-fun classAccessOf(ci : CInfo) -> int {
+fn classAccessOf(ci : CInfo) -> int {
     var access = accPublic() + accSuper()
     if (ci.isAbstract) { access = access + accAbstract() }
     rtn access
@@ -6641,7 +6641,7 @@ fun classAccessOf(ci : CInfo) -> int {
 
 // 类头 `cw.visit` 的父接口数组（阶段 20）。没有父类型子句时是长度 0 的数组 ——
 // ASM 写出来的 `interfaces_count` 与传 `null` 完全一样，所以无接口的源产物一个字节不变。
-fun superArr(ci : CInfo) -> string[] {
+fn superArr(ci : CInfo) -> string[] {
     var out : string[] = new string[ci.scount]
     var i = 0
     while (i < ci.scount) {
@@ -6651,7 +6651,7 @@ fun superArr(ci : CInfo) -> string[] {
     rtn out
 }
 
-fun emitUserClass(g : Gen, ci : CInfo) -> void {
+fn emitUserClass(g : Gen, ci : CInfo) -> void {
     g.newWriter(ci.internal)
     g.cur = ci
     g.cw.visit(v17(), classAccessOf(ci), ci.internal, null, superNameOf(ci), superArr(ci))
@@ -6794,7 +6794,7 @@ fun emitUserClass(g : Gen, ci : CInfo) -> void {
     pk = null
 }
 
-fun emitEnumClass(g : Gen, ei : EInfo) -> void {
+fn emitEnumClass(g : Gen, ei : EInfo) -> void {
     g.newWriter(ei.internal)
     g.cur = null
     g.curMeth = null
@@ -6853,7 +6853,7 @@ fun emitEnumClass(g : Gen, ei : EInfo) -> void {
 }
 
 // `a.b` → `a/b`。rsf 的 string 没有 replace/split，只能逐字符拼。
-fun pkgPathOf(name : string) -> string {
+fn pkgPathOf(name : string) -> string {
     var out = ""
     var i = 0
     while (i < name.length()) {
@@ -6867,7 +6867,7 @@ fun pkgPathOf(name : string) -> string {
 // 阶段 25：类头子句里的**类父**（`SUPER_CLASS`）。接口父仍走 `collectSuperNames`。
 // 本刀只支持 rsf 侧的用户类当父类：JDK 父类**大声报错**，不静默退化成 Object
 // （静默退化会编出 superName 写错、构造器序言也错的字节码，比报错难查得多）。
-fun collectSuperClass(g : Gen, part : Node, ci : CInfo) -> void {
+fn collectSuperClass(g : Gen, part : Node, ci : CInfo) -> void {
     var snm = prop(part, "name")
     var pc = g.findClass(snm)
     if (pc == null) {
@@ -6885,7 +6885,7 @@ fun collectSuperClass(g : Gen, part : Node, ci : CInfo) -> void {
 
 // 有没有任何一个用户类带类父。没有的话后端一次都不要去碰输出目录
 // （骨架 .class 只在帧合并需要 LCA 时才有用，见 emitSkeletons）。
-fun hasParentClass(g : Gen) -> bool {
+fn hasParentClass(g : Gen) -> bool {
     var i = 0
     while (i < g.ciCount) {
         if (g.cis[i].parent != null) { rtn true }
@@ -6896,7 +6896,7 @@ fun hasParentClass(g : Gen) -> bool {
 
 // 父类型子句（阶段 20）：把一个类 / 接口的 `SUPERS` 子节点解析成内部名存进 `ci.supers`。
 // rsf 没有类继承，父类型只可能是接口：先找用户接口，再退到 import 进来的 JDK 接口。
-fun collectSuperNames(g : Gen, part : Node, ci : CInfo) -> void {
+fn collectSuperNames(g : Gen, part : Node, ci : CInfo) -> void {
     var i = 0
     while (i < part.childCount) {
         var sp = part.children[i]
@@ -6923,7 +6923,7 @@ fun collectSuperNames(g : Gen, part : Node, ci : CInfo) -> void {
 }
 
 // 一个 METHODS 子节点 → CMeth 列表（类与接口共用）。
-fun collectMethods(g : Gen, part : Node, ci : CInfo) -> void {
+fn collectMethods(g : Gen, part : Node, ci : CInfo) -> void {
     var mi = 0
     while (mi < part.childCount) {
         var m = part.children[mi]
@@ -6953,7 +6953,7 @@ fun collectMethods(g : Gen, part : Node, ci : CInfo) -> void {
 // 用户接口：登记成 CInfo（`isIface = true`）另存一张表，**不进 classes**——
 // 这样 `findClass("I")` 仍然是 null，`new I()` 会照旧报「构造对象 new I」（接口不能 new）。
 // 与用户类一样分两遍：先登记名字与类型参数，再填方法与父接口。
-fun collectInterfaces(g : Gen, ifs : Node) -> void {
+fn collectInterfaces(g : Gen, ifs : Node) -> void {
     var infos : CInfo[] = new CInfo[ifs.childCount]
     var i = 0
     while (i < ifs.childCount) {
@@ -7014,7 +7014,7 @@ fun collectInterfaces(g : Gen, ifs : Node) -> void {
 //   "Absent Code attribute in method that is not native or abstract"）。
 //   默认方法：与类方法完全同一条发射路径。
 //   接口不发字段、不发 `<init>`、不发 toString 兜底。
-fun emitUserInterface(g : Gen, ci : CInfo) -> void {
+fn emitUserInterface(g : Gen, ci : CInfo) -> void {
     g.newWriter(ci.internal)
     g.cur = ci
     g.curMeth = null
@@ -7091,7 +7091,7 @@ public class AnnInfo(name : string, internal : string) {
     var compInternal : string = ""    // 伴生类内部名（带包前缀）
     var compNode : Node = new Node(NodeKind.ERROR)
 
-    public fun addEl(e : AnnEl) -> void {
+    public fn addEl(e : AnnEl) -> void {
         if (elCount >= els.length) {
             var b : AnnEl[] = new AnnEl[els.length * 2]
             for (var i = 0; i < elCount; i = i + 1) { b[i] = els[i] }
@@ -7101,7 +7101,7 @@ public class AnnInfo(name : string, internal : string) {
         elCount = elCount + 1
     }
 
-    public fun elIndex(nm : string) -> int {
+    public fn elIndex(nm : string) -> int {
         var i = 0
         while (i < elCount) {
             if (els[i].name == nm) { rtn i }
@@ -7112,7 +7112,7 @@ public class AnnInfo(name : string, internal : string) {
 
     // 伴生类构造器的描述符：形参就是元素表（Kotlin `companionPrimaryConstructor`
     // 与 `checkCompanionConstructor` 都要求实参表与元素表逐项对上）。
-    public fun ctorDesc() -> string {
+    public fn ctorDesc() -> string {
         var d = "("
         var i = 0
         while (i < elCount) {
@@ -7137,18 +7137,18 @@ public class AccInfo(ann : string, host : string, member : string, comp : string
 
 // 缓存字段名：`__rsf_ann$<宿主简名>$<成员名>`（类型级时成员名是空串）。
 // Kotlin 侧 `cacheFieldName` 就是这么拼的，`$` 在三个引擎里都原样保留（拍板 3）。
-fun annCacheName(a : AccInfo) -> string {
+fn annCacheName(a : AccInfo) -> string {
     rtn "__rsf_ann$" + a.host + "$" + a.member
 }
 
 // 分组键：同一宿主上「同一个注解 + 同是类型级/同是成员级」合成一个方法。
-fun annKeyOf(a : AccInfo) -> string {
+fn annKeyOf(a : AccInfo) -> string {
     if (a.member.length() == 0) { rtn a.ann + "#type" }
     rtn a.ann + "#member"
 }
 
 // 某个节点自己的 ANNOTATION_USES（没有就是 ERROR 占位节点）。每个节点至多一个。
-fun annUsesOf(n : Node) -> Node {
+fn annUsesOf(n : Node) -> Node {
     var i = 0
     while (i < n.childCount) {
         if (n.children[i].kind == NodeKind.ANNOTATION_USES) { rtn n.children[i] }
@@ -7159,7 +7159,7 @@ fun annUsesOf(n : Node) -> Node {
 
 // 注解实参取不到编译期常量时的统一出口 —— **必须让 build 失败**（拍板 7：
 // `an1_annot_nonconst` 就靠这一条；措辞不要求与 Kotlin 逐字相同）。
-fun annBad(g : Gen, nm : string, t : BType, why : string) -> void {
+fn annBad(g : Gen, nm : string, t : BType, why : string) -> void {
     g.bad("注解元素 '" + nm + "' 的值必须是编译期常量（字面量、取负的字面量或枚举常量）：'" + t.desc() + "' " + why + "；数组/注解类型的元素只能用声明里的默认值")
 }
 
@@ -7171,7 +7171,7 @@ public class NegLit(node : Node, neg : bool) {
     var neg : bool = neg
 }
 
-fun annLiteral(g : Gen, nm : string, t : BType, v : Node) -> ?NegLit {
+fn annLiteral(g : Gen, nm : string, t : BType, v : Node) -> ?NegLit {
     var x = v
     var neg = false
     if (x.kind == NodeKind.UNARY) {
@@ -7189,14 +7189,14 @@ fun annLiteral(g : Gen, nm : string, t : BType, v : Node) -> ?NegLit {
     rtn new NegLit(x, neg)
 }
 
-fun isConstLit(k : NodeKind) -> bool {
+fn isConstLit(k : NodeKind) -> bool {
     if (k == NodeKind.INT_LIT || k == NodeKind.LONG_LIT || k == NodeKind.FLOAT_LIT || k == NodeKind.DOUBLE_LIT) { rtn true }
     if (k == NodeKind.STRING_LIT || k == NodeKind.CHAR_LIT || k == NodeKind.BOOL_LIT) { rtn true }
     rtn false
 }
 
 // 元素值 → bool（对齐 Kotlin `annotationConstant` 的 BOOL 分箱）。
-fun annBoolVal(g : Gen, nm : string, t : BType, v : Node) -> bool {
+fn annBoolVal(g : Gen, nm : string, t : BType, v : Node) -> bool {
     var L = annLiteral(g, nm, t, v)
     if (L == null) { rtn false }
     if (L!!.neg || L!!.node.kind != NodeKind.BOOL_LIT) {
@@ -7207,7 +7207,7 @@ fun annBoolVal(g : Gen, nm : string, t : BType, v : Node) -> bool {
 }
 
 // 元素值 → String。
-fun annStrVal(g : Gen, nm : string, t : BType, v : Node) -> string {
+fn annStrVal(g : Gen, nm : string, t : BType, v : Node) -> string {
     var L = annLiteral(g, nm, t, v)
     if (L == null) { rtn "" }
     if (L!!.neg || L!!.node.kind != NodeKind.STRING_LIT) {
@@ -7218,7 +7218,7 @@ fun annStrVal(g : Gen, nm : string, t : BType, v : Node) -> string {
 }
 
 // 元素值 → int（int 元素吃 INT_LIT / CHAR_LIT；byte 元素也走这里）。
-fun annIntVal(g : Gen, nm : string, t : BType, v : Node) -> int {
+fn annIntVal(g : Gen, nm : string, t : BType, v : Node) -> int {
     var L = annLiteral(g, nm, t, v)
     if (L == null) { rtn 0 }
     var x = L!!.node
@@ -7237,7 +7237,7 @@ fun annIntVal(g : Gen, nm : string, t : BType, v : Node) -> int {
 }
 
 // 元素值 → char（CHAR 分箱：Char 字面量直接用，别的走 int 再 toChar）。
-fun annCharVal(g : Gen, nm : string, t : BType, v : Node) -> char {
+fn annCharVal(g : Gen, nm : string, t : BType, v : Node) -> char {
     var L = annLiteral(g, nm, t, v)
     if (L == null) { rtn toChar(0) }
     if (!L!!.neg && L!!.node.kind == NodeKind.CHAR_LIT) {
@@ -7249,7 +7249,7 @@ fun annCharVal(g : Gen, nm : string, t : BType, v : Node) -> char {
 }
 
 // 元素值 → long（LONG 分箱：Int / Char 也接受）。
-fun annLongVal(g : Gen, nm : string, t : BType, v : Node) -> long {
+fn annLongVal(g : Gen, nm : string, t : BType, v : Node) -> long {
     var L = annLiteral(g, nm, t, v)
     if (L == null) { rtn 0 }
     var x = L!!.node
@@ -7271,7 +7271,7 @@ fun annLongVal(g : Gen, nm : string, t : BType, v : Node) -> long {
 }
 
 // 元素值 → float（FLOAT 分箱：Int 也接受）。
-fun annFloatVal(g : Gen, nm : string, t : BType, v : Node) -> float {
+fn annFloatVal(g : Gen, nm : string, t : BType, v : Node) -> float {
     var fz : float = 0.0f
     var L = annLiteral(g, nm, t, v)
     if (L == null) { rtn fz }
@@ -7291,7 +7291,7 @@ fun annFloatVal(g : Gen, nm : string, t : BType, v : Node) -> float {
 }
 
 // 元素值 → double（DOUBLE 分箱：Int / Long / Float 也接受）。
-fun annDoubleVal(g : Gen, nm : string, t : BType, v : Node) -> double {
+fn annDoubleVal(g : Gen, nm : string, t : BType, v : Node) -> double {
     var L = annLiteral(g, nm, t, v)
     if (L == null) { rtn 0.0 }
     var x = L!!.node
@@ -7317,7 +7317,7 @@ fun annDoubleVal(g : Gen, nm : string, t : BType, v : Node) -> double {
 
 // 值是不是枚举常量 `Color.RED`？是就返回「枚举内部名 \t 常量名」，否则 null。
 // 对齐 Kotlin `model.enumValueOf(value)`：只有 `枚举名.常量名` 这一种写法算。
-fun annEnumOf(g : Gen, v : Node) -> ?string {
+fn annEnumOf(g : Gen, v : Node) -> ?string {
     if (v.kind != NodeKind.MEMBER || v.childCount < 2) { rtn null }
     var recv = v.children[0]
     if (recv.kind != NodeKind.VAR) { rtn null }
@@ -7330,7 +7330,7 @@ fun annEnumOf(g : Gen, v : Node) -> ?string {
 
 // 一条 ANNOTATION_USE 的显式实参表：按**元素下标**摆放（对齐 Kotlin `explicitValues`），
 // 没给的格子留 ERROR 占位。位置实参写在它自己的实参下标上，命名实参按名字查。
-fun annExplicit(g : Gen, ai : AnnInfo, use : Node) -> Node[] {
+fn annExplicit(g : Gen, ai : AnnInfo, use : Node) -> Node[] {
     var out : Node[] = new Node[ai.elCount]
     var i = 0
     while (i < ai.elCount) {
@@ -7365,7 +7365,7 @@ fun annExplicit(g : Gen, ai : AnnInfo, use : Node) -> Node[] {
 }
 
 // 使用点上第 i 个元素的最终取值：显式实参 → 元素默认值 → ERROR（跳过）。
-fun annValueOf(ai : AnnInfo, expl : Node[], i : int) -> Node {
+fn annValueOf(ai : AnnInfo, expl : Node[], i : int) -> Node {
     if (expl[i].kind != NodeKind.ERROR) { rtn expl[i] }
     if (ai.els[i].hasDef) { rtn ai.els[i].def }
     rtn new Node(NodeKind.ERROR)
@@ -7374,7 +7374,7 @@ fun annValueOf(ai : AnnInfo, expl : Node[], i : int) -> Node {
 // ---------------------------------------------------------------- 收集
 
 // ANNOTATIONS 子节点 → `gen.ains`（元素表 + 伴生类坐标）。
-fun collectAnnDecls(g : Gen, anns : Node) -> void {
+fn collectAnnDecls(g : Gen, anns : Node) -> void {
     var i = 0
     while (i < anns.childCount) {
         var an = anns.children[i]
@@ -7412,7 +7412,7 @@ fun collectAnnDecls(g : Gen, anns : Node) -> void {
 }
 
 // 与 `collectAnnDecls` 的命名规则保持一致：第 5 刀（嵌套类型名）用它算伴生类的内部名。
-fun scanAnnCompNames(g : Gen, anns : Node) -> void {
+fn scanAnnCompNames(g : Gen, anns : Node) -> void {
     var i = 0
     while (i < anns.childCount) {
         var an = anns.children[i]
@@ -7435,7 +7435,7 @@ fun scanAnnCompNames(g : Gen, anns : Node) -> void {
 // 字段表：元素字段（前 `annElemCount` 个）→ 伴生体自己的字段。
 // 方法表：伴生体自己的构造器/方法；没写构造器就按元素表合成一个（Kotlin
 // `companionPrimaryConstructor`）。元素访问器不是 CMeth，发射时插在构造器之后。
-fun buildCompanion(g : Gen, ai : AnnInfo) -> void {
+fn buildCompanion(g : Gen, ai : AnnInfo) -> void {
     var ci = new CInfo(ai.compName, ai.compInternal)
     ci.node = ai.compNode
     ci.annComp = ai.name
@@ -7504,7 +7504,7 @@ fun buildCompanion(g : Gen, ai : AnnInfo) -> void {
 
 // 一个宿主节点上的使用点 → 访问器。宿主为空串（顶层函数）时**不登记** ——
 // 对齐 Kotlin `emitAnnotationAccessors` 的 `if (hostName == null) return`。
-fun regHostUses(g : Gen, node : Node, host : string, member : string) -> void {
+fn regHostUses(g : Gen, node : Node, host : string, member : string) -> void {
     if (host.length() == 0) { rtn }
     var uses = annUsesOf(node)
     if (uses.kind != NodeKind.ANNOTATION_USES) { rtn }
@@ -7528,7 +7528,7 @@ fun regHostUses(g : Gen, node : Node, host : string, member : string) -> void {
 //   注解声明（自己 → 伴生体字段 → 伴生体非构造器方法）
 //   → 接口（自己 → 它的方法）→ 类（自己 → 字段 → 非构造器方法）→ 顶层函数（不登记）
 // 唯一会被字节码观察到的差别是「同一宿主上成员级访问器的先后」，正是这里定的。
-fun collectAnnotations(g : Gen, anns : Node, ifs : Node, classes : Node, funcs : Node) -> void {
+fn collectAnnotations(g : Gen, anns : Node, ifs : Node, classes : Node, funcs : Node) -> void {
     collectAnnDecls(g, anns)
     if (g.failed) { rtn }
     var i = 0
@@ -7634,14 +7634,14 @@ fun collectAnnotations(g : Gen, anns : Node, ifs : Node, classes : Node, funcs :
 // ---------------------------------------------------------------- 发射
 
 // 注解接口的父接口数组：**永远**只有 `java/lang/annotation/Annotation` 一个元素。
-fun annSuperArr() -> string[] {
+fn annSuperArr() -> string[] {
     var out : string[] = new string[1]
     out[0] = "java/lang/annotation/Annotation"
     rtn out
 }
 
 // 注解接口的 .class（对齐 Kotlin `BytecodeCompiler.annotationClass` :945-983）。
-fun emitAnnotationClass(g : Gen, ai : AnnInfo) -> void {
+fn emitAnnotationClass(g : Gen, ai : AnnInfo) -> void {
     g.newWriter(ai.name)
     g.cur = null
     g.curMeth = null
@@ -7677,7 +7677,7 @@ fun emitAnnotationClass(g : Gen, ai : AnnInfo) -> void {
 }
 
 // 注解元素的默认值（`AnnotationDefault` 属性）。名字槽固定传 null（Kotlin :968）。
-fun emitAnnDefault(g : Gen, mv : MethodVisitor, ai : AnnInfo, i : int) -> void {
+fn emitAnnDefault(g : Gen, mv : MethodVisitor, ai : AnnInfo, i : int) -> void {
     var el = ai.els[i]
     var nm = el.name
     var t = el.type
@@ -7702,7 +7702,7 @@ fun emitAnnDefault(g : Gen, mv : MethodVisitor, ai : AnnInfo, i : int) -> void {
 }
 
 // 类级使用点（接收者是 g.cw）。
-fun emitAnnSites(g : Gen, uses : Node) -> void {
+fn emitAnnSites(g : Gen, uses : Node) -> void {
     if (uses.kind != NodeKind.ANNOTATION_USES) { rtn }
     var i = 0
     while (i < uses.childCount) {
@@ -7723,7 +7723,7 @@ fun emitAnnSites(g : Gen, uses : Node) -> void {
 }
 
 // 字段级使用点。
-fun emitAnnSitesF(g : Gen, uses : Node, fv : FieldVisitor) -> void {
+fn emitAnnSitesF(g : Gen, uses : Node, fv : FieldVisitor) -> void {
     if (uses.kind != NodeKind.ANNOTATION_USES) { rtn }
     var i = 0
     while (i < uses.childCount) {
@@ -7744,7 +7744,7 @@ fun emitAnnSitesF(g : Gen, uses : Node, fv : FieldVisitor) -> void {
 }
 
 // 方法级使用点（接口抽象方法、用户方法、顶层函数共用）。
-fun emitAnnSitesM(g : Gen, uses : Node, mv : MethodVisitor) -> void {
+fn emitAnnSitesM(g : Gen, uses : Node, mv : MethodVisitor) -> void {
     if (uses.kind != NodeKind.ANNOTATION_USES) { rtn }
     var i = 0
     while (i < uses.childCount) {
@@ -7765,7 +7765,7 @@ fun emitAnnSitesM(g : Gen, uses : Node, mv : MethodVisitor) -> void {
 }
 
 // 一条使用点的实参对：按**元素表顺序**逐条写（NullLit 与没值的跳过）。
-fun emitAnnArgs(g : Gen, av : AnnotationVisitor, us : Node, ai : AnnInfo) -> void {
+fn emitAnnArgs(g : Gen, av : AnnotationVisitor, us : Node, ai : AnnInfo) -> void {
     var expl : Node[] = annExplicit(g, ai, us)
     if (g.failed) { rtn }
     var i = 0
@@ -7780,7 +7780,7 @@ fun emitAnnArgs(g : Gen, av : AnnotationVisitor, us : Node, ai : AnnInfo) -> voi
 }
 
 // 一个元素 → 一个 `visit` / `visitEnum`。装箱按**元素声明类型**走（Kotlin :1069-1106）。
-fun emitAnnPair(g : Gen, av : AnnotationVisitor, ai : AnnInfo, i : int, v : Node) -> void {
+fn emitAnnPair(g : Gen, av : AnnotationVisitor, ai : AnnInfo, i : int, v : Node) -> void {
     var nm = ai.els[i].name
     var t = ai.els[i].type
     var ev = annEnumOf(g, v)
@@ -7803,7 +7803,7 @@ fun emitAnnPair(g : Gen, av : AnnotationVisitor, ai : AnnInfo, i : int, v : Node
 
 // 元素访问器：伴生类上的 `public <元素类型> <元素名>()`，体是
 // `ALOAD 0; GETFIELD <伴生内部名>.<字段> <描述符>; <xRETURN>`。
-fun emitAnnElemAccessors(g : Gen, ci : CInfo) -> void {
+fn emitAnnElemAccessors(g : Gen, ci : CInfo) -> void {
     var ai = g.findAnn(ci.annComp)
     var i = 0
     while (i < ci.annElemCount) {
@@ -7832,7 +7832,7 @@ fun emitAnnElemAccessors(g : Gen, ci : CInfo) -> void {
 
 // 伴生类上的访问器缓存字段（`static <伴生内部名> __rsf_ann$<宿主>$<成员>`，
 // 只有 ACC_STATIC —— 和 Kotlin 一样是包私有静态）。
-fun emitAnnCaches(g : Gen, ci : CInfo) -> void {
+fn emitAnnCaches(g : Gen, ci : CInfo) -> void {
     var i = 0
     while (i < g.accCount) {
         var a = g.accs[i]
@@ -7844,7 +7844,7 @@ fun emitAnnCaches(g : Gen, ci : CInfo) -> void {
 }
 
 // 伴生类的 `annotationType()`：`LDC Type.getObjectType(注解接口简名); ARETURN`。
-fun emitAnnType(g : Gen, ci : CInfo) -> void {
+fn emitAnnType(g : Gen, ci : CInfo) -> void {
     var mv = g.cw.visitMethod(accPublic(), "annotationType", "()Ljava/lang/Class;", null, null)
     mv.visitCode()
     // 伴生类的实例方法：LVT 只有 this
@@ -7858,7 +7858,7 @@ fun emitAnnType(g : Gen, ci : CInfo) -> void {
 
 // 宿主上的访问器。`sync`：宿主是**类**时带 ACC_SYNCHRONIZED（32），
 // 宿主是接口 / 注解声明时**绝不能带**（0x29 会 ClassFormatError）。
-fun emitAnnotationAccessors(g : Gen, host : string, sync : bool) -> void {
+fn emitAnnotationAccessors(g : Gen, host : string, sync : bool) -> void {
     var idx : int[] = new int[g.accCount]
     var n = 0
     var i = 0
@@ -7899,7 +7899,7 @@ fun emitAnnotationAccessors(g : Gen, host : string, sync : bool) -> void {
 }
 
 // 类型级访问器（Kotlin `emitTypeLevelAccessor` :1214-1234）
-fun emitAnnTypeAccessor(g : Gen, a : AccInfo, sync : bool) -> void {
+fn emitAnnTypeAccessor(g : Gen, a : AccInfo, sync : bool) -> void {
     var flags = accPublic() + accStatic()
     if (sync) { flags = flags + accSync() }
     var mv = g.cw.visitMethod(flags, a.ann, "()L" + a.comp + ";", null, null)
@@ -7924,7 +7924,7 @@ fun emitAnnTypeAccessor(g : Gen, a : AccInfo, sync : bool) -> void {
 
 // 成员级访问器（Kotlin `emitMemberLevelAccessor` :1236-1269）：
 // 一条成员一个分支，全不中就是 ACONST_NULL。
-fun emitAnnMemberAccessor(g : Gen, group : int[], gn : int, sync : bool) -> void {
+fn emitAnnMemberAccessor(g : Gen, group : int[], gn : int, sync : bool) -> void {
     var a0 = g.accs[group[0]]
     var flags = accPublic() + accStatic()
     if (sync) { flags = flags + accSync() }
@@ -7963,7 +7963,7 @@ fun emitAnnMemberAccessor(g : Gen, group : int[], gn : int, sync : bool) -> void
 
 // 访问器体里造伴生对象的那一段：`NEW 伴生; DUP; <逐个压元素实参>; INVOKESPECIAL <init>`。
 // 实参 = 显式实参 → 元素默认值，**没有就报错**（Kotlin `emitAccessorNew` :1275-1302）。
-fun emitAnnNew(g : Gen, mv : MethodVisitor, a : AccInfo) -> void {
+fn emitAnnNew(g : Gen, mv : MethodVisitor, a : AccInfo) -> void {
     var ai = a.ai
     var expl : Node[] = annExplicit(g, ai, a.use)
     if (g.failed) { rtn }
@@ -7985,7 +7985,7 @@ fun emitAnnNew(g : Gen, mv : MethodVisitor, a : AccInfo) -> void {
 
 // 构造器实参的压栈（Kotlin `pushAnnotationValue` :1126-1158）。
 // 枚举元素发 GETSTATIC；基本类型照各自的形态压（char/byte 压 int，JVM 认）。
-fun emitAnnPushArg(g : Gen, mv : MethodVisitor, ai : AnnInfo, i : int, v : Node) -> void {
+fn emitAnnPushArg(g : Gen, mv : MethodVisitor, ai : AnnInfo, i : int, v : Node) -> void {
     var t = ai.els[i].type
     var nm = ai.els[i].name
     var ev = annEnumOf(g, v)
@@ -8011,7 +8011,7 @@ fun emitAnnPushArg(g : Gen, mv : MethodVisitor, ai : AnnInfo, i : int, v : Node)
 }
 
 // 全程序：先收集类型与签名（函数可以互相调用 / 递归），再发射
-public fun compileProgram(g : Gen, ast : Node, sourceName : string) -> void {
+public fn compileProgram(g : Gen, ast : Node, sourceName : string) -> void {
     g.sourceName = sourceName
     // `pkg a.b`：程序类与**所有**用户类 / 枚举的内部名都要带包路径
     // （`pkg a.b` + `Main.rsf` → `a/b/Main`；`class Point` → `a/b/Point`）。
@@ -8158,7 +8158,7 @@ public fun compileProgram(g : Gen, ast : Node, sourceName : string) -> void {
 //
 // 触发条件收紧到「程序里真有类继承」：没有继承的程序（148 类验收、verify21 的
 // 探针）根本不走这段，字节与旧版逐字节一致。
-fun writeSkeleton(g : Gen, out : string, nm : string, access : int, sup : string, ifaces : string[]) -> void {
+fn writeSkeleton(g : Gen, out : string, nm : string, access : int, sup : string, ifaces : string[]) -> void {
     // writeBytes 是 `!void`，必须就地配 try/catch；写不出去只当骨架没备成。
     try {
         var sw = new ClassWriter(0)
@@ -8169,7 +8169,7 @@ fun writeSkeleton(g : Gen, out : string, nm : string, access : int, sup : string
     }
 }
 
-fun writeSkeletons(g : Gen) -> void {
+fn writeSkeletons(g : Gen) -> void {
     if (!hasParentClass(g)) { rtn }
     // 调用方可能根本没传 -Drsf.backend.out（`System.getProperty` 返回 Java null，
     // 而 rsf 的类型系统里它是非空 string），目录也可能不存在 —— 整段包在 try 里
@@ -8201,19 +8201,19 @@ fun writeSkeletons(g : Gen) -> void {
 }
 
 // 多类输出：0 号是程序类（backendBytes 仍指它）
-public fun backendCount(g : Gen) -> int {
+public fn backendCount(g : Gen) -> int {
     rtn g.cwCount
 }
 
-public fun backendNameAt(g : Gen, i : int) -> string {
+public fn backendNameAt(g : Gen, i : int) -> string {
     rtn g.cwNames[i]
 }
 
-public fun backendBytesAt(g : Gen, i : int) -> byte[] {
+public fn backendBytesAt(g : Gen, i : int) -> byte[] {
     rtn g.cws[i].toByteArray()
 }
 
-public fun backendBytes(g : Gen) -> byte[] {
+public fn backendBytes(g : Gen) -> byte[] {
     rtn g.cws[0].toByteArray()
 }
 

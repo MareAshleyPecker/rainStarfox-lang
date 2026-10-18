@@ -1,4 +1,4 @@
 // 被 import "lib/greet.rsf" 引入
-fun greet(who : string) -> string {
+fn greet(who : string) -> string {
     rtn "hello, " + who
 }

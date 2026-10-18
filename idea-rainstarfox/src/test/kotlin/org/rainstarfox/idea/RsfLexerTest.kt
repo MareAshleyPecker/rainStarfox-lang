@@ -30,8 +30,8 @@ class RsfLexerTest {
 
     @Test
     fun `关键字 修饰词 类型名 各归各类`() {
-        assertEquals(RsfTokens.MODIFIER.toString(), tokenOf("public fun f() -> void", "public"))
-        assertEquals(RsfTokens.TYPE_KEYWORD.toString(), tokenOf("fun f() -> void", "void"))
+        assertEquals(RsfTokens.MODIFIER.toString(), tokenOf("public fn f() -> void", "public"))
+        assertEquals(RsfTokens.TYPE_KEYWORD.toString(), tokenOf("fn f() -> void", "void"))
         assertEquals(RsfTokens.CONTROL_KEYWORD.toString(), tokenOf("if (a) { rtn }", "if"))
         assertEquals(RsfTokens.CONTROL_KEYWORD.toString(), tokenOf("while (a) { break }", "while"))
     }
@@ -40,12 +40,12 @@ class RsfLexerTest {
     fun `fun 后面的名字认成函数定义`() {
         assertEquals(
             RsfTokens.FUNCTION_DECLARATION.toString(),
-            tokenOf("public fun square(int n) -> int { rtn n }", "square"),
+            tokenOf("public fn square(int n) -> int { rtn n }", "square"),
         )
         // 带返回类型的写法也不能漏
         assertEquals(
             RsfTokens.FUNCTION_DECLARATION.toString(),
-            tokenOf("fun string greet() -> string { rtn \"hi\" }", "greet"),
+            tokenOf("fn string greet() -> string { rtn \"hi\" }", "greet"),
         )
     }
 
@@ -92,7 +92,7 @@ class RsfLexerTest {
 
     @Test
     fun `长运算符不会被切碎`() {
-        val tokens = lex("fun f() -> int { rtn 1 }")
+        val tokens = lex("fn f() -> int { rtn 1 }")
         assertTrue(tokens.any { it.second == "->" }, tokens.toString())
         assertTrue(!tokens.any { it.second == "-" }, "-> 被切成了减号：$tokens")
         assertTrue(types("import \"a.rsf\"").contains(RsfTokens.STRING.toString()))
@@ -110,19 +110,19 @@ class RsfLexerTest {
 
     @Test
     fun `注释与字符串可以跨行`() {
-        val comment = "/* 第一行\n   第二行 */ fun f()"
+        val comment = "/* 第一行\n   第二行 */ fn f()"
         assertEquals(RsfTokens.BLOCK_COMMENT.toString(), tokenOf(comment, "/* 第一行\n   第二行 */"))
 
         val multilineString = "var s = \"第一行\n第二行\""
         assertEquals(RsfTokens.STRING.toString(), tokenOf(multilineString, "\"第一行\n第二行\""))
 
-        assertEquals(RsfTokens.LINE_COMMENT.toString(), tokenOf("// 说明\nfun f()", "// 说明"))
+        assertEquals(RsfTokens.LINE_COMMENT.toString(), tokenOf("// 说明\nfn f()", "// 说明"))
     }
 
     @Test
     fun `未闭合的注释与字符串不会让整份文件崩掉`() {
         // 用户打字打到一半就是这样：后面还得能继续切
-        val types = types("/* 没关的注释\n\nfun f() -> void { rtn }")
+        val types = types("/* 没关的注释\n\nfn f() -> void { rtn }")
         assertTrue(types.isNotEmpty())
 
         val types2 = types("var s = \"没关的字符串")
@@ -133,7 +133,7 @@ class RsfLexerTest {
     fun `不认识的字符合法地被标成非法字符`() {
         // 注意：这里以前拿 `@` 当非法字符的样例，阶段 21 之后 `@` 是**合法的记号和
         // 标点**（`@Marker` 的注解记号），不能再用它了，换成 `#`。
-        val types = types("fun f() { # }")
+        val types = types("fn f() { # }")
         assertTrue(types.contains(RsfTokens.BAD_CHARACTER.toString()), types.toString())
         // 非法字符不该把后面的花括号带歪
         assertTrue(types.contains(RsfTokens.RBRACE.toString()), types.toString())
@@ -149,7 +149,7 @@ class RsfLexerTest {
 
     @Test
     fun `空白被合并成一个 token 且覆盖到文件末尾`() {
-        val text = "fun f() {\n\n    rtn\n}\n"
+        val text = "fn f() {\n\n    rtn\n}\n"
         val lexer = RsfLexer()
         lexer.start(text)
         var guard = 0
@@ -160,7 +160,7 @@ class RsfLexerTest {
 
     @Test
     fun `从中间开始切也不会越界`() {
-        val text = "fun main() -> void { rtn }"
+        val text = "fn main() -> void { rtn }"
         // 编辑器做增量高亮时会从任意位置开始
         for (start in 0..text.length) {
             val lexer = RsfLexer()
@@ -179,7 +179,7 @@ class RsfLexerTest {
      * 改 `Lexer.kt` 的 KEYWORDS 时，这张表和 [RsfKeywords] 都要跟着改，测试会拦住漏改。
      */
     private val COMPILER_KEYWORDS = setOf(
-        "fun", "rtn", "return", "import", "module", "pkg",
+        "fn", "rtn", "return", "import", "module", "pkg",
         "var", "imutvar", "let",
         // 阶段 20：`interface` 是那时进的前端（这份快照当时漏抄了，插件的高亮表其实已经有一份）；
         // `override` 是阶段 20 追加的可选修饰词，和 public/static 同族
@@ -219,7 +219,7 @@ class RsfLexerTest {
         assertEquals(RsfTokens.CONTROL_KEYWORD.toString(), tokenOf("constructor(n : int) { }", "constructor"))
         assertEquals(RsfTokens.CONTROL_KEYWORD.toString(), tokenOf("var p = new Point(1, 2)", "new"))
         assertEquals(RsfTokens.CONTROL_KEYWORD.toString(), tokenOf("rtn this.value", "this"))
-        assertEquals(RsfTokens.MODIFIER.toString(), tokenOf("public static fun f() -> void { }", "static"))
+        assertEquals(RsfTokens.MODIFIER.toString(), tokenOf("public static fn f() -> void { }", "static"))
     }
 
     // ------------------------------------------------------------------ 阶段 19 / 19b 的新写法
@@ -248,11 +248,11 @@ class RsfLexerTest {
         // 类型关键字本来就是 TYPE_KEYWORD；自定义类名得靠位置认出来（TYPE_NAME），
         // 否则 `var p : Point` 里的 Point 会跟普通变量一个颜色
         assertEquals(RsfTokens.TYPE_NAME.toString(), tokenOf("var p : Marker = null", "Marker"))
-        assertEquals(RsfTokens.TYPE_NAME.toString(), tokenOf("fun take(p : Widget) -> void { rtn }", "Widget"))
-        assertEquals(RsfTokens.TYPE_NAME.toString(), tokenOf("fun give() -> Gadget { rtn null }", "Gadget"))
-        assertEquals(RsfTokens.TYPE_NAME.toString(), tokenOf("fun give() :: Gadget { rtn null }", "Gadget"))
+        assertEquals(RsfTokens.TYPE_NAME.toString(), tokenOf("fn take(p : Widget) -> void { rtn }", "Widget"))
+        assertEquals(RsfTokens.TYPE_NAME.toString(), tokenOf("fn give() -> Gadget { rtn null }", "Gadget"))
+        assertEquals(RsfTokens.TYPE_NAME.toString(), tokenOf("fn give() :: Gadget { rtn null }", "Gadget"))
         // 错误返回 `-> !T` 里的 ! 不该把后面的类型带歪
-        assertEquals(RsfTokens.TYPE_NAME.toString(), tokenOf("fun give() -> !Gadget { rtn null }", "Gadget"))
+        assertEquals(RsfTokens.TYPE_NAME.toString(), tokenOf("fn give() -> !Gadget { rtn null }", "Gadget"))
     }
 
     @Test
@@ -262,29 +262,29 @@ class RsfLexerTest {
         // 三目与 if 的冒号形式也一样
         assertEquals(RsfTokens.IDENTIFIER.toString(), tokenOf("var y = if c ? alpha : beta", "beta"))
         // 老写法 `: T` 返回子句已经删掉：`:` 只是普通运算符，后面那个名字不是返回类型
-        val legacy = "fun f() : What { rtn 1 }"
+        val legacy = "fn f() : What { rtn 1 }"
         assertEquals(RsfTokens.OPERATION.toString(), tokenOf(legacy, ":"))
         assertEquals(RsfTokens.IDENTIFIER.toString(), tokenOf(legacy, "What"))
     }
 
     @Test
     fun `返回子句只认箭头与双冒号`() {
-        assertEquals(RsfTokens.OPERATION.toString(), tokenOf("fun f() -> int { rtn 1 }", "->"))
-        assertEquals(RsfTokens.OPERATION.toString(), tokenOf("fun f() :: int { rtn 1 }", "::"))
+        assertEquals(RsfTokens.OPERATION.toString(), tokenOf("fn f() -> int { rtn 1 }", "->"))
+        assertEquals(RsfTokens.OPERATION.toString(), tokenOf("fn f() :: int { rtn 1 }", "::"))
         // `::` 不能被切成两个 `:`
-        assertTrue(!lex("fun f() :: int { rtn 1 }").any { it.second == ":" })
+        assertTrue(!lex("fn f() :: int { rtn 1 }").any { it.second == ":" })
     }
 
     @Test
     fun `参数两种风格都能正确切词`() {
-        val mixed = "fun mix(int a, b : string) -> int { rtn a }"
+        val mixed = "fn mix(int a, b : string) -> int { rtn a }"
         assertEquals(RsfTokens.TYPE_KEYWORD.toString(), tokenOf(mixed, "int"))
         assertEquals(RsfTokens.IDENTIFIER.toString(), tokenOf(mixed, "a"))
         assertEquals(RsfTokens.IDENTIFIER.toString(), tokenOf(mixed, "b"))
         assertEquals(RsfTokens.TYPE_KEYWORD.toString(), tokenOf(mixed, "string"))
 
         // Java 风格 / Kotlin 风格里的用户类名都算类型，参数名照旧是标识符
-        val cls = "fun take(who : Widget, Spot spot) -> void { rtn }"
+        val cls = "fn take(who : Widget, Spot spot) -> void { rtn }"
         assertEquals(RsfTokens.TYPE_NAME.toString(), tokenOf(cls, "Widget"))
         assertEquals(RsfTokens.TYPE_NAME.toString(), tokenOf(cls, "Spot"))
         assertEquals(RsfTokens.IDENTIFIER.toString(), tokenOf(cls, "who"))

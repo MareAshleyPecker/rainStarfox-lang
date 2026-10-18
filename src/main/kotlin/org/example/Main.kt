@@ -311,7 +311,7 @@ class Cli {
         // 标签是给解释器看的：它先静默重放前缀把变量状态建起来，再从标签处开始带输出执行。
         val prologue = if (history.isEmpty()) "" else history.joinToString("\n") + "\n"
         val text = decls.joinToString("\n") +
-            "\nfun __repl__() -> void {\n$prologue$BEGIN_LABEL:\n$stmt\n}\n"
+            "\nfn __repl__() -> void {\n$prologue$BEGIN_LABEL:\n$stmt\n}\n"
         val src = SourceFile.of("<repl>", text)
         try {
             val model = Rsf.analyze(src)
@@ -352,9 +352,9 @@ class Cli {
         println(
             """
             |函数
-            |  fun main() -> void { ... }             入口（ControlType 可省；省了就是 public；main 不能带参数）
-            |  public fun add(a : int, b : int) : int { rtn a + b }
-            |  public fun parse(s : string) -> !int { ... }   可能失败：出错走异常，调用方要 try / ?: / !!
+            |  fn main() -> void { ... }             入口（ControlType 可省；省了就是 public；main 不能带参数）
+            |  public fn add(a : int, b : int) : int { rtn a + b }
+            |  public fn parse(s : string) -> !int { ... }   可能失败：出错走异常，调用方要 try / ?: / !!
             |      访问控制写在最左，省略就是 public；-> : 两种返回写法等价（'::' 不再接受）
             |      参数两种风格都能写、可以混：int a / a : int；参数按 C 惯例默认可变
             |
@@ -392,7 +392,7 @@ class Cli {
         // 缺省就是 public：清单里**显示成 public**，空着会让人以为「没有权限」
         val control = fn.control.label.padEnd(10)
         val static = if (fn.isStatic) "static " else ""
-        return "$control ${static}fun$mainType ${fn.name}($params) ${fn.ret.display()}"
+        return "$control ${static}fn$mainType ${fn.name}($params) ${fn.ret.display()}"
     }
 
     private fun requireFile(path: String?, usage: String): File {
@@ -495,7 +495,7 @@ class Cli {
          * 函数声明的开头：可选的修饰符 + `fun`。
          * REPL 靠它区分「登记一个函数」和「立即执行一条语句」。
          */
-        val DECL_START = Regex("^\\s*(public|private)?\\s*fun\\b")
+        val DECL_START = Regex("^\\s*(public|private)?\\s*fn\\b")
 
         /** 从语句里抠出变量名，让 REPL 能识别重复声明。 */
         val LET_HEAD = Regex("^\\s*(?:var|imutvar)\\s+([A-Za-z_][A-Za-z0-9_]*)")

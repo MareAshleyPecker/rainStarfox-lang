@@ -111,7 +111,7 @@ main.rsf:17:1: error[checker]: classpath 上找不到 JVM 类 'multifile.rsf'：
 import java.lang.Math
 import java.lang.Integer
 
-fun main() -> void {
+fn main() -> void {
     println(Math.max(3, 7))              // 静态方法（按实参类型选重载）
     println(Math.PI)                     // 静态字段
     System.out.println("走 Java 的输出")  // 静态字段 + 实例方法链
@@ -170,8 +170,8 @@ java -cp out UseRsf
 ```rsf
 public class Box&<T> {              // 声明类型参数
     var value : T = ...              // 类体里 T 可以当类型用（字段 / 参数 / 返回 / 局部变量）
-    public fun get() -> T { rtn value }
-    public fun set(v : T) -> void { value = v }
+    public fn get() -> T { rtn value }
+    public fn set(v : T) -> void { value = v }
 }
 
 public class Pair&<K, V> {          // 多个类型参数用逗号分隔
@@ -179,7 +179,7 @@ public class Pair&<K, V> {          // 多个类型参数用逗号分隔
     var val : V = ...
 }
 
-fun main() -> void {
+fn main() -> void {
     var b : Box&<int> = new Box&<int>(0)      // 实例化：类型名后面&<实参类型>
     b.set(7)
     println(b.get() + 1)                        // 8
@@ -217,7 +217,7 @@ fun main() -> void {
   类型参数，所以 `add` 装箱、`get` 拆箱。`Signature` 属性一律不看（看擦除后的描述符）；
   元数从类签名里数出来，数不出来就不拦。
 
-**不做**：泛型函数（`fun <T> T pick(...)`，阶段 19d 起会明确报「泛型函数还不支持」而不是
+**不做**：泛型函数（`fn <T> T pick(...)`，阶段 19d 起会明确报「泛型函数还不支持」而不是
 一句含糊的语法错）、上界（`T : Number`）、通配符、泛型继承。
 
 `rsfSrc/lang/generics.rsf` 是完整示例：
@@ -231,14 +231,14 @@ java -cp out generics
 ### 函数声明
 
 ```
-<ControlType> fun <MainType> 名字(参数表) <返回子句> { 函数体 }
+<ControlType> fn <MainType> 名字(参数表) <返回子句> { 函数体 }
 ```
 
 | 槽位 | 取值 | 说明 |
 | --- | --- | --- |
 | `<ControlType>` | `public` / `protected` / `private` / 省略 | 访问控制，写在**最左**；**省略就是 `public`**（见下） |
-| `fun` | `fun` | 函数定义关键字 |
-| `<MainType>` | 类型，缺省 `void` | 在 `fun` 之后、函数名之前；**目前只接受 `void`** |
+| `fn` | `fn` | 函数定义关键字 |
+| `<MainType>` | 类型，缺省 `void` | 在 `fn` 之后、函数名之前；**目前只接受 `void`** |
 | 返回子句 | 见下 | 可省略，缺省 `void` |
 
 **访问控制：什么都不写就是 `public`。** 不是 `protected`、也不是「模块内可见」——
@@ -250,17 +250,17 @@ java -cp out generics
 
 ```bat
 rsf check rsfSrc/lang/main.rsf
-      public     fun greeting() -> string
-      public     fun add(a : int, b : int) -> int
-      private    fun secret() :: int
+      public     fn greeting() -> string
+      public     fn add(a : int, b : int) -> int
+      private    fn secret() :: int
       ...
 ```
 
 **返回子句有两种等价写法**（`->` 和 `::`）：
 
 ```
-public fun add(a : int, b : int) -> int { rtn a + b }
-public fun add(a : int, b : int) :: int { rtn a + b }
+public fn add(a : int, b : int) -> int { rtn a + b }
+public fn add(a : int, b : int) :: int { rtn a + b }
 ```
 
 > ⚠️ 曾经还有第三种 `: T`，**已经删除**（2026-10-08）。`: T` 不再被接受，报错会提示改用
@@ -271,12 +271,12 @@ public fun add(a : int, b : int) :: int { rtn a + b }
 （三种写法见下面的「错误返回 `!T` 与 `try` / `catch`」）：
 
 ```
-fun f() -> !int { ... }     // 类似 Zig 的错误返回：正常返回 int，出错走异常
-fun g() -> !void { ... }    // !void 也一样，函数体里用不带值的 rtn
+fn f() -> !int { ... }     // 类似 Zig 的错误返回：正常返回 int，出错走异常
+fn g() -> !void { ... }    // !void 也一样，函数体里用不带值的 rtn
 ```
 
 > ⚠️ 因为 `<MainType>` 槽位在函数名前面，**类型关键字不能当函数名**：
-> `fun double()` 里的 `double` 会被当成类型槽。报错时会提示改名。
+> `fn double()` 里的 `double` 会被当成类型槽。报错时会提示改名。
 
 ### 参数
 
@@ -288,19 +288,19 @@ fun g() -> !void { ... }    // !void 也一样，函数体里用不带值的 rtn
 | Kotlin 风格（名字在前） | `名字 : 类型` | `a : int`、`p : Point`、`b : Box&<int>`、`xs : int[]`、`s : ?string` |
 
 ```rsf
-public fun add(a : int, b : int) -> int {          // 全 Kotlin 风格
+public fn add(a : int, b : int) -> int {          // 全 Kotlin 风格
     rtn a + b
 }
 
-fun mix(int a, b : long, c : double) -> double {   // 混着写也行
+fn mix(int a, b : long, c : double) -> double {   // 混着写也行
     rtn a + b + c
 }
 
-fun greet(who : string) -> string {
+fn greet(who : string) -> string {
     rtn "hello, " + who
 }
 
-fun fact(n : int) -> int {
+fn fact(n : int) -> int {
     if (n <= 1) { rtn 1 }
     rtn n * fact(n - 1)        // 递归
 }
@@ -308,7 +308,7 @@ fun fact(n : int) -> int {
 
 判定靠**两个记号的前瞻**，无歧义：`标识符` 后面跟 `:` 就是 Kotlin 风格；类型关键字或者 `?`
 开头就是 Java 风格；`标识符` 后面还跟 `标识符` / `&` / `[` 也是 Java 风格（类名当类型）。
-光写一个名字（`fun f(x) -> int`）两种都不是，会同时给出两种写法的提示：
+光写一个名字（`fn f(x) -> int`）两种都不是，会同时给出两种写法的提示：
 
 ```
 参数 'x' 缺少类型。两种写法都可以：Java 风格 'int x'，或者 Kotlin 风格 'x : int'
@@ -339,16 +339,16 @@ fun fact(n : int) -> int {
 **顶层函数与类方法（实例 + `static`）都能重载**，两处走的是同一套解析机器：
 
 ```rsf
-fun tag() -> string { rtn "无参" }
-fun tag(a : int) -> string { rtn "一参：" + a }
-fun tag(a : int, b : int) -> string { rtn "两参：" + (a + b) }
+fn tag() -> string { rtn "无参" }
+fn tag(a : int) -> string { rtn "一参：" + a }
+fn tag(a : int, b : int) -> string { rtn "两参：" + (a + b) }
 
 class Greeter {
-    fun greet() -> string { rtn "hello" }
-    fun greet(name : string) -> string { rtn "hello, " + name }
+    fn greet() -> string { rtn "hello" }
+    fn greet(name : string) -> string { rtn "hello, " + name }
 
-    static fun kind(a : int) -> string { rtn "int" }
-    static fun kind(a : string) -> string { rtn "string" }
+    static fn kind(a : int) -> string { rtn "int" }
+    static fn kind(a : string) -> string { rtn "string" }
 }
 ```
 
@@ -379,7 +379,7 @@ error[checker]: 调用 'pick' 无法确定用哪个重载：实参类型（null�
   同一个类的两个方法之间都适用），文案里写明「参数擦除后的描述符都是 (LBox;)」与两处签名；
 - **返回类型不参与**：`f(int) -> int` 与 `f(int) -> string` 一样拒绝——调用点 `f(1)` 说不清该返回什么；
 - 而签名**源码写法也完全一样**的（`f(a : int)` 写两遍）报的是老的「重复定义」；
-- `fun put(v : T)` 与 `fun put(v : int)` **不**冲突（`T` 擦成 `Object`，描述符不同）。
+- `fn put(v : T)` 与 `fn put(v : int)` **不**冲突（`T` 擦成 `Object`，描述符不同）。
   **泛型类的方法可以重载**，解析时先把类型实参替换进去再打分。
 
 **与构造器的规则差异（有意为之）**：构造器同分时取**声明在前**的那个（阶段 18 的老规矩，
@@ -393,7 +393,7 @@ error[checker]: 调用 'pick' 无法确定用哪个重载：实参类型（null�
 **`main` 只有无参的那个是入口**：`main(a : int)` 现在是合法重载，但它只是普通函数
 （`rsf run` 会提示「入口函数 main 不能有参数」）；**两个无参 `main()`** 报「入口歧义」。
 
-**泛型函数不支持**（与重载无关，类型参数只能写在 `class` 上）：写 `fun pick&<T>(a : T)`
+**泛型函数不支持**（与重载无关，类型参数只能写在 `class` 上）：写 `fn pick&<T>(a : T)`
 会明确报「泛型函数还不支持：类型参数只能写在 class 上……想要「什么类型都能收」的函数，
 就为每种类型各写一个重载」。
 
@@ -403,7 +403,7 @@ error[checker]: 调用 'pick' 无法确定用哪个重载：实参类型（null�
 ### 入口
 
 ```
-fun main() -> void {
+fn main() -> void {
     println("hello, rainStarfox!")
     rtn null
 }
@@ -482,7 +482,7 @@ var y = if x > 2 ? 1 : 2        // 三目——它是**表达式**，不是语�
 三种写法都能跟 `else`，`else` 后面接另一个 `if` 就形成 `else if` 链：
 
 ```
-fun classify(x : int) -> string {
+fn classify(x : int) -> string {
     if (x < 0) {
         rtn "negative"
     } else if (x == 0) {
@@ -501,7 +501,7 @@ else : println("small")
 因为三目是表达式，所以可以直接喂给 `rtn`：
 
 ```
-fun pick() -> int {
+fn pick() -> int {
     imutvar x = 3
     rtn if x > 2 ? 100 : 200
 }
@@ -512,7 +512,7 @@ fun pick() -> int {
 ### `while` / `break` / `continue`
 
 ```
-fun fibOf10() -> int {
+fn fibOf10() -> int {
     var a = 0
     var b = 1
     var i = 0
@@ -530,7 +530,7 @@ fun fibOf10() -> int {
 所以下面这种写法**不会**误报"函数可能不返回"：
 
 ```
-fun f() -> int {
+fn f() -> int {
     while (true) {
         rtn 7
     }
@@ -565,7 +565,7 @@ for (;;) { ... if (done) { break } }        // 无限循环
 C/C++ 意义上的无条件跳转。标签是**函数作用域**，不能跨函数跳。
 
 ```
-fun main() -> void {
+fn main() -> void {
     var n = 0
 countdown:
     if (n >= 3) { goto finished }
@@ -629,16 +629,16 @@ println(x)              // 1
 类型名前面加 `?` 表示「可能是 null」：
 
 ```rsf
-fun findName(id : int) :: ?string {
+fn findName(id : int) :: ?string {
     if (id == 1) { rtn "rainStarfox" }
     rtn null
 }
 
-fun greet(who : ?string) -> string {
+fn greet(who : ?string) -> string {
     rtn "hello, " + (who ?: "stranger")     // 参数也可以可空
 }
 
-fun maybeInt(n : int) -> ?int {               // 可空的基本类型
+fn maybeInt(n : int) -> ?int {               // 可空的基本类型
     if (n > 0) { rtn n * 10 }
     rtn null
 }
@@ -678,7 +678,7 @@ var k : int = 7            // 非空也可以写，只是没必要
 返回子句前面加 `!`，表示**这个函数可能失败**（阶段 14，类似 Zig 的错误返回）：
 
 ```rsf
-public fun parseInt(s : string) -> !int {
+public fn parseInt(s : string) -> !int {
     if (s.length() == 0) {
         fail "空字符串没法转数字"          // fail 抛出一个错误
     }
@@ -699,7 +699,7 @@ public fun parseInt(s : string) -> !int {
 **调用方必须显式处理错误**，三种写法任选一种；都做不到就是编译错误，报错里会把三种都列出来：
 
 ```rsf
-fun main() -> void {
+fn main() -> void {
     // (a) 包进 try：catch 变量是 string，就是 fail 的那条消息
     try {
         var n = parseInt("")            // try 块里可以直接调 !T 函数（视为已处理）
@@ -753,7 +753,7 @@ fun main() -> void {
 - `try` / `?:` 只接 **rsf 自己的** `fail`。Java 互操作抛出来的异常（例如
   `Integer.parseInt("abc")` 的 `NumberFormatException`）在解释器里不会被子解释器的 `try`
   接住，编译产物那边却会——这种跨语言异常的差异本版**不做**。
-- 可空与错误返回**不能在同一个地方混用**：`fun f() -> !?int` 这样的函数，写 `f()!!`
+- 可空与错误返回**不能在同一个地方混用**：`fn f() -> !?int` 这样的函数，写 `f()!!`
   或 `f() ?: 0` 会明确报「暂不支持在同一处同时用可空与错误返回」（`!!` 到底是解包还是
   抛错说不清）。拆成两句写就行：先用 `try` 把错误处理掉，再用 `?:` 处理 null。
 
@@ -820,7 +820,7 @@ public enum TokenKind {
 }
 ```
 
-- 顶层声明，权限修饰词可选（缺省 `public`，和 `fun` / `class` 一样）；至少要有一个值；
+- 顶层声明，权限修饰词可选（缺省 `public`，和 `fn` / `class` 一样）；至少要有一个值；
   值名重复、枚举名与类名/函数名重名都会在编译期报错（枚举和类**共用类型命名空间**）。
 - **类型位置随便用**：字段、参数、返回值、局部变量、数组 `TokenKind[]`、可空 `?TokenKind`。
 - **取值**：`TokenKind.IDENT`。枚举值只能从**类型**上取，不能拿变量当接收者
@@ -919,19 +919,19 @@ switch (kind) {
 
 ```rsf
 public interface Greeter {
-    fun greet(name : string) -> string                                   // 抽象方法：不写体
-    fun shout(name : string) -> string { rtn greet(name) + "!" }         // 默认方法：写体
+    fn greet(name : string) -> string                                   // 抽象方法：不写体
+    fn shout(name : string) -> string { rtn greet(name) + "!" }         // 默认方法：写体
 }
 
 public interface Loud : Greeter { }        // 接口可以继承接口，多个用逗号
 
 class Dog(name : string) : Greeter {       // 类实现接口；继承与实现共用 `:`
-    public override fun greet(name : string) -> string {                 // override 可选
+    public override fn greet(name : string) -> string {                 // override 可选
         rtn "woof " + name
     }
 }
 
-fun main() -> void {
+fn main() -> void {
     var g : Greeter = new Dog("rex")
     println(g.greet("bob"))                 // woof bob（虚分派）
     println(g.shout("bob"))                 // woof bob!
@@ -976,12 +976,12 @@ fun main() -> void {
 
 ```rsf
 public class Base(x : int) {                             // 类默认可被继承
-    public fun tag() -> string { rtn "base" }            // 方法默认可被覆盖
-    public final fun id() -> int { rtn x }               // final：到此为止，子类不能再覆盖
+    public fn tag() -> string { rtn "base" }            // 方法默认可被覆盖
+    public final fn id() -> int { rtn x }               // final：到此为止，子类不能再覆盖
 }
 
 public abstract class Shape(size : int) {
-    public abstract fun area() -> double                 // 没有函数体，子类必须实现
+    public abstract fn area() -> double                 // 没有函数体，子类必须实现
 }
 
 public class Box&<T>(v : T) : Base(1) { }                // 泛型类也能当父类
@@ -989,15 +989,15 @@ public class Box&<T>(v : T) : Base(1) { }                // 泛型类也能当�
 public final class Sealed(x : int) : Base(x) { }         // final class：别人不能再继承它
 
 public class D(y : int) : Base(y * 2), Greeter {         // 父类唯一且排最前，后面只跟接口
-    public override fun tag() -> string { rtn "derived" }
-    public fun use() -> string { rtn super.tag() + "/" + tag() }   // "base/derived"
+    public override fn tag() -> string { rtn "derived" }
+    public fn use() -> string { rtn super.tag() + "/" + tag() }   // "base/derived"
 }
 
 public class D2(v : int) : Base(v) {
     constructor() { super(1) }                           // 次构造的父类委托 = 第一句
 }
 
-fun main() -> void {
+fn main() -> void {
     var base : Base = new D(3)
     println(base.tag())        // derived（虚分派）
     println(base.id())         // 继承来的 final 方法照常调用
@@ -1008,7 +1008,7 @@ fun main() -> void {
 几条定死的规矩（设计见 `DESIGN-25.md`，默认值在阶段 27 按 `DESIGN-27.md` 反转）：
 
 - **默认开放，`final` 封口**：类不写 `final` 就能当父类，方法不写 `final` 就能被子类覆盖；
-  `final class` 不能再被继承、`final fun` 不能再被覆盖（`override final fun` 把一条覆盖链就地封住）。
+  `final class` 不能再被继承、`final fn` 不能再被覆盖（`override final fn` 把一条覆盖链就地封住）。
   旧法（阶段 25–26）要求写 `open` 才有这些自由，阶段 27 删掉了 `open` 关键字。
 - **禁止字段遮蔽**（与 Kotlin 的故意偏离，理由同样是「两端逐字节对拍」）。
 - **构造顺序**：父 `<init>(实参)` → 自己的字段初值 → 构造体；`super(...)` 与 `this(...)` 互斥且只能第一句。
@@ -1029,7 +1029,7 @@ fun main() -> void {
 ```rsf
 annotation Marker(value : string = "x", count : int = 0) {
     companion entity Impl : Runnable {          // 注解的行为写在这里，至多一个
-        fun run() -> void {
+        fn run() -> void {
             println(value + " x" + intToString(count))   // 元素按裸名读
             rtn
         }
@@ -1039,7 +1039,7 @@ annotation Marker(value : string = "x", count : int = 0) {
 @Marker(value = "hi", count = 3)                 // 可标：类/接口/注解声明/方法/字段
 class Greeter { }
 
-fun main() -> void {
+fn main() -> void {
     var m : Marker::Impl = new Marker("hi", 3)   // 在 rsf 这边把行为 new 出来跑
     m.run()                                      // hi x3
     rtn
@@ -1126,7 +1126,7 @@ public class Point(x0 : int, y0 : int) {
     var x : int = x0                 // 主构造的「体」就是字段初值
     var y : int = y0
     var doubled : int = x0 * 2 + y0
-    public fun sum() -> int { rtn x + y }
+    public fn sum() -> int { rtn x + y }
 }
 var p = new Point(3, 4)
 
@@ -1164,7 +1164,7 @@ public class R(x0 : int) {
 | 有主构造时 | **每个次构造都必须委托**（和 Kotlin 一样）：这样字段初值里用的主构造参数一定有值 |
 | 一个都没有 | 等价于隐式无参构造器；写了任何一个之后就没有隐式的了 |
 | 字段初值 | 只跑一次，跑在**委托链的根**（最终落到主构造）那条 `<init>` 里 —— 和 JVM 一致 |
-| 不能再这样写 | `fun 类名(...)` 不再是构造器（明确报错，提示改用 `constructor`） |
+| 不能再这样写 | `fn 类名(...)` 不再是构造器（明确报错，提示改用 `constructor`） |
 | 仍然不支持 | 构造器不能是 `!T`。（**方法重载自阶段 19d 起已经支持**，构造器不再是唯一能重载的东西） |
 
 ### 自动 `new`：`new` 可以省
@@ -1399,10 +1399,10 @@ gradlew.bat verifyPlugin          :: 官方校验器静态检查
   `[B` → `byte[]`、`[[Ljava/lang/String;` → `string[][]`）。`Files.write(Path, byte[])`、
   `String.getBytes() -> byte[]` 这类方法现在都能正常解析与调用；阶段 16b 的四个文件函数
   （`readBytes` / `writeBytes` 等）就是骑在这条路上的
-- 泛型函数（`fun <T> T pick(...)`）、上界（`T : Number`）、通配符、泛型继承
+- 泛型函数（`fn <T> T pick(...)`）、上界（`T : Number`）、通配符、泛型继承
 - `Map&<K, V>` 这种**多个类型参数的外部类**：擦除后 `Object` 形参分不清对应哪个实参，
   所以只按 `Object` 处理（一个类型参数的外部类，如 `ArrayList&<int>`，是通的）
-- 可空与错误返回混用（`fun f() -> !?int` 上的 `f()!!` / `f() ?: x`）：明确报「暂不支持」
+- 可空与错误返回混用（`fn f() -> !?int` 上的 `f()!!` / `f() ?: x`）：明确报「暂不支持」
 - 构造器不能是 `!T`（构造对象没有处理错误的写法；阶段 18 起构造器干脆没有返回类型）。
   `new` 可省之后这一点没变：`C(...)` 与 `new C(...)` 一样都没有错误处理
 - ~~**`catch (e string)` 仍然是 Java 风格**~~ —— **已经改掉（阶段 19b）**：`catch` 变量的
@@ -1413,14 +1413,14 @@ gradlew.bat verifyPlugin          :: 官方校验器静态检查
 - **类名与函数名不能重名**（报 `'X' 已经是一个类名了，函数名和类名不能重名`）——
   这正是「自动 `new`」判定无歧义的前提，所以这条检查会一直留着
 - 名称既不是函数也不是可构造的类型时，报「未定义的函数 'x'」（不是「没有这个类」）
-- ~~方法重载仍然不支持（`fun f(int)` 与 `fun f(string)` 同名报错）~~ —— **已经支持（阶段 19d）**：
+- ~~方法重载仍然不支持（`fn f(int)` 与 `fn f(string)` 同名报错）~~ —— **已经支持（阶段 19d）**：
   顶层函数与类方法（实例 + `static`）都能重载，两处共用一套解析机器（先按个数筛 → 类型打分，
   **最低分并列就报错并列出候选**）。**注意与构造器的规则差异**：构造器同分取「声明在前」，
   函数/方法同分报错。擦除冲突（`f(Box&<int>)` 与 `f(Box&<string>)`）编译期拒绝。
   详见上面「重载（阶段 19d）」一节
 - **`rsfSrc/bootstrap/*.rsf` 里绕开重载的写法不改**（`matchAny2/3/4` 等）：那些产物被
   自举差分测试逐字节钉住，重载只对**新写的** rsf 代码开放
-- **泛型函数**（`fun pick&<T>(...)`）不支持：类型参数只能写在 `class` 上（报错会提示
+- **泛型函数**（`fn pick&<T>(...)`）不支持：类型参数只能写在 `class` 上（报错会提示
   改用「每种类型写一个重载」或把数据放进泛型类）
 - 构造器没有初始化块（`init { }`）：语句就写在次构造的体里，或者做成普通方法
 - `try` / `?:` 只接 rsf 自己的 `fail`，接不住 Java 互操作抛出来的异常（跨语言异常本版不做）
@@ -1432,7 +1432,7 @@ gradlew.bat verifyPlugin          :: 官方校验器静态检查
   （`toByte` / `toChar` / `charToInt`）
 - 可空目标不接加宽（`var x : ?long = 1` 报错，得写 `1L`）——这是既有 `?T` 机制本来的规矩
 - 全局变量、常量（跨文件共享只能靠函数）
-- 类型关键字不能当函数名（`fun double()` 会被当成 `<MainType>`）
+- 类型关键字不能当函数名（`fn double()` 会被当成 `<MainType>`）
 - `imutvar` 只禁止**重新赋值**，不禁止通过它去改指向的对象
 - `for (i in a..b)` 的起点与步长类型要能相容（例如 int 计数器配 `step 2L` 会报类型错）
 - 字符串字面量现在可以跨行了，漏掉收尾引号时会一路吃到文件末尾（报错仍指向开引号）
@@ -1510,7 +1510,7 @@ gradlew.bat verifyPlugin          :: 官方校验器静态检查
 | 缺口 | 不补的话 | 补完之后 |
 | --- | --- | --- |
 | 没有 `&&` / `||` | `if (c == '/' && peek(1) == '/')` 只能写成三层嵌套 `if` | 一行写完，两侧必须是 `bool`，**真短路**（右边可能一次都不求值） |
-| 没有 `enum` | `TokenKind` 只能用一串 `static fun xxx() -> string` 拼字符串常量，**拼错名字编译器不吭声** | `TokenKind.IDENT` 写错值名当场报错并列出全部值；`==` 只管同类型 |
+| 没有 `enum` | `TokenKind` 只能用一串 `static fn xxx() -> string` 拼字符串常量，**拼错名字编译器不吭声** | `TokenKind.IDENT` 写错值名当场报错并列出全部值；`==` 只管同类型 |
 | 没有 `switch` | 按 kind 分派只能写成十几条 `if (kind == ...)` 长链 | `switch (k) { TokenKind.IDENT : ... }`；**漏分支会在编译期报错**（不用 else 时必须穷尽） |
 
 **对 17b 的直接结论**：`rsfSrc/bootstrap/Lexer.rsf` 里 `TokenKind` 的**全部**用法形态

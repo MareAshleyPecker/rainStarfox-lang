@@ -1,17 +1,17 @@
 public interface Greeter {
-    fun name() -> string
-    fun shout() -> string {
+    fn name() -> string
+    fn shout() -> string {
         rtn name() + "!"
     }
 }
 
 class Dog : Greeter {
-    public fun name() -> string {
+    public fn name() -> string {
         rtn "rex"
     }
 }
 
-fun main() -> void {
+fn main() -> void {
     var g : Greeter = new Dog()
     println(g.shout())
     rtn

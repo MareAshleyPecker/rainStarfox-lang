@@ -88,7 +88,7 @@ object RsfKeywords {
     )
 
     val CONTROL = setOf(
-        "fun", "rtn", "return", "if", "else", "while", "for", "in",
+        "fn", "rtn", "return", "if", "else", "while", "for", "in",
         "break", "continue", "goto", "import", "module",
         // 阶段 6a 的 pkg —— 这张表一直漏着它，于是 `pkg demo.util` 里的 pkg
         // 在编辑器里跟普通名字一个颜色。和 Lexer.KEYWORDS 对齐时补上

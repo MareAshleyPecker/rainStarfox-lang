@@ -35,10 +35,10 @@ class CastTest {
             """
             class A { }
             class B : A() { }
-            interface Named { fun name() -> string }
-            class N : A(), Named { override fun name() -> string { rtn "n" } }
+            interface Named { fn name() -> string }
+            class N : A(), Named { override fn name() -> string { rtn "n" } }
 
-            fun main() -> void {
+            fn main() -> void {
                 var b : B = new B()
                 var a : A = b
                 var n : Named = new N()
@@ -67,7 +67,7 @@ class CastTest {
             class A { }
             class B : A() { }
 
-            fun main() -> void {
+            fn main() -> void {
                 var b : B = new B()
                 var a : A = b
                 var t : bool = a is B
@@ -89,10 +89,10 @@ class CastTest {
     fun `as 上转型是空操作`() {
         val out = bothEnds(
             """
-            class A { fun who() -> string { rtn "A" } }
+            class A { fn who() -> string { rtn "A" } }
             class B : A() { }
 
-            fun main() -> void {
+            fn main() -> void {
                 var b : B = new B()
                 var b2 : B = b as B
                 var a : A = b2 as A
@@ -110,13 +110,13 @@ class CastTest {
     fun `as 下转型之后能调子类成员`() {
         val out = bothEnds(
             """
-            class A { fun who() -> string { rtn "A" } }
+            class A { fn who() -> string { rtn "A" } }
             class B : A() {
-                fun only() -> string { rtn "only-B" }
-                override fun who() -> string { rtn "B" }
+                fn only() -> string { rtn "only-B" }
+                override fn who() -> string { rtn "B" }
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var b : B = new B()
                 var a : A = b
                 var b2 : B = a as B
@@ -138,7 +138,7 @@ class CastTest {
             class B : A() { }
             class C : A() { }
 
-            fun main() -> void {
+            fn main() -> void {
                 var c : C = new C()
                 var a : A = c
                 try {
@@ -163,7 +163,7 @@ class CastTest {
             """
             class A { }
 
-            fun main() -> void {
+            fn main() -> void {
                 try {
                     var a : A = "hi" as A
                     println("不该到这里")
@@ -184,7 +184,7 @@ class CastTest {
             """
             class A { }
 
-            fun main() -> void {
+            fn main() -> void {
                 var a : ?A = null
                 println("" + (a is A))
                 println("" + (a !is A))
@@ -215,7 +215,7 @@ class CastTest {
             class B : A() { }
             class C : A() { }
 
-            fun main() -> void {
+            fn main() -> void {
                 var b : B = new B()
                 var a : A = b
                 var ok : ?B = a ?as B
@@ -243,13 +243,13 @@ class CastTest {
         val out = bothEnds(
             """
             interface Greeter {
-                fun greet() -> string { rtn "hi" }
+                fn greet() -> string { rtn "hi" }
             }
             class Impl : Greeter { }
             class Base { }
             class Both : Base(), Greeter { }
 
-            fun main() -> void {
+            fn main() -> void {
                 var g : Greeter = new Impl()
                 println("" + (g is Impl))
                 println("" + (g is Greeter))
@@ -277,7 +277,7 @@ class CastTest {
             class B : A() { }
             class C : A() { }
 
-            fun main() -> void {
+            fn main() -> void {
                 var bs : B[] = new B[2]
                 var as1 : A[] = bs
                 println("" + (bs is A[]))
@@ -303,7 +303,7 @@ class CastTest {
             class B : A() { }
             class C : A() { }
 
-            fun main() -> void {
+            fn main() -> void {
                 var as1 : A[] = new C[1]
                 try {
                     var bs : B[] = as1 as B[]
@@ -326,10 +326,10 @@ class CastTest {
         val program = """
             class Box&<T>(v : T) {
                 var value : T = v
-                fun get() -> T { rtn value }
+                fn get() -> T { rtn value }
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var b : Box&<int> = new Box&<int>(7)
                 var o : Box&<int> = b as Box&<int>
                 var n : int = o.get()
@@ -361,7 +361,7 @@ class CastTest {
             class A { }
             class B : A() { }
 
-            fun main() -> void {
+            fn main() -> void {
                 var b : B = new B()
                 var a : A = b
                 var a2 : A = a as A
@@ -385,7 +385,7 @@ class CastTest {
                 source(
                     """
                     class A { }
-                    fun main() -> void {
+                    fn main() -> void {
                         var a : A = new A()
                         var b : A = a as ?A
                         rtn
@@ -402,7 +402,7 @@ class CastTest {
             Rsf.analyze(
                 source(
                     """
-                    fun main() -> void {
+                    fn main() -> void {
                         var n : int = 1
                         var x : int = n as int
                         rtn
@@ -419,7 +419,7 @@ class CastTest {
             Rsf.analyze(
                 source(
                     """
-                    fun main() -> void {
+                    fn main() -> void {
                         var n : int = 1
                         println("" + (n is int))
                         rtn
@@ -436,7 +436,7 @@ class CastTest {
                 source(
                     """
                     class A { }
-                    fun main() -> void {
+                    fn main() -> void {
                         var a : A = new A()
                         var x : A = a as int
                         rtn
@@ -455,7 +455,7 @@ class CastTest {
                 source(
                     """
                     class A { }
-                    fun main() -> void {
+                    fn main() -> void {
                         var a : A = new A()
                         var b : A = a as A as A
                         rtn
@@ -472,7 +472,7 @@ class CastTest {
                 source(
                     """
                     class A { }
-                    fun main() -> void {
+                    fn main() -> void {
                         var a : A = new A()
                         println("" + (a is A is A))
                         rtn
@@ -492,7 +492,7 @@ class CastTest {
                 source(
                     """
                     class A { }
-                    fun main() -> void {
+                    fn main() -> void {
                         var a : ?A = new A()
                         var b : A = a ?as A
                         rtn
@@ -512,7 +512,7 @@ class CastTest {
                 source(
                     """
                     class A { }
-                    fun main() -> void {
+                    fn main() -> void {
                         var a : A = new A()
                         var b : A = a as Nope
                         rtn
@@ -532,7 +532,7 @@ class CastTest {
                 source(
                     """
                     class A { }
-                    fun main() -> void {
+                    fn main() -> void {
                         var a : A = new A()
                         var b : A = a as A&<int>
                         rtn
@@ -554,7 +554,7 @@ class CastTest {
                 source(
                     """
                     class A { }
-                    fun main() -> void {
+                    fn main() -> void {
                         var a : A = new A()
                         var b : A = a as A
                         var c : ?A = a ?as A
@@ -583,7 +583,7 @@ class CastTest {
                         var value : T = v
                     }
                     class A { }
-                    fun main() -> void {
+                    fn main() -> void {
                         var b : Box&<int> = new Box&<int>(1)
                         println("" + (b is Box&<int>))
                         var a : A[] = new A[0]

@@ -1,4 +1,4 @@
 // 被 module "plugins" 引入——该目录下所有 .rsf 都会并进来
-fun pluginHello() -> string {
+fn pluginHello() -> string {
     rtn "hello from a plugin folder"
 }

@@ -22,13 +22,13 @@ import java.lang.System
 // 注意 `System.getProperty` 的 rsf 类型是 `string` 但实际可能是 null（属性不存在时），
 // 所以这里用 `?string` 接，再自己兜底——第一次写成 `path.length() == 0` 直接吃了个
 // NullPointerException（编译产物上炸的，解释器那条路反而看不出问题）。
-fun pickPath() -> string {
+fn pickPath() -> string {
     var given : ?string = System.getProperty("rsf.lex.file")
     var path = given ?: "rsfSrc/bootstrap/Lexer.rsf"
     rtn path
 }
 
-fun main() -> void {
+fn main() -> void {
     var path = pickPath()
 
     // 17e 刻意**不接装载器**：`rsf lex` 是纯词法阶段，只认字符流，能不能装载与被

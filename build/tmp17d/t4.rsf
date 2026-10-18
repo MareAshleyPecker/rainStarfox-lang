@@ -1,11 +1,11 @@
-fun risky(n : int) -> !int {
+fn risky(n : int) -> !int {
     if (n < 0) {
         fail "负数不行: " + intToString(n)
     }
     rtn n * 2
 }
 
-fun main() -> void {
+fn main() -> void {
     var a = risky(5) ?: -1
     println("a = " + intToString(a))
     var b = risky(-3) ?: -1

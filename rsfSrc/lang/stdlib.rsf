@@ -16,7 +16,7 @@
 // ------------------------------------------------------------------ 字符分类
 
 // 词法器的第一步：一个字符算数字、字母、空白，还是别的
-fun kindOf(c : char) -> string {
+fn kindOf(c : char) -> string {
     if (isDigit(c)) { rtn "数字" }
     if (isLetter(c)) { rtn "字母" }
     if (isWhitespace(c)) { rtn "空白" }
@@ -24,13 +24,13 @@ fun kindOf(c : char) -> string {
 }
 
 // 十六进制字符 -> 数值。这里同时用了 charToInt（取码点）和 toLower（统一大小写）
-fun hexValue(c : char) -> int {
+fn hexValue(c : char) -> int {
     if (isDigit(c)) { rtn charToInt(c) - charToInt('0') }
     rtn charToInt(toLower(c)) - charToInt('a') + 10
 }
 
 // 把转义字符写成能看懂的名字：'\n' 这种打出来是看不见的
-fun escapeName(c : char) -> string {
+fn escapeName(c : char) -> string {
     if (c == '\n') { rtn "\\n" }
     if (c == '\t') { rtn "\\t" }
     if (c == '\r') { rtn "\\r" }
@@ -43,7 +43,7 @@ fun escapeName(c : char) -> string {
 // ------------------------------------------------------------------ 字符串切片
 
 // 只用 length / charAt / substring 这三个，把字符串倒过来（数组还没实现，所以不落地）
-fun reverse(s : string) -> string {
+fn reverse(s : string) -> string {
     var out = ""
     var i = s.length() - 1
     while (i >= 0) {
@@ -54,7 +54,7 @@ fun reverse(s : string) -> string {
 }
 
 // 统计每个字符的种类，返回「数字 x 个，字母 y 个，空白 z 个」
-fun summarize(s : string) -> string {
+fn summarize(s : string) -> string {
     var digits = 0
     var letters = 0
     var spaces = 0
@@ -69,7 +69,7 @@ fun summarize(s : string) -> string {
 
 // ------------------------------------------------------------------ 主程序
 
-fun main() -> void {
+fn main() -> void {
     println("== byte ==")
     // byte 与 int 的边界：字面量可以直接给（0..127），算术一律按 int 提升
     var b : byte = 100

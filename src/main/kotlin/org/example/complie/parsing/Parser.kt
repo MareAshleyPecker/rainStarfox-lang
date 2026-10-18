@@ -1087,7 +1087,7 @@ class Parser(
                     t,
                     "接口里只能写方法：'${nameTok.lexeme}' 里的 '${t.lexeme}' 是字段/变量声明。" +
                         "接口没有字段——值要么由实现类自己存（在类里写 var），" +
-                        "要么写成一个方法返回它（fun 名字() -> 类型）",
+                        "要么写成一个方法返回它（fn 名字() -> 类型）",
                 )
             }
             if (t.kind == TokenKind.KW_CONSTRUCTOR) {
@@ -1132,7 +1132,7 @@ class Parser(
             if (peek(offset).kind != TokenKind.KW_FUN) {
                 throw error(
                     t,
-                    "接口 '${nameTok.lexeme}' 里只能写方法（格式是 'fun 名字(参数) 返回子句'，可以有方法体），" +
+                    "接口 '${nameTok.lexeme}' 里只能写方法（格式是 'fn 名字(参数) 返回子句'，可以有方法体），" +
                         "实际读到 ${t.describe()}",
                 )
             }
@@ -1569,13 +1569,13 @@ class Parser(
         if (!peek().kind.isFunKeyword) {
             val t = peek()
             val hint = when {
-                t.kind == TokenKind.KW_VOID -> "；注意 'void' 现在写在 fun 后面的 <MainType> 槽位里"
+                t.kind == TokenKind.KW_VOID -> "；注意 'void' 现在写在 fn 后面的 <MainType> 槽位里"
                 // lang/example.rsf 那份草稿里到处是 <ControlType>、<MainType> 这种写法，
                 // 有人会照着抄。这里直接说清楚：那是占位符，不是语法。
                 t.lexeme == "<" ->
                     "；'<...>' 是 lang/example.rsf 草稿里的占位符，不是真的语法：" +
                         "权限修饰词直接写 public / protected / private（都不写就是默认权限），" +
-                        "类型槽紧跟在 fun 后面（缺省 void）"
+                        "类型槽紧跟在 fn 后面（缺省 void）"
                 t.lexeme == "[" ->
                     "；『[...]』是 lang/example.rsf 草稿里的占位符写法，不是声明语法" +
                         "（方括号现在的意思是数组：类型后缀 int[]、下标 a[0]、创建 new int[5]）"
@@ -1588,7 +1588,7 @@ class Parser(
             // 看不出是哪个词的问题，这里补一句专说 override 的话。只有新关键字才会走到这一支，
             // 所以旧程序（一个 override 都没写）的任何报错文案都不受影响。
             val overrideHint = if (isOverride) {
-                "；'override' 只能写在方法前面（fun 前）——字段/变量声明没有可覆盖的东西"
+                "；'override' 只能写在方法前面（fn 前）——字段/变量声明没有可覆盖的东西"
             } else {
                 ""
             }
@@ -1611,7 +1611,7 @@ class Parser(
             }
             throw error(
                 t,
-                "顶层只能写函数声明，格式是 '[public|protected|private] [static] fun [类型] 名字() 返回子句 函数体'，" +
+                "顶层只能写函数声明，格式是 '[public|protected|private] [static] fn [类型] 名字() 返回子句 函数体'，" +
                     "实际读到 ${t.describe()}$hint$overrideHint$inheritHint",
             )
         }
@@ -1620,7 +1620,7 @@ class Parser(
         // 曾经写反的修饰符位置，给个明确提示
         if (peek().kind.isModifierKeyword) {
             val m = peek()
-            throw error(m, "修饰符 '${m.lexeme}' 要写在 fun 前面：改成 '${m.lexeme} fun ...'")
+            throw error(m, "修饰符 '${m.lexeme}' 要写在 fn 前面：改成 '${m.lexeme} fn ...'")
         }
 
         // <MainType>：fun 之后、函数名之前的类型槽，缺省 void
@@ -1637,9 +1637,9 @@ class Parser(
                 // 典型情况：fun double() —— double 被当成了 <MainType>
                 throw error(
                     t,
-                    "'${mainType.name}' 是类型关键字，不能当函数名（<MainType> 槽位在 fun 之后、" +
-                        "函数名之前）。换个名字，例如 fun twice()" +
-                        "；返回类型要写在参数表后面：fun 名字(...) -> ${mainType.name}" +
+                    "'${mainType.name}' 是类型关键字，不能当函数名（<MainType> 槽位在 fn 之后、" +
+                        "函数名之前）。换个名字，例如 fn twice()" +
+                        "；返回类型要写在参数表后面：fn 名字(...) -> ${mainType.name}" +
                         "（可能失败就写成 -> !${mainType.name}）",
                 )
             }
@@ -1667,7 +1667,7 @@ class Parser(
             check(TokenKind.DOUBLE_COLON) -> throw error(
                 peek(),
                 "返回类型子句不再接受 '::'：请用 '->' 或者 ':'，" +
-                    "例如 fun ${nameTok.lexeme}() -> int { ... }。" +
+                    "例如 fn ${nameTok.lexeme}() -> int { ... }。" +
                     "（'::' 现在留给 xxx::xx 这种嵌套写法，例如 Marker::Impl）",
             )
             else -> ReturnSpec(TypeRef("void", funTok.at), ReturnStyle.OMITTED, false, funTok.at)
@@ -1685,7 +1685,7 @@ class Parser(
                 val brace = peek()
                 throw error(
                     brace,
-                    "抽象方法不能写函数体：'abstract fun ${nameTok.lexeme}(...)' 只写签名，没有 '{ ... }'。" +
+                    "抽象方法不能写函数体：'abstract fn ${nameTok.lexeme}(...)' 只写签名，没有 '{ ... }'。" +
                         "要么把 'abstract' 删掉、把体留下，要么把体删掉",
                 )
             }
@@ -1693,7 +1693,7 @@ class Parser(
                 val t = peek()
                 throw error(
                     t,
-                    "抽象方法要写出返回子句：'abstract fun ${nameTok.lexeme}(...) -> 返回类型'。" +
+                    "抽象方法要写出返回子句：'abstract fn ${nameTok.lexeme}(...) -> 返回类型'。" +
                         "（普通方法省略返回子句等于 void，抽象方法省了就分不清「返回 void」" +
                         "与「忘了写体」）实际读到 ${t.describe()}",
                 )
@@ -1787,7 +1787,7 @@ class Parser(
             throw error(
                 m,
                 "只有类/接口里的方法能写 override：顶层函数没有父类型方法可覆盖，" +
-                    "去掉 'override' 直接写 fun ...",
+                    "去掉 'override' 直接写 fn ...",
             )
         }
         advance()

@@ -1,11 +1,11 @@
 class A {
     var x : int = 1
-    public fun get() -> int {
+    public fn get() -> int {
         rtn x
     }
 }
 
-fun main() -> void {
+fn main() -> void {
     var a = new A()
     println(a.get())
     rtn

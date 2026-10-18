@@ -17,36 +17,36 @@ class Point {
         y = y0
     }
 
-    fun sum() -> int {
+    fn sum() -> int {
         rtn x + y
     }
 
     // 方法体里可以直接写字段名（裸字段名）；和参数重名时才必须写 this.
-    fun shift(dx : int, dy : int) -> void {
+    fn shift(dx : int, dy : int) -> void {
         x = x + dx
         y = y + dy
     }
 
-    fun describe() -> string {
+    fn describe() -> string {
         rtn label + "(" + x + ", " + y + ")"
     }
 
     // 实例方法里直接调另一个实例方法（隐式 this）
-    fun doubleBoth() -> void {
+    fn doubleBoth() -> void {
         shift(x, y)
     }
 
     // private 方法只能在类内部用；外面要通过公开方法访问
-    private fun secret() -> int {
+    private fn secret() -> int {
         rtn 42
     }
 
-    fun reveal() -> int {
+    fn reveal() -> int {
         rtn secret()
     }
 
     // 静态方法：用「类名.方法()」调，不能用对象调
-    static fun origin() -> Point {
+    static fn origin() -> Point {
         rtn new Point(0, 0)
     }
 }
@@ -56,15 +56,15 @@ class Point {
 class Holder {
     var held : ?Point = null          // 可空的自定义类字段
 
-    fun keep(p : Point) -> void {
+    fn keep(p : Point) -> void {
         held = p
     }
 
-    fun has() -> bool {
+    fn has() -> bool {
         rtn held != null
     }
 
-    fun sumOrZero() -> int {
+    fn sumOrZero() -> int {
         // 注意：三目要带 if —— 写法是 `if 条件 ? 甲 : 乙`
         rtn if held == null ? 0 : held!!.sum()
     }
@@ -72,19 +72,19 @@ class Holder {
 
 // ---------------------------------------------------------------- 类当参数/返回类型
 
-fun distanceSquared(a : Point, b : Point) -> int {
+fn distanceSquared(a : Point, b : Point) -> int {
     var dx = a.x - b.x
     var dy = a.y - b.y
     rtn dx * dx + dy * dy
 }
 
-fun makePoint(n : int) -> Point {
+fn makePoint(n : int) -> Point {
     rtn new Point(n, n * 2)
 }
 
 // ---------------------------------------------------------------- 入口
 
-fun main() -> void {
+fn main() -> void {
     var p = new Point(3, 4)
     println(p.describe())                       // point(3, 4)
     println("sum = " + p.sum())                 // 7

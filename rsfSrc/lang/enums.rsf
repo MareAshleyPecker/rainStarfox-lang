@@ -31,7 +31,7 @@ enum Op {
 }
 
 // 打印枚举就是打印**值名**：`println(k)` 与 `"kind = " + k` 都是 `IDENT`
-fun nameOf(k : TokenKind) -> string {
+fn nameOf(k : TokenKind) -> string {
     switch (k) {
         TokenKind.IDENT : rtn "标识符"
         TokenKind.INT_LIT : rtn "整数"
@@ -44,7 +44,7 @@ fun nameOf(k : TokenKind) -> string {
 }
 
 // `switch` 是语句：命中哪一支就只跑哪一支，没有 fallthrough（也不需要写 break）
-fun describe(k : TokenKind) -> string {
+fn describe(k : TokenKind) -> string {
     var out = ""
     switch (k) {
         TokenKind.IDENT : out = "名字"
@@ -59,7 +59,7 @@ fun describe(k : TokenKind) -> string {
 }
 
 // 带 `else` 的 switch：不必穷尽，剩下的都进 else
-fun isOperator(k : TokenKind) -> bool {
+fn isOperator(k : TokenKind) -> bool {
     switch (k) {
         TokenKind.PLUS : rtn true
         TokenKind.MINUS : rtn true
@@ -68,7 +68,7 @@ fun isOperator(k : TokenKind) -> bool {
 }
 
 // 操作符 → 枚举：返回类型是枚举，参数也是枚举
-fun opOf(k : TokenKind) -> ?Op {
+fn opOf(k : TokenKind) -> ?Op {
     switch (k) {
         TokenKind.PLUS : rtn Op.ADD
         TokenKind.MINUS : rtn Op.SUB
@@ -76,7 +76,7 @@ fun opOf(k : TokenKind) -> ?Op {
     }
 }
 
-fun apply(a : int, b : int, op : Op) -> int {
+fn apply(a : int, b : int, op : Op) -> int {
     switch (op) {
         Op.ADD : rtn a + b
         Op.SUB : rtn a - b
@@ -96,13 +96,13 @@ class Lexeme {
     }
 
     // 枚举比较用 == / !=（枚举值是单例，比的就是「同一个常量」）
-    fun isIdent() -> bool {
+    fn isIdent() -> bool {
         rtn kind == TokenKind.IDENT
     }
 }
 
 // 枚举值的数组：没填过的元素是 null，和枚举常量比较不会命中（两端都是 false）
-fun countKinds(items : TokenKind[], want : TokenKind) -> int {
+fn countKinds(items : TokenKind[], want : TokenKind) -> int {
     var n = 0
     var i = 0
     while (i < items.length) {
@@ -123,14 +123,14 @@ class Tracer {
 }
 
 // 左边：记一笔调用、返回 false
-fun no(t : Tracer, tag : string) -> bool {
+fn no(t : Tracer, tag : string) -> bool {
     t.calls = t.calls + 1
     t.log = t.log + tag
     rtn false
 }
 
 // 右边：记一笔调用、返回 true
-fun yes(t : Tracer, tag : string) -> bool {
+fn yes(t : Tracer, tag : string) -> bool {
     t.calls = t.calls + 1
     t.log = t.log + tag
     rtn true
@@ -138,13 +138,13 @@ fun yes(t : Tracer, tag : string) -> bool {
 
 // 用短路把「先看边界、再看内容」写在一行里：
 // 下标越界检查放左边，左边为假时右边**根本不会被求值**
-fun startsWithSlash(s : string, i : int) -> bool {
+fn startsWithSlash(s : string, i : int) -> bool {
     rtn i < s.length() && s.charAt(i) == '/'
 }
 
 // ---------------------------------------------------------------- 入口
 
-fun main() -> void {
+fn main() -> void {
     // ============================================================ 枚举基础
     var k = TokenKind.IDENT
     println("k = " + k)                       // IDENT

@@ -53,17 +53,17 @@ class InterfaceRuntimeTest {
     fun `类类型接收者能调继承来的默认方法`() {
         val program = """
             public interface Greeter {
-                fun greet(n : string) -> string
-                fun shout(n : string) -> string {
+                fn greet(n : string) -> string
+                fn shout(n : string) -> string {
                     rtn greet(n) + "!"
                 }
             }
             class Dog : Greeter {
-                public fun greet(n : string) -> string {
+                public fn greet(n : string) -> string {
                     rtn "woof"
                 }
             }
-            fun main() -> void {
+            fn main() -> void {
                 var d : Dog = new Dog()
                 println(d.shout("a"))
                 var g : Greeter = new Dog()
@@ -83,17 +83,17 @@ class InterfaceRuntimeTest {
     fun `默认方法内部调抽象方法也走接口分派`() {
         val program = """
             public interface Calc {
-                fun twice(x : int) -> int
-                fun quad(x : int) -> int {
+                fn twice(x : int) -> int
+                fn quad(x : int) -> int {
                     rtn twice(twice(x))
                 }
             }
             class Doubler : Calc {
-                public fun twice(x : int) -> int {
+                public fn twice(x : int) -> int {
                     rtn x * 2
                 }
             }
-            fun main() -> void {
+            fn main() -> void {
                 var c : Calc = new Doubler()
                 println(c.quad(2))
                 var d : Doubler = new Doubler()
@@ -117,22 +117,22 @@ class InterfaceRuntimeTest {
     fun `接口类型变量调抽象方法按真实类分派`() {
         val program = """
             public interface Shape {
-                fun area() -> int
+                fn area() -> int
             }
             class Sq : Shape {
-                public fun area() -> int {
+                public fn area() -> int {
                     rtn 4
                 }
             }
             class Tri : Shape {
-                public fun area() -> int {
+                public fn area() -> int {
                     rtn 3
                 }
             }
-            fun describe(s : Shape) -> string {
+            fn describe(s : Shape) -> string {
                 rtn "area=" + s.area()
             }
-            fun main() -> void {
+            fn main() -> void {
                 var a : Shape = new Sq()
                 var b : Shape = new Tri()
                 println(describe(a))
@@ -155,23 +155,23 @@ class InterfaceRuntimeTest {
     fun `接口继承接口时默认方法与父接口抽象方法都能调`() {
         val program = """
             public interface Named {
-                fun name() -> string
+                fn name() -> string
             }
             public interface Greeter : Named {
-                fun greet(n : string) -> string
-                fun hello() -> string {
+                fn greet(n : string) -> string
+                fn hello() -> string {
                     rtn "hi " + name() + " " + greet("x")
                 }
             }
             class Dog : Greeter {
-                public fun name() -> string {
+                public fn name() -> string {
                     rtn "dog"
                 }
-                public fun greet(n : string) -> string {
+                public fn greet(n : string) -> string {
                     rtn "woof-" + n
                 }
             }
-            fun main() -> void {
+            fn main() -> void {
                 var g : Greeter = new Dog()
                 println(g.hello())
                 println(g.name())
@@ -203,17 +203,17 @@ class InterfaceRuntimeTest {
     fun `类同时实现 rsf 接口与 JDK 接口`() {
         val program = """
             public interface Greeter {
-                fun greet() -> string
+                fn greet() -> string
             }
             class Dog : Greeter, Runnable {
-                public fun greet() -> string {
+                public fn greet() -> string {
                     rtn "woof"
                 }
-                public fun run() -> void {
+                public fn run() -> void {
                     println("running")
                 }
             }
-            fun main() -> void {
+            fn main() -> void {
                 var d : Dog = new Dog()
                 println(d.greet())
                 var r : Runnable = new Dog()
@@ -240,20 +240,20 @@ class InterfaceRuntimeTest {
     fun `默认方法里的 elvis 兜底两端一致`() {
         val program = """
             public interface Fetcher {
-                fun load(n : int) -> !string
-                fun safe(n : int) -> string {
+                fn load(n : int) -> !string
+                fn safe(n : int) -> string {
                     rtn load(n) ?: "fallback"
                 }
             }
             class F : Fetcher {
-                public fun load(n : int) -> !string {
+                public fn load(n : int) -> !string {
                     if (n < 0) {
                         fail "bad"
                     }
                     rtn "ok-" + n
                 }
             }
-            fun main() -> void {
+            fn main() -> void {
                 var f : Fetcher = new F()
                 println(f.safe(1))
                 println(f.safe(-1))
@@ -274,9 +274,9 @@ class InterfaceRuntimeTest {
                 source(
                     """
                         public interface Greeter {
-                            fun greet() -> string
+                            fn greet() -> string
                         }
-                        fun main() -> void {
+                        fn main() -> void {
                             var g = new Greeter()
                             rtn
                         }
@@ -300,18 +300,18 @@ class InterfaceRuntimeTest {
     fun `接口静态类型下调的是子接口覆盖后的默认方法`() {
         val program = """
             public interface Named {
-                fun name() -> string {
+                fn name() -> string {
                     rtn "n"
                 }
             }
             public interface Person : Named {
-                override fun name() -> string {
+                override fn name() -> string {
                     rtn "p"
                 }
             }
             class P : Person {
             }
-            fun main() -> void {
+            fn main() -> void {
                 var n : Named = new P()
                 println(n.name())
                 rtn
@@ -340,14 +340,14 @@ class InterfaceRuntimeTest {
                 Rsf.analyze(
                     source(
                         "public interface Greeter {\n" +
-                            "    fun greet() -> string\n" +
+                            "    fn greet() -> string\n" +
                             "}\n" +
                             "class Dog : Greeter {\n" +
-                            "    $modifier" + "fun greet() -> string {\n" +
+                            "    $modifier" + "fn greet() -> string {\n" +
                             "        rtn \"woof\"\n" +
                             "    }\n" +
                             "}\n" +
-                            "fun main() -> void {\n" +
+                            "fn main() -> void {\n" +
                             "    rtn\n" +
                             "}\n",
                     ),
@@ -365,13 +365,13 @@ class InterfaceRuntimeTest {
             Rsf.analyze(
                 source(
                     "public interface A {\n" +
-                        "    fun say() -> string {\n        rtn \"a\"\n    }\n" +
+                        "    fn say() -> string {\n        rtn \"a\"\n    }\n" +
                         "}\n" +
                         "public interface B {\n" +
-                        "    fun say() -> string {\n        rtn \"b\"\n    }\n" +
+                        "    fn say() -> string {\n        rtn \"b\"\n    }\n" +
                         "}\n" +
                         "class C : A, B {\n" +
-                        "    private fun say() -> string {\n        rtn \"c\"\n    }\n" +
+                        "    private fn say() -> string {\n        rtn \"c\"\n    }\n" +
                         "}\n",
                 ),
             )
@@ -396,20 +396,20 @@ class InterfaceRuntimeTest {
     fun `接口产物形状正确且调用点发 invokeinterface`() {
         val program = """
             public interface Greeter {
-                fun greet(n : string) -> string
-                fun shout(n : string) -> string {
+                fn greet(n : string) -> string
+                fn shout(n : string) -> string {
                     rtn greet(n) + "!"
                 }
             }
             class Dog : Greeter, Runnable {
-                public fun greet(n : string) -> string {
+                public fn greet(n : string) -> string {
                     rtn "woof"
                 }
-                public fun run() -> void {
+                public fn run() -> void {
                     rtn
                 }
             }
-            fun main() -> void {
+            fn main() -> void {
                 var d : Dog = new Dog()
                 println(d.shout("a"))
                 var g : Greeter = new Dog()
@@ -554,14 +554,14 @@ class InterfaceRuntimeTest {
             import java.util.Comparator
 
             class ByValue : Comparator&<string> {
-                public fun compare(a : string, b : string) -> int {
+                public fn compare(a : string, b : string) -> int {
                     var x = parseInt(a) ?: 0
                     var y = parseInt(b) ?: 0
                     rtn x - y
                 }
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var xs = new ArrayList&<string>()
                 xs.add("5")
                 xs.add("3")
@@ -584,12 +584,12 @@ class InterfaceRuntimeTest {
     fun `rsf 对象当 JDK 构造器实参两端一致`() {
         val program = """
             class Job : Runnable {
-                public fun run() -> void {
+                public fn run() -> void {
                     println("running")
                 }
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var t = new Thread(new Job())
                 println(t.isAlive())
                 rtn
@@ -608,16 +608,16 @@ class InterfaceRuntimeTest {
     fun `泛型 rsf 接口的实现类补桥方法两端一致`() {
         val program = """
             public interface Box&<T> {
-                fun get() -> T
+                fn get() -> T
             }
 
             class IntBox : Box&<int> {
-                public fun get() -> int {
+                public fn get() -> int {
                     rtn 7
                 }
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var b : Box&<int> = new IntBox()
                 println(b.get())
                 rtn
@@ -634,12 +634,12 @@ class InterfaceRuntimeTest {
             import java.util.Comparator
 
             class ByValue : Comparator&<string> {
-                public fun compare(a : string, b : string) -> int {
+                public fn compare(a : string, b : string) -> int {
                     rtn 0
                 }
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 rtn
             }
         """.trimIndent() + "\n"

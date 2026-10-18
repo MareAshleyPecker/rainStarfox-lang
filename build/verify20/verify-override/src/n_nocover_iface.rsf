@@ -1,9 +1,9 @@
 public interface Named {
-    fun name() -> string
+    fn name() -> string
 }
 
 public interface Person : Named {
-    override fun age() -> int {
+    override fn age() -> int {
         rtn 1
     }
 }

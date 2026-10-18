@@ -50,7 +50,7 @@ class AnnotationSemaTest {
                 xs : int[],
             )
 
-            fun main() -> void { println("ok") }
+            fn main() -> void { println("ok") }
             """,
         )
         val spec = assertNotNull(model.annotationOf("Marker"))
@@ -76,7 +76,7 @@ class AnnotationSemaTest {
 
             annotation Marker(value : Dog)
 
-            fun main() -> void { println("ok") }
+            fn main() -> void { println("ok") }
             """,
             line = 5,
             "注解元素 'value' 的类型 'Dog' 不合法",
@@ -91,7 +91,7 @@ class AnnotationSemaTest {
             """
             annotation Marker(grid : int[][])
 
-            fun main() -> void { println("ok") }
+            fn main() -> void { println("ok") }
             """,
             line = 1,
             "注解元素 'grid' 的类型 'int[][]' 不合法",
@@ -105,7 +105,7 @@ class AnnotationSemaTest {
             """
             annotation Marker(nothing : void)
 
-            fun main() -> void { println("ok") }
+            fn main() -> void { println("ok") }
             """,
             line = 1,
             "注解元素 'nothing' 的类型 'void' 不合法",
@@ -119,7 +119,7 @@ class AnnotationSemaTest {
             """
             annotation Marker(value : ?string)
 
-            fun main() -> void { println("ok") }
+            fn main() -> void { println("ok") }
             """,
             line = 1,
             "注解元素 'value' 不能是可空类型：注解元素在 JVM 里不能是 null",
@@ -136,7 +136,7 @@ class AnnotationSemaTest {
             """
             annotation Marker(count : ?int)
 
-            fun main() -> void { println("ok") }
+            fn main() -> void { println("ok") }
             """,
             line = 1,
             "注解元素 'count' 不能是可空类型：注解元素在 JVM 里不能是 null",
@@ -150,7 +150,7 @@ class AnnotationSemaTest {
             """
             annotation Marker(value : string = "x", count : int = 3, flag : bool = true)
 
-            fun main() -> void { println("ok") }
+            fn main() -> void { println("ok") }
             """,
         )
         val spec = assertNotNull(model.annotationOf("Marker"))
@@ -164,7 +164,7 @@ class AnnotationSemaTest {
             """
             annotation Marker(count : int = "x")
 
-            fun main() -> void { println("ok") }
+            fn main() -> void { println("ok") }
             """,
             line = 1,
             "注解元素 'count' 的默认值",
@@ -179,11 +179,11 @@ class AnnotationSemaTest {
             """
             annotation Marker(value : string) {
                 companion entity value {
-                    fun describe() -> string { rtn "d" }
+                    fn describe() -> string { rtn "d" }
                 }
             }
 
-            fun main() -> void { println("ok") }
+            fn main() -> void { println("ok") }
             """,
             line = 2,
             "companion entity 的名字 'value' 和注解元素重名了：换一个名字",
@@ -201,11 +201,11 @@ class AnnotationSemaTest {
 
             annotation Marker(value : string) {
                 companion entity Impl : Base {
-                    fun describe() -> string { rtn "d" }
+                    fn describe() -> string { rtn "d" }
                 }
             }
 
-            fun main() -> void { println("ok") }
+            fn main() -> void { println("ok") }
             """,
             line = 6,
             "companion entity 暂时只能继承接口：rsf 还没有类继承",
@@ -220,12 +220,12 @@ class AnnotationSemaTest {
             """
             annotation Marker(value : string) {
                 companion entity Impl : Runnable {
-                    fun describe() -> string { rtn value }
-                    fun run() -> void { println(value) }
+                    fn describe() -> string { rtn value }
+                    fn run() -> void { println(value) }
                 }
             }
 
-            fun main() -> void { println("ok") }
+            fn main() -> void { println("ok") }
             """,
         )
         val supers = model.superInterfacesOf("Marker\$Impl").map { it.name }
@@ -240,11 +240,11 @@ class AnnotationSemaTest {
             annotation Marker(value : string, count : int = 0) {
                 companion entity Impl {
                     constructor(value : string) { }
-                    fun describe() -> string { rtn value }
+                    fn describe() -> string { rtn value }
                 }
             }
 
-            fun main() -> void { println("ok") }
+            fn main() -> void { println("ok") }
             """,
             line = 3,
             "companion entity 的构造器参数必须和注解元素一致：缺少 'count'",
@@ -259,11 +259,11 @@ class AnnotationSemaTest {
             annotation Marker(value : string, count : int = 0) {
                 companion entity Impl {
                     constructor(count : int, value : string) { }
-                    fun describe() -> string { rtn value }
+                    fn describe() -> string { rtn value }
                 }
             }
 
-            fun main() -> void { println("ok") }
+            fn main() -> void { println("ok") }
             """,
             line = 3,
             "companion entity 的构造器参数必须和注解元素一致",
@@ -280,11 +280,11 @@ class AnnotationSemaTest {
             annotation Marker(value : string) {
                 companion entity Impl {
                     constructor(value : int) { }
-                    fun describe() -> string { rtn "d" }
+                    fn describe() -> string { rtn "d" }
                 }
             }
 
-            fun main() -> void { println("ok") }
+            fn main() -> void { println("ok") }
             """,
             line = 3,
             "companion entity 的构造器参数 'value' 的类型应该是 string，写的是 int",
@@ -299,11 +299,11 @@ class AnnotationSemaTest {
             annotation Marker(value : string) {
                 companion entity Impl {
                     constructor(value : string, extra : int) { }
-                    fun describe() -> string { rtn value }
+                    fn describe() -> string { rtn value }
                 }
             }
 
-            fun main() -> void { println("ok") }
+            fn main() -> void { println("ok") }
             """,
             line = 3,
             "companion entity 的构造器参数必须和注解元素一致：多出了 'extra'",
@@ -317,11 +317,11 @@ class AnnotationSemaTest {
             """
             annotation Marker(value : string, count : int = 0) {
                 companion entity Impl {
-                    fun describe() -> string { rtn value }
+                    fn describe() -> string { rtn value }
                 }
             }
 
-            fun main() -> void { println("ok") }
+            fn main() -> void { println("ok") }
             """,
         )
         val companion = assertNotNull(model.companionOf("Marker"))
@@ -352,11 +352,11 @@ class AnnotationSemaTest {
             annotation Marker(value : string) {
                 companion entity Impl {
                     var hits : int = 0
-                    fun describe() -> string { rtn "d" }
+                    fn describe() -> string { rtn "d" }
                 }
             }
 
-            fun main() -> void { println("ok") }
+            fn main() -> void { println("ok") }
             """,
         )
         val companion = assertNotNull(model.companionOf("Marker"))
@@ -380,16 +380,16 @@ class AnnotationSemaTest {
             """
             annotation Marker(value : string, count : int = 0) {
                 companion entity Impl {
-                    fun describe() -> string { rtn "d" }
+                    fn describe() -> string { rtn "d" }
                 }
             }
 
-            fun takes(a : Marker, b : Marker::Impl) -> void {
+            fn takes(a : Marker, b : Marker::Impl) -> void {
                 println(a.value)
                 println(b.describe())
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var a : Marker = new Marker("hi")
                 var b : Marker::Impl = new Marker::Impl("hi", 3)
                 takes(a, b)
@@ -409,11 +409,11 @@ class AnnotationSemaTest {
             """
             annotation Marker(value : string) {
                 companion entity Impl {
-                    fun describe() -> string { rtn "d" }
+                    fn describe() -> string { rtn "d" }
                 }
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var x : Marker::Nope = null
                 println("ok")
             }
@@ -430,7 +430,7 @@ class AnnotationSemaTest {
             """
             annotation Marker(value : string)
 
-            fun main() -> void {
+            fn main() -> void {
                 var x : Marker::Impl = null
                 println("ok")
             }
@@ -447,11 +447,11 @@ class AnnotationSemaTest {
             """
             annotation Marker(value : string) {
                 companion entity {
-                    fun describe() -> string { rtn value }
+                    fn describe() -> string { rtn value }
                 }
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var x : Marker::Impl = null
                 println("ok")
             }
@@ -471,7 +471,7 @@ class AnnotationSemaTest {
                 var x : int = 0
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var x : Dog::Impl = null
                 println("ok")
             }
@@ -493,7 +493,7 @@ class AnnotationSemaTest {
                 var x : int = 0
             }
 
-            fun main() -> void { println("ok") }
+            fn main() -> void { println("ok") }
             """,
             line = 3,
             "'Marker' 是注解，不能当父类型：注解只能用来标注（@Marker）或 new 出伴生实例",
@@ -512,7 +512,7 @@ class AnnotationSemaTest {
                 var x : int = 0
             }
 
-            fun main() -> void { println("ok") }
+            fn main() -> void { println("ok") }
             """,
         )
         val point = assertNotNull(program.classes.firstOrNull { it.name == "Point" })
@@ -533,7 +533,7 @@ class AnnotationSemaTest {
                 var x : int = 0
             }
 
-            fun main() -> void { println("ok") }
+            fn main() -> void { println("ok") }
             """,
             line = 1,
             "没有这个注解：'@Nope'",
@@ -553,7 +553,7 @@ class AnnotationSemaTest {
 
             annotation Tag(value : int = 1)
 
-            fun main() -> void { println("ok") }
+            fn main() -> void { println("ok") }
             """,
             line = 1,
             "没有这个注解：'@Nope'",
@@ -578,7 +578,7 @@ class AnnotationSemaTest {
                 var x : int = 0
             }
 
-            fun main() -> void { println("ok") }
+            fn main() -> void { println("ok") }
             """,
         )
         val point = assertNotNull(program.classes.firstOrNull { it.name == "Point" })
@@ -604,7 +604,7 @@ class AnnotationSemaTest {
                 var x : int = 0
             }
 
-            fun main() -> void { println("ok") }
+            fn main() -> void { println("ok") }
             """,
             line = 3,
             "注解 'Marker' 的元素 'count' 没有默认值：写 @Marker 时必须给出 count",
@@ -623,7 +623,7 @@ class AnnotationSemaTest {
                 var x : int = 0
             }
 
-            fun main() -> void { println("ok") }
+            fn main() -> void { println("ok") }
             """,
             line = 3,
             "注解 'Marker' 没有元素 'nope'",
@@ -643,7 +643,7 @@ class AnnotationSemaTest {
                 var x : int = 0
             }
 
-            fun main() -> void { println("ok") }
+            fn main() -> void { println("ok") }
             """,
             line = 3,
             "注解 'Marker' 的元素 'value' 需要 string，实际给的是 int（3）",
@@ -662,7 +662,7 @@ class AnnotationSemaTest {
                 var x : int = 0
             }
 
-            fun main() -> void { println("ok") }
+            fn main() -> void { println("ok") }
             """,
             line = 3,
             "注解 'Marker' 的实参个数不对：给了 2 个，但它的元素只有 1 个",
@@ -681,7 +681,7 @@ class AnnotationSemaTest {
                 var x : int = 0
             }
 
-            fun main() -> void { println("ok") }
+            fn main() -> void { println("ok") }
             """,
             line = 3,
             "注解 'Marker' 的元素 'value' 给了两次值",
@@ -702,7 +702,7 @@ class AnnotationSemaTest {
                 var x : int = 0
             }
 
-            fun main() -> void { println("ok") }
+            fn main() -> void { println("ok") }
             """,
         )
     }
@@ -720,7 +720,7 @@ class AnnotationSemaTest {
                 var x : int = 0
             }
 
-            fun main() -> void { println("ok") }
+            fn main() -> void { println("ok") }
             """,
             line = 4,
             "类 'Point' 上重复标了 '@Marker'：同一个地方同一个注解只能标一次",
@@ -739,10 +739,10 @@ class AnnotationSemaTest {
 
                 @Tag(1)
                 @Tag(2)
-                fun shift() -> void { x = x + 1 }
+                fn shift() -> void { x = x + 1 }
             }
 
-            fun main() -> void { println("ok") }
+            fn main() -> void { println("ok") }
             """,
             line = 7,
             "方法 'Point.shift' 上重复标了 '@Tag'：同一个地方同一个注解只能标一次",
@@ -763,7 +763,7 @@ class AnnotationSemaTest {
                 var x : int = 0
             }
 
-            fun main() -> void { println("ok") }
+            fn main() -> void { println("ok") }
             """,
         )
     }
@@ -775,17 +775,17 @@ class AnnotationSemaTest {
             """
             annotation Marker(value : string) {
                 companion entity Impl {
-                    fun describe() -> string { rtn value }
+                    fn describe() -> string { rtn value }
                 }
             }
 
             @Marker("hi")
             class Point {
                 var x : int = 0
-                fun Marker() -> string { rtn "already here" }
+                fn Marker() -> string { rtn "already here" }
             }
 
-            fun main() -> void { println("ok") }
+            fn main() -> void { println("ok") }
             """,
             line = 7,
             "类 'Point' 里已经有了成员 'Marker'：方案 B 要在它上面生成注解访问器 'Marker(...)'，名字撞上了",
@@ -799,7 +799,7 @@ class AnnotationSemaTest {
             """
             annotation Marker(value : string) {
                 companion entity Impl {
-                    fun describe() -> string { rtn value }
+                    fn describe() -> string { rtn value }
                 }
             }
 
@@ -808,7 +808,7 @@ class AnnotationSemaTest {
                 var Marker : string = "already here"
             }
 
-            fun main() -> void { println("ok") }
+            fn main() -> void { println("ok") }
             """,
             line = 7,
             "类 'Point' 里已经有了成员 'Marker'",
@@ -822,7 +822,7 @@ class AnnotationSemaTest {
             """
             annotation Marker(value : string) {
                 companion entity Impl {
-                    fun describe() -> string { rtn value }
+                    fn describe() -> string { rtn value }
                 }
             }
 
@@ -832,10 +832,10 @@ class AnnotationSemaTest {
                 var x : int = 0
 
                 @Marker("on the method")
-                fun shift(dx : int) -> void { x = x + dx }
+                fn shift(dx : int) -> void { x = x + dx }
             }
 
-            fun main() -> void { println("ok") }
+            fn main() -> void { println("ok") }
             """,
         )
         val accessors = model.accessorsOn("Point")
@@ -862,7 +862,7 @@ class AnnotationSemaTest {
             @Tag(1)
             interface Greeter {
                 @Tag(2)
-                fun greet(name : string) -> void
+                fn greet(name : string) -> void
             }
 
             @Tag(3)
@@ -874,10 +874,10 @@ class AnnotationSemaTest {
                 var x : int = 0
 
                 @Tag(6)
-                fun shift() -> void { x = x + 1 }
+                fn shift() -> void { x = x + 1 }
             }
 
-            fun main() -> void { println("ok") }
+            fn main() -> void { println("ok") }
             """,
         )
         assertEquals(
@@ -905,10 +905,10 @@ class AnnotationSemaTest {
             annotation Tag(value : int = 1)
 
             @Tag(7)
-            fun hello() -> void { println("hi") }
+            fn hello() -> void { println("hi") }
 
             @Tag
-            fun main() -> void { hello() }
+            fn main() -> void { hello() }
             """,
         )
         assertEquals(2, model.annotationUses.size)
@@ -923,12 +923,12 @@ class AnnotationSemaTest {
             """
             annotation Marker(value : string) {
                 companion entity Impl {
-                    fun describe() -> string { rtn value }
+                    fn describe() -> string { rtn value }
                 }
             }
 
             @Marker("hi")
-            fun main() -> void { println("ok") }
+            fn main() -> void { println("ok") }
             """,
             line = 7,
             "顶层函数 'main' 上不能标带 companion entity 的注解 '@Marker'",
@@ -946,12 +946,12 @@ class AnnotationSemaTest {
             annotation Marker(value : string, count : int = 0) {
                 companion entity Impl {
                     var hits : int = 0
-                    fun describe() -> string { rtn "Marker(" + value + ")" }
-                    fun run() -> void { println("run") }
+                    fn describe() -> string { rtn "Marker(" + value + ")" }
+                    fn run() -> void { println("run") }
                 }
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var a : Marker::Impl = new Marker("hi")
                 var b : Marker::Impl = new Marker::Impl("yo", 3)
                 println(a.describe())
@@ -984,7 +984,7 @@ class AnnotationSemaTest {
             """
             annotation Marker(value : string)
 
-            fun main() -> void {
+            fn main() -> void {
                 var a : Marker = new Marker("hi")
                 println(a.value)
             }
@@ -1001,11 +1001,11 @@ class AnnotationSemaTest {
             """
             annotation Marker(value : string) {
                 companion entity Impl {
-                    fun describe() -> string { rtn value }
+                    fn describe() -> string { rtn value }
                 }
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var a : Marker::Impl = new Marker()
                 println(a.describe())
             }
@@ -1023,11 +1023,11 @@ class AnnotationSemaTest {
             """
             annotation Marker(value : string) {
                 companion entity Impl {
-                    fun describe() -> string { rtn value }
+                    fn describe() -> string { rtn value }
                 }
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var a : Marker::Impl = new Marker(3)
                 println(a.describe())
             }
@@ -1045,11 +1045,11 @@ class AnnotationSemaTest {
             annotation Marker(value : string, count : int = 0) {
                 companion entity Impl {
                     var hits : int = 0
-                    fun describe() -> string { rtn "d" }
+                    fn describe() -> string { rtn "d" }
                 }
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var m : Marker = new Marker("hi", 3)
                 println(m.value)
                 println(m.count())
@@ -1071,11 +1071,11 @@ class AnnotationSemaTest {
             annotation Marker(value : string, count : int = 0) {
                 companion entity Impl {
                     var hits : int = 0
-                    fun describe() -> string { rtn "d" }
+                    fn describe() -> string { rtn "d" }
                 }
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var m : Marker = new Marker("hi")
                 println(m.describe())
             }
@@ -1093,11 +1093,11 @@ class AnnotationSemaTest {
             """
             annotation Marker(value : string) {
                 companion entity Impl {
-                    fun describe() -> string { rtn value }
+                    fn describe() -> string { rtn value }
                 }
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var m : Marker = new Marker("hi")
                 println(m.nope)
             }
@@ -1116,11 +1116,11 @@ class AnnotationSemaTest {
             annotation Marker(value : string) {
                 companion entity Impl {
                     var hits : int = 0
-                    fun describe() -> string { rtn value }
+                    fn describe() -> string { rtn value }
                 }
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var impl : Marker::Impl = new Marker("hi")
                 impl.hits = impl.hits + 1
                 println(impl.describe())

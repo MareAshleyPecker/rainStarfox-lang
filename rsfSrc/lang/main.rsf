@@ -15,42 +15,42 @@
 // 控制流：if / else / else if / while / for（两种写法）/ switch / try + catch /
 //         break / continue / goto + 标签 / 三目 / ?: / !!
 
-fun greeting() -> string {
+fn greeting() -> string {
     rtn "hello, rainStarfox!"
 }
 
-fun add(a : int, b : int) -> int {
+fn add(a : int, b : int) -> int {
     rtn a + b
 }
 
-private fun secret() : int {
+private fn secret() : int {
     rtn 42
 }
 
 // 递归
-fun fact(n : int) -> int {
+fn fact(n : int) -> int {
     if (n <= 1) { rtn 1 }
     rtn n * fact(n - 1)
 }
 
-fun fib(n : int) -> int {
+fn fib(n : int) -> int {
     if (n < 2) { rtn n }
     rtn fib(n - 1) + fib(n - 2)
 }
 
 // 参数按 C 的惯例是可变的
-fun twice(n : int) -> int {
+fn twice(n : int) -> int {
     n = n * 2
     rtn n
 }
 
 // 实参会自动加宽到形参类型
-fun mix(a : int, b : long, c : double) -> double {
+fn mix(a : int, b : long, c : double) -> double {
     rtn a + b + c
 }
 
 // 用 else 做分支
-fun classify(x : int) -> string {
+fn classify(x : int) -> string {
     if (x < 0) {
         rtn "negative"
     } else if (x == 0) {
@@ -63,7 +63,7 @@ fun classify(x : int) -> string {
 }
 
 // 字符串参数 + 区间循环拼接
-fun stars(n : int) -> string {
+fn stars(n : int) -> string {
     var out = ""
     for (i in 0..n - 1) {
         out = out + "*"
@@ -73,23 +73,23 @@ fun stars(n : int) -> string {
 
 // ---- ?T 可空 ----
 // 返回类型写 ?string 就表示「可能返回 null」，调用方必须处理
-fun findName(id : int) : ?string {
+fn findName(id : int) : ?string {
     if (id == 1) { rtn "rainStarfox" }
     rtn null
 }
 
 // 参数也可以可空
-fun greet(who : ?string) -> string {
+fn greet(who : ?string) -> string {
     rtn "hello, " + (who ?: "stranger")
 }
 
 // 可空的基本类型会装箱成包装类
-fun maybeInt(n : int) -> ?int {
+fn maybeInt(n : int) -> ?int {
     if (n > 0) { rtn n * 10 }
     rtn null
 }
 
-fun main() -> void {
+fn main() -> void {
     println(greeting())
     println("add(1, 2) = " + add(1, 2))
     println("private secret() = " + secret())

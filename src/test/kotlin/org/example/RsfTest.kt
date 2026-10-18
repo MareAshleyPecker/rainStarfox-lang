@@ -34,8 +34,8 @@ class RsfTest {
 
     @Test
     fun `两种返回样式等价`() {
-        val arrow = Rsf.parse(source("public fun one() -> int {\n    rtn 1\n}\n"))
-        val colon = Rsf.parse(source("public fun one() : int {\n    rtn 1\n}\n"))
+        val arrow = Rsf.parse(source("public fn one() -> int {\n    rtn 1\n}\n"))
+        val colon = Rsf.parse(source("public fn one() : int {\n    rtn 1\n}\n"))
 
         val a = arrow.functions.single()
         val b = colon.functions.single()
@@ -48,16 +48,16 @@ class RsfTest {
 
     @Test
     fun `MainType 槽位缺省是 void 且只接受 void`() {
-        val decl = Rsf.parse(source("fun main() -> void {\n    rtn\n}\n")).functions.single()
+        val decl = Rsf.parse(source("fn main() -> void {\n    rtn\n}\n")).functions.single()
         assertEquals("void", decl.mainType.name)
         assertEquals(ControlType.DEFAULT, decl.control)
         assertEquals("void", decl.ret.type.name)
 
-        val withKeyword = Rsf.parse(source("fun void main() -> void {\n    rtn\n}\n")).functions.single()
+        val withKeyword = Rsf.parse(source("fn void main() -> void {\n    rtn\n}\n")).functions.single()
         assertEquals("void", withKeyword.mainType.name)
 
         val e = assertFailsWith<RsfError> {
-            Rsf.analyze(source("fun int f() -> int {\n    rtn 1\n}\n"))
+            Rsf.analyze(source("fn int f() -> int {\n    rtn 1\n}\n"))
         }
         assertTrue(e.detail.contains("<MainType>"), e.detail)
     }
@@ -65,28 +65,28 @@ class RsfTest {
     @Test
     fun `访问控制必须写在 fun 前面`() {
         val e = assertFailsWith<RsfError> {
-            Rsf.analyze(source("fun public add() -> int {\n    rtn 1\n}\n"))
+            Rsf.analyze(source("fn public add() -> int {\n    rtn 1\n}\n"))
         }
         assertEquals("parser", e.phase)
-        assertTrue(e.detail.contains("fun 前面"), e.detail)
+        assertTrue(e.detail.contains("fn 前面"), e.detail)
     }
 
     // ------------------------------------------------------------------ protected / static
 
     @Test
     fun `protected 与 static 写在 fun 前面`() {
-        val decl = Rsf.parse(source("protected static fun util() -> int {\n    rtn 1\n}\n")).functions.single()
+        val decl = Rsf.parse(source("protected static fn util() -> int {\n    rtn 1\n}\n")).functions.single()
         assertEquals(ControlType.PROTECTED, decl.control)
         assertTrue(decl.isStatic, "static 槽位没被记下来")
 
         // 三档访问控制都能解析出来
         assertEquals(
             ControlType.PRIVATE,
-            Rsf.parse(source("private fun f() -> int {\n    rtn 1\n}\n")).functions.single().control,
+            Rsf.parse(source("private fn f() -> int {\n    rtn 1\n}\n")).functions.single().control,
         )
         assertEquals(
             ControlType.DEFAULT,
-            Rsf.parse(source("fun f() -> int {\n    rtn 1\n}\n")).functions.single().control,
+            Rsf.parse(source("fn f() -> int {\n    rtn 1\n}\n")).functions.single().control,
         )
     }
 
@@ -94,8 +94,8 @@ class RsfTest {
     fun `顶层写 static 只是多余 给警告但照常能调`() {
         val model = Rsf.analyze(
             source(
-                "static fun twice(n : int) -> int {\n    rtn n * 2\n}\n\n" +
-                    "fun main() -> void {\n    println(twice(21))\n    rtn\n}\n",
+                "static fn twice(n : int) -> int {\n    rtn n * 2\n}\n\n" +
+                    "fn main() -> void {\n    println(twice(21))\n    rtn\n}\n",
             ),
         )
         assertTrue(model.warnings.any { it.contains("static") }, model.warnings.toString())
@@ -109,8 +109,8 @@ class RsfTest {
     fun `protected 函数可以跨文件调用`() {
         val root = project(
             mapOf(
-                "lib/util.rsf" to "protected fun secret() -> int {\n    rtn 7\n}\n",
-                "main.rsf" to "import \"lib/util.rsf\"\n\nfun main() -> void {\n    println(secret())\n    rtn\n}\n",
+                "lib/util.rsf" to "protected fn secret() -> int {\n    rtn 7\n}\n",
+                "main.rsf" to "import \"lib/util.rsf\"\n\nfn main() -> void {\n    println(secret())\n    rtn\n}\n",
             ),
         )
         val model = Rsf.analyze(Rsf.load(root))
@@ -125,8 +125,8 @@ class RsfTest {
         // IllegalAccessError。两端行为会分歧，所以必须在编译期挡掉。
         val root = project(
             mapOf(
-                "lib/util.rsf" to "private fun secret() -> int {\n    rtn 7\n}\n",
-                "main.rsf" to "import \"lib/util.rsf\"\n\nfun main() -> void {\n    println(secret())\n    rtn\n}\n",
+                "lib/util.rsf" to "private fn secret() -> int {\n    rtn 7\n}\n",
+                "main.rsf" to "import \"lib/util.rsf\"\n\nfn main() -> void {\n    println(secret())\n    rtn\n}\n",
             ),
         )
         val e = assertFailsWith<RsfError> { Rsf.analyze(Rsf.load(root)) }
@@ -139,8 +139,8 @@ class RsfTest {
     fun `private 函数在自己文件里照常能调`() {
         val model = Rsf.analyze(
             source(
-                "private fun secret() -> int {\n    rtn 7\n}\n\n" +
-                    "fun main() -> void {\n    println(secret())\n    rtn\n}\n",
+                "private fn secret() -> int {\n    rtn 7\n}\n\n" +
+                    "fn main() -> void {\n    println(secret())\n    rtn\n}\n",
             ),
         )
         val buf = ByteArrayOutputStream()
@@ -151,8 +151,8 @@ class RsfTest {
     @Test
     fun `访问控制在字节码里就是 JVM 的访问标志`() {
         val bytes = compileToBytes(
-            "protected fun util() -> int {\n    rtn 1\n}\n\n" +
-                "fun main() -> void {\n    println(util())\n    rtn\n}\n",
+            "protected fn util() -> int {\n    rtn 1\n}\n\n" +
+                "fn main() -> void {\n    println(util())\n    rtn\n}\n",
         )
         val loader = object : ClassLoader(javaClass.classLoader) {
             fun define(n: String, b: ByteArray): Class<*> = defineClass(n, b, 0, b.size)
@@ -172,7 +172,7 @@ class RsfTest {
                     "    var x : int = 0\n" +
                     "    imutvar id : int = 7\n" +
                     "    constructor(x0 : int) {\n        x = x0\n    }\n" +
-                    "    protected fun sum() -> int {\n        rtn x\n    }\n" +
+                    "    protected fn sum() -> int {\n        rtn x\n    }\n" +
                     "}\n",
             ),
         )
@@ -192,7 +192,7 @@ class RsfTest {
     fun `new 与 this 能解析成 AST 节点`() {
         val program = Rsf.parse(
             source(
-                "fun main() -> void {\n" +
+                "fn main() -> void {\n" +
                     "    var p = new Point(1, 2)\n" +
                     "    println(this.x)\n" +
                     "    rtn\n" +
@@ -231,13 +231,13 @@ class RsfTest {
     fun `类程序能通过检查 未知的类是真诊断`() {
         // 12-C1 之后：类程序（含 new）能正常通过 check 与 run，不再报「还没实现」
         val model = Rsf.analyze(
-            source("class P {\n    var x : int = 1\n}\n\nfun main() -> void {\n    var p = new P()\n    rtn\n}\n"),
+            source("class P {\n    var x : int = 1\n}\n\nfn main() -> void {\n    var p = new P()\n    rtn\n}\n"),
         )
         assertEquals(listOf("P"), model.classModel.classes.keys.toList())
 
         // 未知的类是**真诊断**（不是「没实现」）
         val created = assertFailsWith<RsfError> {
-            Rsf.analyze(source("fun main() -> void {\n    var p = new P()\n    rtn\n}\n"))
+            Rsf.analyze(source("fn main() -> void {\n    var p = new P()\n    rtn\n}\n"))
         }
         assertTrue(created.detail.contains("没有这个类"), created.detail)
     }
@@ -249,13 +249,13 @@ class RsfTest {
         val program = """
             class P {
                 var v : int = 1
-                fun bump() -> void {
+                fn bump() -> void {
                     v = v + 1
                     this.v = this.v + 1
                 }
-                fun get() -> int { rtn this.v }
+                fn get() -> int { rtn this.v }
             }
-            fun main() -> void {
+            fn main() -> void {
                 var p = new P()
                 println(p.get())
                 p.bump()
@@ -276,12 +276,12 @@ class RsfTest {
         val program = """
             class Counter {
                 var n : int = 0
-                public fun inc() -> int {
+                public fn inc() -> int {
                     n = n + 1
                     rtn n
                 }
             }
-            fun main() -> void {
+            fn main() -> void {
                 var a = new Counter()
                 var b = new Counter()
                 println(a.inc())
@@ -308,10 +308,10 @@ class RsfTest {
                     x = x0
                     y = y0
                 }
-                public fun sum() -> int { rtn x + y }
-                public static fun zero() -> int { rtn 0 }
+                public fn sum() -> int { rtn x + y }
+                public static fn zero() -> int { rtn 0 }
             }
-            fun main() -> void {
+            fn main() -> void {
                 var p = new Point(3, 4)
                 println(p.sum())
                 println(p.origin_x)
@@ -335,13 +335,13 @@ class RsfTest {
             public class Box {
                 var v : int = 0
                 constructor(v0 : int) { v = v0 }
-                public fun bump() -> void { add(1) }
-                private fun add(d : int) -> void { v = v + d }
+                public fn bump() -> void { add(1) }
+                private fn add(d : int) -> void { v = v + d }
             }
-            public fun total(a : Box, b : Box) -> int {
+            public fn total(a : Box, b : Box) -> int {
                 rtn a.v + b.v
             }
-            fun main() -> void {
+            fn main() -> void {
                 var x = new Box(1)
                 var y = new Box(2)
                 x.bump()
@@ -361,7 +361,7 @@ class RsfTest {
         // 阶段 12-C2 拆掉了「类的字节码生成还没接通」那道闸门：
         // build 现在会为程序类和每个用户类各写一个 .class，不再只编顶层函数。
         val program = source(
-            "class P {\n    var x : int = 0\n}\n\nfun main() -> void {\n" +
+            "class P {\n    var x : int = 0\n}\n\nfn main() -> void {\n" +
                 "    var p = new P()\n    println(p.x)\n    rtn\n}\n",
         )
         val model = Rsf.analyze(program)
@@ -374,7 +374,7 @@ class RsfTest {
     @Test
     fun `字段初值类型不对会报错`() {
         val e = assertFailsWith<RsfError> {
-            Rsf.analyze(source("class P {\n    var x : int = \"abc\"\n}\nfun main() -> void { rtn }\n"))
+            Rsf.analyze(source("class P {\n    var x : int = \"abc\"\n}\nfn main() -> void { rtn }\n"))
         }
         assertTrue(e.detail.contains("字段 'x'"), e.detail)
         assertTrue(e.detail.contains("int"), e.detail)
@@ -386,7 +386,7 @@ class RsfTest {
             Rsf.analyze(
                 source(
                     "class P {\n    var x : int = 0\n    constructor(x0 : int) { x = x0 }\n}\n" +
-                        "fun main() -> void {\n    var p = new P()\n    rtn\n}\n",
+                        "fn main() -> void {\n    var p = new P()\n    rtn\n}\n",
                 ),
             )
         }
@@ -397,7 +397,7 @@ class RsfTest {
             Rsf.analyze(
                 source(
                     "class P {\n    var x : int = 0\n    constructor(x0 : int) { x = x0 }\n}\n" +
-                        "fun main() -> void {\n    var p = new P(\"nope\")\n    rtn\n}\n",
+                        "fn main() -> void {\n    var p = new P(\"nope\")\n    rtn\n}\n",
                 ),
             )
         }
@@ -410,7 +410,7 @@ class RsfTest {
             Rsf.analyze(
                 source(
                     "class P {\n    var x : int = 0\n}\n" +
-                        "fun main() -> void {\n    var p = new P(1)\n    rtn\n}\n",
+                        "fn main() -> void {\n    var p = new P(1)\n    rtn\n}\n",
                 ),
             )
         }
@@ -422,8 +422,8 @@ class RsfTest {
         val viaObject = assertFailsWith<RsfError> {
             Rsf.analyze(
                 source(
-                    "class P {\n    var x : int = 0\n    public static fun make() -> int { rtn 1 }\n}\n" +
-                        "fun main() -> void {\n    var p = new P()\n    println(p.make())\n    rtn\n}\n",
+                    "class P {\n    var x : int = 0\n    public static fn make() -> int { rtn 1 }\n}\n" +
+                        "fn main() -> void {\n    var p = new P()\n    println(p.make())\n    rtn\n}\n",
                 ),
             )
         }
@@ -432,8 +432,8 @@ class RsfTest {
         val viaClass = assertFailsWith<RsfError> {
             Rsf.analyze(
                 source(
-                    "class P {\n    var x : int = 0\n    public fun get() -> int { rtn x }\n}\n" +
-                        "fun main() -> void {\n    println(P.get())\n    rtn\n}\n",
+                    "class P {\n    var x : int = 0\n    public fn get() -> int { rtn x }\n}\n" +
+                        "fn main() -> void {\n    println(P.get())\n    rtn\n}\n",
                 ),
             )
         }
@@ -446,7 +446,7 @@ class RsfTest {
             Rsf.analyze(
                 source(
                     "class P {\n    var x : int = 0\n    var y : int = 0\n}\n" +
-                        "fun main() -> void {\n    var p = new P()\n    println(p.z)\n    rtn\n}\n",
+                        "fn main() -> void {\n    var p = new P()\n    println(p.z)\n    rtn\n}\n",
                 ),
             )
         }
@@ -460,7 +460,7 @@ class RsfTest {
             Rsf.analyze(
                 source(
                     "class P {\n    imutvar id : int = 7\n}\n" +
-                        "fun main() -> void {\n    var p = new P()\n    p.id = 9\n    rtn\n}\n",
+                        "fn main() -> void {\n    var p = new P()\n    p.id = 9\n    rtn\n}\n",
                 ),
             )
         }
@@ -472,8 +472,8 @@ class RsfTest {
         val e = assertFailsWith<RsfError> {
             Rsf.analyze(
                 source(
-                    "class P {\n    var x : int = 0\n    private fun secret() -> int { rtn 1 }\n}\n" +
-                        "fun main() -> void {\n    var p = new P()\n    println(p.secret())\n    rtn\n}\n",
+                    "class P {\n    var x : int = 0\n    private fn secret() -> int { rtn 1 }\n}\n" +
+                        "fn main() -> void {\n    var p = new P()\n    println(p.secret())\n    rtn\n}\n",
                 ),
             )
         }
@@ -484,7 +484,7 @@ class RsfTest {
     @Test
     fun `类名不能和函数名重名 方法可以重载`() {
         val clash = assertFailsWith<RsfError> {
-            Rsf.analyze(source("fun P() -> int { rtn 1 }\nclass P {\n    var x : int = 0\n}\n"))
+            Rsf.analyze(source("fn P() -> int { rtn 1 }\nclass P {\n    var x : int = 0\n}\n"))
         }
         assertTrue(clash.detail.contains("不能重名"), clash.detail)
 
@@ -493,10 +493,10 @@ class RsfTest {
         val program = """
             class P {
                 var x : int = 0
-                fun f() -> int { rtn 1 }
-                fun f(a : int) -> int { rtn a }
+                fn f() -> int { rtn 1 }
+                fn f(a : int) -> int { rtn a }
             }
-            fun main() -> void {
+            fn main() -> void {
                 var p = new P()
                 println(p.f())
                 println(p.f(7))
@@ -510,8 +510,8 @@ class RsfTest {
         val same = assertFailsWith<RsfError> {
             Rsf.analyze(
                 source(
-                    "class P {\n    var x : int = 0\n    fun f(a : int) -> int { rtn a }\n" +
-                        "    fun f(b : int) -> int { rtn b }\n}\n",
+                    "class P {\n    var x : int = 0\n    fn f(a : int) -> int { rtn a }\n" +
+                        "    fn f(b : int) -> int { rtn b }\n}\n",
                 ),
             )
         }
@@ -527,7 +527,7 @@ class RsfTest {
             class Holder {
                 var node : ?Node = null
             }
-            fun main() -> void {
+            fn main() -> void {
                 var h = new Holder()
                 println(h.node)
                 h.node = new Node()
@@ -544,8 +544,8 @@ class RsfTest {
     }
 
     @Test
-    fun `rtn 与 return 等价`() {        val a = Rsf.analyze(source("fun main() -> void {\n    println(1)\n    rtn\n}\n"))
-        val b = Rsf.analyze(source("fun main() -> void {\n    println(1)\n    return\n}\n"))
+    fun `rtn 与 return 等价`() {        val a = Rsf.analyze(source("fn main() -> void {\n    println(1)\n    rtn\n}\n"))
+        val b = Rsf.analyze(source("fn main() -> void {\n    println(1)\n    return\n}\n"))
         assertEquals(a.functions.single().name, b.functions.single().name)
         assertEquals("void", b.functions.single().ret.type.name)
     }
@@ -554,7 +554,7 @@ class RsfTest {
     fun `rtn 独占一行时不会吃掉下一行语句`() {
         // 这是 ASI 那类问题：旧写法会把 println(1) 当成返回值
         val model = Rsf.analyze(
-            source("fun main() -> void {\n    rtn\n    println(1)\n}\n"),
+            source("fn main() -> void {\n    rtn\n    println(1)\n}\n"),
         )
         assertTrue(model.warnings.any { it.contains("不可达") }, model.warnings.toString())
     }
@@ -567,10 +567,10 @@ class RsfTest {
         val err = assertFailsWith<RsfError> {
             Rsf.analyze(
                 source(
-                    "public fun parse(s : string) -> !int {\n" +
+                    "public fn parse(s : string) -> !int {\n" +
                         "    rtn 1\n" +
                         "}\n\n" +
-                        "fun main() -> void {\n" +
+                        "fn main() -> void {\n" +
                         "    println(parse(\"x\"))\n" +
                         "    rtn\n" +
                         "}\n",
@@ -587,10 +587,10 @@ class RsfTest {
         // 处理掉就通过（这里用 ?:；另外两种在别的用例里）
         Rsf.analyze(
             source(
-                "public fun parse(s : string) -> !int {\n" +
+                "public fn parse(s : string) -> !int {\n" +
                     "    rtn 1\n" +
                     "}\n\n" +
-                    "fun main() -> void {\n" +
+                    "fn main() -> void {\n" +
                     "    println(parse(\"x\") ?: -1)\n" +
                     "    rtn\n" +
                     "}\n",
@@ -602,13 +602,13 @@ class RsfTest {
         val nested = assertFailsWith<RsfError> {
             Rsf.analyze(
                 source(
-                    "public fun parse(s : string) -> !int {\n" +
+                    "public fn parse(s : string) -> !int {\n" +
                         "    rtn 1\n" +
                         "}\n\n" +
-                        "fun wrap(s : ?string) -> ?string {\n" +
+                        "fn wrap(s : ?string) -> ?string {\n" +
                         "    rtn s\n" +
                         "}\n\n" +
-                        "fun main() -> void {\n" +
+                        "fn main() -> void {\n" +
                         "    var x = wrap(\"\" + parse(\"x\")) ?: \"兜底\"\n" +
                         "    println(x)\n" +
                         "    rtn\n" +
@@ -623,7 +623,7 @@ class RsfTest {
     fun `fail 用在不该用的地方会报错`() {
         // 非 !T 函数、又不在 try 里 —— 这个错误没人接得住
         val err = assertFailsWith<RsfError> {
-            Rsf.analyze(source("fun main() -> void {\n    fail \"boom\"\n    rtn\n}\n"))
+            Rsf.analyze(source("fn main() -> void {\n    fail \"boom\"\n    rtn\n}\n"))
         }
         assertTrue(err.detail.contains("!T"), err.detail)
         assertTrue(err.detail.contains("try"), err.detail)
@@ -631,7 +631,7 @@ class RsfTest {
         // 包进 try 就合法（哪怕函数本身不是 !T）
         Rsf.analyze(
             source(
-                "fun main() -> void {\n" +
+                "fn main() -> void {\n" +
                     "    try {\n" +
                     "        fail \"boom\"\n" +
                     "    } catch (e : string) {\n" +
@@ -644,20 +644,20 @@ class RsfTest {
 
         // 消息必须是 string
         val notString = assertFailsWith<RsfError> {
-            Rsf.analyze(source("fun f() -> !void {\n    fail 42\n    rtn\n}\n"))
+            Rsf.analyze(source("fn f() -> !void {\n    fail 42\n    rtn\n}\n"))
         }
         assertTrue(notString.detail.contains("string"), notString.detail)
     }
 
     @Test
     fun `!! 传播要求本函数也是 !T`() {
-        val program = "public fun parse(s : string) -> !int {\n    rtn 1\n}\n\n"
+        val program = "public fn parse(s : string) -> !int {\n    rtn 1\n}\n\n"
 
         val err = assertFailsWith<RsfError> {
             Rsf.analyze(
                 source(
                     program +
-                        "fun main() -> void {\n" +
+                        "fn main() -> void {\n" +
                         "    println(parse(\"x\")!!)\n" +
                         "    rtn\n" +
                         "}\n",
@@ -670,10 +670,10 @@ class RsfTest {
         val ok = Rsf.analyze(
             source(
                 program +
-                    "public fun bump() -> !int {\n" +
+                    "public fn bump() -> !int {\n" +
                     "    rtn parse(\"x\")!! + 1\n" +
                     "}\n\n" +
-                    "fun main() -> void {\n" +
+                    "fn main() -> void {\n" +
                     "    try {\n" +
                     "        println(bump())\n" +
                     "    } catch (e : string) {\n" +
@@ -689,14 +689,14 @@ class RsfTest {
     @Test
     fun `fail 与 try catch 的两端一致`() {
         val program = """
-            public fun parse(s : string) -> !int {
+            public fn parse(s : string) -> !int {
                 if (s.length() == 0) {
                     fail "空字符串没法转数字"
                 }
                 rtn 42
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 try {
                     var n = parse("abc")
                     println("n = " + n)
@@ -744,23 +744,23 @@ class RsfTest {
     fun `问号冒号兜底值两端一致`() {
         // ?: 左边是 !T 调用时：出错取右边的值，正常路径取左边的值（类型都是非 ! 的正常类型）
         val program = """
-            public fun parse(s : string) -> !int {
+            public fn parse(s : string) -> !int {
                 if (s.length() == 0) {
                     fail "空字符串"
                 }
                 rtn 42
             }
 
-            public fun boom() -> !string {
+            public fn boom() -> !string {
                 fail "实参里的错"
             }
 
-            public fun note() -> int {
+            public fn note() -> int {
                 println("兜底被求值了")
                 rtn -1
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 println("出错的：" + (parse("") ?: -1))
                 println("正常的：" + (parse("ab") ?: -1))
 
@@ -804,22 +804,22 @@ class RsfTest {
     @Test
     fun `错误能跨多层函数传播`() {
         val program = """
-            public fun c(n : int) -> !int {
+            public fn c(n : int) -> !int {
                 if (n < 0) {
                     fail "负数：" + n
                 }
                 rtn n * 2
             }
 
-            public fun b(n : int) -> !int {
+            public fn b(n : int) -> !int {
                 rtn c(n)!! + 1
             }
 
-            public fun a(n : int) -> !int {
+            public fn a(n : int) -> !int {
                 rtn b(n)!! + 1
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 try {
                     println("a(1) = " + a(1))
                     println("a(-1) = " + a(-1))
@@ -841,7 +841,7 @@ class RsfTest {
     @Test
     fun `!void 函数可以 rtn 不带值`() {
         val program = """
-            public fun check(n : int) -> !void {
+            public fn check(n : int) -> !void {
                 if (n < 0) {
                     fail "check 只接受非负数"
                 }
@@ -849,7 +849,7 @@ class RsfTest {
                 rtn
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 try {
                     check(3)
                     check(-3)
@@ -871,10 +871,10 @@ class RsfTest {
         // !void 后面还能继续写语句（fail 只是抛出去，不是 rtn）
         val after = Rsf.analyze(
             source(
-                "public fun f() -> !void {\n" +
+                "public fn f() -> !void {\n" +
                     "    rtn\n" +
                     "}\n\n" +
-                    "fun main() -> void {\n" +
+                    "fn main() -> void {\n" +
                     "    try {\n" +
                     "        f()\n" +
                     "        println(\"回来了\")\n" +
@@ -898,18 +898,18 @@ class RsfTest {
                     base = v
                 }
 
-                public fun divide(n : int) -> !int {
+                public fn divide(n : int) -> !int {
                     if (n == 0) {
                         fail "除以零：" + base
                     }
                     rtn base / n
                 }
 
-                public fun safeDivide(n : int) -> int {
+                public fn safeDivide(n : int) -> int {
                     rtn divide(n) ?: -1
                 }
 
-                public static fun parse(s : string) -> !int {
+                public static fn parse(s : string) -> !int {
                     if (s.length() == 0) {
                         fail "静态方法里的空串"
                     }
@@ -917,7 +917,7 @@ class RsfTest {
                 }
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var c = new Calc(10)
                 println("10 / 2 = " + c.safeDivide(2))
                 println("10 / 0 = " + c.safeDivide(0))
@@ -953,14 +953,14 @@ class RsfTest {
         // `while (true)` 里从 try 块中 break 出去 = 这个循环有出口。
         // 漏判的话「所有路径都返回」会算错，字节码那边还会指着一个不存在的标签。
         val program = """
-            public fun pick(n : int) -> !int {
+            public fn pick(n : int) -> !int {
                 if (n < 0) {
                     fail "负数"
                 }
                 rtn n
             }
 
-            fun firstOk(limit : int) -> int {
+            fn firstOk(limit : int) -> int {
                 var i = 0
                 while (true) {
                     try {
@@ -978,7 +978,7 @@ class RsfTest {
                 rtn i
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 println("结果：" + firstOk(2))
                 rtn
             }
@@ -996,13 +996,13 @@ class RsfTest {
     fun `可空与错误返回不能在同一处混用`() {
         // `?int!` 这种「既可能失败、又可能返回 null」的函数：`?:` / `!!` 到底是解包还是抛错
         // 说不清，所以这一版**明确拒绝**，而不是含糊地放过去。
-        val program = "public fun maybe(n : int) -> !?int {\n    rtn n\n}\n\n"
+        val program = "public fn maybe(n : int) -> !?int {\n    rtn n\n}\n\n"
 
         val force = assertFailsWith<RsfError> {
             Rsf.analyze(
                 source(
                     program +
-                        "fun main() -> void {\n" +
+                        "fn main() -> void {\n" +
                         "    println(\"x = \" + (maybe(1)!!))\n" +
                         "    rtn\n" +
                         "}\n",
@@ -1016,7 +1016,7 @@ class RsfTest {
             Rsf.analyze(
                 source(
                     program +
-                        "fun main() -> void {\n" +
+                        "fn main() -> void {\n" +
                         "    println(\"x = \" + (maybe(1) ?: 0))\n" +
                         "    rtn\n" +
                         "}\n",
@@ -1029,7 +1029,7 @@ class RsfTest {
         Rsf.analyze(
             source(
                 program +
-                    "fun main() -> void {\n" +
+                    "fn main() -> void {\n" +
                     "    try {\n" +
                     "        var v : ?int = maybe(1)\n" +
                     "        println(\"x = \" + (v ?: 0))\n" +
@@ -1045,7 +1045,7 @@ class RsfTest {
     @Test
     fun `try 与 catch 的写法错误会给出提示`() {
         val noCatch = assertFailsWith<RsfError> {
-            Rsf.analyze(source("fun main() -> void {\n    try {\n        println(1)\n    }\n    rtn\n}\n"))
+            Rsf.analyze(source("fn main() -> void {\n    try {\n        println(1)\n    }\n    rtn\n}\n"))
         }
         assertEquals("parser", noCatch.phase)
         assertTrue(noCatch.detail.contains("catch"), noCatch.detail)
@@ -1053,7 +1053,7 @@ class RsfTest {
         val badType = assertFailsWith<RsfError> {
             Rsf.analyze(
                 source(
-                    "fun main() -> void {\n" +
+                    "fn main() -> void {\n" +
                         "    try {\n        println(1)\n    } catch (e int) {\n        println(e)\n    }\n" +
                         "    rtn\n}\n",
                 ),
@@ -1064,7 +1064,7 @@ class RsfTest {
         val noParen = assertFailsWith<RsfError> {
             Rsf.analyze(
                 source(
-                    "fun main() -> void {\n" +
+                    "fn main() -> void {\n" +
                         "    try {\n        println(1)\n    } catch e string {\n        println(e)\n    }\n" +
                         "    rtn\n}\n",
                 ),
@@ -1073,13 +1073,13 @@ class RsfTest {
         assertTrue(noParen.detail.contains("'('"), noParen.detail)
 
         val bareCatch = assertFailsWith<RsfError> {
-            Rsf.analyze(source("fun main() -> void {\n    catch (e : string) { }\n    rtn\n}\n"))
+            Rsf.analyze(source("fn main() -> void {\n    catch (e : string) { }\n    rtn\n}\n"))
         }
         assertEquals("parser", bareCatch.phase)
         assertTrue(bareCatch.detail.contains("try"), bareCatch.detail)
 
         val noMessage = assertFailsWith<RsfError> {
-            Rsf.analyze(source("fun f() -> !void {\n    fail\n    rtn\n}\n"))
+            Rsf.analyze(source("fn f() -> !void {\n    fail\n    rtn\n}\n"))
         }
         assertEquals("parser", noMessage.phase)
         assertTrue(noMessage.detail.contains("fail"), noMessage.detail)
@@ -1091,12 +1091,12 @@ class RsfTest {
         // 老写法 `catch (e string)` 不打死（和函数参数一样两种风格并存）。
         // 两种写法解析出来的 TryStmt 完全一样，所以两端输出必须一字不差。
         val kotlinStyle = """
-            fun boom(n : int) -> !int {
+            fn boom(n : int) -> !int {
                 if (n < 0) { fail "负数：" + n }
                 rtn n * 2
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 try {
                     println("正常 " + boom(3))
                 } catch (e : string) {
@@ -1141,7 +1141,7 @@ class RsfTest {
         val missing = assertFailsWith<RsfError> {
             Rsf.analyze(
                 source(
-                    "fun main() -> void {\n" +
+                    "fn main() -> void {\n" +
                         "    try {\n        println(1)\n    } catch (e) {\n        println(e)\n    }\n" +
                         "    rtn\n}\n",
                 ),
@@ -1155,7 +1155,7 @@ class RsfTest {
         val wrongType = assertFailsWith<RsfError> {
             Rsf.analyze(
                 source(
-                    "fun main() -> void {\n" +
+                    "fn main() -> void {\n" +
                         "    try {\n        println(1)\n    } catch (e : int) {\n        println(e)\n    }\n" +
                         "    rtn\n}\n",
                 ),
@@ -1170,7 +1170,7 @@ class RsfTest {
     @Test
     fun `while 循环两端一致`() {
         val program = """
-            fun fibOf10() -> int {
+            fn fibOf10() -> int {
                 var a = 0
                 var b = 1
                 var i = 0
@@ -1183,7 +1183,7 @@ class RsfTest {
                 rtn a
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 println("fib = " + fibOf10())
                 rtn
             }
@@ -1195,7 +1195,7 @@ class RsfTest {
     @Test
     fun `goto 与标签两端一致`() {
         val program = """
-            fun main() -> void {
+            fn main() -> void {
                 var n = 0
             top:
                 if (n >= 3) { goto done }
@@ -1214,7 +1214,7 @@ class RsfTest {
     @Test
     fun `break 与 continue 两端一致`() {
         val program = """
-            fun main() -> void {
+            fn main() -> void {
                 var i = 0
                 var acc = 0
                 while (i < 10) {
@@ -1234,12 +1234,12 @@ class RsfTest {
     @Test
     fun `三目是表达式两端一致`() {
         val program = """
-            fun pick() -> int {
+            fn pick() -> int {
                 var x = 3
                 rtn if x > 2 ? 100 : 200
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 println(pick())
                 var s = if 1 < 2 ? "y" : "n"
                 println(s)
@@ -1256,7 +1256,7 @@ class RsfTest {
         val e = assertFailsWith<RsfError> {
             Rsf.analyze(
                 source(
-                    "fun main() -> void {\n" +
+                    "fn main() -> void {\n" +
                         "    var c = true\n" +
                         "    if (c) { var x = 1 }\n" +
                         "    println(x)\n" +
@@ -1271,7 +1271,7 @@ class RsfTest {
     @Test
     fun `同名变量可以在内层块里遮蔽`() {
         val program = """
-            fun main() -> void {
+            fn main() -> void {
                 var x = 1
                 {
                     var x = 99
@@ -1290,7 +1290,7 @@ class RsfTest {
     @Test
     fun `else 与 else if 链两端一致`() {
         val program = """
-            fun classify() -> string {
+            fn classify() -> string {
                 var x = 7
                 if (x < 0) {
                     rtn "negative"
@@ -1303,7 +1303,7 @@ class RsfTest {
                 }
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 println(classify())
                 var n = 4
                 if n > 3 : println("big")
@@ -1320,7 +1320,7 @@ class RsfTest {
         // 两个分支都 rtn，函数末尾不可达 —— 不该报“走到函数末尾”
         val ok = Rsf.analyze(
             source(
-                "fun f() -> int {\n" +
+                "fn f() -> int {\n" +
                     "    var c = true\n" +
                     "    if (c) { rtn 1 } else { rtn 2 }\n" +
                     "}\n",
@@ -1332,7 +1332,7 @@ class RsfTest {
         val e = assertFailsWith<RsfError> {
             Rsf.analyze(
                 source(
-                    "fun f() -> int {\n" +
+                    "fn f() -> int {\n" +
                         "    var c = true\n" +
                         "    if (c) { rtn 1 } else { println(2) }\n" +
                         "}\n",
@@ -1347,7 +1347,7 @@ class RsfTest {
         val e = assertFailsWith<RsfError> {
             Rsf.analyze(
                 source(
-                    "fun main() -> void {\n" +
+                    "fn main() -> void {\n" +
                         "    var c = true\n" +
                         "    if (c) { rtn } else { imutvar y = 1 }\n" +
                         "    println(y)\n" +
@@ -1362,7 +1362,7 @@ class RsfTest {
     @Test
     fun `imutvar 不能重新赋值`() {
         val e = assertFailsWith<RsfError> {
-            Rsf.analyze(source("fun main() -> void {\n    imutvar x = 1\n    x = 2\n    rtn\n}\n"))
+            Rsf.analyze(source("fn main() -> void {\n    imutvar x = 1\n    x = 2\n    rtn\n}\n"))
         }
         assertEquals("checker", e.phase)
         assertTrue(e.detail.contains("imutvar"), e.detail)
@@ -1371,7 +1371,7 @@ class RsfTest {
     @Test
     fun `var 可以重新赋值`() {
         val program = """
-            fun main() -> void {
+            fn main() -> void {
                 var x = 1
                 x = x + 41
                 println(x)
@@ -1384,8 +1384,8 @@ class RsfTest {
 
     @Test
     fun `imutvar 与 var 生成的指令序列一致`() {
-        val a = Rsf.analyze(source("fun main() -> void {\n    imutvar x = 1 + 2\n    rtn\n}\n"))
-        val b = Rsf.analyze(source("fun main() -> void {\n    var x = 1 + 2\n    rtn\n}\n"))
+        val a = Rsf.analyze(source("fn main() -> void {\n    imutvar x = 1 + 2\n    rtn\n}\n"))
+        val b = Rsf.analyze(source("fn main() -> void {\n    var x = 1 + 2\n    rtn\n}\n"))
         assertEquals(
             a.loweredOf(a.functions.single()).instructions.size,
             b.loweredOf(b.functions.single()).instructions.size,
@@ -1395,7 +1395,7 @@ class RsfTest {
     @Test
     fun `let 已经换成 var 与 imutvar 并给出提示`() {
         val e = assertFailsWith<RsfError> {
-            Rsf.analyze(source("fun main() -> void {\n    let x = 1\n    rtn\n}\n"))
+            Rsf.analyze(source("fn main() -> void {\n    let x = 1\n    rtn\n}\n"))
         }
         assertEquals("parser", e.phase)
         // 带引号比，免得被 `imutvar` 里那三个字母 `var` 蒙混过去
@@ -1411,7 +1411,7 @@ class RsfTest {
         // 它已经不在关键字表里（表要跟 rsf 版逐条对齐，51 项不变），所以是在词法层
         // 被一条独立判断拦下的 —— 这条测试钉住「报错清楚 + 给出改写 + 两端同一句话」。
         val e = assertFailsWith<RsfError> {
-            Rsf.parse(source("fun main() -> void {\n    varis x : int = 0\n    rtn\n}\n"))
+            Rsf.parse(source("fn main() -> void {\n    varis x : int = 0\n    rtn\n}\n"))
         }
         assertEquals("lexer", e.phase)
         assertTrue(e.detail.contains("'varis' 已改名为 'var'"), e.detail)
@@ -1421,9 +1421,9 @@ class RsfTest {
         // 所以都要给出同一条文案（不是「先报别的错、顺带提一句」）。
         val positions = listOf(
             "class P {\n    varis x : int = 0\n}\n",
-            "fun main() -> void {\n    for (varis i = 0; i < 3; i = i + 1) { }\n    rtn\n}\n",
-            "varis g : int = 1\nfun main() -> void {\n    rtn\n}\n",
-            "fun main() -> void {\n    varis n : int = 0\n    rtn\n}\n",
+            "fn main() -> void {\n    for (varis i = 0; i < 3; i = i + 1) { }\n    rtn\n}\n",
+            "varis g : int = 1\nfn main() -> void {\n    rtn\n}\n",
+            "fn main() -> void {\n    varis n : int = 0\n    rtn\n}\n",
         )
         for (bad in positions) {
             val err = assertFailsWith<RsfError> { Rsf.parse(source(bad)) }
@@ -1435,7 +1435,7 @@ class RsfTest {
         // 它那边的 keywordKind 表里同样没有 `varis`，靠的是同一条独立判断。
         val rsfMessage = normalize(
             rsfLexerOutput(
-                "fun main() -> void {\n" +
+                "fn main() -> void {\n" +
                     "    println(lexError(\"varis x : int = 0\\n\"))\n" +
                     "    rtn\n" +
                     "}\n",
@@ -1451,7 +1451,7 @@ class RsfTest {
         val e = assertFailsWith<RsfError> {
             Rsf.analyze(
                 source(
-                    "fun main() -> void {\n" +
+                    "fn main() -> void {\n" +
                         "    goto skip\n" +
                         "    var x = 1\n" +
                         "skip:\n" +
@@ -1470,7 +1470,7 @@ class RsfTest {
         val e = assertFailsWith<RsfError> {
             Rsf.analyze(
                 source(
-                    "fun main() -> void {\n" +
+                    "fn main() -> void {\n" +
                         "    goto inside\n" +
                         "    {\n" +
                         "        var y = 7\n" +
@@ -1490,7 +1490,7 @@ class RsfTest {
         val e = assertFailsWith<RsfError> {
             Rsf.analyze(
                 source(
-                    "fun f() -> int {\n" +
+                    "fn f() -> int {\n" +
                         "    var c = true\n" +
                         "    if (c) { rtn 1 }\n" +
                         "}\n",
@@ -1504,7 +1504,7 @@ class RsfTest {
     fun `所有路径都 return 就合法`() {
         val model = Rsf.analyze(
             source(
-                "fun f() -> int {\n" +
+                "fn f() -> int {\n" +
                     "    var c = true\n" +
                     "    if (c) { rtn 1 }\n" +
                     "    rtn 2\n" +
@@ -1520,13 +1520,13 @@ class RsfTest {
     @Test
     fun `无限循环加 return 也算所有路径都返回`() {
         val program = """
-            fun f() -> int {
+            fn f() -> int {
                 while (true) {
                     rtn 7
                 }
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 println(f())
                 rtn
             }
@@ -1538,12 +1538,12 @@ class RsfTest {
     @Test
     fun `break 与 continue 必须在循环里`() {
         val b = assertFailsWith<RsfError> {
-            Rsf.analyze(source("fun main() -> void {\n    break\n    rtn\n}\n"))
+            Rsf.analyze(source("fn main() -> void {\n    break\n    rtn\n}\n"))
         }
         assertTrue(b.detail.contains("break"), b.detail)
 
         val c = assertFailsWith<RsfError> {
-            Rsf.analyze(source("fun main() -> void {\n    continue\n    rtn\n}\n"))
+            Rsf.analyze(source("fn main() -> void {\n    continue\n    rtn\n}\n"))
         }
         assertTrue(c.detail.contains("continue"), c.detail)
     }
@@ -1551,7 +1551,7 @@ class RsfTest {
     @Test
     fun `goto 不能跳到不存在的标签`() {
         val e = assertFailsWith<RsfError> {
-            Rsf.analyze(source("fun main() -> void {\n    goto nowhere\n    rtn\n}\n"))
+            Rsf.analyze(source("fn main() -> void {\n    goto nowhere\n    rtn\n}\n"))
         }
         assertTrue(e.detail.contains("没有定义"), e.detail)
     }
@@ -1559,7 +1559,7 @@ class RsfTest {
     @Test
     fun `重复标签会报错`() {
         val e = assertFailsWith<RsfError> {
-            Rsf.analyze(source("fun main() -> void {\nloop:\n    rtn\nloop:\n    rtn\n}\n"))
+            Rsf.analyze(source("fn main() -> void {\nloop:\n    rtn\nloop:\n    rtn\n}\n"))
         }
         assertTrue(e.detail.contains("重复定义"), e.detail)
     }
@@ -1567,7 +1567,7 @@ class RsfTest {
     @Test
     fun `if 的条件必须是 bool`() {
         val e = assertFailsWith<RsfError> {
-            Rsf.analyze(source("fun main() -> void {\n    if (1) { rtn }\n    rtn\n}\n"))
+            Rsf.analyze(source("fn main() -> void {\n    if (1) { rtn }\n    rtn\n}\n"))
         }
         assertTrue(e.detail.contains("bool"), e.detail)
     }
@@ -1575,7 +1575,7 @@ class RsfTest {
     @Test
     fun `三目两个分支类型不一致会报错`() {
         val e = assertFailsWith<RsfError> {
-            Rsf.analyze(source("fun main() -> void {\n    var x = if true ? 1 : \"s\"\n    rtn\n}\n"))
+            Rsf.analyze(source("fn main() -> void {\n    var x = if true ? 1 : \"s\"\n    rtn\n}\n"))
         }
         assertTrue(e.detail.contains("不一致"), e.detail)
     }
@@ -1583,7 +1583,7 @@ class RsfTest {
     @Test
     fun `for-in 缺区间会报错`() {
         val e = assertFailsWith<RsfError> {
-            Rsf.analyze(source("fun main() -> void {\n    for (i in 0) { }\n    rtn\n}\n"))
+            Rsf.analyze(source("fn main() -> void {\n    for (i in 0) { }\n    rtn\n}\n"))
         }
         assertEquals("parser", e.phase)
         assertTrue(e.detail.contains(".."), e.detail)
@@ -1594,7 +1594,7 @@ class RsfTest {
     @Test
     fun `for-in 两端一致`() {
         val program = """
-            fun main() -> void {
+            fn main() -> void {
                 var sum = 0
                 for (i in 0..4) {
                     sum = sum + i
@@ -1623,7 +1623,7 @@ class RsfTest {
     fun `for 的 continue 落到步进而不是条件`() {
         // 如果解糖成 while，continue 会跳过 `i = i + 1`，这里就会死循环
         val program = """
-            fun main() -> void {
+            fn main() -> void {
                 var odd = 0
                 for (i in 0..9) {
                     if (i % 2 == 0) : continue
@@ -1647,7 +1647,7 @@ class RsfTest {
     @Test
     fun `Java 式 for 的 break 与嵌套两端一致`() {
         val program = """
-            fun main() -> void {
+            fn main() -> void {
                 var count = 0
                 for (var k = 0; k < 100; k = k + 1) {
                     if (k >= 3) { break }
@@ -1673,7 +1673,7 @@ class RsfTest {
     @Test
     fun `for 三段都可以省略`() {
         val program = """
-            fun main() -> void {
+            fn main() -> void {
                 var n = 0
                 for (;;) {
                     n = n + 1
@@ -1692,7 +1692,7 @@ class RsfTest {
         val e = assertFailsWith<RsfError> {
             Rsf.analyze(
                 source(
-                    "fun main() -> void {\n" +
+                    "fn main() -> void {\n" +
                         "    for (var i = 0; i < 3; i = i + 1) { }\n" +
                         "    println(i)\n" +
                         "    rtn\n" +
@@ -1708,7 +1708,7 @@ class RsfTest {
         val e = assertFailsWith<RsfError> {
             Rsf.analyze(
                 source(
-                    "fun main() -> void {\n" +
+                    "fn main() -> void {\n" +
                         "    for (i in 0..3) { i = 99 }\n" +
                         "    rtn\n" +
                         "}\n",
@@ -1723,7 +1723,7 @@ class RsfTest {
         val e = assertFailsWith<RsfError> {
             Rsf.analyze(
                 source(
-                    "fun main() -> void {\n" +
+                    "fn main() -> void {\n" +
                         "    for (var i = 0; i; i = i + 1) { }\n" +
                         "    rtn\n" +
                         "}\n",
@@ -1737,7 +1737,7 @@ class RsfTest {
     fun `step 仍然可以作为普通标识符`() {
         // step 只在 for 头部当关键字
         val program = """
-            fun main() -> void {
+            fn main() -> void {
                 var step = 5
                 for (i in 0..4) {
                     step = step + i
@@ -1754,21 +1754,21 @@ class RsfTest {
     @Test
     fun `参数与递归两端一致`() {
         val program = """
-            fun fact(n : int) -> int {
+            fn fact(n : int) -> int {
                 if (n <= 1) { rtn 1 }
                 rtn n * fact(n - 1)
             }
 
-            fun fib(n : int) -> int {
+            fn fib(n : int) -> int {
                 if (n < 2) { rtn n }
                 rtn fib(n - 1) + fib(n - 2)
             }
 
-            public fun add(a : int, b : int) -> int {
+            public fn add(a : int, b : int) -> int {
                 rtn a + b
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 println("fact(5) = " + fact(5))
                 println("fib(10) = " + fib(10))
                 println("add(add(1, 2), fact(3)) = " + add(add(1, 2), fact(3)))
@@ -1785,15 +1785,15 @@ class RsfTest {
     @Test
     fun `实参会按形参类型加宽`() {
         val program = """
-            fun mix(a : int, b : long, c : double) -> double {
+            fn mix(a : int, b : long, c : double) -> double {
                 rtn a + b + c
             }
 
-            fun onlyLong(a : long) -> long {
+            fn onlyLong(a : long) -> long {
                 rtn a
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 println(mix(1, 10L, 0.5))
                 println(mix(1, 10, 0.5d))
                 println(onlyLong(7))
@@ -1807,12 +1807,12 @@ class RsfTest {
     @Test
     fun `参数默认可变`() {
         val program = """
-            fun twice(n : int) -> int {
+            fn twice(n : int) -> int {
                 n = n * 2
                 rtn n
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 println(twice(21))
                 rtn
             }
@@ -1826,8 +1826,8 @@ class RsfTest {
         val e = assertFailsWith<RsfError> {
             Rsf.analyze(
                 source(
-                    "fun add(a : int, b : int) -> int {\n    rtn a + b\n}\n" +
-                        "fun main() -> void {\n    println(add(1))\n    rtn\n}\n",
+                    "fn add(a : int, b : int) -> int {\n    rtn a + b\n}\n" +
+                        "fn main() -> void {\n    println(add(1))\n    rtn\n}\n",
                 ),
             )
         }
@@ -1840,8 +1840,8 @@ class RsfTest {
         val e = assertFailsWith<RsfError> {
             Rsf.analyze(
                 source(
-                    "fun add(a : int) -> int {\n    rtn a\n}\n" +
-                        "fun main() -> void {\n    println(add(\"s\"))\n    rtn\n}\n",
+                    "fn add(a : int) -> int {\n    rtn a\n}\n" +
+                        "fn main() -> void {\n    println(add(\"s\"))\n    rtn\n}\n",
                 ),
             )
         }
@@ -1852,7 +1852,7 @@ class RsfTest {
     @Test
     fun `参数类型不能是 void`() {
         val e = assertFailsWith<RsfError> {
-            Rsf.analyze(source("fun f(a : void) -> int {\n    rtn 1\n}\n"))
+            Rsf.analyze(source("fn f(a : void) -> int {\n    rtn 1\n}\n"))
         }
         assertTrue(e.detail.contains("不能是 void"), e.detail)
     }
@@ -1860,7 +1860,7 @@ class RsfTest {
     @Test
     fun `参数重名会报错`() {
         val e = assertFailsWith<RsfError> {
-            Rsf.analyze(source("fun f(a : int, a : int) -> int {\n    rtn a\n}\n"))
+            Rsf.analyze(source("fn f(a : int, a : int) -> int {\n    rtn a\n}\n"))
         }
         assertTrue(e.detail.contains("重名"), e.detail)
     }
@@ -1869,7 +1869,7 @@ class RsfTest {
     fun `参数与函数体顶层同名会报重复声明`() {
         val e = assertFailsWith<RsfError> {
             Rsf.analyze(
-                source("fun f(a : int) -> int {\n    var a = 2\n    rtn a\n}\n"),
+                source("fn f(a : int) -> int {\n    var a = 2\n    rtn a\n}\n"),
             )
         }
         assertTrue(e.detail.contains("重复声明"), e.detail)
@@ -1878,7 +1878,7 @@ class RsfTest {
     @Test
     fun `参数可以在内层块里被遮蔽`() {
         val program = """
-            fun show(a : int) -> int {
+            fn show(a : int) -> int {
                 var total = a
                 {
                     var a = 100
@@ -1887,7 +1887,7 @@ class RsfTest {
                 rtn total
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 println(show(1))
                 rtn
             }
@@ -1899,7 +1899,7 @@ class RsfTest {
     @Test
     fun `main 带参数时 run 会报错但函数本身可用`() {
         val source = source(
-            "fun main(a : int) -> void {\n    println(a)\n    rtn\n}\n",
+            "fn main(a : int) -> void {\n    println(a)\n    rtn\n}\n",
         )
         // 静态检查通过
         val model = Rsf.analyze(source)
@@ -1916,16 +1916,16 @@ class RsfTest {
     @Test
     fun `可空返回与 elvis 两端一致`() {
         val program = """
-            fun find(id : int) : ?string {
+            fn find(id : int) : ?string {
                 if (id == 1) { rtn "one" }
                 rtn null
             }
 
-            fun greet(who : ?string) -> string {
+            fn greet(who : ?string) -> string {
                 rtn "hello, " + (who ?: "stranger")
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 println(find(1) ?: "not found")
                 println(find(9) ?: "not found")
                 println(greet("rsf"))
@@ -1943,12 +1943,12 @@ class RsfTest {
     @Test
     fun `null 比较与强制解包两端一致`() {
         val program = """
-            fun maybe(n : int) : ?string {
+            fn maybe(n : int) : ?string {
                 if (n > 0) { rtn "yes" }
                 rtn null
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var a = maybe(1)
                 if (a == null) { println("a is null") } else { println("a = " + a) }
                 println("a!! = " + a!!)
@@ -1969,17 +1969,17 @@ class RsfTest {
     @Test
     fun `可空基本类型会装箱两端一致`() {
         val program = """
-            fun maybeInt(n : int) -> ?int {
+            fn maybeInt(n : int) -> ?int {
                 if (n > 0) { rtn n * 10 }
                 rtn null
             }
 
-            fun maybeLong(n : int) : ?long {
+            fn maybeLong(n : int) : ?long {
                 if (n > 0) { rtn 9000000000L }
                 rtn null
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var n = maybeInt(4)
                 println("n = " + n)
                 println("n ?: -1 = " + (n ?: -1))
@@ -2003,7 +2003,7 @@ class RsfTest {
     @Test
     fun `显式类型标注可以声明可空变量`() {
         val program = """
-            fun main() -> void {
+            fn main() -> void {
                 var s : ?string = null
                 println("s = " + s)
                 s = "set"
@@ -2021,7 +2021,7 @@ class RsfTest {
     @Test
     fun `非空函数不能 rtn null`() {
         val e = assertFailsWith<RsfError> {
-            Rsf.analyze(source("fun f() -> string {\n    rtn null\n}\n"))
+            Rsf.analyze(source("fn f() -> string {\n    rtn null\n}\n"))
         }
         assertTrue(e.detail.contains("不能 'rtn null'"), e.detail)
         assertTrue(e.detail.contains("?string"), e.detail)
@@ -2032,8 +2032,8 @@ class RsfTest {
         val e = assertFailsWith<RsfError> {
             Rsf.analyze(
                 source(
-                    "fun f() : ?string {\n    rtn null\n}\n" +
-                        "fun main() -> void {\n    var t = \"x\"\n    t = f()\n    rtn\n}\n",
+                    "fn f() : ?string {\n    rtn null\n}\n" +
+                        "fn main() -> void {\n    var t = \"x\"\n    t = f()\n    rtn\n}\n",
                 ),
             )
         }
@@ -2043,7 +2043,7 @@ class RsfTest {
     @Test
     fun `没法从 null 推断变量类型`() {
         val e = assertFailsWith<RsfError> {
-            Rsf.analyze(source("fun main() -> void {\n    var x = null\n    rtn\n}\n"))
+            Rsf.analyze(source("fn main() -> void {\n    var x = null\n    rtn\n}\n"))
         }
         assertTrue(e.detail.contains("没法从 null 推断"), e.detail)
     }
@@ -2052,7 +2052,7 @@ class RsfTest {
     fun `非空值跟 null 比较会被拦下`() {
         val e = assertFailsWith<RsfError> {
             Rsf.analyze(
-                source("fun main() -> void {\n    var s = \"hi\"\n    if (s == null) { println(1) }\n    rtn\n}\n"),
+                source("fn main() -> void {\n    var s = \"hi\"\n    if (s == null) { println(1) }\n    rtn\n}\n"),
             )
         }
         assertTrue(e.detail.contains("恒为假"), e.detail)
@@ -2062,8 +2062,8 @@ class RsfTest {
     fun `可空值不能直接参与运算`() {
         val e = assertFailsWith<RsfError> {
             Rsf.analyze(
-                source("fun f() -> ?int {\n    rtn 1\n}\n" +
-                    "fun main() -> void {\n    var n = f()\n    println(n + 1)\n    rtn\n}\n"),
+                source("fn f() -> ?int {\n    rtn 1\n}\n" +
+                    "fn main() -> void {\n    var n = f()\n    println(n + 1)\n    rtn\n}\n"),
             )
         }
         assertTrue(e.detail.contains("可空值不能直接参与运算"), e.detail)
@@ -2073,7 +2073,7 @@ class RsfTest {
     fun `强制解包只能用在可空值上`() {
         val e = assertFailsWith<RsfError> {
             Rsf.analyze(
-                source("fun main() -> void {\n    var s = \"hi\"\n    println(s!!)\n    rtn\n}\n"),
+                source("fn main() -> void {\n    var s = \"hi\"\n    println(s!!)\n    rtn\n}\n"),
             )
         }
         assertTrue(e.detail.contains("'!!' 只能用在可空值上"), e.detail)
@@ -2082,11 +2082,11 @@ class RsfTest {
     @Test
     fun `对 null 用双叹号在两端都是 NullPointerException`() {
         val program = """
-            fun f() : ?string {
+            fn f() : ?string {
                 rtn null
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 println(f()!!)
                 rtn
             }
@@ -2121,12 +2121,12 @@ class RsfTest {
     fun `import 路径里的反斜杠 点斜杠 都认`() {
         val root = project(
             mapOf(
-                "lib/util.rsf" to "public fun greet() -> string {\n    rtn \"hi\"\n}\n",
-                "plugins/a.rsf" to "public fun pluginA() -> string {\n    rtn \"A\"\n}\n",
+                "lib/util.rsf" to "public fn greet() -> string {\n    rtn \"hi\"\n}\n",
+                "plugins/a.rsf" to "public fn pluginA() -> string {\n    rtn \"A\"\n}\n",
                 "main.rsf" to (
                     "import \".\\lib\\util.rsf\"\n" + // Windows 写法，单反斜杠
                         "module \".\\plugins\"\n" +
-                        "fun main() -> void {\n" +
+                        "fn main() -> void {\n" +
                         "    println(greet() + pluginA())\n" +
                         "    rtn\n" +
                         "}\n"
@@ -2143,10 +2143,10 @@ class RsfTest {
     fun `import 也认正斜杠与上跳目录`() {
         val root = project(
             mapOf(
-                "lib/util.rsf" to "public fun greet() -> string {\n    rtn \"hi\"\n}\n",
+                "lib/util.rsf" to "public fn greet() -> string {\n    rtn \"hi\"\n}\n",
                 "app/main.rsf" to (
                     "import \"../lib/util.rsf\"\n" + // 往上跳一层
-                        "fun main() -> void {\n" +
+                        "fn main() -> void {\n" +
                         "    println(greet())\n" +
                         "    rtn\n" +
                         "}\n"
@@ -2169,7 +2169,7 @@ class RsfTest {
             "pkg a.b\\c/d" to "a.b.c.d",
         )
         for ((decl, expected) in cases) {
-            val program = Rsf.parse(source("$decl\n\nfun main() -> void {\n    rtn\n}\n"))
+            val program = Rsf.parse(source("$decl\n\nfn main() -> void {\n    rtn\n}\n"))
             assertEquals(expected, program.packageName, "声明：$decl")
         }
     }
@@ -2179,10 +2179,10 @@ class RsfTest {
         // 位置对得上：app/util.rsf 里写 pkg app
         val ok = project(
             mapOf(
-                "app/util.rsf" to "pkg app\n\npublic fun twice(n : int) -> int {\n    rtn n * 2\n}\n",
+                "app/util.rsf" to "pkg app\n\npublic fn twice(n : int) -> int {\n    rtn n * 2\n}\n",
                 "app/main.rsf" to (
                     "pkg app\n\nimport \"util.rsf\"\n\n" +
-                        "fun main() -> void {\n    println(twice(21))\n    rtn\n}\n"
+                        "fn main() -> void {\n    println(twice(21))\n    rtn\n}\n"
                     ),
             ),
         )
@@ -2194,7 +2194,7 @@ class RsfTest {
         assertEquals(listOf("42"), buf.toString("UTF-8").trim().lines())
 
         // 位置对不上：根目录下的文件写 pkg a.b
-        val bad = project(mapOf("main.rsf" to "pkg a.b\n\nfun main() -> void {\n    rtn\n}\n"))
+        val bad = project(mapOf("main.rsf" to "pkg a.b\n\nfn main() -> void {\n    rtn\n}\n"))
         val e = assertFailsWith<RsfError> { Rsf.load(bad) }
         assertEquals("loader", e.phase)
         assertTrue(e.detail.contains("对不上"), e.detail)
@@ -2206,7 +2206,7 @@ class RsfTest {
             mapOf(
                 "app/main.rsf" to (
                     "pkg app\n\n" +
-                        "fun main() -> void {\n    println(\"hi\")\n    rtn\n}\n"
+                        "fn main() -> void {\n    println(\"hi\")\n    rtn\n}\n"
                     ),
             ),
         )
@@ -2229,7 +2229,7 @@ class RsfTest {
     @Test
     fun `pkg 只能写在文件最前面`() {
         val e = assertFailsWith<RsfError> {
-            Rsf.parse(source("fun main() -> void {\n    rtn\n}\n\npkg a\n"))
+            Rsf.parse(source("fn main() -> void {\n    rtn\n}\n\npkg a\n"))
         }
         assertEquals("parser", e.phase)
         assertTrue(e.detail.contains("最前面"), e.detail)
@@ -2238,16 +2238,16 @@ class RsfTest {
     @Test
     fun `三种 import 语法都能把函数并进来`() {        val root = project(
             mapOf(
-                "lib/util.rsf" to "fun greet(who : string) -> string {\n    rtn \"hi, \" + who\n}\n",
-                "lib/math.rsf" to "fun add(a : int, b : int) -> int {\n    rtn a + b\n}\n",
-                "plugins/a.rsf" to "fun pluginA() -> string {\n    rtn \"A\"\n}\n",
-                "plugins/b.rsf" to "fun pluginB() -> string {\n    rtn \"B\"\n}\n",
+                "lib/util.rsf" to "fn greet(who : string) -> string {\n    rtn \"hi, \" + who\n}\n",
+                "lib/math.rsf" to "fn add(a : int, b : int) -> int {\n    rtn a + b\n}\n",
+                "plugins/a.rsf" to "fn pluginA() -> string {\n    rtn \"A\"\n}\n",
+                "plugins/b.rsf" to "fn pluginB() -> string {\n    rtn \"B\"\n}\n",
                 "main.rsf" to (
                     "import \"lib/util.rsf\"\n" +
                         "import \"lib/\n       math.rsf\"\n" + // 路径跨行（Go 风格）
                         "module \"plugins\"\n" +
                         "\n" +
-                        "fun main() -> void {\n" +
+                        "fn main() -> void {\n" +
                         "    println(greet(\"rsf\"))\n" +
                         "    println(add(1, 2))\n" +
                         "    println(pluginA() + pluginB())\n" +
@@ -2271,10 +2271,10 @@ class RsfTest {
     fun `同一个文件被两个地方 import 只算一次`() {
         val root = project(
             mapOf(
-                "shared.rsf" to "fun twice(n : int) -> int {\n    rtn n * 2\n}\n",
-                "a.rsf" to "import \"shared.rsf\"\nfun fromA() -> int {\n    rtn twice(1)\n}\n",
-                "b.rsf" to "import \"shared.rsf\"\nfun fromB() -> int {\n    rtn twice(2)\n}\n",
-                "main.rsf" to "import \"a.rsf\"\nimport \"b.rsf\"\nfun main() -> void {\n    rtn\n}\n",
+                "shared.rsf" to "fn twice(n : int) -> int {\n    rtn n * 2\n}\n",
+                "a.rsf" to "import \"shared.rsf\"\nfn fromA() -> int {\n    rtn twice(1)\n}\n",
+                "b.rsf" to "import \"shared.rsf\"\nfn fromB() -> int {\n    rtn twice(2)\n}\n",
+                "main.rsf" to "import \"a.rsf\"\nimport \"b.rsf\"\nfn main() -> void {\n    rtn\n}\n",
             ),
         )
         val loaded = Rsf.load(root)
@@ -2287,9 +2287,9 @@ class RsfTest {
     fun `互相 import 不会死循环`() {
         val root = project(
             mapOf(
-                "a.rsf" to "import \"b.rsf\"\nfun fromA() -> int {\n    rtn fromB() + 1\n}\n",
-                "b.rsf" to "import \"a.rsf\"\nfun fromB() -> int {\n    rtn 41\n}\n",
-                "main.rsf" to "import \"a.rsf\"\nfun main() -> void {\n    println(fromA())\n    rtn\n}\n",
+                "a.rsf" to "import \"b.rsf\"\nfn fromA() -> int {\n    rtn fromB() + 1\n}\n",
+                "b.rsf" to "import \"a.rsf\"\nfn fromB() -> int {\n    rtn 41\n}\n",
+                "main.rsf" to "import \"a.rsf\"\nfn main() -> void {\n    println(fromA())\n    rtn\n}\n",
             ),
         )
         val loaded = Rsf.load(root)
@@ -2303,8 +2303,8 @@ class RsfTest {
     fun `被导入文件里的错误会指向那个文件`() {
         val root = project(
             mapOf(
-                "bad.rsf" to "fun helper() -> int {\n    rtn \"nope\"\n}\n",
-                "main.rsf" to "import \"bad.rsf\"\nfun main() -> void {\n    rtn\n}\n",
+                "bad.rsf" to "fn helper() -> int {\n    rtn \"nope\"\n}\n",
+                "main.rsf" to "import \"bad.rsf\"\nfn main() -> void {\n    rtn\n}\n",
             ),
         )
         val e = assertFailsWith<RsfError> { Rsf.analyze(Rsf.load(root)) }
@@ -2314,12 +2314,12 @@ class RsfTest {
 
     @Test
     fun `找不到文件或空目录会报错`() {
-        val missing = project(mapOf("main.rsf" to "import \"nope.rsf\"\nfun main() -> void { rtn }\n"))
+        val missing = project(mapOf("main.rsf" to "import \"nope.rsf\"\nfn main() -> void { rtn }\n"))
         val e1 = assertFailsWith<RsfError> { Rsf.load(missing) }
         assertEquals("loader", e1.phase)
         assertTrue(e1.detail.contains("找不到被 import 的文件"), e1.detail)
 
-        val emptyDir = project(mapOf("main.rsf" to "module \"nothing\"\nfun main() -> void { rtn }\n"))
+        val emptyDir = project(mapOf("main.rsf" to "module \"nothing\"\nfn main() -> void { rtn }\n"))
         File(emptyDir.parentFile, "nothing").mkdirs()
         val e2 = assertFailsWith<RsfError> { Rsf.load(emptyDir) }
         assertTrue(e2.detail.contains("没有 .rsf 文件"), e2.detail)
@@ -2329,9 +2329,9 @@ class RsfTest {
     fun `跨文件重复定义函数会报错`() {
         val root = project(
             mapOf(
-                "one.rsf" to "fun dup() -> int {\n    rtn 1\n}\n",
-                "two.rsf" to "fun dup() -> int {\n    rtn 2\n}\n",
-                "main.rsf" to "import \"one.rsf\"\nimport \"two.rsf\"\nfun main() -> void { rtn }\n",
+                "one.rsf" to "fn dup() -> int {\n    rtn 1\n}\n",
+                "two.rsf" to "fn dup() -> int {\n    rtn 2\n}\n",
+                "main.rsf" to "import \"one.rsf\"\nimport \"two.rsf\"\nfn main() -> void { rtn }\n",
             ),
         )
         val e = assertFailsWith<RsfError> { Rsf.analyze(Rsf.load(root)) }
@@ -2341,7 +2341,7 @@ class RsfTest {
     @Test
     fun `JVM 类导入能解析且方法能被调用`() {
         // 之前这里会报「成员访问还没接通」，现在是真能算了
-        val program = "import java.lang.Math\nfun main() -> void {\n" +
+        val program = "import java.lang.Math\nfn main() -> void {\n" +
             "    println(Math.max(1, 2))\n    rtn\n}\n"
         assertEquals(listOf("2"), lines(runInterpreted(program)))
         assertEquals(normalize(runInterpreted(program)), normalize(runCompiled(program)))
@@ -2355,7 +2355,7 @@ class RsfTest {
             import java.lang.Math
             import java.lang.Integer
 
-            fun main() -> void {
+            fn main() -> void {
                 println("max = " + Math.max(3, 7))
                 println("abs = " + Math.abs(-5))
                 println("sqrt = " + Math.sqrt(2.0))
@@ -2379,7 +2379,7 @@ class RsfTest {
     @Test
     fun `实例方法两端一致`() {
         val program = """
-            fun main() -> void {
+            fn main() -> void {
                 var s = "rainStarfox"
                 println(s.length())
                 println(s.toUpperCase())
@@ -2401,7 +2401,7 @@ class RsfTest {
     fun `静态字段加实例方法链两端一致`() {
         // System.out 是静态字段，println 是它上面的实例方法
         val program = """
-            fun main() -> void {
+            fn main() -> void {
                 System.out.println("via System.out")
                 System.out.print("no newline")
                 System.out.println()
@@ -2416,7 +2416,7 @@ class RsfTest {
     fun `引用类型之间按类层次匹配 CharSequence`() {
         // String 能当 CharSequence 用，靠的是遍历接口链
         val program = """
-            fun main() -> void {
+            fn main() -> void {
                 var s = "abc"
                 println(s.contains("b"))
                 println(String.valueOf(1))
@@ -2431,7 +2431,7 @@ class RsfTest {
     fun `找不到方法时列出候选签名`() {
         val e = assertFailsWith<RsfError> {
             Rsf.analyze(
-                source("fun main() -> void {\n    var s = \"x\"\n    s.contains(1)\n    rtn\n}\n"),
+                source("fn main() -> void {\n    var s = \"x\"\n    s.contains(1)\n    rtn\n}\n"),
             )
         }
         assertTrue(e.detail.contains("没有匹配的方法"), e.detail)
@@ -2442,7 +2442,7 @@ class RsfTest {
     @Test
     fun `找不到静态字段时给出提示`() {
         val e = assertFailsWith<RsfError> {
-            Rsf.analyze(source("fun main() -> void {\n    println(Math.NOPE)\n    rtn\n}\n"))
+            Rsf.analyze(source("fn main() -> void {\n    println(Math.NOPE)\n    rtn\n}\n"))
         }
         assertTrue(e.detail.contains("没有静态字段"), e.detail)
     }
@@ -2450,7 +2450,7 @@ class RsfTest {
     @Test
     fun `import 不存在的类会报错`() {
         val e = assertFailsWith<RsfError> {
-            Rsf.analyze(source("import no.such.Klass\nfun main() -> void { rtn }\n"))
+            Rsf.analyze(source("import no.such.Klass\nfn main() -> void { rtn }\n"))
         }
         assertEquals("checker", e.phase)
         assertTrue(e.detail.contains("classpath 上找不到"), e.detail)
@@ -2461,8 +2461,8 @@ class RsfTest {
         val e = assertFailsWith<RsfError> {
             Rsf.analyze(
                 source(
-                    "fun f() : ?string {\n    rtn null\n}\n" +
-                        "fun main() -> void {\n    var s = f()\n    println(s.length())\n    rtn\n}\n",
+                    "fn f() : ?string {\n    rtn null\n}\n" +
+                        "fn main() -> void {\n    var s = f()\n    println(s.length())\n    rtn\n}\n",
                 ),
             )
         }
@@ -2474,7 +2474,7 @@ class RsfTest {
         // Math.max 有 int/long/float/double 四个重载，实参类型决定选哪个。
         // 两端必须一致，否则输出会分叉。
         val program = """
-            fun main() -> void {
+            fn main() -> void {
                 println(Math.max(1, 2))
                 println(Math.max(1L, 2L))
                 println(Math.max(1.5, 2.5))
@@ -2494,21 +2494,21 @@ class RsfTest {
     @Test
     fun `反向调用 Java 能直接调 rsf 的 public 函数`() {
         val program = """
-            public fun greet(who : string) -> string {
+            public fn greet(who : string) -> string {
                 rtn "hi, " + who
             }
 
-            public fun fact(n : int) -> int {
+            public fn fact(n : int) -> int {
                 if (n <= 1) { rtn 1 }
                 rtn n * fact(n - 1)
             }
 
-            public fun maybe(n : int) : ?string {
+            public fn maybe(n : int) : ?string {
                 if (n > 0) { rtn "yes" }
                 rtn null
             }
 
-            fun main() -> void { rtn }
+            fn main() -> void { rtn }
         """.trimIndent() + "\n"
         val className = "RsfJavaCallable"
         val bytes = compileToBytes(program, className)
@@ -2537,7 +2537,7 @@ class RsfTest {
     fun `诊断 JSON 定位到出错的位置`() {
         val dir = File.createTempFile("rsf-diag", "").let { it.delete(); it.mkdirs(); it }
         val f = File(dir, "bad.rsf")
-        f.writeText("fun main() -> void {\n    nope()\n    rtn\n}\n", Charsets.UTF_8)
+        f.writeText("fn main() -> void {\n    nope()\n    rtn\n}\n", Charsets.UTF_8)
 
         val json = EditorSupport.diagnosticsJson(f, null)
         // 形状固定，编辑器侧直接 JSON.parse
@@ -2552,7 +2552,7 @@ class RsfTest {
     fun `诊断 JSON 里警告也会带出来`() {
         val dir = File.createTempFile("rsf-diag2", "").let { it.delete(); it.mkdirs(); it }
         val f = File(dir, "warn.rsf")
-        f.writeText("fun main() -> void {\n    rtn\n    println(1)\n}\n", Charsets.UTF_8)
+        f.writeText("fn main() -> void {\n    rtn\n    println(1)\n}\n", Charsets.UTF_8)
 
         val json = EditorSupport.diagnosticsJson(f, null)
         assertTrue(json.contains("\"severity\":\"warning\""), json)
@@ -2564,8 +2564,8 @@ class RsfTest {
         val dir = File.createTempFile("rsf-comp", "").let { it.delete(); it.mkdirs(); it }
         val f = File(dir, "c.rsf")
         f.writeText(
-            "public fun add(a : int, b : int) -> int {\n    rtn a + b\n}\n\n" +
-                "fun main() -> void {\n    var local = 1\n    rtn\n}\n",
+            "public fn add(a : int, b : int) -> int {\n    rtn a + b\n}\n\n" +
+                "fn main() -> void {\n    var local = 1\n    rtn\n}\n",
             Charsets.UTF_8,
         )
 
@@ -2582,7 +2582,7 @@ class RsfTest {
         // 解析一定失败（少了收尾花括号），走 token 扫描兜底
         val dir = File.createTempFile("rsf-comp2", "").let { it.delete(); it.mkdirs(); it }
         val f = File(dir, "broken.rsf")
-        f.writeText("fun helper() -> int {\n    rtn 1\n}\n\nfun main() -> void {\n    var x = \n", Charsets.UTF_8)
+        f.writeText("fn helper() -> int {\n    rtn 1\n}\n\nfn main() -> void {\n    var x = \n", Charsets.UTF_8)
 
         val json = EditorSupport.completionJson(f, null, 6, 14, null)
         assertTrue(json.contains("\"label\":\"helper\""), json)
@@ -2593,7 +2593,7 @@ class RsfTest {
     fun `补全会列出类的静态成员`() {
         val dir = File.createTempFile("rsf-comp3", "").let { it.delete(); it.mkdirs(); it }
         val f = File(dir, "m.rsf")
-        f.writeText("fun main() -> void {\n    Math.\n    rtn\n}\n", Charsets.UTF_8)
+        f.writeText("fn main() -> void {\n    Math.\n    rtn\n}\n", Charsets.UTF_8)
 
         val json = EditorSupport.completionJson(f, null, 2, 10, null)
         assertTrue(json.contains("\"label\":\"PI\""), json)
@@ -2608,7 +2608,7 @@ class RsfTest {
         // 报错不能只说「读到 <」，还得说清楚 <> 是占位符、真语法怎么写。
         val dir = File.createTempFile("rsf-placeholder", "").let { it.delete(); it.mkdirs(); it }
         val f = File(dir, "ph.rsf")
-        f.writeText("<public> fun main() -> void { rtn }\n", Charsets.UTF_8)
+        f.writeText("<public> fn main() -> void { rtn }\n", Charsets.UTF_8)
 
         val json = EditorSupport.diagnosticsJson(f, null)
         assertTrue(json.contains("占位符"), json)
@@ -2620,12 +2620,12 @@ class RsfTest {
     fun `补全会带上被 import 进来的函数`() {
         val dir = File.createTempFile("rsf-comp4", "").let { it.delete(); it.mkdirs(); it }
         File(dir, "lib.rsf").writeText(
-            "public fun greet(who : string) -> string {\n    rtn \"hi \" + who\n}\n",
+            "public fn greet(who : string) -> string {\n    rtn \"hi \" + who\n}\n",
             Charsets.UTF_8,
         )
         val f = File(dir, "main.rsf")
         f.writeText(
-            "import \"lib.rsf\"\n\nfun main() -> void {\n    rtn\n}\n",
+            "import \"lib.rsf\"\n\nfn main() -> void {\n    rtn\n}\n",
             Charsets.UTF_8,
         )
 
@@ -2639,19 +2639,19 @@ class RsfTest {
     @Test
     fun `解释执行与编译执行输出逐字节一致`() {
         val program = """
-            public fun add() -> int {
+            public fn add() -> int {
                 rtn 1 + 2 * 3
             }
 
-            private fun half() : float {
+            private fn half() : float {
                 rtn 1.5f
             }
 
-            fun greeting() -> string {
+            fn greeting() -> string {
                 rtn "rsf"
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 println(greeting() + " " + add())
                 println(half())
                 var x = 10
@@ -2677,7 +2677,7 @@ class RsfTest {
     @Test
     fun `整型溢出与截断除法遵循 JVM 语义`() {
         val program = """
-            fun main() -> void {
+            fn main() -> void {
                 var a = 2147483647
                 println(a + 1)
                 var b = -7
@@ -2693,7 +2693,7 @@ class RsfTest {
     @Test
     fun `数值加宽赋值两端一致`() {
         val program = """
-            fun main() -> void {
+            fn main() -> void {
                 var x = 1
                 var y = 2L
                 x = 5
@@ -2709,7 +2709,7 @@ class RsfTest {
 
     @Test
     fun `没有 main 时解释执行会报错`() {
-        val model = Rsf.analyze(source("fun foo() -> int {\n    rtn 1\n}\n"))
+        val model = Rsf.analyze(source("fn foo() -> int {\n    rtn 1\n}\n"))
         val e = assertFailsWith<RsfError> {
             Interpreter(model, PrintStream(ByteArrayOutputStream())).runEntry()
         }
@@ -2719,7 +2719,7 @@ class RsfTest {
     @Test
     fun `返回类型不匹配会报错`() {
         val e = assertFailsWith<RsfError> {
-            Rsf.analyze(source("fun foo() -> int {\n    rtn 1.5\n}\n"))
+            Rsf.analyze(source("fn foo() -> int {\n    rtn 1.5\n}\n"))
         }
         assertEquals("checker", e.phase)
         assertTrue(e.detail.contains("返回类型不匹配"))
@@ -2728,7 +2728,7 @@ class RsfTest {
     @Test
     fun `未定义的函数会报错`() {
         val e = assertFailsWith<RsfError> {
-            Rsf.analyze(source("fun main() -> void {\n    nope()\n    rtn\n}\n"))
+            Rsf.analyze(source("fn main() -> void {\n    nope()\n    rtn\n}\n"))
         }
         assertTrue(e.detail.contains("未定义的函数 'nope'"))
     }
@@ -2736,7 +2736,7 @@ class RsfTest {
     @Test
     fun `重复定义函数会报错`() {
         val e = assertFailsWith<RsfError> {
-            Rsf.analyze(source("fun a() -> int {\n    rtn 1\n}\nfun a() -> int {\n    rtn 2\n}\n"))
+            Rsf.analyze(source("fn a() -> int {\n    rtn 1\n}\nfn a() -> int {\n    rtn 2\n}\n"))
         }
         assertTrue(e.detail.contains("重复定义"))
     }
@@ -2744,15 +2744,15 @@ class RsfTest {
     @Test
     fun `编译产物里 main 是合法 JVM 入口且 private 函数保留可见性`() {
         val program = """
-            private fun hidden() -> int {
+            private fn hidden() -> int {
                 rtn 41
             }
 
-            public fun exposed() : int {
+            public fn exposed() : int {
                 rtn hidden() + 1
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 println(exposed())
                 rtn
             }
@@ -2784,15 +2784,15 @@ class RsfTest {
                 constructor(v : int) {
                     println("构造器收到 " + v)
                 }
-                public fun get() -> int { rtn n }
+                public fn get() -> int { rtn n }
             }
 
-            public fun note(tag : string) -> int {
+            public fn note(tag : string) -> int {
                 println(tag)
                 rtn 7
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var p = new P(note("实参"))
                 println("n = " + p.get())
                 rtn
@@ -2836,28 +2836,28 @@ class RsfTest {
                     n = start
                 }
 
-                public fun value() -> int {
+                public fn value() -> int {
                     rtn n + twice
                 }
 
-                public fun bump(n : int) -> void {
+                public fn bump(n : int) -> void {
                     this.n = n
                 }
 
-                private fun magic() -> int {
+                private fn magic() -> int {
                     rtn 7
                 }
 
-                public fun reveal() -> int {
+                public fn reveal() -> int {
                     rtn magic()
                 }
 
-                public static fun of(start : int) -> Box {
+                public static fn of(start : int) -> Box {
                     rtn new Box(start)
                 }
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var b = new Box(3)
                 println(b.tag + " n = " + b.n)
                 println("value = " + b.value())
@@ -2933,8 +2933,8 @@ class RsfTest {
 
         // static 方法里用裸字段名（需要 this）：编译期就说清楚，别让 JVM 甩 VerifyError
         val inStatic = source(
-            "class S {\n    var x : int = 5\n    public static fun bad() -> int {\n" +
-                "        rtn x\n    }\n}\n\nfun main() -> void {\n    println(S.bad())\n    rtn\n}\n",
+            "class S {\n    var x : int = 5\n    public static fn bad() -> int {\n" +
+                "        rtn x\n    }\n}\n\nfn main() -> void {\n    println(S.bad())\n    rtn\n}\n",
         )
         val e2 = assertFailsWith<RsfError> {
             Rsf.build(Rsf.analyze(inStatic), inStatic, "RsfStatic", tempDir())
@@ -2952,10 +2952,10 @@ class RsfTest {
                         "public class Pt {\n" +
                         "    var x : int = 7\n" +
                         "    constructor() { x = x + 1 }\n" +
-                        "    public fun get2() -> int { rtn x * 2 }\n" +
+                        "    public fn get2() -> int { rtn x * 2 }\n" +
                         "}\n\n" +
-                        "public fun twice(p : Pt) -> int {\n    rtn p.get2()\n}\n\n" +
-                        "fun main() -> void {\n" +
+                        "public fn twice(p : Pt) -> int {\n    rtn p.get2()\n}\n\n" +
+                        "fn main() -> void {\n" +
                         "    var p = new Pt()\n" +
                         "    println(\"x = \" + p.x + \", twice = \" + twice(p))\n" +
                         "    rtn\n}\n"
@@ -3000,16 +3000,16 @@ class RsfTest {
                 value = v0
             }
 
-            public fun get() -> T {
+            public fn get() -> T {
                 rtn value
             }
 
-            public fun set(v : T) -> void {
+            public fn set(v : T) -> void {
                 value = v
             }
         }
 
-        fun main() -> void {
+        fn main() -> void {
             var b : Box&<int> = new Box&<int>(0)
             b.set(7)
             println("get = " + b.get())
@@ -3044,12 +3044,12 @@ class RsfTest {
                     value = v0
                 }
 
-                public fun get() -> T {
+                public fn get() -> T {
                     rtn value
                 }
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var nested : Box&<Box&<int>> = new Box&<Box&<int>>(new Box&<int>(5))
                 println(nested.get().get())
                 println(nested.get().get() + 2)
@@ -3075,7 +3075,7 @@ class RsfTest {
                     "public class Box&<T> {\n" +
                         "    var value : T = 0\n" +
                         "}\n" +
-                        "fun main() -> void {\n" +
+                        "fn main() -> void {\n" +
                         "    var b : Box&<int, int> = new Box&<int, int>()\n" +
                         "    rtn\n" +
                         "}\n",
@@ -3092,7 +3092,7 @@ class RsfTest {
             Rsf.analyze(
                 source(
                     "class Plain {\n    var x : int = 1\n}\n" +
-                        "fun main() -> void {\n" +
+                        "fn main() -> void {\n" +
                         "    var p : Plain&<int> = new Plain()\n" +
                         "    rtn\n" +
                         "}\n",
@@ -3113,7 +3113,7 @@ class RsfTest {
                     "public class Box&<T> {\n" +
                         "    var value : T = 0\n" +
                         "}\n" +
-                        "fun main() -> void {\n" +
+                        "fn main() -> void {\n" +
                         "    var a : Box&<int> = new Box&<int>()\n" +
                         "    var b : Box&<string> = new Box&<string>()\n" +
                         "    b = a\n" +
@@ -3133,7 +3133,7 @@ class RsfTest {
                     "public class Box&<T> {\n" +
                         "    var value : T = 0\n" +
                         "}\n" +
-                        "fun main() -> void {\n" +
+                        "fn main() -> void {\n" +
                         "    var a : Box&<int> = new Box&<int>()\n" +
                         "    var b : Box&<string> = new Box&<string>()\n" +
                         "    a = b\n" +
@@ -3156,21 +3156,21 @@ class RsfTest {
                     value = v0
                 }
 
-                public fun get() -> T {
+                public fn get() -> T {
                     rtn value
                 }
 
-                public fun echo(v : T) -> T {
+                public fn echo(v : T) -> T {
                     var copy : T = v
                     rtn copy
                 }
 
-                public fun show() -> string {
+                public fn show() -> string {
                     rtn "value = " + value
                 }
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var a : Box&<int> = new Box&<int>(3)
                 println(a.show())
                 println(a.echo(11))
@@ -3204,16 +3204,16 @@ class RsfTest {
                     val = v0
                 }
 
-                public fun keyOf() -> K {
+                public fn keyOf() -> K {
                     rtn key
                 }
 
-                public fun valOf() -> V {
+                public fn valOf() -> V {
                     rtn val
                 }
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var p : Pair&<string, int> = new Pair&<string, int>("a", 1)
                 println(p.keyOf() + " -> " + p.valOf())
                 println(p.valOf() + 41)
@@ -3237,7 +3237,7 @@ class RsfTest {
         val program = """
             import java.util.ArrayList
 
-            fun main() -> void {
+            fn main() -> void {
                 var xs : ArrayList&<int> = new ArrayList&<int>()
                 xs.add(3)
                 xs.add(4)
@@ -3268,15 +3268,15 @@ class RsfTest {
     @Test
     fun `byte 与 char 的基本用法两端一致`() {
         val program = """
-            fun echo(b : byte) -> byte {
+            fn echo(b : byte) -> byte {
                 rtn b
             }
 
-            fun code(c : char) -> int {
+            fn code(c : char) -> int {
                 rtn charToInt(c)
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 // byte：字面量直接给（0..127），算术一律按 int 提升
                 var b : byte = 100
                 println(b)
@@ -3321,7 +3321,7 @@ class RsfTest {
     @Test
     fun `char 字面量的转义都认`() {
         val program = """
-            fun name(c : char) -> string {
+            fn name(c : char) -> string {
                 if (c == '\n') { rtn "LF" }
                 if (c == '\t') { rtn "TAB" }
                 if (c == '\r') { rtn "CR" }
@@ -3331,7 +3331,7 @@ class RsfTest {
                 rtn "?"
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 println(name('\n'))
                 println(name('\t'))
                 println(name('\r'))
@@ -3359,31 +3359,31 @@ class RsfTest {
     @Test
     fun `char 字面量写错会报错`() {
         // 空字符
-        val empty = assertFailsWith<RsfError> { Rsf.parse(source("fun main() -> void {\n    var c = ''\n}\n")) }
+        val empty = assertFailsWith<RsfError> { Rsf.parse(source("fn main() -> void {\n    var c = ''\n}\n")) }
         assertEquals("lexer", empty.phase)
         assertTrue(empty.detail.contains("不能是空的"), empty.detail)
 
         // 多字符
-        val many = assertFailsWith<RsfError> { Rsf.parse(source("fun main() -> void {\n    var c = 'ab'\n}\n")) }
+        val many = assertFailsWith<RsfError> { Rsf.parse(source("fn main() -> void {\n    var c = 'ab'\n}\n")) }
         assertEquals("lexer", many.phase)
         assertTrue(many.detail.contains("只能放一个字符"), many.detail)
 
         // 没闭合（换行前没等到收尾引号）
-        val unclosed = assertFailsWith<RsfError> { Rsf.parse(source("fun main() -> void {\n    var c = 'a\n}\n")) }
+        val unclosed = assertFailsWith<RsfError> { Rsf.parse(source("fn main() -> void {\n    var c = 'a\n}\n")) }
         assertEquals("lexer", unclosed.phase)
         assertTrue(unclosed.detail.contains("没有闭合"), unclosed.detail)
 
         // 文件末尾就断了
-        val eof = assertFailsWith<RsfError> { Rsf.parse(source("fun main() -> void {\n    var c = '")) }
+        val eof = assertFailsWith<RsfError> { Rsf.parse(source("fn main() -> void {\n    var c = '")) }
         assertEquals("lexer", eof.phase)
         assertTrue(eof.detail.contains("没有闭合"), eof.detail)
 
         // 不认识的转义
-        val bad = assertFailsWith<RsfError> { Rsf.parse(source("fun main() -> void {\n    var c = '\\q'\n}\n")) }
+        val bad = assertFailsWith<RsfError> { Rsf.parse(source("fn main() -> void {\n    var c = '\\q'\n}\n")) }
         assertTrue(bad.detail.contains("不认识的转义"), bad.detail)
 
         // \u 后面必须写满四位
-        val short = assertFailsWith<RsfError> { Rsf.parse(source("fun main() -> void {\n    var c = '\\u12'\n}\n")) }
+        val short = assertFailsWith<RsfError> { Rsf.parse(source("fn main() -> void {\n    var c = '\\u12'\n}\n")) }
         assertTrue(short.detail.contains("四位十六进制"), short.detail)
     }
 
@@ -3391,36 +3391,36 @@ class RsfTest {
     fun `char 与 int 不能隐式互赋`() {
         // 反向也要拦住：char 不能当 int 用
         val toInt = assertFailsWith<RsfError> {
-            Rsf.analyze(source("fun main() -> void {\n    var n : int = 'a'\n    rtn\n}\n"))
+            Rsf.analyze(source("fn main() -> void {\n    var n : int = 'a'\n    rtn\n}\n"))
         }
         assertTrue(toInt.detail.contains("不能把 char 赋给 int"), toInt.detail)
 
         val toChar = assertFailsWith<RsfError> {
-            Rsf.analyze(source("fun main() -> void {\n    var c : char = 65\n    rtn\n}\n"))
+            Rsf.analyze(source("fn main() -> void {\n    var c : char = 65\n    rtn\n}\n"))
         }
         assertTrue(toChar.detail.contains("不能把 int 赋给 char"), toChar.detail)
 
         // 参数位置同样不放过
         val arg = assertFailsWith<RsfError> {
-            Rsf.analyze(source("fun take(c : char) -> int {\n    rtn 0\n}\n\nfun main() -> void {\n    println(take(65))\n    rtn\n}\n"))
+            Rsf.analyze(source("fn take(c : char) -> int {\n    rtn 0\n}\n\nfn main() -> void {\n    println(take(65))\n    rtn\n}\n"))
         }
         assertTrue(arg.detail.contains("take"), arg.detail)
 
         // byte 与 char 之间也不行（两个方向）
         val byteToChar = assertFailsWith<RsfError> {
-            Rsf.analyze(source("fun main() -> void {\n    var c : char = toByte(65)\n    rtn\n}\n"))
+            Rsf.analyze(source("fn main() -> void {\n    var c : char = toByte(65)\n    rtn\n}\n"))
         }
         assertTrue(byteToChar.detail.contains("不能把 byte 赋给 char"), byteToChar.detail)
 
         // int -> byte 的窄化也要显式：字面量在范围内是特例，算不出来就不行
         val narrow = assertFailsWith<RsfError> {
-            Rsf.analyze(source("fun main() -> void {\n    var n : int = 300\n    var b : byte = n\n    rtn\n}\n"))
+            Rsf.analyze(source("fn main() -> void {\n    var n : int = 300\n    var b : byte = n\n    rtn\n}\n"))
         }
         assertTrue(narrow.detail.contains("不能把 int 赋给 byte"), narrow.detail)
 
         // 显式转换函数能绕开全部上面这些
         val program = """
-            fun main() -> void {
+            fn main() -> void {
                 var n : int = 65
                 var c : char = toChar(n)
                 var back : int = charToInt(c)
@@ -3443,17 +3443,17 @@ class RsfTest {
     @Test
     fun `可空的 byte 与 char 两端一致`() {
         val program = """
-            fun maybeChar(n : int) -> ?char {
+            fn maybeChar(n : int) -> ?char {
                 if (n > 0) { rtn 'x' }
                 rtn null
             }
 
-            fun maybeByte(n : int) -> ?byte {
+            fn maybeByte(n : int) -> ?byte {
                 if (n > 0) { rtn toByte(9) }
                 rtn null
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var c : ?char = maybeChar(1)
                 println("c = " + c)
                 println(c ?: 'z')
@@ -3498,14 +3498,14 @@ class RsfTest {
     @Test
     fun `标准库的 char 分类与转换函数都对`() {
         val program = """
-            fun classify(c : char) -> string {
+            fn classify(c : char) -> string {
                 if (isDigit(c)) { rtn "digit" }
                 if (isLetter(c)) { rtn "letter" }
                 if (isWhitespace(c)) { rtn "space" }
                 rtn "other"
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 println(classify('7'))
                 println(classify('x'))
                 println(classify(' '))
@@ -3558,27 +3558,27 @@ class RsfTest {
     fun `parseInt 失败会 fail 且能被 try 接住`() {
         // 先把「没处理错误就编译不过」这条钉住
         val unhandled = assertFailsWith<RsfError> {
-            Rsf.analyze(source("fun main() -> void {\n    var n = parseInt(\"1\")\n    rtn\n}\n"))
+            Rsf.analyze(source("fn main() -> void {\n    var n = parseInt(\"1\")\n    rtn\n}\n"))
         }
         assertTrue(unhandled.detail.contains("必须显式处理错误"), unhandled.detail)
 
         // 实参类型也只能是 string
         val wrongArg = assertFailsWith<RsfError> {
-            Rsf.analyze(source("fun main() -> void {\n    println(parseInt(1) ?: 0)\n    rtn\n}\n"))
+            Rsf.analyze(source("fn main() -> void {\n    println(parseInt(1) ?: 0)\n    rtn\n}\n"))
         }
         assertTrue(wrongArg.detail.contains("parseInt"), wrongArg.detail)
 
         val program = """
-            fun twice(s : string) -> int {
+            fn twice(s : string) -> int {
                 rtn (parseInt(s) ?: 0) * 2
             }
 
             // !int：把 parseInt 的错误往上抛，用来验证错误能跨函数帧传出去
-            fun failTwice(s : string) -> !int {
+            fn failTwice(s : string) -> !int {
                 rtn (parseInt(s)!!) * 2
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 println(parseInt("42") ?: -1)
                 println(parseInt("0") ?: -1)
                 println(parseInt("-7") ?: -1)
@@ -3625,7 +3625,7 @@ class RsfTest {
     @Test
     fun `字符串拼接 char 两端一致`() {
         val program = """
-            fun main() -> void {
+            fn main() -> void {
                 var c : char = 'x'
                 var s : string = "ab"
 
@@ -3679,32 +3679,32 @@ class RsfTest {
                 y = y0
             }
 
-            public fun sum() -> int {
+            public fn sum() -> int {
                 rtn x + y
             }
 
-            public fun shift(dx : int, dy : int) -> void {
+            public fn shift(dx : int, dy : int) -> void {
                 x = x + dx
                 y = y + dy
             }
 
-            public fun describe() -> string {
+            public fn describe() -> string {
                 rtn label + "(" + x + ", " + y + ")"
             }
 
-            public fun doubleBoth() -> void {
+            public fn doubleBoth() -> void {
                 shift(x, y)
             }
 
-            private fun secret() -> int {
+            private fn secret() -> int {
                 rtn 42
             }
 
-            public fun reveal() -> int {
+            public fn reveal() -> int {
                 rtn secret()
             }
 
-            public static fun origin() -> Point {
+            public static fn origin() -> Point {
                 rtn new Point(0, 0)
             }
         }
@@ -3712,15 +3712,15 @@ class RsfTest {
         public class Holder {
             var held : ?Point = null
 
-            public fun keep(p : Point) -> void {
+            public fn keep(p : Point) -> void {
                 held = p
             }
 
-            public fun has() -> bool {
+            public fn has() -> bool {
                 rtn held != null
             }
 
-            public fun sumOrZero() -> int {
+            public fn sumOrZero() -> int {
                 rtn if held == null ? 0 : held!!.sum()
             }
         }
@@ -3729,22 +3729,22 @@ class RsfTest {
             var base : int = 10
             var doubled : int = base * 2
 
-            public fun value() -> int {
+            public fn value() -> int {
                 rtn base + doubled
             }
         }
 
-        public fun distanceSquared(a : Point, b : Point) -> int {
+        public fn distanceSquared(a : Point, b : Point) -> int {
             var dx = a.x - b.x
             var dy = a.y - b.y
             rtn dx * dx + dy * dy
         }
 
-        public fun makePoint(n : int) -> Point {
+        public fn makePoint(n : int) -> Point {
             rtn new Point(n, n * 2)
         }
 
-        fun main() -> void {
+        fn main() -> void {
             var p = new Point(3, 4)
             println(p.describe())
             println("sum = " + p.sum())
@@ -3788,7 +3788,7 @@ class RsfTest {
     @Test
     fun `数组的基本用法两端一致`() {
         val program = """
-            fun sum(xs : int[]) -> int {
+            fn sum(xs : int[]) -> int {
                 var total = 0
                 for (var i = 0; i < xs.length; i = i + 1) {
                     total = total + xs[i]
@@ -3796,7 +3796,7 @@ class RsfTest {
                 rtn total
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var a : int[] = new int[4]
                 println("长度 = " + a.length)
                 println("默认值 = " + a[0] + "," + a[1] + "," + a[2] + "," + a[3])
@@ -3852,14 +3852,14 @@ class RsfTest {
     @Test
     fun `数组作为参数与返回值的引用语义两端一致`() {
         val program = """
-            fun fill(xs : int[], value : int) -> void {
+            fn fill(xs : int[], value : int) -> void {
                 for (var i = 0; i < xs.length; i = i + 1) {
                     xs[i] = value
                 }
                 rtn
             }
 
-            fun makeSquares(n : int) -> int[] {
+            fn makeSquares(n : int) -> int[] {
                 var out = new int[n]
                 for (var i = 0; i < n; i = i + 1) {
                     out[i] = i * i
@@ -3867,12 +3867,12 @@ class RsfTest {
                 rtn out
             }
 
-            fun bump(xs : int[]) -> int[] {
+            fn bump(xs : int[]) -> int[] {
                 xs[0] = xs[0] + 1
                 rtn xs
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var a : int[] = new int[3]
                 // 赋给另一个变量：还是同一个数组
                 var b : int[] = a
@@ -3919,16 +3919,16 @@ class RsfTest {
                     y = y0
                 }
 
-                public fun sum() -> int { rtn x + y }
+                public fn sum() -> int { rtn x + y }
             }
 
             public class Box&<T> {
                 var value : T = 0
-                public fun get() -> T { rtn value }
-                public fun set(v : T) -> void { value = v }
+                public fn get() -> T { rtn value }
+                public fn set(v : T) -> void { value = v }
             }
 
-            fun total(ps : Point[]) -> int {
+            fn total(ps : Point[]) -> int {
                 var t = 0
                 for (var i = 0; i < ps.length; i = i + 1) {
                     t = t + ps[i].sum()
@@ -3936,7 +3936,7 @@ class RsfTest {
                 rtn t
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var ps : Point[] = new Point[2]
                 println("默认 ps[0] 是对象吗（长度为 " + ps.length + "）")
                 ps[0] = new Point(3, 4)
@@ -3991,7 +3991,7 @@ class RsfTest {
     @Test
     fun `数组越界两端报同样的错`() {
         val caught = """
-            fun main() -> void {
+            fn main() -> void {
                 var a : int[] = new int[3]
                 try {
                     println("不该走到这里：" + a[5])
@@ -4029,7 +4029,7 @@ class RsfTest {
 
         // 没被接住时：解释器抛的是**rsf 自己的错误**，不是 JVM 的 ArrayIndexOutOfBoundsException
         val leaked = """
-            fun main() -> void {
+            fn main() -> void {
                 var a : int[] = new int[2]
                 println(a[7])
                 rtn
@@ -4053,14 +4053,14 @@ class RsfTest {
     fun `byte 数组能创建并按下标读写`() {
         val program = """
             // 阶段 16b（byte[] + Files.write 落盘）的前提：byte 数组能建、能按字节读写
-            fun fillZeros(raw : byte[], from : int) -> void {
+            fn fillZeros(raw : byte[], from : int) -> void {
                 for (var i = from; i < raw.length; i = i + 1) {
                     raw[i] = 0
                 }
                 rtn
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var raw : byte[] = new byte[4]
                 println("长度 = " + raw.length)
                 println("默认 = " + raw[0] + "," + raw[1] + "," + raw[2] + "," + raw[3])
@@ -4107,9 +4107,9 @@ class RsfTest {
                     items[1] = b
                 }
 
-                public fun total() -> int { rtn items[0] + items[1] }
+                public fn total() -> int { rtn items[0] + items[1] }
 
-                public fun grow(size : int) -> void {
+                public fn grow(size : int) -> void {
                     // 字段数组可以整体换掉（引用赋值）
                     items = new int[size]
                 }
@@ -4120,7 +4120,7 @@ class RsfTest {
                 var grid : int[][] = new int[2][2]
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var bag = new Bag(3, 4)
                 println("长度 = " + bag.items.length + "，total = " + bag.total())
                 bag.items[0] = 10
@@ -4158,7 +4158,7 @@ class RsfTest {
         // 下标是纯整数位置：char / string / long 都不接受，报错要说清该写什么
         val charIndex = assertFailsWith<RsfError> {
             Rsf.analyze(
-                source("fun main() -> void {\n    var a : int[] = new int[2]\n    println(a['x'])\n    rtn\n}\n"),
+                source("fn main() -> void {\n    var a : int[] = new int[2]\n    println(a['x'])\n    rtn\n}\n"),
             )
         }
         assertEquals("checker", charIndex.phase)
@@ -4167,7 +4167,7 @@ class RsfTest {
 
         val stringIndex = assertFailsWith<RsfError> {
             Rsf.analyze(
-                source("fun main() -> void {\n    var a : int[] = new int[2]\n    a[\"0\"] = 1\n    rtn\n}\n"),
+                source("fn main() -> void {\n    var a : int[] = new int[2]\n    a[\"0\"] = 1\n    rtn\n}\n"),
             )
         }
         assertTrue(stringIndex.detail.contains("数组下标必须是 int"), stringIndex.detail)
@@ -4175,7 +4175,7 @@ class RsfTest {
         val longIndex = assertFailsWith<RsfError> {
             Rsf.analyze(
                 source(
-                    "fun main() -> void {\n    var a : int[] = new int[2]\n" +
+                    "fn main() -> void {\n    var a : int[] = new int[2]\n" +
                         "    var i : long = 0L\n    println(a[i])\n    rtn\n}\n",
                 ),
             )
@@ -4184,13 +4184,13 @@ class RsfTest {
 
         // 不是数组的东西不能写下标；数组的 length 是属性不是方法
         val notArray = assertFailsWith<RsfError> {
-            Rsf.analyze(source("fun main() -> void {\n    println(1[0])\n    rtn\n}\n"))
+            Rsf.analyze(source("fn main() -> void {\n    println(1[0])\n    rtn\n}\n"))
         }
         assertTrue(notArray.detail.contains("不是数组"), notArray.detail)
 
         val lengthCall = assertFailsWith<RsfError> {
             Rsf.analyze(
-                source("fun main() -> void {\n    var a : int[] = new int[2]\n    println(a.length())\n    rtn\n}\n"),
+                source("fn main() -> void {\n    var a : int[] = new int[2]\n    println(a.length())\n    rtn\n}\n"),
             )
         }
         assertTrue(lengthCall.detail.contains("不要括号"), lengthCall.detail)
@@ -4198,7 +4198,7 @@ class RsfTest {
         // 数组不能直接打印：身份哈希两端没法一致，所以编译期就拦住
         val printArray = assertFailsWith<RsfError> {
             Rsf.analyze(
-                source("fun main() -> void {\n    var a : int[] = new int[2]\n    println(a)\n    rtn\n}\n"),
+                source("fn main() -> void {\n    var a : int[] = new int[2]\n    println(a)\n    rtn\n}\n"),
             )
         }
         assertTrue(printArray.detail.contains("不能直接打印"), printArray.detail)
@@ -4206,7 +4206,7 @@ class RsfTest {
         // 数组元素类型不对也要报清楚
         val badElement = assertFailsWith<RsfError> {
             Rsf.analyze(
-                source("fun main() -> void {\n    var a : int[] = new int[2]\n    a[0] = \"x\"\n    rtn\n}\n"),
+                source("fn main() -> void {\n    var a : int[] = new int[2]\n    a[0] = \"x\"\n    rtn\n}\n"),
             )
         }
         assertTrue(badElement.detail.contains("元素类型是 int"), badElement.detail)
@@ -4215,7 +4215,7 @@ class RsfTest {
     @Test
     fun `嵌套数组两端一致`() {
         val program = """
-            fun sumGrid(grid : int[][]) -> int {
+            fn sumGrid(grid : int[][]) -> int {
                 var total = 0
                 for (var r = 0; r < grid.length; r = r + 1) {
                     for (var c = 0; c < grid[r].length; c = c + 1) {
@@ -4225,7 +4225,7 @@ class RsfTest {
                 rtn total
             }
 
-            fun makeGrid(rows : int, cols : int) -> int[][] {
+            fn makeGrid(rows : int, cols : int) -> int[][] {
                 var g = new int[rows][cols]
                 for (var r = 0; r < rows; r = r + 1) {
                     for (var c = 0; c < cols; c = c + 1) {
@@ -4235,7 +4235,7 @@ class RsfTest {
                 rtn g
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var grid : int[][] = new int[2][3]
                 println("grid.length = " + grid.length + "，grid[0].length = " + grid[0].length)
                 println("默认 grid[0][0] = " + grid[0][0] + "，grid[1][2] = " + grid[1][2])
@@ -4300,11 +4300,11 @@ class RsfTest {
                     this(n, n)
                 }
 
-                public fun sum() -> int { rtn x + y }
-                public fun describe() -> string { rtn "(" + x + "," + y + ") d=" + doubled }
+                public fn sum() -> int { rtn x + y }
+                public fn describe() -> string { rtn "(" + x + "," + y + ") d=" + doubled }
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var p = new Point(3, 4)
                 println(p.describe() + " sum=" + p.sum())
                 println(new Point(5).describe())
@@ -4353,10 +4353,10 @@ class RsfTest {
                     tag = "string"
                 }
 
-                public fun show() -> string { rtn tag + ":" + v }
+                public fn show() -> string { rtn tag + ":" + v }
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 println(new Q().show())
                 println(new Q(7).show())       // int 是精确匹配，赢了 long
                 println(new Q(7L).show())
@@ -4396,10 +4396,10 @@ class RsfTest {
                     trace = trace + 100
                 }
 
-                public fun show() -> string { rtn "x=" + x + " trace=" + trace }
+                public fn show() -> string { rtn "x=" + x + " trace=" + trace }
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 println(new R().show())
                 println(new R(2, 3).show())
                 println(new R(9).show())          // 直接走主构造
@@ -4430,13 +4430,13 @@ class RsfTest {
             public class Empty {
                 var n : int = 7
                 var xs : int[] = new int[2]
-                public fun get() -> int { rtn n + xs.length }
+                public fn get() -> int { rtn n + xs.length }
             }
 
             // 显式无参主构造：写 class Zero()
             public class Zero() {
                 var z : int = 3
-                public fun get() -> int { rtn z }
+                public fn get() -> int { rtn z }
             }
 
             // 主构造没有参数、次构造委托给它
@@ -4446,10 +4446,10 @@ class RsfTest {
                     this()
                     w = n
                 }
-                public fun get() -> int { rtn w }
+                public fn get() -> int { rtn w }
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 println("Empty = " + new Empty().get())
                 println("Zero = " + new Zero().get())
                 println("WithSecondary() = " + new WithSecondary().get())
@@ -4478,8 +4478,8 @@ class RsfTest {
         val oldStyle = assertFailsWith<RsfError> {
             Rsf.analyze(
                 source(
-                    "class P {\n    var x : int = 0\n    fun P(a : int) -> void { x = a }\n}\n" +
-                        "fun main() -> void { rtn }\n",
+                    "class P {\n    var x : int = 0\n    fn P(a : int) -> void { x = a }\n}\n" +
+                        "fn main() -> void { rtn }\n",
                 ),
             )
         }
@@ -4491,7 +4491,7 @@ class RsfTest {
             Rsf.analyze(
                 source(
                     "class P {\n    var x : int = 0\n    constructor(a : int) { x = a }\n" +
-                        "    constructor(b : int) { x = b }\n}\nfun main() -> void { rtn }\n",
+                        "    constructor(b : int) { x = b }\n}\nfn main() -> void { rtn }\n",
                 ),
             )
         }
@@ -4502,7 +4502,7 @@ class RsfTest {
             Rsf.analyze(
                 source(
                     "class P(x0 : int) {\n    var x : int = x0\n    constructor() { x = 1 }\n}\n" +
-                        "fun main() -> void { rtn }\n",
+                        "fn main() -> void { rtn }\n",
                 ),
             )
         }
@@ -4513,7 +4513,7 @@ class RsfTest {
             Rsf.analyze(
                 source(
                     "class P(x0 : int) {\n    var x : int = x0\n    constructor() {\n" +
-                        "        x = 1\n        this(2)\n    }\n}\nfun main() -> void { rtn }\n",
+                        "        x = 1\n        this(2)\n    }\n}\nfn main() -> void { rtn }\n",
                 ),
             )
         }
@@ -4524,7 +4524,7 @@ class RsfTest {
             Rsf.analyze(
                 source(
                     "class P(x0 : int) {\n    var x : int = x0\n" +
-                        "    public fun f() -> void { this(1) }\n}\nfun main() -> void { rtn }\n",
+                        "    public fn f() -> void { this(1) }\n}\nfn main() -> void { rtn }\n",
                 ),
             )
         }
@@ -4535,7 +4535,7 @@ class RsfTest {
             Rsf.analyze(
                 source(
                     "class P {\n    var x : int = 0\n    constructor() { this(1) }\n" +
-                        "    constructor(a : int) { this() }\n}\nfun main() -> void { rtn }\n",
+                        "    constructor(a : int) { this() }\n}\nfn main() -> void { rtn }\n",
                 ),
             )
         }
@@ -4546,7 +4546,7 @@ class RsfTest {
             Rsf.analyze(
                 source(
                     "class P {\n    var x : int = 0\n    constructor() { this() }\n}\n" +
-                        "fun main() -> void { rtn }\n",
+                        "fn main() -> void { rtn }\n",
                 ),
             )
         }
@@ -4571,7 +4571,7 @@ class RsfTest {
 
         // constructor 只能写在类体里
         val topLevel = assertFailsWith<RsfError> {
-            Rsf.parse(source("constructor() { }\nfun main() -> void { rtn }\n"))
+            Rsf.parse(source("constructor() { }\nfn main() -> void { rtn }\n"))
         }
         assertEquals("parser", topLevel.phase)
         assertTrue(topLevel.detail.contains("类体"), topLevel.detail)
@@ -4581,7 +4581,7 @@ class RsfTest {
             Rsf.analyze(
                 source(
                     "class P {\n    var x : int = 0\n    constructor(a : int) { x = a }\n}\n" +
-                        "fun main() -> void {\n    var p = new P()\n    rtn\n}\n",
+                        "fn main() -> void {\n    var p = new P()\n    rtn\n}\n",
                 ),
             )
         }
@@ -4593,7 +4593,7 @@ class RsfTest {
             Rsf.analyze(
                 source(
                     "class P(x0 : int) {\n    var x : int = x0\n" +
-                        "    public fun f() -> int { rtn x0 }\n}\nfun main() -> void { rtn }\n",
+                        "    public fn f() -> int { rtn x0 }\n}\nfn main() -> void { rtn }\n",
                 ),
             )
         }
@@ -4614,10 +4614,10 @@ class RsfTest {
                     xs[5] = 1          // 委托之后，在次构造体里越界
                 }
 
-                public fun get() -> int { rtn n }
+                public fn get() -> int { rtn n }
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 try {
                     var p = new P(3)
                     println("正常 = " + p.get())
@@ -4656,7 +4656,7 @@ class RsfTest {
         val file = File(dir, "hello.txt")
 
         val program = """
-            fun main() -> void {
+            fn main() -> void {
                 try {
                     writeText(${rsfPath(file)}, "第一行\n第二行")
                     var back : string = readText(${rsfPath(file)})
@@ -4687,7 +4687,7 @@ class RsfTest {
         val file = File(dir, "raw.bin")
 
         val program = """
-            fun main() -> void {
+            fn main() -> void {
                 var data : byte[] = new byte[4]
                 data[0] = toByte(200)
                 data[1] = 1
@@ -4723,7 +4723,7 @@ class RsfTest {
         val missingDir = File(dir, "no-such-dir")
 
         val program = """
-            fun main() -> void {
+            fn main() -> void {
                 try {
                     var text : string = readText(${rsfPath(missing)})
                     println("不该到这里：" + text)
@@ -4773,12 +4773,12 @@ class RsfTest {
         good.writeText("兜底用的内容")
 
         val program = """
-            public fun loadOrFail(path : string) -> !string {
+            public fn loadOrFail(path : string) -> !string {
                 var text : string = readText(path)!!
                 rtn text
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 println("兜底 = " + (readText(${rsfPath(missing)}) ?: "读不到"))
 
                 try {
@@ -4816,7 +4816,7 @@ class RsfTest {
         val file = File(dir, "jvm-bytes.bin")
 
         val program = """
-            fun main() -> void {
+            fn main() -> void {
                 var text : string = "RsF"
                 var utf : byte[] = text.getBytes()
                 println("字节数 = " + utf.length)
@@ -4881,7 +4881,7 @@ class RsfTest {
 
         // 端到端：上面这两条签名在两条后端里都真的调得动
         val program = """
-            fun main() -> void {
+            fn main() -> void {
                 var text : string = "RsF 16b"
                 var raw : byte[] = text.getBytes()
                 var back : string = new String(raw)
@@ -4910,17 +4910,17 @@ class RsfTest {
             public class Box&<T> {
                 var value : T = 0
                 constructor(v0 : T) { value = v0 }
-                public fun get() -> T { rtn value }
+                public fn get() -> T { rtn value }
             }
 
-            fun javaStyle(int a, string s) -> int { rtn a + s.length() }
-            fun kotlinStyle(a : int, s : string) -> int { rtn a + s.length() }
-            fun mixed(int a, s : string, Box&<int> b, xs : int[], maybe : ?int) -> int {
+            fn javaStyle(int a, string s) -> int { rtn a + s.length() }
+            fn kotlinStyle(a : int, s : string) -> int { rtn a + s.length() }
+            fn mixed(int a, s : string, Box&<int> b, xs : int[], maybe : ?int) -> int {
                 var extra = maybe ?: 0
                 rtn a + s.length() + b.get() + xs.length + extra
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var s = "abcd"
                 println("java   = " + javaStyle(1, s))
                 println("kotlin = " + kotlinStyle(1, s))
@@ -4945,7 +4945,7 @@ class RsfTest {
     @Test
     fun `参数漏了类型时提示两种写法`() {
         val e = assertFailsWith<RsfError> {
-            Rsf.analyze(source("fun f(x) -> int { rtn 1 }\n"))
+            Rsf.analyze(source("fn f(x) -> int { rtn 1 }\n"))
         }
         assertTrue(e.detail.contains("参数 'x' 缺少类型"), e.detail)
         // 两种写法的提示都必须出现（用户照着任一条改都能过）
@@ -4968,16 +4968,16 @@ class RsfTest {
                 var y : int = y0
                 constructor() { this(0, 0) }
                 constructor(v : int) { this(v, 0) }
-                public fun sum() -> int { rtn x + y }
+                public fn sum() -> int { rtn x + y }
             }
 
             public class Marker {
                 var tag : string = "m"
             }
 
-            fun makePoint(a : int, b : int) -> Point { rtn new Point(a, b) }
+            fn makePoint(a : int, b : int) -> Point { rtn new Point(a, b) }
 
-            fun main() -> void {
+            fn main() -> void {
                 // 带参数的主构造
                 var p = Point(3, 4)
                 var q = new Point(3, 4)
@@ -5036,10 +5036,10 @@ class RsfTest {
                 var n : int = 1
             }
 
-            fun make() -> int { rtn 41 }
-            fun widget() -> Widget { rtn Widget() }
+            fn make() -> int { rtn 41 }
+            fn widget() -> Widget { rtn Widget() }
 
-            fun main() -> void {
+            fn main() -> void {
                 var a = make()              // 函数调用，不是构造
                 var b = widget()            // 函数调用（返回对象）
                 println("a = " + a + " b = " + b.n)
@@ -5062,7 +5062,7 @@ class RsfTest {
             Rsf.analyze(
                 source(
                     "public class Widget {\n    var n : int = 1\n}\n\n" +
-                        "fun Widget() -> int { rtn 1 }\n",
+                        "fn Widget() -> int { rtn 1 }\n",
                 ),
             )
         }
@@ -5075,7 +5075,7 @@ class RsfTest {
             public class Box&<T> {
                 var value : T = 0
                 constructor(v0 : T) { value = v0 }
-                public fun get() -> T { rtn value }
+                public fn get() -> T { rtn value }
             }
 
             public class Pair&<K, V>(k0 : K, v0 : V) {
@@ -5083,7 +5083,7 @@ class RsfTest {
                 var v : V = v0
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 // 泛型类：`Box&<int>(0)` 与 `new Box&<int>(0)` 一样
                 var b = Box&<int>(0)
                 println("b = " + b.get())
@@ -5121,7 +5121,7 @@ class RsfTest {
         val program = """
             import java.util.ArrayList
 
-            fun main() -> void {
+            fn main() -> void {
                 var text : string = "RsF 16b"
                 var raw : byte[] = text.getBytes()
                 // 显式 new 与省掉 new 各来一次，结果必须相同
@@ -5164,7 +5164,7 @@ class RsfTest {
                 var id : byte = toByte(200)
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var p = new Plain(3, false)
                 println("p = " + p)
                 println(p)
@@ -5206,26 +5206,26 @@ class RsfTest {
     fun `返回子句不再接受双冒号写法`() {
         // 2026-10-15 拍板：`:: T` 删掉，`::` 腾给 `xxx::xx`（伴生类 Marker::Impl）
         val e = assertFailsWith<RsfError> {
-            Rsf.parse(source("fun f() :: int { rtn 1 }\n"))
+            Rsf.parse(source("fn f() :: int { rtn 1 }\n"))
         }
         // 报错要说清改用 -> 或 :
         assertTrue(e.detail.contains("->"), e.detail)
         assertTrue(e.detail.contains(":"), e.detail)
 
         // `->` 和 `:` 都还在
-        Rsf.parse(source("fun f() -> int { rtn 1 }\n"))
-        Rsf.parse(source("fun f() : int { rtn 1 }\n"))
+        Rsf.parse(source("fn f() -> int { rtn 1 }\n"))
+        Rsf.parse(source("fn f() : int { rtn 1 }\n"))
     }
 
     @Test
     fun `变量与字段的类型只接受名字后置写法`() {
         // 新写法：名字 : 类型
-        Rsf.parse(source("fun main() -> void {\n    var x : int = 0\n    rtn\n}\n"))
+        Rsf.parse(source("fn main() -> void {\n    var x : int = 0\n    rtn\n}\n"))
         Rsf.parse(source("class P {\n    var n : int = 0\n}\n"))
 
         // 老写法：类型在前 —— 报错里要直接给出新写法
         val local = assertFailsWith<RsfError> {
-            Rsf.parse(source("fun main() -> void {\n    var int x = 0\n    rtn\n}\n"))
+            Rsf.parse(source("fn main() -> void {\n    var int x = 0\n    rtn\n}\n"))
         }
         assertTrue(local.detail.contains("名字"), local.detail)
         assertTrue(local.detail.contains("var x : int ="), local.detail)
@@ -5237,7 +5237,7 @@ class RsfTest {
 
         // 冒号后面不是类型：要说清这里写的是类型
         val bad = assertFailsWith<RsfError> {
-            Rsf.parse(source("fun main() -> void {\n    var x : 5 = 1\n    rtn\n}\n"))
+            Rsf.parse(source("fn main() -> void {\n    var x : 5 = 1\n    rtn\n}\n"))
         }
         assertTrue(bad.detail.contains("x : 类型"), bad.detail)
     }
@@ -5251,8 +5251,8 @@ class RsfTest {
             public class Box&<T> {
                 var value : T = 0
                 constructor(v0 : T) { value = v0 }
-                public fun get() -> T { rtn value }
-                public fun put(v : T) -> void { value = v }
+                public fn get() -> T { rtn value }
+                public fn put(v : T) -> void { value = v }
             }
 
             public class Pair&<K, V>(k0 : K, v0 : V) {
@@ -5260,7 +5260,7 @@ class RsfTest {
                 var v : V = v0
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var b = Box&<int>(5)
                 println("读 = " + b.value)
                 b.value = 9
@@ -5344,7 +5344,7 @@ class RsfTest {
         // 后者验的是**优先级**：`a == b && c == d` 必须是 `(a == b) && (c == d)`，
         // `x || y && z` 必须是 `x || (y && z)`（`&&` 比 `||` 紧）。
         val program = """
-            fun main() -> void {
+            fn main() -> void {
                 var t = true
                 var f = false
                 println("t && t = " + (t && t))
@@ -5396,19 +5396,19 @@ class RsfTest {
                 var n : int = 0
             }
 
-            fun f(c : Counter) -> bool {
+            fn f(c : Counter) -> bool {
                 c.n = c.n + 1
                 println("f 第 " + c.n + " 次")
                 rtn false
             }
 
-            fun t(c : Counter) -> bool {
+            fn t(c : Counter) -> bool {
                 c.n = c.n + 1
                 println("t 第 " + c.n + " 次")
                 rtn true
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var c = Counter()
 
                 println("假与 = " + (f(c) && t(c)))
@@ -5452,19 +5452,19 @@ class RsfTest {
     fun `与或的操作数必须是 bool`() {
         // 报错要说清**哪一边**、**实际是什么类型**
         val leftInt = assertFailsWith<RsfError> {
-            Rsf.analyze(source("fun main() -> void {\n    println(1 && true)\n    rtn\n}\n"))
+            Rsf.analyze(source("fn main() -> void {\n    println(1 && true)\n    rtn\n}\n"))
         }
         assertTrue(leftInt.detail.contains("两边必须是 bool"), leftInt.detail)
         assertTrue(leftInt.detail.contains("左边是 int"), leftInt.detail)
 
         val rightInt = assertFailsWith<RsfError> {
-            Rsf.analyze(source("fun main() -> void {\n    println(true || 2)\n    rtn\n}\n"))
+            Rsf.analyze(source("fn main() -> void {\n    println(true || 2)\n    rtn\n}\n"))
         }
         assertTrue(rightInt.detail.contains("两边必须是 bool"), rightInt.detail)
         assertTrue(rightInt.detail.contains("右边是 int"), rightInt.detail)
 
         val string = assertFailsWith<RsfError> {
-            Rsf.analyze(source("fun main() -> void {\n    println(\"a\" && true)\n    rtn\n}\n"))
+            Rsf.analyze(source("fn main() -> void {\n    println(\"a\" && true)\n    rtn\n}\n"))
         }
         assertTrue(string.detail.contains("左边是 string"), string.detail)
 
@@ -5472,7 +5472,7 @@ class RsfTest {
         val nullable = assertFailsWith<RsfError> {
             Rsf.analyze(
                 source(
-                    "fun main() -> void {\n" +
+                    "fn main() -> void {\n" +
                         "    var p : ?bool = null\n" +
                         "    println(p && true)\n" +
                         "    rtn\n}\n",
@@ -5484,7 +5484,7 @@ class RsfTest {
 
         // 单个 `|` 不是记号：词法阶段就要给出「逻辑或写两个竖线」的提示
         val single = assertFailsWith<RsfError> {
-            Rsf.parse(source("fun main() -> void {\n    println(true | false)\n    rtn\n}\n"))
+            Rsf.parse(source("fn main() -> void {\n    println(true | false)\n    rtn\n}\n"))
         }
         assertEquals("lexer", single.phase)
         assertTrue(single.detail.contains("||"), single.detail)
@@ -5498,10 +5498,10 @@ class RsfTest {
             public class Box&<T> {
                 var value : T = 0
                 constructor(v0 : T) { value = v0 }
-                public fun get() -> T { rtn value }
+                public fn get() -> T { rtn value }
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var b = Box&<int>(7)
                 var ok = b.value == 7 && b.value > 0
                 println("box = " + b.get() + " ok = " + ok)
@@ -5561,7 +5561,7 @@ class RsfTest {
                 EOF,
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var k = TokenKind.IDENT
                 println(k)
                 println("kind = " + k)
@@ -5602,16 +5602,16 @@ class RsfTest {
             public class Palette(k0 : Color) {
                 var current : Color = k0
                 var history : Color[] = new Color[3]
-                public fun get() -> Color { rtn current }
-                public fun pick(c : Color) -> Color { rtn c }
-                public fun set(c : Color) -> void { current = c }
+                public fn get() -> Color { rtn current }
+                public fn pick(c : Color) -> Color { rtn c }
+                public fn set(c : Color) -> void { current = c }
             }
 
-            fun first(c : Color, other : Color) -> Color {
+            fn first(c : Color, other : Color) -> Color {
                 rtn c
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var p = Palette(Color.RED)
                 println("字段 = " + p.current)
                 println("方法返回 = " + p.get())
@@ -5653,11 +5653,11 @@ class RsfTest {
         val program = """
             public enum Mode { FAST, SLOW, OFF }
 
-            fun pick(m : ?Mode) -> Mode {
+            fn pick(m : ?Mode) -> Mode {
                 rtn m ?: Mode.OFF
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var maybe : ?Mode = null
                 println("可空打印 = " + maybe)
                 println("兜底 = " + (maybe ?: Mode.FAST))
@@ -5699,7 +5699,7 @@ class RsfTest {
     fun `枚举值重名 与 枚举名重名会被拦下`() {
         // 值名重复
         val dupValue = assertFailsWith<RsfError> {
-            Rsf.analyze(source("public enum E { A, B, A }\n\nfun main() -> void { rtn }\n"))
+            Rsf.analyze(source("public enum E { A, B, A }\n\nfn main() -> void { rtn }\n"))
         }
         assertTrue(dupValue.detail.contains("值 'A' 重复"), dupValue.detail)
 
@@ -5709,7 +5709,7 @@ class RsfTest {
                 source(
                     "public enum Thing { A }\n\n" +
                         "public class Thing { var v : int = 0 }\n\n" +
-                        "fun main() -> void { rtn }\n",
+                        "fn main() -> void { rtn }\n",
                 ),
             )
         }
@@ -5720,7 +5720,7 @@ class RsfTest {
             Rsf.analyze(
                 source(
                     "public enum Thing { A }\n\n" +
-                        "public fun Thing() -> void { rtn }\n",
+                        "public fn Thing() -> void { rtn }\n",
                 ),
             )
         }
@@ -5732,7 +5732,7 @@ class RsfTest {
                 source(
                     "public enum Thing { A }\n\n" +
                         "public enum Thing { B }\n\n" +
-                        "fun main() -> void { rtn }\n",
+                        "fn main() -> void { rtn }\n",
                 ),
             )
         }
@@ -5740,7 +5740,7 @@ class RsfTest {
 
         // 空枚举：语法层就该拦住（没有任何值可取）
         val empty = assertFailsWith<RsfError> {
-            Rsf.parse(source("public enum E { }\n\nfun main() -> void { rtn }\n"))
+            Rsf.parse(source("public enum E { }\n\nfn main() -> void { rtn }\n"))
         }
         assertTrue(empty.detail.contains("至少要有一个值"), empty.detail)
 
@@ -5749,7 +5749,7 @@ class RsfTest {
             Rsf.analyze(
                 source(
                     "public enum TokenKind { IDENT, INT_LIT }\n\n" +
-                        "fun main() -> void {\n    println(TokenKind.IDNET)\n    rtn\n}\n",
+                        "fn main() -> void {\n    println(TokenKind.IDNET)\n    rtn\n}\n",
                 ),
             )
         }
@@ -5764,7 +5764,7 @@ class RsfTest {
                 source(
                     "public enum Left { X }\n\n" +
                         "public enum Right { X }\n\n" +
-                        "fun main() -> void {\n" +
+                        "fn main() -> void {\n" +
                         "    var a = Left.X\n" +
                         "    var b = Right.X\n" +
                         "    println(a == b)\n" +
@@ -5780,7 +5780,7 @@ class RsfTest {
         Rsf.analyze(
             source(
                 "public enum Left { X, Y }\n\n" +
-                    "fun main() -> void {\n" +
+                    "fn main() -> void {\n" +
                     "    println(Left.X == Left.Y)\n" +
                     "    rtn\n}\n",
             ),
@@ -5791,7 +5791,7 @@ class RsfTest {
             Rsf.analyze(
                 source(
                     "public enum Left { X }\n\n" +
-                        "fun main() -> void {\n    var a = new Left()\n    rtn\n}\n",
+                        "fn main() -> void {\n    var a = new Left()\n    rtn\n}\n",
                 ),
             )
         }
@@ -5802,7 +5802,7 @@ class RsfTest {
             Rsf.analyze(
                 source(
                     "public enum Left { X }\n\n" +
-                        "fun main() -> void {\n" +
+                        "fn main() -> void {\n" +
                         "    var a = Left.X\n" +
                         "    println(a.X)\n" +
                         "    rtn\n}\n",
@@ -5824,7 +5824,7 @@ class RsfTest {
                         "    INT_LIT,\n" +
                         "    EOF,\n" +
                         "}\n\n" +
-                        "public fun describe(k : TokenKind) -> string {\n" +
+                        "public fn describe(k : TokenKind) -> string {\n" +
                         "    switch (k) {\n" +
                         "        TokenKind.IDENT : rtn \"标识符\"\n" +
                         "        TokenKind.INT_LIT : rtn \"整数\"\n" +
@@ -5839,7 +5839,7 @@ class RsfTest {
                         "    var kind : TokenKind = TokenKind.EOF\n" +
                         "    constructor(k : TokenKind) { kind = k }\n" +
                         "}\n\n" +
-                        "fun main() -> void {\n" +
+                        "fn main() -> void {\n" +
                         "    var t = Token(TokenKind.INT_LIT)\n" +
                         "    println(\"kind = \" + t.kind)\n" +
                         "    println(\"describe = \" + describe(t.kind))\n" +
@@ -5895,7 +5895,7 @@ class RsfTest {
     fun `switch 匹配枚举常量两端一致`() {
         // 命中第一个 / 中间 / 最后一个，以及走 else 的那一路
         val program = switchPrelude + """
-        fun classify(k : TokenKind) -> string {
+        fn classify(k : TokenKind) -> string {
             switch (k) {
                 TokenKind.IDENT : rtn "标识符"
                 TokenKind.INT_LIT : rtn "整数"
@@ -5904,7 +5904,7 @@ class RsfTest {
             }
         }
 
-        fun main() -> void {
+        fn main() -> void {
             println(classify(TokenKind.IDENT))
             println(classify(TokenKind.INT_LIT))
             println(classify(TokenKind.STRING))
@@ -5948,12 +5948,12 @@ class RsfTest {
             var n : int = 0
         }
 
-        fun hit(c : Counter, tag : string) -> void {
+        fn hit(c : Counter, tag : string) -> void {
             c.n = c.n + 1
             println("跑了 " + tag + "（第 " + c.n + " 次）")
         }
 
-        fun main() -> void {
+        fn main() -> void {
             var c = Counter()
             var k = TokenKind.INT_LIT
             switch (k) {
@@ -5995,7 +5995,7 @@ class RsfTest {
             Rsf.analyze(
                 source(
                     switchPrelude +
-                        "fun main() -> void {\n" +
+                        "fn main() -> void {\n" +
                         "    var k = TokenKind.IDENT\n" +
                         "    switch (k) {\n" +
                         "        TokenKind.IDENT : println(\"i\")\n" +
@@ -6018,7 +6018,7 @@ class RsfTest {
         Rsf.analyze(
             source(
                 switchPrelude +
-                    "fun main() -> void {\n" +
+                    "fn main() -> void {\n" +
                     "    var k = TokenKind.IDENT\n" +
                     "    switch (k) {\n" +
                     "        TokenKind.IDENT : println(\"i\")\n" +
@@ -6035,7 +6035,7 @@ class RsfTest {
             Rsf.analyze(
                 source(
                     switchPrelude +
-                        "fun main() -> void {\n" +
+                        "fn main() -> void {\n" +
                         "    var k = TokenKind.IDENT\n" +
                         "    switch (k) {\n" +
                         "        TokenKind.IDENT : println(\"一\")\n" +
@@ -6056,7 +6056,7 @@ class RsfTest {
         val clean = Rsf.analyze(
             source(
                 switchPrelude +
-                    "fun main() -> void {\n" +
+                    "fn main() -> void {\n" +
                     "    var k = TokenKind.IDENT\n" +
                     "    switch (k) {\n" +
                     "        TokenKind.IDENT : println(\"一\")\n" +
@@ -6071,7 +6071,7 @@ class RsfTest {
         val legacy = Rsf.analyze(
             source(
                 switchPrelude +
-                    "fun main() -> void {\n" +
+                    "fn main() -> void {\n" +
                     "    var k = TokenKind.IDENT\n" +
                     "    switch (k) {\n" +
                     "        case TokenKind.IDENT : println(\"一\")\n" +
@@ -6096,7 +6096,7 @@ class RsfTest {
             Rsf.analyze(
                 source(
                     switchPrelude +
-                        "fun main() -> void {\n" +
+                        "fn main() -> void {\n" +
                         "    case TokenKind.IDENT : println(\"一\")\n" +
                         "    rtn\n}\n",
                 ),
@@ -6114,7 +6114,7 @@ class RsfTest {
                 source(
                     switchPrelude +
                         "public enum Other { IDENT }\n\n" +
-                        "fun main() -> void {\n" +
+                        "fn main() -> void {\n" +
                         "    var k = TokenKind.IDENT\n" +
                         "    switch (k) {\n" +
                         "        Other.IDENT : println(\"别的枚举\")\n" +
@@ -6131,7 +6131,7 @@ class RsfTest {
             Rsf.analyze(
                 source(
                     switchPrelude +
-                        "fun main() -> void {\n" +
+                        "fn main() -> void {\n" +
                         "    var k = TokenKind.IDENT\n" +
                         "    switch (k) {\n" +
                         "        TokenKind.NOPE : println(\"?\")\n" +
@@ -6149,7 +6149,7 @@ class RsfTest {
             Rsf.parse(
                 source(
                     switchPrelude +
-                        "fun main() -> void {\n" +
+                        "fn main() -> void {\n" +
                         "    var k = TokenKind.IDENT\n" +
                         "    switch (k) {\n" +
                         "        TokenKind.IDENT : println(\"i\")\n" +
@@ -6170,7 +6170,7 @@ class RsfTest {
             Rsf.analyze(
                 source(
                     switchPrelude +
-                        "fun main() -> void {\n" +
+                        "fn main() -> void {\n" +
                         "    var n = 1\n" +
                         "    switch (n) {\n" +
                         "        TokenKind.IDENT : println(\"i\")\n" +
@@ -6187,7 +6187,7 @@ class RsfTest {
             Rsf.analyze(
                 source(
                     switchPrelude +
-                        "fun main() -> void {\n" +
+                        "fn main() -> void {\n" +
                         "    var s = \"a\"\n" +
                         "    switch (s) {\n" +
                         "        TokenKind.IDENT : println(\"i\")\n" +
@@ -6205,7 +6205,7 @@ class RsfTest {
             Rsf.parse(
                 source(
                     switchPrelude +
-                        "fun main() -> void {\n" +
+                        "fn main() -> void {\n" +
                         "    var k = TokenKind.IDENT\n" +
                         "    switch (k) {\n" +
                         "        case 1 : println(\"一\")\n" +
@@ -6221,7 +6221,7 @@ class RsfTest {
             Rsf.analyze(
                 source(
                     switchPrelude +
-                        "fun main() -> void {\n" +
+                        "fn main() -> void {\n" +
                         "    var k : ?TokenKind = null\n" +
                         "    switch (k) {\n" +
                         "        TokenKind.IDENT : println(\"i\")\n" +
@@ -6237,7 +6237,7 @@ class RsfTest {
     @Test
     fun `switch 里的 break 与 rtn`() {
         val program = switchPrelude + """
-        fun classify(k : TokenKind) -> string {
+        fn classify(k : TokenKind) -> string {
             switch (k) {
                 TokenKind.IDENT : rtn "标识符"
                 TokenKind.INT_LIT : rtn "整数"
@@ -6246,7 +6246,7 @@ class RsfTest {
             }
         }
 
-        fun main() -> void {
+        fn main() -> void {
             // 分支体里的 rtn 正常结束函数
             println("rtn = " + classify(TokenKind.STRING))
 
@@ -6324,7 +6324,7 @@ class RsfTest {
                 var punct : int = 0
             }
 
-            fun bucket(c : Counters, k : Kind) -> void {
+            fn bucket(c : Counters, k : Kind) -> void {
                 switch (k) {
                     Kind.IDENT : c.idents = c.idents + 1
                     Kind.INT : c.numbers = c.numbers + 1
@@ -6339,7 +6339,7 @@ class RsfTest {
                 }
             }
 
-            fun label(k : Kind) -> string {
+            fn label(k : Kind) -> string {
                 switch (k) {
                     Kind.IDENT : rtn "标识符"
                     Kind.INT : rtn "整数"
@@ -6354,7 +6354,7 @@ class RsfTest {
                 }
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var c = Counters()
                 var kinds : Kind[] = new Kind[11]
                 kinds[0] = Kind.IDENT
@@ -6413,7 +6413,7 @@ class RsfTest {
         // 各抛各的异常类型没关系（解释器 RsfFailure / 编译产物 RuntimeException，
         // 都能被 catch 接住），消息分叉就会让两端输出不一致。
         val program = switchPrelude + """
-        fun main() -> void {
+        fn main() -> void {
             var kinds : TokenKind[] = new TokenKind[2]
             try {
                 switch (kinds[1]) {
@@ -6564,7 +6564,7 @@ class RsfTest {
         assertTrue(kt.detail.contains("逻辑或要写成两个竖线"), "Kotlin 版的报错文案：${kt.detail}")
         val rsfMessage = normalize(
             rsfLexerOutput(
-                "fun main() -> void {\n" +
+                "fn main() -> void {\n" +
                     "    println(lexError(\"var a = b | c\\n\"))\n" +
                     "    rtn\n" +
                     "}\n",
@@ -6587,7 +6587,7 @@ class RsfTest {
         // 与注解前缀 `@` 也列进来 —— 这几项此前只有 Kotlin 版认，靠下面那条
         // 「已知差异」用例单独钉着；现在两边都认，那份差异清单随之删掉。
         val keywords = listOf(
-            "fun", "rtn", "return", "import", "module", "pkg", "var", "imutvar", "let",
+            "fn", "rtn", "return", "import", "module", "pkg", "var", "imutvar", "let",
             "public", "private", "protected", "static", "override", "class",
             "enum", "interface", "annotation", "companion", "entity", "mathematic",
             "switch", "case",
@@ -6651,7 +6651,7 @@ class RsfTest {
     @Test
     fun `rsf 版词法器已经收下阶段 20、21、22 的新关键字并与 Kotlin 版一致`() {
         val text = "interface Greeter { }\n" +
-            "override fun f() -> void { }\n" +
+            "override fn f() -> void { }\n" +
             "annotation Marker(value : string = \"x\") { }\n" +
             "companion entity Impl { }\n" +
             "entity E\n" +
@@ -6673,7 +6673,7 @@ class RsfTest {
         val tmp = File.createTempFile("rsf-lex-agree-", ".rsf")
         tmp.writeText(text, Charsets.UTF_8)
         tmp.deleteOnExit()
-        return "fun main() -> void {\n" +
+        return "fn main() -> void {\n" +
             "    var ts : Token[] = lexFile(${rsfPath(tmp)}) ?: new Token[0]\n" +
             "    if (ts.length == 0) { println(\"<词法出错或读不到文件>\") }\n" +
             "    dumpTokens(ts)\n" +
@@ -6765,7 +6765,7 @@ class RsfTest {
 
         // rsf 版：lex() 给出空数组 + 错误消息；lexSafe() 给出带 ILLEGAL 的 token 流
         val probe = rsfLexerOutput(
-            "fun main() -> void {\n" +
+            "fn main() -> void {\n" +
                 "    var src = \"var s : string = \\\"没闭合\\nvar t : int = 1\\n\"\n" +
                 "    println(\"错误=\" + lexError(src))\n" +
                 "    println(\"lex 长度=\" + lex(src).length)\n" +
@@ -6798,7 +6798,7 @@ class RsfTest {
         assertTrue(kt.detail.contains("超出 int 范围"), "Kotlin 版应报超出 int 范围：${kt.detail}")
 
         val ovProbe = rsfLexerOutput(
-            "fun main() -> void {\n" +
+            "fn main() -> void {\n" +
                 "    var ts = lex(\"var big : long = 99999999999\\n\")\n" +
                 "    println(\"长度=\" + ts.length)\n" +
                 "    for (var i = 0; i < ts.length; i = i + 1) {\n" +
@@ -6822,11 +6822,11 @@ class RsfTest {
         // NullPointerException（解释器那条路反而看不出问题，因为解释器里 null 就是 null）。
         // 所以入口要写成 `?string` 接住再 `?:` 兜底；这一条把那个写法钉住。
         val probe = rsfLexerOutput(
-            "fun pickPath() -> string {\n" +
+            "fn pickPath() -> string {\n" +
                 "    var given : ?string = System.getProperty(\"rsf.lex.nope.not.set\")\n" +
                 "    rtn given ?: \"兜底值\"\n" +
                 "}\n" +
-                "fun main() -> void {\n" +
+                "fn main() -> void {\n" +
                 "    println(pickPath())\n" +
                 "    rtn\n" +
                 "}\n",
@@ -6872,7 +6872,7 @@ class RsfTest {
         val tmp = File.createTempFile("rsf-lex-", ".rsf")
         try {
             tmp.writeText(text, Charsets.UTF_8)
-            val probe = "fun main() -> void {\n" +
+            val probe = "fn main() -> void {\n" +
                 "    var ts : Token[] = lexFile(${rsfPath(tmp)}) ?: new Token[0]\n" +
                 "    if (ts.length == 0) { println(\"<词法出错或读不到文件>\") }\n" +
                 "    dumpTokens(ts)\n" +
@@ -7018,21 +7018,21 @@ class RsfTest {
                        math.rsf"
                 module "plugins"
 
-                public fun f(a : int, b : string) -> int { rtn a }
-                protected static fun g() : !string { rtn "x" }
-                private fun h(xs : int[], m : Box&<int>) -> void { rtn }
-                fun i() -> !Token { rtn }
-                fun j() -> null { rtn }
-                fun k() { rtn }
-                fun alias(s : str, b : boolean, c : byte, d : char) -> int { rtn 0 }
+                public fn f(a : int, b : string) -> int { rtn a }
+                protected static fn g() : !string { rtn "x" }
+                private fn h(xs : int[], m : Box&<int>) -> void { rtn }
+                fn i() -> !Token { rtn }
+                fn j() -> null { rtn }
+                fn k() { rtn }
+                fn alias(s : str, b : boolean, c : byte, d : char) -> int { rtn 0 }
             """.trimIndent() + "\n",
 
             "类与构造器" to """
                 public class Point&<T>(x0 : int, y0 : int) {
                     var x : int = x0
                     imutvar y : int = y0
-                    public fun sum() -> int { rtn x + y }
-                    public static fun origin() -> int { rtn 0 }
+                    public fn sum() -> int { rtn x + y }
+                    public static fn origin() -> int { rtn 0 }
                     constructor() { this(0, 0) }
                     constructor(v : int, w : int) {
                         this(v, w)
@@ -7042,7 +7042,7 @@ class RsfTest {
 
                 class Plain {
                     var v : string = "?"
-                    fun get() -> string { rtn v }
+                    fn get() -> string { rtn v }
                 }
 
                 class NoCtor { var n : int = 1 }
@@ -7052,7 +7052,7 @@ class RsfTest {
                 enum Color { RED, GREEN, BLUE, }
                 public enum Empty { ONLY }
 
-                fun name(c : Color) -> string {
+                fn name(c : Color) -> string {
                     switch (c) {
                         Color.RED : rtn "r"
                         Color.GREEN : {
@@ -7063,7 +7063,7 @@ class RsfTest {
                     }
                 }
 
-                fun partial(c : Color) -> void {
+                fn partial(c : Color) -> void {
                     switch (c) {
                         Color.RED : println("r")
                         else : println("other")
@@ -7075,7 +7075,7 @@ class RsfTest {
             """.trimIndent() + "\n",
 
             "语句全家桶" to """
-                fun stmts(a : int[], p : Point) -> int {
+                fn stmts(a : int[], p : Point) -> int {
                     var x : int = 0
                     imutvar y = 1
                     var z : Box&<int>[] = new Box&<int>[2]
@@ -7097,11 +7097,11 @@ class RsfTest {
             """.trimIndent() + "\n",
 
             "if while for" to """
-                fun branches(n : int) -> int {
+                fn branches(n : int) -> int {
                     if (n > 0) { rtn 1 } else if (n < 0) { rtn -1 } else { rtn 0 }
                 }
 
-                fun branches2(n : int) -> int {
+                fn branches2(n : int) -> int {
                     if n > 0 : rtn 1
                     if n > 0 : { rtn 1 }
                     if n ? 1 : 2
@@ -7110,7 +7110,7 @@ class RsfTest {
                     rtn 0
                 }
 
-                fun loops(n : int) -> void {
+                fn loops(n : int) -> void {
                     for (var i = 0; i < 9; i = i + 1) { }
                     for (var i = 0; ; i = i + 1) { break }
                     for (;;) { break }
@@ -7124,14 +7124,14 @@ class RsfTest {
             """.trimIndent() + "\n",
 
             "fail 与 try" to """
-                fun boom() -> !int {
+                fn boom() -> !int {
                     try { fail "boom" } catch (e : string) { rtn 1 }
                     try { fail "x" } catch (e string) { rtn 2 }
                     try { fail "y" } catch (e : string) { rtn 3 }
                     rtn 0
                 }
 
-                fun nest() -> !void {
+                fn nest() -> !void {
                     try {
                         try { fail "in" } catch (e : string) { println(e) }
                     } catch (outer : string) { println(outer) }
@@ -7140,7 +7140,7 @@ class RsfTest {
             """.trimIndent() + "\n",
 
             "表达式全家桶" to """
-                fun expr(a : int[], o : Obj, s : string) -> int {
+                fn expr(a : int[], o : Obj, s : string) -> int {
                     var i = 1 + 2 * 3 - 4 / 5 % 2
                     var u = -i
                     var v = !true
@@ -7167,7 +7167,7 @@ class RsfTest {
             """.trimIndent() + "\n",
 
             "字面量写法" to """
-                fun literals() -> void {
+                fn literals() -> void {
                     var a = 0
                     var b = 007
                     var c = 1_000_000
@@ -7196,7 +7196,7 @@ class RsfTest {
             """.trimIndent() + "\n",
 
             // 字符串里真的是换行（字符串允许跨行是基准行为之一）
-            "跨行字符串与注释" to "fun multi() -> void {\n" +
+            "跨行字符串与注释" to "fn multi() -> void {\n" +
                 "    /* 块注释\n" +
                 "       跨两行 */\n" +
                 "    var s = \"第一行\n" +
@@ -7211,26 +7211,26 @@ class RsfTest {
             // 类实现多个父类型（含泛型实参）、方法后面可选的分号。
             "接口与父类型子句" to """
                 public interface Greeter {
-                    fun greet(name : string) -> string
-                    fun loud(name : string) -> string { rtn "HI" }
+                    fn greet(name : string) -> string
+                    fn loud(name : string) -> string { rtn "HI" }
                 }
 
                 interface Empty { }
 
                 interface Box&<T> : Greeter {
-                    override fun greet(name : string) -> string
-                    fun get() -> T
+                    override fn greet(name : string) -> string
+                    fn get() -> T
                 }
 
                 interface Semi {
-                    fun p() -> void ;
+                    fn p() -> void ;
                 }
 
                 class Impl(x0 : int) : Greeter, Box&<int> {
                     var x : int = x0
-                    public override fun greet(name : string) -> string { rtn name }
-                    override public fun get() -> int { rtn x }
-                    override static fun make() -> int { rtn 1 }
+                    public override fn greet(name : string) -> string { rtn name }
+                    override public fn get() -> int { rtn x }
+                    override static fn make() -> int { rtn 1 }
                 }
             """.trimIndent() + "\n",
 
@@ -7272,7 +7272,7 @@ class RsfTest {
                 annotation WithCompanion {
                     companion entity Handlers : Runnable {
                         var x : int = 1
-                        fun run() -> void { rtn }
+                        fn run() -> void { rtn }
                         constructor() { }
                     }
                 }
@@ -7293,28 +7293,28 @@ class RsfTest {
                 @Marker("hi", count = 3)
                 class C {
                     @Marker var f : int = 0
-                    @Marker() @Other fun g() -> void { rtn }
+                    @Marker() @Other fn g() -> void { rtn }
                 }
 
                 @Marker
                 interface I {
-                    @Marker fun m() -> void
-                    @Other() fun n() -> void { rtn }
+                    @Marker fn m() -> void
+                    @Other() fn n() -> void { rtn }
                 }
 
                 @Marker @Other("x")
-                fun h() -> void { rtn }
+                fn h() -> void { rtn }
 
                 @Marker
-                public fun k() -> void { rtn }
+                public fn k() -> void { rtn }
 
                 @Marker()
-                fun j() -> void { rtn }
+                fn j() -> void { rtn }
             """.trimIndent() + "\n",
             "嵌套类型名（注解名::伴生名）" to """
                 annotation Marker {
                     companion entity Impl : Runnable {
-                        fun run() -> void {
+                        fn run() -> void {
                             rtn
                         }
                     }
@@ -7323,13 +7323,13 @@ class RsfTest {
                 class Uses {
                     @Marker var holder : Marker::Impl = new Marker()
                     var list : Marker::Impl[] = new Marker::Impl[2]
-                    fun make(m : Marker::Impl) -> void {
+                    fn make(m : Marker::Impl) -> void {
                         m.run()
                         rtn
                     }
                 }
 
-                fun take(v : Marker::Impl) -> void {
+                fn take(v : Marker::Impl) -> void {
                     v.run()
                     rtn
                 }
@@ -7363,26 +7363,26 @@ class RsfTest {
         //   1. 凡 Kotlin 版判失败的输入，rsf 版也必须判失败（不能悄悄吞掉）；
         //   2. rsf 版的失败必须带消息（不能是「静默失败」）。
         val bad = listOf(
-            "fun f( -> int { rtn 1 }\n",
-            "fun f() -> int { var = 1 }\n",
+            "fn f( -> int { rtn 1 }\n",
+            "fn f() -> int { var = 1 }\n",
             "class C { var x = 1 }\n",
             "enum E { }\n",
-            "fun f() -> int { switch (x) { } rtn 1 }\n",
-            "fun f() -> int { if (x) rtn 1 }\n",
+            "fn f() -> int { switch (x) { } rtn 1 }\n",
+            "fn f() -> int { if (x) rtn 1 }\n",
             "var a = b | c\n",
-            "fun f() -> int { rtn 1 } extra\n",
-            "fun f() -> int { rtn 1\n",
-            "fun f() -> int { a[0 = 1 }\n",
+            "fn f() -> int { rtn 1 } extra\n",
+            "fn f() -> int { rtn 1\n",
+            "fn f() -> int { a[0 = 1 }\n",
             "class\n",
             "module str\n",
-            "pkg\nfun main() -> void { rtn }\n",
-            "fun main() -> void { try { rtn } rtn }\n",
+            "pkg\nfn main() -> void { rtn }\n",
+            "fn main() -> void { try { rtn } rtn }\n",
             "public constructor() { }\n",
-            "fun main() -> void { fail }\n",
-            "fun main() -> void { switch (x) { default : rtn } }\n",
-            "fun main() -> void { var x : = 1 }\n",
+            "fn main() -> void { fail }\n",
+            "fn main() -> void { switch (x) { default : rtn } }\n",
+            "fn main() -> void { var x : = 1 }\n",
             "class C { constructor(v : int) -> void { } }\n",
-            "fun main() -> int { rtn 1 -> int }\n",
+            "fn main() -> int { rtn 1 -> int }\n",
 
             // 阶段 20 的语法边界。前半段是父类型子句四条必须失败的写法，中间是接口体的
             // 四条禁令，最后两条钉 `override` 的**位置**：顶层函数、构造器上都不准写
@@ -7395,17 +7395,17 @@ class RsfTest {
             "interface I : { }\n",
             "interface I { var x : int = 1 }\n",
             "interface I { constructor() { } }\n",
-            "interface I { static fun f() -> void { rtn } }\n",
-            "interface I { private fun f() -> void { rtn } }\n",
-            "interface I { fun f() -> void { rtn } extra }\n",
-            "override fun f() -> void { rtn }\n",
+            "interface I { static fn f() -> void { rtn } }\n",
+            "interface I { private fn f() -> void { rtn } }\n",
+            "interface I { fn f() -> void { rtn } extra }\n",
+            "override fn f() -> void { rtn }\n",
             "class C { override constructor() { } }\n",
 
             // 阶段 21 的语法边界。注解**不是类**：体里只能有（至多一个）companion entity，
             // 元素重名、Java 风格的「类型 名字」元素写法、非字面量默认值、`@` 写在
             // 参数 / 语句 / 枚举声明上，都要在**语法**层被拒——Kotlin 版靠
             // parseAnnotationDecl / parseParam / parseStmtInner 里的显式禁令，rsf 版靠同一批判据。
-            "annotation M { fun f() -> void { rtn } }\n",
+            "annotation M { fn f() -> void { rtn } }\n",
             "annotation M { var x : int = 1 }\n",
             "annotation M { constructor() { } }\n",
             "annotation M { companion entity A { } companion entity B { } }\n",
@@ -7417,16 +7417,16 @@ class RsfTest {
             "annotation M { companion entity int { } }\n",
             "annotation M { companion { } }\n",
             "annotation M {\n",
-            "fun @Marker f() -> void { rtn }\n",
-            "fun f(@Marker x : int) -> void { rtn }\n",
-            "fun f() -> void { @Marker var x : int = 1 }\n",
+            "fn @Marker f() -> void { rtn }\n",
+            "fn f(@Marker x : int) -> void { rtn }\n",
+            "fn f() -> void { @Marker var x : int = 1 }\n",
             "@Marker enum E { A }\n",
             "public @Meta annotation M { }\n",
             "companion entity { }\n",
             // 嵌套类型名（`注解名::伴生名`）：内置类型后面不能跟 `::`、只允许一层、`::` 后面要有名字。
-            "fun f() -> void { var x : int::Impl = new Marker() rtn }\n",
-            "fun f() -> void { var x : A::B::C = new Marker() rtn }\n",
-            "fun f() -> void { var x : Marker:: = new Marker() rtn }\n",
+            "fn f() -> void { var x : int::Impl = new Marker() rtn }\n",
+            "fn f() -> void { var x : A::B::C = new Marker() rtn }\n",
+            "fn f() -> void { var x : Marker:: = new Marker() rtn }\n",
         )
 
         for (src in bad) {
@@ -7451,7 +7451,7 @@ class RsfTest {
         val kotlinMessage = assertFailsWith<RsfError> { Rsf.parse(source(sample)) }.detail
         val rsfMessage = normalize(
             rsfParserProbe(
-                "fun main() -> void {\n" +
+                "fn main() -> void {\n" +
                     "    println(parseErrorMessage(\"enum E { }\\n\"))\n" +
                     "    rtn\n" +
                     "}\n",
@@ -7793,17 +7793,17 @@ class RsfTest {
         val cases = listOf(
             // JVM 互操作：本阶段只做了 ArrayList / File / System.getProperty 三个口子
             "unknown_jvm_static" to
-                "import java.lang.Math\n\nfun main() -> void {\n    println(Math.max(1, 2))\n    rtn\n}\n",
+                "import java.lang.Math\n\nfn main() -> void {\n    println(Math.max(1, 2))\n    rtn\n}\n",
             "hashmap_construction" to
-                "import java.util.HashMap\n\nfun main() -> void {\n" +
+                "import java.util.HashMap\n\nfn main() -> void {\n" +
                 "    var m : HashMap&<string, string> = new HashMap&<string, string>()\n" +
                 "    m.put(\"a\", \"b\")\n    rtn\n}\n",
             "unknown_jvm_construction" to
-                "import java.util.TreeMap\n\nfun main() -> void {\n" +
+                "import java.util.TreeMap\n\nfn main() -> void {\n" +
                 "    var m = new TreeMap&<string, string>()\n    rtn\n}\n",
             // 顶层变量：两边的**语法分析器**都拒（这条对拍的是「都判失败」）
             "toplevel_var" to
-                "var g : int = 1\n\nfun main() -> void {\n    println(g)\n    rtn\n}\n",
+                "var g : int = 1\n\nfn main() -> void {\n    println(g)\n    rtn\n}\n",
         )
         for ((label, text) in cases) {
             val (stdout, stderr) = rsfInterpRunText(label, text)
@@ -7820,7 +7820,7 @@ class RsfTest {
         }
 
         // 反面：能支持的语法**不许**报「暂不支持」（否则上一条测试就变成了自我实现的预言）
-        val (okOut, okErr) = rsfInterpRunText("supported", "fun main() -> void {\n    println(\"fine\")\n    rtn\n}\n")
+        val (okOut, okErr) = rsfInterpRunText("supported", "fn main() -> void {\n    println(\"fine\")\n    rtn\n}\n")
         assertTrue(okErr.isEmpty(), "受支持的语法不该报错：$okErr")
         assertEquals("fine${System.lineSeparator()}", okOut)
     }
@@ -7882,7 +7882,7 @@ class RsfTest {
                 "\n" +
                 "import java.lang.System\n" +
                 "\n" +
-                "fun main() -> void {\n" +
+                "fn main() -> void {\n" +
                 "    var given : ?string = System.getProperty(\"rsf.interp.probe\")\n" +
                 "    var path = given ?: \"\"\n" +
                 "    var text = \"\"\n" +
@@ -7976,18 +7976,18 @@ class RsfTest {
 
     private val trickyRecursion = """
         // 递归 / 整数与浮点提升 / 溢出回绕
-        fun fact(n : int) -> int {
+        fn fact(n : int) -> int {
             if (n <= 1) { rtn 1 }
             rtn n * fact(n - 1)
         }
 
-        fun ack(m : int, n : int) -> int {
+        fn ack(m : int, n : int) -> int {
             if (m == 0) { rtn n + 1 }
             if (n == 0) { rtn ack(m - 1, 1) }
             rtn ack(m - 1, ack(m, n - 1))
         }
 
-        fun main() -> void {
+        fn main() -> void {
             println("fact(10) = " + fact(10))
             println("ack(2, 3) = " + ack(2, 3))
             println("10 / 3 = " + (10 / 3))
@@ -8014,18 +8014,18 @@ class RsfTest {
 
     private val trickyArrays = """
         // 数组：越界 / 负长度 / 多维 / 引用语义 / 默认值
-        fun make(n : int) -> int[] {
+        fn make(n : int) -> int[] {
             rtn new int[n]
         }
 
-        fun fill(a : int[], n : int) -> void {
+        fn fill(a : int[], n : int) -> void {
             for (var i = 0; i < n; i = i + 1) {
                 a[i] = i * i
             }
             rtn
         }
 
-        fun main() -> void {
+        fn main() -> void {
             var a = new int[5]
             fill(a, 5)
             println("a[0]=" + a[0] + " a[4]=" + a[4] + " length=" + a.length)
@@ -8075,18 +8075,18 @@ class RsfTest {
         public class Log {
             var s : string = ""
 
-            public fun note(tag : string, v : bool) -> bool {
+            public fn note(tag : string, v : bool) -> bool {
                 s = s + tag
                 rtn v
             }
 
-            public fun reset() -> void {
+            public fn reset() -> void {
                 s = ""
                 rtn
             }
         }
 
-        fun main() -> void {
+        fn main() -> void {
             var lg = new Log()
 
             var r1 = lg.note("a", false) && lg.note("b", true)
@@ -8131,7 +8131,7 @@ class RsfTest {
 
         enum TokenKind { IDENT, INT_LIT, PLUS, EOF }
 
-        fun name(c : Color) -> string {
+        fn name(c : Color) -> string {
             switch (c) {
                 Color.RED : rtn "红"
                 Color.GREEN : rtn "绿"
@@ -8140,7 +8140,7 @@ class RsfTest {
             rtn "?"
         }
 
-        fun weight(k : TokenKind) -> int {
+        fn weight(k : TokenKind) -> int {
             var out = 0
             switch (k) {
                 TokenKind.IDENT : out = 1
@@ -8151,7 +8151,7 @@ class RsfTest {
             rtn out
         }
 
-        fun main() -> void {
+        fn main() -> void {
             println(name(Color.RED) + "/" + name(Color.GREEN) + "/" + name(Color.BLUE))
             println("weight = " + weight(TokenKind.IDENT) + "," + weight(TokenKind.INT_LIT) + "," + weight(TokenKind.PLUS))
             println("else 分支 = " + weight(TokenKind.EOF))
@@ -8196,29 +8196,29 @@ class RsfTest {
                 this(k, k)
             }
 
-            public fun sum() -> int {
+            public fn sum() -> int {
                 rtn x + y
             }
 
-            public fun describe() -> string {
+            public fn describe() -> string {
                 rtn tag + "(" + x + ", " + y + ")"
             }
 
-            public fun bump(d : int) -> void {
+            public fn bump(d : int) -> void {
                 x = x + d
                 y = y + d
                 rtn
             }
 
-            public static fun zero() -> Vec {
+            public static fn zero() -> Vec {
                 rtn new Vec()
             }
 
-            private fun secret() -> int {
+            private fn secret() -> int {
                 rtn 7
             }
 
-            public fun reveal() -> int {
+            public fn reveal() -> int {
                 rtn secret()
             }
         }
@@ -8226,21 +8226,21 @@ class RsfTest {
         public class Holder {
             var held : ?Vec = null
 
-            public fun keep(v : Vec) -> void {
+            public fn keep(v : Vec) -> void {
                 held = v
                 rtn
             }
 
-            public fun has() -> bool {
+            public fn has() -> bool {
                 rtn held != null
             }
 
-            public fun total() -> int {
+            public fn total() -> int {
                 rtn if held == null ? 0 : held!!.sum()
             }
         }
 
-        fun main() -> void {
+        fn main() -> void {
             var a = new Vec(1, 2)
             println("主构造 = " + a.describe())
             var b = new Vec()
@@ -8266,17 +8266,17 @@ class RsfTest {
 
     private val trickyStrings = """
         // 字符串 / char / 可空 / parseInt / fail / try / ?: / !!
-        fun pick(s : string) -> ?string {
+        fn pick(s : string) -> ?string {
             if (s.length() == 0) { rtn null }
             rtn s
         }
 
-        fun mustInt(s : string) -> !int {
+        fn mustInt(s : string) -> !int {
             if (s.length() == 0) { fail "空串" }
             rtn parseInt(s)!!
         }
 
-        fun main() -> void {
+        fn main() -> void {
             var text = "rainStarfox"
             println("length = " + text.length())
             println("charAt(0) = " + text.charAt(0))
@@ -8326,7 +8326,7 @@ class RsfTest {
 
     private val trickyControlFlow = """
         // 控制流全家桶：while / 两种 for / break / continue / goto / 标签 / 块作用域 / 三目
-        fun main() -> void {
+        fn main() -> void {
             var sum = 0
             var i = 0
             while (i < 10) {
@@ -8400,11 +8400,11 @@ class RsfTest {
                 value = v0
             }
 
-            public fun get() -> T {
+            public fn get() -> T {
                 rtn value
             }
 
-            public fun set(v : T) -> void {
+            public fn set(v : T) -> void {
                 value = v
                 rtn
             }
@@ -8413,12 +8413,12 @@ class RsfTest {
         public class P(x0 : int) {
             var x : int = x0
 
-            public fun twice() -> int {
+            public fn twice() -> int {
                 rtn x * 2
             }
         }
 
-        fun main() -> void {
+        fn main() -> void {
             var xs : ArrayList&<int> = new ArrayList&<int>()
             for (var i = 1; i <= 5; i = i + 1) {
                 xs.add(i * i)

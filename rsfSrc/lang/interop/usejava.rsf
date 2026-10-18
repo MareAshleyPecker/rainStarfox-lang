@@ -11,7 +11,7 @@
 import java.lang.Math
 import java.lang.Integer
 
-fun main() -> void {
+fn main() -> void {
     // ---- 静态方法：按实参类型选重载 ----
     println("Math.max(3, 7) = " + Math.max(3, 7))
     println("Math.max(1.5, 2.5) = " + Math.max(1.5, 2.5))

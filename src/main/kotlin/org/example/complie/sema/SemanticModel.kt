@@ -722,10 +722,10 @@ class SemanticModel(
         get() {
             if (entry != null) return null
             val named = functionsNamed("main")
-            if (named.isEmpty()) return "找不到入口函数：需要 fun main() -> void { ... }"
+            if (named.isEmpty()) return "找不到入口函数：需要 fn main() -> void { ... }"
             return "入口函数 main 不能有参数（实际有 ${named.first().params.size} 个）：" +
                 "JVM 只认 main(String[])，rsf 里也没有地方给它传参。" +
-                "入口要写成 fun main() -> void { ... }；带参数的 main 仍然是一个普通函数，" +
+                "入口要写成 fn main() -> void { ... }；带参数的 main 仍然是一个普通函数，" +
                 "在 rsf 内部可以照常调用（阶段 19d 起它是重载，只是当不了入口）"
         }
 

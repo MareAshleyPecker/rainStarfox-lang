@@ -22,16 +22,16 @@ import java.io.File
 class TempFile(name : string) {
     var file : File = new File(System.getProperty("java.io.tmpdir"), "rsf-16b-" + name)
 
-    fun path() -> string {
+    fn path() -> string {
         rtn file.getAbsolutePath()
     }
 
-    fun label() -> string {
+    fn label() -> string {
         rtn file.getName()
     }
 
     // 删除是**尽力而为**：删不掉不报错（临时目录本来就由系统回收）
-    fun cleanup() -> void {
+    fn cleanup() -> void {
         if (file.delete()) {
             println("  （临时文件已删除: " + label() + "）")
         } else {
@@ -46,7 +46,7 @@ class TempFile(name : string) {
 // 有返回值的用 `!!` 往上抛；返回 void 的没有值可取，所以用 try + fail 原样往上抛
 // （`!void` 上不能写 `!!`——没有值可以取）。
 
-fun saveText(path : string, text : string) -> !void {
+fn saveText(path : string, text : string) -> !void {
     try {
         writeText(path, text)
     } catch (e : string) {
@@ -54,11 +54,11 @@ fun saveText(path : string, text : string) -> !void {
     }
 }
 
-fun loadText(path : string) -> !string {
+fn loadText(path : string) -> !string {
     rtn readText(path)!!
 }
 
-fun saveBytes(path : string, data : byte[]) -> !void {
+fn saveBytes(path : string, data : byte[]) -> !void {
     try {
         writeBytes(path, data)
     } catch (e : string) {
@@ -66,25 +66,25 @@ fun saveBytes(path : string, data : byte[]) -> !void {
     }
 }
 
-fun loadBytes(path : string) -> !byte[] {
+fn loadBytes(path : string) -> !byte[] {
     rtn readBytes(path)!!
 }
 
 // ---------------------------------------------------------------- 小工具
 
 // byte -> 两位十六进制（byte 是**有符号**的，负的要先加回 256）
-fun hexDigit(n : int) -> string {
+fn hexDigit(n : int) -> string {
     if (n < 10) { rtn intToString(n) }
     rtn "abcdef".substring(n - 10, n - 9)
 }
 
-fun byteHex(b : byte) -> string {
+fn byteHex(b : byte) -> string {
     var n : int = b                 // byte 隐式加宽成 int
     if (n < 0) { n = n + 256 }
     rtn hexDigit(n / 16) + hexDigit(n % 16)
 }
 
-fun bytesToHex(data : byte[]) -> string {
+fn bytesToHex(data : byte[]) -> string {
     var out = ""
     for (i in 0..data.length - 1) {
         out = out + byteHex(data[i])
@@ -94,7 +94,7 @@ fun bytesToHex(data : byte[]) -> string {
 
 // ---------------------------------------------------------------- 入口
 
-fun main() -> void {
+fn main() -> void {
     var text = new TempFile("demo.txt")
     var bin = new TempFile("demo.bin")
     var missing = new TempFile("no-such-file.txt")

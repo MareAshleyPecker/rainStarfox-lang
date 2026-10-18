@@ -1,6 +1,6 @@
 import java.util.ArrayList
 import java.util.Collections
-fun main() -> void {
+fn main() -> void {
     var xs = new ArrayList&<string>()
     Collections.sort(xs, 3)
     rtn

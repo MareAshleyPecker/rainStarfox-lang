@@ -10,11 +10,11 @@ rm -rf "$P"; mkdir -p "$P"
 cat > "$P/M.rsf" <<'EOF'
 class Box(v : int) {
     imutvar v : int = v
-    public fun risky() -> !int {
+    public fn risky() -> !int {
         rtn v
     }
 }
-public fun main() {
+public fn main() {
     var b = Box(5)
     println("x=" + intToString(b.risky() ?: 0))
 }
@@ -23,14 +23,14 @@ EOF
 cat > "$P/I.rsf" <<'EOF'
 class Box(v : int) {
     imutvar v : int = v
-    public fun risky() -> !int {
+    public fn risky() -> !int {
         rtn v
     }
-    public fun use() -> int {
+    public fn use() -> int {
         rtn risky() ?: 0
     }
 }
-public fun main() {
+public fn main() {
     var b = Box(5)
     println("x=" + intToString(b.use()))
 }

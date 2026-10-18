@@ -1,14 +1,14 @@
 public interface Greeter {
-    fun greet() -> string
-    fun shout() -> string
+    fn greet() -> string
+    fn shout() -> string
 }
 
 class Dog : Greeter {
-    public fun greet() -> string {
+    public fn greet() -> string {
         rtn "woof"
     }
 }
 
-fun main() -> void {
+fn main() -> void {
     rtn
 }

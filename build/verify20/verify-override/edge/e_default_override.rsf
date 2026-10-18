@@ -1,11 +1,11 @@
 public interface Named {
-    fun name() -> string {
+    fn name() -> string {
         rtn "n"
     }
 }
 
 public interface Person : Named {
-    override fun name() -> string {
+    override fn name() -> string {
         rtn "p"
     }
 }
@@ -13,7 +13,7 @@ public interface Person : Named {
 class P : Person {
 }
 
-fun main() -> void {
+fn main() -> void {
     var n : Named = new P()
     println(n.name())
     rtn

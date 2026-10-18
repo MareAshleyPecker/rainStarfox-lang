@@ -59,7 +59,7 @@ class MathematicKeywordTest {
         val e = assertFailsWith<RsfError> {
             parse(
                 """
-                fun f() -> void {
+                fn f() -> void {
                     var mathematic : int = 0
                     rtn
                 }

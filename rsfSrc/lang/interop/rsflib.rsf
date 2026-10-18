@@ -7,19 +7,19 @@
 //   javac -d out -cp out lang/interop/UseRsf.java
 //   java -cp out UseRsf
 
-fun greet(who : string) -> string {
+fn greet(who : string) -> string {
     rtn "hello from rsf, " + who
 }
 
-fun fact(n : int) -> int {
+fn fact(n : int) -> int {
     if (n <= 1) { rtn 1 }
     rtn n * fact(n - 1)
 }
 
 // 可空返回类型在 Java 侧就是一个可能为 null 的引用
-fun maybe(n : int) : ?string {
+fn maybe(n : int) : ?string {
     if (n > 0) { rtn "positive" }
     rtn null
 }
 
-fun main() -> void { rtn }
+fn main() -> void { rtn }

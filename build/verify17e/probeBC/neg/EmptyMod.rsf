@@ -1,5 +1,5 @@
 module "emptydir"
 
-fun main() {
+fn main() {
     println("never")
 }

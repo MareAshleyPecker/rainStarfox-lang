@@ -3,12 +3,12 @@ import java.util.Collections
 import java.util.Comparator
 
 class ByValue : Comparator&<string> {
-    public fun compare(a : string, b : string) -> int {
+    public fn compare(a : string, b : string) -> int {
         rtn 0
     }
 }
 
-fun main() -> void {
+fn main() -> void {
     var xs = new ArrayList&<string>()
     xs.add("5")
     var c : Comparator&<string> = new ByValue()

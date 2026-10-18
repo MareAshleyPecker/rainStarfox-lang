@@ -49,12 +49,12 @@ class InheritanceTest {
     fun `类默认可继承 方法默认可覆盖 并调用 super 方法`() {
         val src = rsfSource(
             "class Base(x : int) {\n" +
-                "    public fun tag() -> string {\n" +
+                "    public fn tag() -> string {\n" +
                 "        rtn \"base\"\n" +
                 "    }\n" +
                 "}\n" +
                 "class D(y : int) : Base(y) {\n" +
-                "    override fun tag() -> string {\n" +
+                "    override fn tag() -> string {\n" +
                 "        rtn super.tag()\n" +
                 "    }\n" +
                 "}\n",
@@ -90,10 +90,10 @@ class InheritanceTest {
     fun `父类排最前 接口跟在后面 父类实现的接口要求子类不用再实现`() {
         val src = rsfSource(
             "public interface Tag {\n" +
-                "    fun tag() -> string\n" +
+                "    fn tag() -> string\n" +
                 "}\n" +
                 "class Base : Tag {\n" +
-                "    override fun tag() -> string {\n" +
+                "    override fn tag() -> string {\n" +
                 "        rtn \"base\"\n" +
                 "    }\n" +
                 "}\n" +
@@ -117,12 +117,12 @@ class InheritanceTest {
     fun `接口写在父类前面要报错`() {
         val e = fails(
             "public interface Tag {\n" +
-                "    fun tag() -> string\n" +
+                "    fn tag() -> string\n" +
                 "}\n" +
                 "class Base {\n" +
                 "}\n" +
                 "class D : Tag, Base() {\n" +
-                "    override fun tag() -> string {\n" +
+                "    override fn tag() -> string {\n" +
                 "        rtn \"d\"\n" +
                 "    }\n" +
                 "}\n",
@@ -135,17 +135,17 @@ class InheritanceTest {
     fun `super 接口名 能挑出指定接口的默认实现`() {
         val src = rsfSource(
             "public interface A {\n" +
-                "    fun m() -> string {\n" +
+                "    fn m() -> string {\n" +
                 "        rtn \"a\"\n" +
                 "    }\n" +
                 "}\n" +
                 "public interface B {\n" +
-                "    fun m() -> string {\n" +
+                "    fn m() -> string {\n" +
                 "        rtn \"b\"\n" +
                 "    }\n" +
                 "}\n" +
                 "class C : A, B {\n" +
-                "    override fun m() -> string {\n" +
+                "    override fn m() -> string {\n" +
                 "        rtn super(B).m()\n" +
                 "    }\n" +
                 "}\n",
@@ -175,10 +175,10 @@ class InheritanceTest {
                 "}\n" +
                 "class Sub : Base() {\n" +
                 "    var b : string = \"\"\n" +
-                "    public fun getA() -> int {\n" +
+                "    public fn getA() -> int {\n" +
                 "        rtn this.a\n" +
                 "    }\n" +
-                "    public fun getB() -> string {\n" +
+                "    public fn getB() -> string {\n" +
                 "        rtn this.b\n" +
                 "    }\n" +
                 "}\n",
@@ -209,10 +209,10 @@ class InheritanceTest {
     fun `抽象类能被继承 子类实现抽象方法就能过`() {
         val src = rsfSource(
             "abstract class Shape(x : int) {\n" +
-                "    public abstract fun area() -> double\n" +
+                "    public abstract fn area() -> double\n" +
                 "}\n" +
                 "class Sq(y : int) : Shape(y) {\n" +
-                "    override fun area() -> double {\n" +
+                "    override fn area() -> double {\n" +
                 "        rtn 1.0\n" +
                 "    }\n" +
                 "}\n",
@@ -295,12 +295,12 @@ class InheritanceTest {
     fun `覆盖父类 final 方法要报错`() {
         val e = fails(
             "class Base(x : int) {\n" +
-                "    final fun tag() -> string {\n" +
+                "    final fn tag() -> string {\n" +
                 "        rtn \"base\"\n" +
                 "    }\n" +
                 "}\n" +
                 "class D(y : int) : Base(y) {\n" +
-                "    override fun tag() -> string {\n" +
+                "    override fn tag() -> string {\n" +
                 "        rtn \"d\"\n" +
                 "    }\n" +
                 "}\n",
@@ -313,12 +313,12 @@ class InheritanceTest {
     fun `final 类不能再被继承 但可以 override 父类方法`() {
         val ok = rsfSource(
             "class Base(x : int) {\n" +
-                "    fun tag() -> string {\n" +
+                "    fn tag() -> string {\n" +
                 "        rtn \"base\"\n" +
                 "    }\n" +
                 "}\n" +
                 "final class D(y : int) : Base(y) {\n" +
-                "    override fun tag() -> string {\n" +
+                "    override fn tag() -> string {\n" +
                 "        rtn \"d\"\n" +
                 "    }\n" +
                 "}\n",
@@ -339,17 +339,17 @@ class InheritanceTest {
     fun `override 之后不写 final 仍可被孙子类覆盖`() {
         val src = rsfSource(
             "class A(x : int) {\n" +
-                "    fun tag() -> string {\n" +
+                "    fn tag() -> string {\n" +
                 "        rtn \"a\"\n" +
                 "    }\n" +
                 "}\n" +
                 "class B(y : int) : A(y) {\n" +
-                "    override fun tag() -> string {\n" +
+                "    override fn tag() -> string {\n" +
                 "        rtn \"b\"\n" +
                 "    }\n" +
                 "}\n" +
                 "class C(z : int) : B(z) {\n" +
-                "    override fun tag() -> string {\n" +
+                "    override fn tag() -> string {\n" +
                 "        rtn \"c\"\n" +
                 "    }\n" +
                 "}\n",
@@ -361,17 +361,17 @@ class InheritanceTest {
     fun `override final 之后孙子类不能再覆盖`() {
         val e = fails(
             "class A(x : int) {\n" +
-                "    fun tag() -> string {\n" +
+                "    fn tag() -> string {\n" +
                 "        rtn \"a\"\n" +
                 "    }\n" +
                 "}\n" +
                 "class B(y : int) : A(y) {\n" +
-                "    override final fun tag() -> string {\n" +
+                "    override final fn tag() -> string {\n" +
                 "        rtn \"b\"\n" +
                 "    }\n" +
                 "}\n" +
                 "class C(z : int) : B(z) {\n" +
-                "    override fun tag() -> string {\n" +
+                "    override fn tag() -> string {\n" +
                 "        rtn \"c\"\n" +
                 "    }\n" +
                 "}\n",
@@ -382,7 +382,7 @@ class InheritanceTest {
     @Test
     fun `open 不再是关键字 普通标识符可用 但写在 class 前面是语法错误`() {
         val ident = rsfSource(
-            "fun main() -> void {\n" +
+            "fn main() -> void {\n" +
                 "    var open = 1\n" +
                 "    println(intToString(open))\n" +
                 "    rtn\n" +
@@ -398,12 +398,12 @@ class InheritanceTest {
     fun `同签名的方法漏写 override 要报错`() {
         val e = fails(
             "class Base(x : int) {\n" +
-                "    public fun tag() -> string {\n" +
+                "    public fn tag() -> string {\n" +
                 "        rtn \"base\"\n" +
                 "    }\n" +
                 "}\n" +
                 "class D(y : int) : Base(y) {\n" +
-                "    public fun tag() -> string {\n" +
+                "    public fn tag() -> string {\n" +
                 "        rtn \"d\"\n" +
                 "    }\n" +
                 "}\n",
@@ -507,12 +507,12 @@ class InheritanceTest {
     fun `super 不能用在静态方法里`() {
         val e = fails(
             "class Base(x : int) {\n" +
-                "    public fun tag() -> string {\n" +
+                "    public fn tag() -> string {\n" +
                 "        rtn \"base\"\n" +
                 "    }\n" +
                 "}\n" +
                 "class D(y : int) : Base(y) {\n" +
-                "    public static fun use() -> string {\n" +
+                "    public static fn use() -> string {\n" +
                 "        rtn super.tag()\n" +
                 "    }\n" +
                 "}\n",
@@ -524,7 +524,7 @@ class InheritanceTest {
     @Test
     fun `super 不能用在类外`() {
         val e = fails(
-            "fun top() -> string {\n" +
+            "fn top() -> string {\n" +
                 "    rtn super.tag()\n" +
                 "}\n",
         )
@@ -552,9 +552,9 @@ class InheritanceTest {
     fun `抽象类不能 new`() {
         val e = fails(
             "abstract class Shape(x : int) {\n" +
-                "    public abstract fun area() -> double\n" +
+                "    public abstract fn area() -> double\n" +
                 "}\n" +
-                "fun make() -> Shape {\n" +
+                "fn make() -> Shape {\n" +
                 "    rtn new Shape(1)\n" +
                 "}\n",
         )
@@ -567,7 +567,7 @@ class InheritanceTest {
     fun `抽象方法不能写函数体`() {
         val e = fails(
             "abstract class Shape {\n" +
-                "    public abstract fun area() -> double {\n" +
+                "    public abstract fn area() -> double {\n" +
                 "        rtn 1.0\n" +
                 "    }\n" +
                 "}\n",
@@ -580,7 +580,7 @@ class InheritanceTest {
     fun `抽象方法要写出返回子句`() {
         val e = fails(
             "abstract class Shape {\n" +
-                "    public abstract fun area()\n" +
+                "    public abstract fn area()\n" +
                 "}\n",
         )
         assertEquals("parser", e.phase)
@@ -591,7 +591,7 @@ class InheritanceTest {
     fun `子类没实现抽象成员要报错`() {
         val e = fails(
             "abstract class Shape {\n" +
-                "    public abstract fun area() -> double\n" +
+                "    public abstract fn area() -> double\n" +
                 "}\n" +
                 "class Sq : Shape() {\n" +
                 "}\n",
@@ -666,20 +666,20 @@ class InheritanceTest {
         val program = """
             class Base(p : int) {
                 var x : int = p
-                fun value() -> int {
+                fn value() -> int {
                     rtn x
                 }
-                fun tag() -> string {
+                fn tag() -> string {
                     rtn "base"
                 }
             }
             class Derived(p : int) : Base(p) {
                 var y : int = p + 1
-                override fun tag() -> string {
+                override fn tag() -> string {
                     rtn super.tag() + "+derived/" + intToString(y)
                 }
             }
-            fun main() -> void {
+            fn main() -> void {
                 var d : Derived = new Derived(7)
                 println(d.tag())
                 println(intToString(d.value()))
@@ -705,17 +705,17 @@ class InheritanceTest {
         val program = """
             class Base(p : int) {
                 var x : int = p
-                fun tag() -> string {
+                fn tag() -> string {
                     rtn "base"
                 }
             }
             class Derived(p : int) : Base(p) {
                 var y : int = p + 1
-                override fun tag() -> string {
+                override fn tag() -> string {
                     rtn super.tag() + "!"
                 }
             }
-            fun main() -> void {
+            fn main() -> void {
                 rtn
             }
         """.trimIndent() + "\n"
@@ -745,18 +745,18 @@ class InheritanceTest {
         val program = """
             abstract class Shape(nm : string) {
                 var name : string = nm
-                abstract fun area() -> int
-                fun describe() -> string {
+                abstract fn area() -> int
+                fn describe() -> string {
                     rtn name + "=" + intToString(area())
                 }
             }
             class Square(side0 : int) : Shape("square") {
                 var side : int = side0
-                override fun area() -> int {
+                override fn area() -> int {
                     rtn side * side
                 }
             }
-            fun main() -> void {
+            fn main() -> void {
                 var s : Shape = new Square(3)
                 println(s.describe())
                 rtn
@@ -786,7 +786,7 @@ class InheritanceTest {
             class Child(x : int, y : int) : Base(x) {
                 var b : int = y
             }
-            fun main() -> void {
+            fn main() -> void {
                 var c : Child = new Child(1, 2)
                 println(c)
                 rtn
@@ -806,11 +806,11 @@ class InheritanceTest {
         val program = """
             import java.lang.Exception
             class MyError(msg : string) : Exception(msg) {
-                fun describe() -> string {
+                fn describe() -> string {
                     rtn "MyError:" + getMessage()
                 }
             }
-            fun main() -> void {
+            fn main() -> void {
                 var e : MyError = new MyError("boom")
                 println(e.describe())
                 println(e.getMessage())
@@ -829,33 +829,33 @@ class InheritanceTest {
     fun `接口默认方法与类继承混用两端一致`() {
         val program = """
             interface Greeter {
-                fun greet() -> string {
+                fn greet() -> string {
                     rtn "hi"
                 }
             }
             interface Named {
-                fun name() -> string
-                fun greet() -> string {
+                fn name() -> string
+                fn greet() -> string {
                     rtn "named-hi"
                 }
             }
             class Base {
-                fun base() -> string {
+                fn base() -> string {
                     rtn "base"
                 }
             }
             class E : Base(), Greeter, Named {
-                override fun name() -> string {
+                override fn name() -> string {
                     rtn "E"
                 }
-                override fun greet() -> string {
+                override fn greet() -> string {
                     rtn super(Named).greet()
                 }
-                fun which() -> string {
+                fn which() -> string {
                     rtn super(Greeter).greet() + ":" + name()
                 }
             }
-            fun main() -> void {
+            fn main() -> void {
                 var e : E = new E()
                 println(e.greet())
                 println(e.which())
@@ -873,16 +873,16 @@ class InheritanceTest {
         val out = runInterpreted(
             "class Base(x : int) {\n" +
                 "    var v : int = x\n" +
-                "    public fun tag() -> string {\n" +
+                "    public fn tag() -> string {\n" +
                 "        rtn \"base\"\n" +
                 "    }\n" +
                 "}\n" +
                 "class D(y : int) : Base(y) {\n" +
-                "    override fun tag() -> string {\n" +
+                "    override fn tag() -> string {\n" +
                 "        rtn super.tag() + \"+d\"\n" +
                 "    }\n" +
                 "}\n" +
-                "fun main() -> void {\n" +
+                "fn main() -> void {\n" +
                 "    var d : D = new D(7)\n" +
                 "    println(d.tag())\n" +
                 "    println(intToString(d.v))\n" +
@@ -908,13 +908,13 @@ class InheritanceTest {
                 "class Holder(v : A) {\n" +
                 "    var slot : A = v\n" +
                 "}\n" +
-                "fun take(a : A) -> void {\n" +
+                "fn take(a : A) -> void {\n" +
                 "    rtn\n" +
                 "}\n" +
-                "fun give() -> A {\n" +
+                "fn give() -> A {\n" +
                 "    rtn new C(\"c\")\n" +
                 "}\n" +
-                "fun main() -> void {\n" +
+                "fn main() -> void {\n" +
                 "    var c : C = new C(\"c\")\n" +
                 "    var b : B = c\n" +
                 "    var a : A = b\n" +
@@ -935,12 +935,12 @@ class InheritanceTest {
     fun `G2 隐式 this 调的父类方法沿类链找 记的是声明它的类`() {
         val src = rsfSource(
             "class Base {\n" +
-                "    public fun base() -> string {\n" +
+                "    public fn base() -> string {\n" +
                 "        rtn \"base\"\n" +
                 "    }\n" +
                 "}\n" +
                 "class D : Base() {\n" +
-                "    public fun use() -> string {\n" +
+                "    public fn use() -> string {\n" +
                 "        rtn base()\n" +
                 "    }\n" +
                 "}\n",
@@ -962,11 +962,11 @@ class InheritanceTest {
                 "}\n" +
                 "class Child(p : int, c : int) : Base(p) {\n" +
                 "    var d : int = c\n" +
-                "    public fun bump() -> void {\n" +
+                "    public fn bump() -> void {\n" +
                 "        b = b + 1\n" +
                 "    }\n" +
                 "}\n" +
-                "fun main() -> void {\n" +
+                "fn main() -> void {\n" +
                 "    var o : Child = new Child(1, 2)\n" +
                 "    o.b = o.b + 100\n" +
                 "    rtn\n" +
@@ -991,7 +991,7 @@ class InheritanceTest {
         val src = rsfSource(
             "class Holder&<T>(v0 : T) {\n" +
                 "    var v : T = v0\n" +
-                "    public fun get() -> T {\n" +
+                "    public fn get() -> T {\n" +
                 "        rtn v\n" +
                 "    }\n" +
                 "}\n" +
@@ -999,7 +999,7 @@ class InheritanceTest {
                 "}\n" +
                 "class Wrap(v0 : string) : Holder&<string>(v0) {\n" +
                 "}\n" +
-                "fun main() -> void {\n" +
+                "fn main() -> void {\n" +
                 "    var h : IntHolder = new IntHolder(5)\n" +
                 "    var w : Wrap = new Wrap(\"s\")\n" +
                 "    println(intToString(h.get()))\n" +
@@ -1020,7 +1020,7 @@ class InheritanceTest {
         val src = rsfSource(
             "import java.lang.Exception\n" +
                 "class MyError(msg : string) : Exception(msg) {\n" +
-                "    public fun describe() -> string {\n" +
+                "    public fn describe() -> string {\n" +
                 "        rtn \"MyError:\" + getMessage()\n" +
                 "    }\n" +
                 "}\n",
@@ -1062,7 +1062,7 @@ class InheritanceTest {
                 "        println(\"grand-post\")\n" +
                 "    }\n" +
                 "}\n" +
-                "fun main() -> void {\n" +
+                "fn main() -> void {\n" +
                 "    println(\"grand-pre\")\n" +
                 "    var c : Child = new Child()\n" +
                 "    var g : Grand = new Grand()\n" +
@@ -1078,21 +1078,21 @@ class InheritanceTest {
             "class Base(p : int) {\n" +
                 "    var a : int = p\n" +
                 "    var b : int = 10\n" +
-                "    public fun sum() -> int {\n" +
+                "    public fn sum() -> int {\n" +
                 "        rtn a + b\n" +
                 "    }\n" +
-                "    public fun bump() -> void {\n" +
+                "    public fn bump() -> void {\n" +
                 "        b = b + 1\n" +
                 "        rtn\n" +
                 "    }\n" +
                 "}\n" +
                 "class Child(p : int, c : int) : Base(p) {\n" +
                 "    var d : int = c + 1\n" +
-                "    public fun total() -> int {\n" +
+                "    public fn total() -> int {\n" +
                 "        rtn sum() + d\n" +
                 "    }\n" +
                 "}\n" +
-                "fun main() -> void {\n" +
+                "fn main() -> void {\n" +
                 "    var o : Child = new Child(1, 2)\n" +
                 "    println(intToString(o.total()))\n" +
                 "    o.bump()\n" +
@@ -1111,35 +1111,35 @@ class InheritanceTest {
     fun `K3 虚分派：静态类型是父类 跑的是子类那一份覆盖`() {
         val out = runInterpreted(
             "class A {\n" +
-                "    public fun t() -> string {\n" +
+                "    public fn t() -> string {\n" +
                 "        rtn \"A\"\n" +
                 "    }\n" +
                 "}\n" +
                 "class B : A() {\n" +
-                "    override fun t() -> string {\n" +
+                "    override fn t() -> string {\n" +
                 "        rtn \"B>\" + super.t()\n" +
                 "    }\n" +
                 "}\n" +
                 "class C : B() {\n" +
-                "    override fun t() -> string {\n" +
+                "    override fn t() -> string {\n" +
                 "        rtn \"C>\" + super.t()\n" +
                 "    }\n" +
                 "}\n" +
                 "class Animal(nm : string) {\n" +
                 "    var name : string = nm\n" +
-                "    public fun sound() -> string {\n" +
+                "    public fn sound() -> string {\n" +
                 "        rtn \"...\"\n" +
                 "    }\n" +
-                "    public fun who() -> string {\n" +
+                "    public fn who() -> string {\n" +
                 "        rtn name\n" +
                 "    }\n" +
                 "}\n" +
                 "class Dog(nm : string) : Animal(nm) {\n" +
-                "    override fun sound() -> string {\n" +
+                "    override fn sound() -> string {\n" +
                 "        rtn \"woof\"\n" +
                 "    }\n" +
                 "}\n" +
-                "fun main() -> void {\n" +
+                "fn main() -> void {\n" +
                 "    var c : C = new C()\n" +
                 "    var b : B = c\n" +
                 "    var a : A = c\n" +
@@ -1160,38 +1160,38 @@ class InheritanceTest {
     fun `K3 super(接口) 只跑指定接口那一份默认实现 不是虚分派`() {
         val out = runInterpreted(
             "public interface Greeter {\n" +
-                "    public fun greet() -> string {\n" +
+                "    public fn greet() -> string {\n" +
                 "        rtn \"hi\"\n" +
                 "    }\n" +
                 "}\n" +
                 "public interface Named {\n" +
-                "    public fun name() -> string\n" +
-                "    public fun greet() -> string {\n" +
+                "    public fn name() -> string\n" +
+                "    public fn greet() -> string {\n" +
                 "        rtn \"named-hi\"\n" +
                 "    }\n" +
                 "}\n" +
                 "class Base {\n" +
-                "    public fun base() -> string {\n" +
+                "    public fn base() -> string {\n" +
                 "        rtn \"base\"\n" +
                 "    }\n" +
                 "}\n" +
                 "class D : Base(), Greeter {\n" +
-                "    public fun greet2() -> string {\n" +
+                "    public fn greet2() -> string {\n" +
                 "        rtn super(Greeter).greet() + \"/\" + base()\n" +
                 "    }\n" +
                 "}\n" +
                 "class E : Base(), Greeter, Named {\n" +
-                "    override fun name() -> string {\n" +
+                "    override fn name() -> string {\n" +
                 "        rtn \"E\"\n" +
                 "    }\n" +
-                "    override fun greet() -> string {\n" +
+                "    override fn greet() -> string {\n" +
                 "        rtn super(Named).greet()\n" +
                 "    }\n" +
-                "    public fun which() -> string {\n" +
+                "    public fn which() -> string {\n" +
                 "        rtn super(Greeter).greet() + \":\" + name()\n" +
                 "    }\n" +
                 "}\n" +
-                "fun main() -> void {\n" +
+                "fn main() -> void {\n" +
                 "    var d : D = new D()\n" +
                 "    println(d.greet())\n" +
                 "    println(d.greet2())\n" +
@@ -1210,16 +1210,16 @@ class InheritanceTest {
     fun `K3 接口实现在父类里写、子类继承：按接口调用要沿类链找得到`() {
         val out = runInterpreted(
             "public interface Named {\n" +
-                "    public fun label() -> string\n" +
+                "    public fn label() -> string\n" +
                 "}\n" +
                 "class Base : Named {\n" +
-                "    override fun label() -> string {\n" +
+                "    override fn label() -> string {\n" +
                 "        rtn \"base-label\"\n" +
                 "    }\n" +
                 "}\n" +
                 "class Child : Base() {\n" +
                 "}\n" +
-                "fun main() -> void {\n" +
+                "fn main() -> void {\n" +
                 "    var n : Named = new Child()\n" +
                 "    println(n.label())\n" +
                 "    rtn\n" +
@@ -1235,11 +1235,11 @@ class InheritanceTest {
         val out = runInterpreted(
             "import java.lang.Exception\n" +
                 "class MyError(msg : string) : Exception(msg) {\n" +
-                "    public fun describe() -> string {\n" +
+                "    public fn describe() -> string {\n" +
                 "        rtn \"MyError:\" + getMessage()\n" +
                 "    }\n" +
                 "}\n" +
-                "fun main() -> void {\n" +
+                "fn main() -> void {\n" +
                 "    var e : MyError = new MyError(\"boom\")\n" +
                 "    println(e.describe())\n" +
                 "    println(e.getMessage())\n" +
@@ -1261,7 +1261,7 @@ class InheritanceTest {
                 "class Child(x : int, y : int) : Base(x) {\n" +
                 "    var b : int = y\n" +
                 "}\n" +
-                "fun main() -> void {\n" +
+                "fn main() -> void {\n" +
                 "    var c : Child = new Child(1, 2)\n" +
                 "    println(c)\n" +
                 "    rtn\n" +
@@ -1490,7 +1490,7 @@ class InheritanceTest {
             "import java.lang.StringBuilder\n" +
                 "class SB(s : string) : StringBuilder(s) {\n" +
                 "}\n" +
-                "fun main() -> void {\n" +
+                "fn main() -> void {\n" +
                 "    rtn\n" +
                 "}\n",
         )
@@ -1514,7 +1514,7 @@ class InheritanceTest {
             "import java.util.AbstractList\n" +
                 "class L : AbstractList&<int>() {\n" +
                 "}\n" +
-                "fun main() -> void {\n" +
+                "fn main() -> void {\n" +
                 "    rtn\n" +
                 "}\n",
         )
@@ -1532,11 +1532,11 @@ class InheritanceTest {
     fun `缺口 C JDK 父类上的 super 调用打到声明类那一份`() {
         val program = "import java.lang.Exception\n" +
             "class MyErr(msg : string) : Exception(msg) {\n" +
-            "    fun describe() -> string {\n" +
+            "    fn describe() -> string {\n" +
             "        rtn \"e:\" + super.getMessage()\n" +
             "    }\n" +
             "}\n" +
-            "fun main() -> void {\n" +
+            "fn main() -> void {\n" +
             "    var e : MyErr = new MyErr(\"boom\")\n" +
             "    println(e.describe())\n" +
             "    rtn\n" +
@@ -1576,11 +1576,11 @@ class InheritanceTest {
     fun `缺口 D 父类构造器由语义模型选中 两端读同一份`() {
         val program = "import java.lang.Exception\n" +
             "class MyError(msg : string) : Exception(msg) {\n" +
-            "    fun describe() -> string {\n" +
+            "    fn describe() -> string {\n" +
             "        rtn \"MyError:\" + getMessage()\n" +
             "    }\n" +
             "}\n" +
-            "fun main() -> void {\n" +
+            "fn main() -> void {\n" +
             "    var e : MyError = new MyError(\"boom\")\n" +
             "    println(e.describe())\n" +
             "    rtn\n" +
@@ -1614,7 +1614,7 @@ class InheritanceTest {
             "        super(m)\n" +
             "    }\n" +
             "}\n" +
-            "fun main() -> void {\n" +
+            "fn main() -> void {\n" +
             "    var e : E = new E(\"boom\")\n" +
             "    println(e.getMessage())\n" +
             "    rtn\n" +
@@ -1643,11 +1643,11 @@ class InheritanceTest {
     fun `缺口 E JDK 父类的 protected 构造器解释器也建得出来`() {
         val program = "import java.lang.ClassLoader\n" +
             "class MyLoader : ClassLoader() {\n" +
-            "    fun tag() -> string {\n" +
+            "    fn tag() -> string {\n" +
             "        rtn \"loader\"\n" +
             "    }\n" +
             "}\n" +
-            "fun main() -> void {\n" +
+            "fn main() -> void {\n" +
             "    var l : MyLoader = new MyLoader()\n" +
             "    println(l.tag())\n" +
             "    rtn\n" +
@@ -1668,13 +1668,13 @@ class InheritanceTest {
     fun `缺口 F static 方法不继承 报文不再自相矛盾`() {
         val e = fails(
             "class Base {\n" +
-                "    static fun make() -> string {\n" +
+                "    static fn make() -> string {\n" +
                 "        rtn \"base-static\"\n" +
                 "    }\n" +
                 "}\n" +
                 "class Child : Base() {\n" +
                 "}\n" +
-                "fun main() -> void {\n" +
+                "fn main() -> void {\n" +
                 "    println(Child.make())\n" +
                 "    rtn\n" +
                 "}\n",
@@ -1700,14 +1700,14 @@ class InheritanceTest {
     fun `K4b JDK 父类用户类的 toString 与裸 println 同一个字符串`() {
         val program = "import java.lang.Exception\n" +
             "class E2(m : string) : Exception(m) {\n" +
-            "    fun implicit() -> string {\n" +
+            "    fn implicit() -> string {\n" +
             "        rtn toString()\n" +
             "    }\n" +
-            "    fun explicit() -> string {\n" +
+            "    fn explicit() -> string {\n" +
             "        rtn this.toString()\n" +
             "    }\n" +
             "}\n" +
-            "fun main() -> void {\n" +
+            "fn main() -> void {\n" +
             "    var a : E2 = new E2(\"x\")\n" +
             "    println(a.toString())\n" +
             "    println(a.implicit())\n" +
@@ -1735,11 +1735,11 @@ class InheritanceTest {
     fun `K4b JDK 父类用户类的 equals 按 rsf 对象同一性算`() {
         val program = "import java.lang.Exception\n" +
             "class E3(m : string) : Exception(m) {\n" +
-            "    fun same(o : E3) -> bool {\n" +
+            "    fn same(o : E3) -> bool {\n" +
             "        rtn this.equals(o)\n" +
             "    }\n" +
             "}\n" +
-            "fun main() -> void {\n" +
+            "fn main() -> void {\n" +
             "    var a : E3 = new E3(\"x\")\n" +
             "    var b : E3 = new E3(\"x\")\n" +
             "    println(a.equals(a))\n" +
@@ -1768,11 +1768,11 @@ class InheritanceTest {
     fun `K4b JDK 父类用户类的 hashCode 按 identity hash 算`() {
         val program = "import java.lang.Exception\n" +
             "class E4(m : string) : Exception(m) {\n" +
-            "    fun h() -> int {\n" +
+            "    fn h() -> int {\n" +
             "        rtn hashCode()\n" +
             "    }\n" +
             "}\n" +
-            "fun main() -> void {\n" +
+            "fn main() -> void {\n" +
             "    var a : E4 = new E4(\"x\")\n" +
             "    var b : E4 = new E4(\"x\")\n" +
             "    println(a.hashCode() == a.hashCode())\n" +
@@ -1800,7 +1800,7 @@ class InheritanceTest {
             "import java.lang.Exception\n" +
                 "class Err3(m : string) : Exception(m) {\n" +
                 "}\n" +
-                "fun main() -> void {\n" +
+                "fn main() -> void {\n" +
                 "    var a : Err3 = new Err3(\"x\")\n" +
                 "    println(a.getClass())\n" +
                 "    rtn\n" +
@@ -1812,7 +1812,7 @@ class InheritanceTest {
 
         // 合法路径：接收者真的是 JDK 对象，两端照旧一致
         val jdk = "import java.lang.Exception\n" +
-            "fun main() -> void {\n" +
+            "fn main() -> void {\n" +
             "    var e : Exception = new Exception(\"boom\")\n" +
             "    println(e.getClass())\n" +
             "    rtn\n" +
@@ -1834,7 +1834,7 @@ class InheritanceTest {
             "import java.lang.Exception\n" +
                 "class Err5(m : string) : Exception(m) {\n" +
                 "}\n" +
-                "fun main() -> void {\n" +
+                "fn main() -> void {\n" +
                 "    var a : Err5 = new Err5(\"x\")\n" +
                 "    a.notify()\n" +
                 "    rtn\n" +
@@ -1846,7 +1846,7 @@ class InheritanceTest {
             "import java.lang.Exception\n" +
                 "class Err6(m : string) : Exception(m) {\n" +
                 "}\n" +
-                "fun main() -> void {\n" +
+                "fn main() -> void {\n" +
                 "    var a : Err6 = new Err6(\"x\")\n" +
                 "    a.clone()\n" +
                 "    rtn\n" +
@@ -1883,7 +1883,7 @@ class InheritanceTest {
         // PUBLIC，默认「可继承」由缺失 final 表达（阶段 27），而且整条链路都不报错。
         val doc = rsfSource(
             "public class A(x : int) {\n" +
-                "    public fun tag() -> string { rtn \"a\" }\n" +
+                "    public fn tag() -> string { rtn \"a\" }\n" +
                 "}\n",
         )
         val program = Rsf.parse(doc)
@@ -1900,7 +1900,7 @@ class InheritanceTest {
      */
     @Test
     fun `K5a-fix 两种顺序的 AST dump 逐字节相同`() {
-        val member = "    public final fun tag() -> string { rtn \"a\" }\n"
+        val member = "    public final fn tag() -> string { rtn \"a\" }\n"
         val a = AstDump.dump(Rsf.parse(rsfSource("final public class A {\n" + member + "}\n")))
         val b = AstDump.dump(Rsf.parse(rsfSource("public final class A {\n" + member + "}\n")))
         assertEquals(a, b)
@@ -1928,7 +1928,7 @@ class InheritanceTest {
 
         // memebr 级的互斥：`abstract final fun`（被注解隔开的同理，见 parseFuncDecl 的两段收集）
         val memberAbstractFinal = fails(
-            "abstract class C {\n    abstract final fun f() -> void\n}\n",
+            "abstract class C {\n    abstract final fn f() -> void\n}\n",
         )
         assertTrue(
             memberAbstractFinal.detail.contains("'abstract' 不能和 'final' 写在一起"),

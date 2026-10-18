@@ -1,16 +1,16 @@
 public interface Greeter {
-    fun greet(name : string) -> string
+    fn greet(name : string) -> string
 }
 
 class Dog : Greeter {
-    public fun greet(name : string) -> string {
+    public fn greet(name : string) -> string {
         rtn "woof"
     }
-    override static fun helper() -> void {
+    override static fn helper() -> void {
         rtn
     }
 }
 
-fun main() -> void {
+fn main() -> void {
     rtn
 }

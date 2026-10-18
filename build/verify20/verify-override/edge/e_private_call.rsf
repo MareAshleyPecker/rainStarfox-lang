@@ -1,14 +1,14 @@
 public interface Greeter {
-    fun greet(name : string) -> string
+    fn greet(name : string) -> string
 }
 
 class Dog : Greeter {
-    private override fun greet(name : string) -> string {
+    private override fn greet(name : string) -> string {
         rtn "woof " + name
     }
 }
 
-fun main() -> void {
+fn main() -> void {
     var g : Greeter = new Dog()
     println(g.greet("bob"))
     rtn

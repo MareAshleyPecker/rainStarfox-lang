@@ -7,8 +7,8 @@ import org.example.complie.diag.SourceFile
  * 可变变量/字段的老关键字（2026-10-11 起唯一写法是 `var`）。
  *
  * 它**不**在 [KEYWORDS] 里——关键字表要与 rsf 版自举词法器（`rsfSrc/bootstrap/Lexer.rsf`
- * 的 `keywordKind`）**逐条对齐**，条数不能变（阶段 25 起是 55 项：阶段 24 之前 51 项，
- * 加上 `open` / `final` / `abstract` / `super`）。所以拦它靠的是
+ * 的 `keywordKind`）**逐条对齐**，条数不能变（阶段 27 起是 56 项：阶段 24 之前 51 项，
+ * 加上 `as` / `is` 是 57 项，阶段 27 又删掉 `open` 减到 56）。所以拦它靠的是
  * [Lexer.readIdentOrKeyword] 里一条独立的判断，rsf 版那边也写了同一条。
  */
 internal const val LEGACY_VAR_KEYWORD: String = "varis"
@@ -16,8 +16,20 @@ internal const val LEGACY_VAR_KEYWORD: String = "varis"
 /** 老写法 `varis` 的统一报错文案：说清改成了什么、以及一句话能照抄的改写。 */
 internal const val LEGACY_VAR_MESSAGE: String = "'varis' 已改名为 'var'：请写成 'var x : int = 0'"
 
+/**
+ * 函数声明关键字的老写法（2026-10-18 阶段 29 起唯一写法是 `fn`）。
+ *
+ * 与 [LEGACY_VAR_KEYWORD] 同一条路子：`fun` **不**在 [KEYWORDS] 里（表仍是 56 项，
+ * 阶段 29 只是把表里那一项的字面量从 `fun` 改成 `fn`，记号名还要叫 [TokenKind.KW_FUN]），
+ * 拦它靠 [Lexer.readIdentOrKeyword] 里一条独立判断，rsf 版那边写了同一条、同一句文案。
+ */
+internal const val LEGACY_FUN_KEYWORD: String = "fun"
+
+/** 老写法 `fun` 的统一报错文案（与 `rsfSrc/bootstrap/Lexer.rsf` 的 `legacyFnMessage` 逐字相同）。 */
+internal const val LEGACY_FUN_MESSAGE: String = "'fun' 已改名为 'fn'：请写成 'fn main() { … }'"
+
 private val KEYWORDS: Map<String, TokenKind> = buildMap {
-    put("fun", TokenKind.KW_FUN)
+    put("fn", TokenKind.KW_FUN)
     put("rtn", TokenKind.KW_RTN)
     put("return", TokenKind.KW_RETURN)
     put("import", TokenKind.KW_IMPORT)
@@ -216,15 +228,20 @@ class Lexer(private val source: SourceFile) {
     private fun legacyVarError(at: SourceLine): RsfError =
         RsfError("lexer", LEGACY_VAR_MESSAGE, at.line, at.column, source)
 
+    /** 老写法 `fun` 的报错（位置指向那个词本身，与 rsf 版 `reportError` 同口径）。 */
+    private fun legacyFunError(at: SourceLine): RsfError =
+        RsfError("lexer", LEGACY_FUN_MESSAGE, at.line, at.column, source)
+
     private fun readIdentOrKeyword(at: SourceLine): Token {
         val sb = StringBuilder()
         while (pos < text.length && isIdentPart(text[pos])) sb.append(advance())
         val word = sb.toString()
-        // 旧名 `varis`（2026-10-11 改名为 `var`）**不再是关键字**，所以它落在
-        // 关键字表外面——这里是唯一一处能拦住它、并给出改写建议的地方。
-        // 拦在词法层而不是语法层：`varis` 可以出现在任何声明位置（顶层 / 类体字段 /
-        // 局部 / for 初始化），逐个入口去查会漏；而且 `var` 已经是关键字，
-        // 再让 `varis` 当合法标识符只会让两套写法并存。
+        // 旧名 `fun`（2026-10-18 改名为 `fn`）与旧名 `varis`（改名为 `var`）**都不再是关键字**，
+        // 所以它们落在关键字表外面——这里是唯一一处能拦住它们、并给出改写建议的地方。
+        // 拦在词法层而不是语法层：它们可以出现在任何声明位置（顶层 / 类体字段 /
+        // 局部 / for 初始化），逐个入口去查会漏；而且 `fn` / `var` 已经是关键字，
+        // 再让旧名当合法标识符只会让两套写法并存。
+        if (word == LEGACY_FUN_KEYWORD) throw legacyFunError(at)
         if (word == LEGACY_VAR_KEYWORD) throw legacyVarError(at)
         val kind = KEYWORDS[word]
         return if (kind == null) {

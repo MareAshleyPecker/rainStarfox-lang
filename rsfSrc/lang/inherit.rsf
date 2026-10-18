@@ -11,18 +11,18 @@ class Animal(nm : string, legs0 : int) {
     var name : string = nm
     var legs : int = legs0
 
-    fun sound() -> string {
+    fn sound() -> string {
         rtn "..."
     }
 
     // 没写 final 的方法子类可以覆盖；describe() 里调 sound() 按运行期类型虚分派
-    fun describe() -> string {
+    fn describe() -> string {
         rtn name + " 叫 " + sound() + "，有 " + intToString(legs) + " 条腿"
     }
 }
 
 class Dog(nm : string) : Animal(nm, 4) {
-    override fun sound() -> string {
+    override fn sound() -> string {
         rtn "woof"
     }
 }
@@ -30,7 +30,7 @@ class Dog(nm : string) : Animal(nm, 4) {
 // super.f()：先拿父类那一份结果，再补一截
 // final：这个类就此封口，再有人写 `class X : Puppy` 会被 Checker 拒掉
 final class Puppy(nm : string) : Dog(nm) {
-    override fun sound() -> string {
+    override fn sound() -> string {
         rtn super.sound() + "(小奶音)"
     }
 }
@@ -40,9 +40,9 @@ final class Puppy(nm : string) : Dog(nm) {
 abstract class Shape(nm : string) {
     var name : string = nm
 
-    abstract fun area() -> int
+    abstract fn area() -> int
 
-    fun show() -> string {
+    fn show() -> string {
         rtn name + " 面积 = " + intToString(area())
     }
 }
@@ -51,7 +51,7 @@ class Rect(w0 : int, h0 : int) : Shape("rect") {
     var w : int = w0
     var h : int = h0
 
-    override fun area() -> int {
+    override fn area() -> int {
         rtn w * h
     }
 }
@@ -59,7 +59,7 @@ class Rect(w0 : int, h0 : int) : Shape("rect") {
 class Square(s0 : int) : Shape("square") {
     var side : int = s0
 
-    override fun area() -> int {
+    override fn area() -> int {
         rtn side * side
     }
 }
@@ -87,7 +87,7 @@ class Leaf(n0 : int) : Base(n0) {
 
 // ---------------------------------------------------------------- 入口
 
-fun main() -> void {
+fn main() -> void {
     // 上转型变量：静态类型都是 Animal，运行期分别是 Dog / Puppy
     var a : Animal = new Dog("旺财")
     println(a.describe())

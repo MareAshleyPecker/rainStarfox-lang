@@ -126,7 +126,7 @@ public enum NodeKind {
 
 // 枚举值 -> dump 里的名字。写成显式 switch（而不是靠 `"" + k` 拿 toString）有两个好处：
 // 名字和 AstDump.kt 里写死的字符串**能一眼对上**，而且这一层穷尽性由编译器把关。
-public fun kindName(k : NodeKind) -> string {
+public fn kindName(k : NodeKind) -> string {
     switch (k) {
         NodeKind.PROGRAM : rtn "PROGRAM"
         NodeKind.PKG : rtn "PKG"
@@ -241,7 +241,7 @@ public class Node(kind : NodeKind, text : string) {
     }
 
     // 追加一个属性。属性顺序 = put 的顺序，必须与 AstDump.kt 里那几个函数写字段的顺序一致。
-    public fun put(name : string, value : string) -> Node {
+    public fn put(name : string, value : string) -> Node {
         if (text.length() == 0) {
             text = name + "=" + value
         } else {
@@ -251,7 +251,7 @@ public class Node(kind : NodeKind, text : string) {
     }
 
     // 追加一个孩子。rsf 的数组长度固定，所以满了就翻倍（和 Lexer.rsf 的 pushToken 一个套路）。
-    public fun add(child : Node) -> Node {
+    public fn add(child : Node) -> Node {
         if (childCount >= children.length) {
             var size = 8
             if (children.length > 0) { size = children.length * 2 }
@@ -267,7 +267,7 @@ public class Node(kind : NodeKind, text : string) {
     }
 
     // 列表节点的 `count=N`：必须在孩子都加完之后调。
-    public fun countTag() -> Node {
+    public fn countTag() -> Node {
         rtn put("count", intToString(childCount))
     }
 }
@@ -289,14 +289,14 @@ public class TypeInfo(name : string, args : string, depth : int, nested : string
     var depth : int = depth
     var nested : string = nested
 
-    public fun text() -> string {
+    public fn text() -> string {
         var out = name
         if (args.length() > 0) { out = out + "&<" + args + ">" }
         if (nested.length() > 0) { out = out + "::" + nested }
         rtn out + repeatText("[]", depth)
     }
 
-    public fun argsOrDash() -> string {
+    public fn argsOrDash() -> string {
         if (args.length() == 0) { rtn "-" }
         rtn args
     }
@@ -304,7 +304,7 @@ public class TypeInfo(name : string, args : string, depth : int, nested : string
 
 // ---------------------------------------------------------------- 小工具
 
-fun repeatText(s : string, n : int) -> string {
+fn repeatText(s : string, n : int) -> string {
     var out = ""
     for (var i = 0; i < n; i = i + 1) {
         out = out + s
@@ -312,17 +312,17 @@ fun repeatText(s : string, n : int) -> string {
     rtn out
 }
 
-fun boolText(b : bool) -> string {
+fn boolText(b : bool) -> string {
     if (b) { rtn "true" }
     rtn "false"
 }
 
-fun startsWithChar(s : string, c : char) -> bool {
+fn startsWithChar(s : string, c : char) -> bool {
     if (s.length() == 0) { rtn false }
     rtn s.charAt(0) == c
 }
 
-public fun isTypeKeyword(kind : string) -> bool {
+public fn isTypeKeyword(kind : string) -> bool {
     if (kind == "KW_VOID") { rtn true }
     if (kind == "KW_INT") { rtn true }
     if (kind == "KW_LONG") { rtn true }
@@ -335,68 +335,68 @@ public fun isTypeKeyword(kind : string) -> bool {
     rtn false
 }
 
-public fun isControlKeyword(kind : string) -> bool {
+public fn isControlKeyword(kind : string) -> bool {
     if (kind == "KW_PUBLIC") { rtn true }
     if (kind == "KW_PRIVATE") { rtn true }
     if (kind == "KW_PROTECTED") { rtn true }
     rtn false
 }
 
-fun isStaticKeyword(kind : string) -> bool { rtn kind == "KW_STATIC" }
+fn isStaticKeyword(kind : string) -> bool { rtn kind == "KW_STATIC" }
 
-fun isOverrideKeyword(kind : string) -> bool { rtn kind == "KW_OVERRIDE" }
+fn isOverrideKeyword(kind : string) -> bool { rtn kind == "KW_OVERRIDE" }
 
 // 阶段 25：继承修饰词（阶段 27 起只剩 `final` / `abstract`，与 Kotlin 侧
 // TokenKind.isInheritKeyword 同口径，见 src/main/kotlin/org/example/complie/lexing/Token.kt）。
 // 注意 `super` **不在**这里：它不是修饰词，而是表达式位置上的接收者。
-fun isInheritKeyword(kind : string) -> bool {
+fn isInheritKeyword(kind : string) -> bool {
     if (kind == "KW_FINAL") { rtn true }
     rtn kind == "KW_ABSTRACT"
 }
 
 // 排在声明前面的修饰词（与 Kotlin 侧 TokenKind.isModifierKeyword 同口径：
 // 权限修饰词 / static / override / 继承修饰词）。接口体的成员循环要用它把一整个修饰词串数完。
-fun isModifierKeyword(kind : string) -> bool {
+fn isModifierKeyword(kind : string) -> bool {
     if (isControlKeyword(kind)) { rtn true }
     if (isStaticKeyword(kind)) { rtn true }
     if (isInheritKeyword(kind)) { rtn true }
     rtn isOverrideKeyword(kind)
 }
 
-fun isVarKeyword(kind : string) -> bool {
+fn isVarKeyword(kind : string) -> bool {
     if (kind == "KW_VAR") { rtn true }
     rtn kind == "KW_IMUTVAR"
 }
 
-fun isReturnKeyword(kind : string) -> bool {
+fn isReturnKeyword(kind : string) -> bool {
     if (kind == "KW_RTN") { rtn true }
     rtn kind == "KW_RETURN"
 }
 
-fun isComparisonKind(kind : string) -> bool {
+fn isComparisonKind(kind : string) -> bool {
     if (kind == "LT") { rtn true }
     if (kind == "GT") { rtn true }
     if (kind == "LE") { rtn true }
     rtn kind == "GE"
 }
 
-fun isEqualityKind(kind : string) -> bool {
+fn isEqualityKind(kind : string) -> bool {
     if (kind == "EQ") { rtn true }
     rtn kind == "NE"
 }
 
-fun isAddKind(kind : string) -> bool {
+fn isAddKind(kind : string) -> bool {
     if (kind == "PLUS") { rtn true }
     rtn kind == "MINUS"
 }
 
-fun isMulKind(kind : string) -> bool {
+fn isMulKind(kind : string) -> bool {
     if (kind == "STAR") { rtn true }
     if (kind == "SLASH") { rtn true }
     rtn kind == "PERCENT"
 }
 
-fun isLiteralKind(kind : string) -> bool {
+fn isLiteralKind(kind : string) -> bool {
     if (kind == "INT_LIT") { rtn true }
     if (kind == "LONG_LIT") { rtn true }
     if (kind == "FLOAT_LIT") { rtn true }
@@ -406,7 +406,7 @@ fun isLiteralKind(kind : string) -> bool {
 }
 
 // 控制词 -> ControlType 的名字（Kotlin 版是 ControlType.of(kind).name）
-fun controlName(kind : string) -> string {
+fn controlName(kind : string) -> string {
     if (kind == "KW_PUBLIC") { rtn "PUBLIC" }
     if (kind == "KW_PRIVATE") { rtn "PRIVATE" }
     if (kind == "KW_PROTECTED") { rtn "PROTECTED" }
@@ -414,7 +414,7 @@ fun controlName(kind : string) -> string {
 }
 
 // 类型关键字 -> 规范类型名（Kotlin 版的 canonicalTypeName：别名 str / boolean 归一化）
-fun canonicalTypeName(kind : string) -> string {
+fn canonicalTypeName(kind : string) -> string {
     if (kind == "KW_VOID") { rtn "void" }
     if (kind == "KW_INT") { rtn "int" }
     if (kind == "KW_LONG") { rtn "long" }
@@ -430,7 +430,7 @@ fun canonicalTypeName(kind : string) -> string {
 // 阶段 28b：反引号只允许出现在「标签声明」和 `goto` 之后。其它位置（表达式、变量名、
 // 字段名、函数名、goto 以外的语句首……）一律报这一句 —— 与 Kotlin 版
 // Parser.labelNameOnlyError（:3090）**逐字一致**（含逗号后没有空格）。
-public fun labelNameOnlyMessage() -> string {
+public fn labelNameOnlyMessage() -> string {
     rtn "反引号只用来写标签名（合法写法只有 `名字:` 与 goto `名字` 两种），变量 / 字段 / 函数名不能用反引号"
 }
 
@@ -442,7 +442,7 @@ public fun labelNameOnlyMessage() -> string {
 // 为什么非要转义空格：dump 的行格式是「字段之间正好一个空格」，值里再出现空格
 // 就没法按空格切了 —— 而字符串字面量 `"hello world"` 里就有空格。
 
-public fun escapeValue(s : string) -> string {
+public fn escapeValue(s : string) -> string {
     var out = ""
     for (var i = 0; i < s.length(); i = i + 1) {
         var c = s.charAt(i)
@@ -475,12 +475,12 @@ public fun escapeValue(s : string) -> string {
     rtn out
 }
 
-fun hexDigitChar(v : int) -> char {
+fn hexDigitChar(v : int) -> char {
     if (v < 10) { rtn toChar(48 + v) }
     rtn toChar(87 + v)
 }
 
-fun hex2(v : int) -> string {
+fn hex2(v : int) -> string {
     rtn "" + hexDigitChar(v / 16) + hexDigitChar(v % 16)
 }
 
@@ -490,7 +490,7 @@ fun hex2(v : int) -> string {
 // rsf 没有 split/join，只能自己走一遍字符；trim 用内置的 isWhitespace
 // （正是 Kotlin 的 Char.isWhitespace，所以两边裁的是同一批字符）。
 
-fun trimWhitespace(s : string) -> string {
+fn trimWhitespace(s : string) -> string {
     var from = 0
     var to = s.length()
     while (from < to) {
@@ -504,7 +504,7 @@ fun trimWhitespace(s : string) -> string {
     rtn s.substring(from, to)
 }
 
-fun normalizeImportPath(raw : string) -> string {
+fn normalizeImportPath(raw : string) -> string {
     var out = ""
     var line = ""
     for (var i = 0; i < raw.length(); i = i + 1) {
@@ -525,20 +525,20 @@ fun normalizeImportPath(raw : string) -> string {
 // 走的也是同一批 JVM 方法，所以源码文本与值的十进制写法不同的那种输入
 // （`007`、`3.141592653589793238`、`2.5D`）两端也能对上。
 
-fun intLiteralText(t : Token) -> string {
+fn intLiteralText(t : Token) -> string {
     rtn Integer.toString(Integer.parseInt(t.text))
 }
 
-fun longLiteralText(t : Token) -> string {
+fn longLiteralText(t : Token) -> string {
     // 词法阶段已经把后缀统一成小写，所以 LONG_LIT 的文本一定是「数字 + l」
     rtn Long.toString(Long.parseLong(dropLast(t.text)))
 }
 
-fun floatLiteralText(t : Token) -> string {
+fn floatLiteralText(t : Token) -> string {
     rtn Float.toString(Float.parseFloat(dropLast(t.text)))
 }
 
-fun doubleLiteralText(t : Token) -> string {
+fn doubleLiteralText(t : Token) -> string {
     // 带 d 后缀要去掉；不带后缀的（源码里写了小数点）整串就是数字
     if (endsWithLetter(t.text, 'd')) {
         rtn Double.toString(Double.parseDouble(dropLast(t.text)))
@@ -597,7 +597,7 @@ public class Parser(tokens : Token[]) {
 
     // ------------------------------------------------------------ 出错
 
-    fun failAt(t : Token, message : string) -> void {
+    fn failAt(t : Token, message : string) -> void {
         if (failed) { rtn }
         failed = true
         failLine = t.line
@@ -605,7 +605,7 @@ public class Parser(tokens : Token[]) {
         failMessage = message
     }
 
-    fun errorNode() -> Node {
+    fn errorNode() -> Node {
         var n = new Node(NodeKind.ERROR)
         n.put("message", escapeValue(failMessage))
         rtn n
@@ -613,26 +613,26 @@ public class Parser(tokens : Token[]) {
 
     // ------------------------------------------------------------ 记号流
 
-    fun peekAt(offset : int) -> Token {
+    fn peekAt(offset : int) -> Token {
         var i = pos + offset
         if (i >= ts.length) { i = ts.length - 1 }
         rtn ts[i]
     }
 
-    fun peek() -> Token { rtn peekAt(0) }
+    fn peek() -> Token { rtn peekAt(0) }
 
-    fun check(kind : string) -> bool { rtn peek().kind == kind }
+    fn check(kind : string) -> bool { rtn peek().kind == kind }
 
-    fun checkAt(offset : int, kind : string) -> bool { rtn peekAt(offset).kind == kind }
+    fn checkAt(offset : int, kind : string) -> bool { rtn peekAt(offset).kind == kind }
 
     // 与 Kotlin 版一样：EOF 上 advance 不动（不然会越界，循环也停不下来）
-    fun advance() -> Token {
+    fn advance() -> Token {
         var t = peek()
         if (t.kind != "EOF") { pos = pos + 1 }
         rtn t
     }
 
-    fun matchOne(kind : string) -> bool {
+    fn matchOne(kind : string) -> bool {
         if (!check(kind)) { rtn false }
         advance()
         rtn true
@@ -640,25 +640,25 @@ public class Parser(tokens : Token[]) {
 
     // 没有可变参数 / 重载，所以按参数个数各写一个（这是 rsf 目前最直接的缺口之一，
     // 见报告里「rsf 还缺什么」）
-    fun matchAny2(a : string, b : string) -> bool {
+    fn matchAny2(a : string, b : string) -> bool {
         if (matchOne(a)) { rtn true }
         rtn matchOne(b)
     }
 
-    fun matchAny3(a : string, b : string, c : string) -> bool {
+    fn matchAny3(a : string, b : string, c : string) -> bool {
         if (matchOne(a)) { rtn true }
         if (matchOne(b)) { rtn true }
         rtn matchOne(c)
     }
 
-    fun matchAny4(a : string, b : string, c : string, d : string) -> bool {
+    fn matchAny4(a : string, b : string, c : string, d : string) -> bool {
         if (matchOne(a)) { rtn true }
         if (matchOne(b)) { rtn true }
         if (matchOne(c)) { rtn true }
         rtn matchOne(d)
     }
 
-    fun expect(kind : string, message : string) -> Token {
+    fn expect(kind : string, message : string) -> Token {
         if (!check(kind)) {
             failAt(peek(), message)
             rtn advance()
@@ -666,12 +666,12 @@ public class Parser(tokens : Token[]) {
         rtn advance()
     }
 
-    fun hasFailed() -> bool { rtn failed }
-    fun errorMessage() -> string { rtn failMessage }
+    fn hasFailed() -> bool { rtn failed }
+    fn errorMessage() -> string { rtn failMessage }
 
     // ============================================================ 顶层
 
-    fun parseProgram() -> Node {
+    fn parseProgram() -> Node {
         var program = new Node(NodeKind.PROGRAM)
 
         // pkg 只能出现在最前面（在 import 之前），和 Java 的 package 一样
@@ -743,7 +743,7 @@ public class Parser(tokens : Token[]) {
     }
 
     // 包名段之间 ` . ` ` \ ` `/` 都收，混写也行，最后统一成点分形式
-    fun parsePackageDecl() -> string {
+    fn parsePackageDecl() -> string {
         advance()   // pkg
         var parts = readPkgIdent()
         var going = true
@@ -767,7 +767,7 @@ public class Parser(tokens : Token[]) {
         rtn parts
     }
 
-    fun readPkgIdent() -> string {
+    fn readPkgIdent() -> string {
         var t = peek()
         if (t.kind != "IDENT") {
             failAt(t, "包名需要标识符（例如 pkg util 或 pkg a.b）")
@@ -780,7 +780,7 @@ public class Parser(tokens : Token[]) {
     // 声明前面那一串修饰词的个数（权限 / static / override / final / abstract）。
     // 阶段 25 起 `class Base` 里 `class` 前面不再是「一个可选的权限修饰词」，
     // 所以四个前瞻都要按 Kotlin 版 modifierRun 的口径**整串**跳过去再认声明关键字。
-    fun modifierRun() -> int {
+    fn modifierRun() -> int {
         var offset = 0
         while (isModifierKeyword(peekAt(offset).kind)) {
             offset = offset + 1
@@ -791,7 +791,7 @@ public class Parser(tokens : Token[]) {
     // 继承修饰词后面是不是一个字段：`var x` / `final var x`。
     // 字段不吃继承修饰词（阶段 25 禁止字段遮蔽，DESIGN-25 §5），要单独给一句准确的报错
     // （Kotlin 版 isFieldDeclAheadAfterInherit，Parser.kt:1422）。
-    fun isFieldDeclAheadAfterInherit() -> bool {
+    fn isFieldDeclAheadAfterInherit() -> bool {
         if (!isInheritKeyword(peek().kind)) { rtn false }
         var n = 0
         while (isInheritKeyword(peekAt(n).kind)) {
@@ -800,29 +800,29 @@ public class Parser(tokens : Token[]) {
         rtn isVarKeyword(peekAt(n).kind)
     }
 
-    fun isClassDeclAhead() -> bool {
+    fn isClassDeclAhead() -> bool {
         rtn peekAt(modifierRun()).kind == "KW_CLASS"
     }
 
-    fun isEnumDeclAhead() -> bool {
+    fn isEnumDeclAhead() -> bool {
         rtn peekAt(modifierRun()).kind == "KW_ENUM"
     }
 
     // `interface` 是硬关键字，写接口不用修饰词也认；带了 public 也要认，
     // 所以先跳过前缀里的修饰词（与 isClassDeclAhead 同一招）。
-    fun isInterfaceDeclAhead() -> bool {
+    fn isInterfaceDeclAhead() -> bool {
         rtn peekAt(modifierRun()).kind == "KW_INTERFACE"
     }
 
     // 阶段 21：`annotation` 跟 `interface` 一样是硬关键字，带了 public 也要认。
     // 注意调用点（parseProgram）**已经把声明前的注解收掉了**，所以这里只需要跳过修饰词，
     // 与 isClassDeclAhead / isEnumDeclAhead / isInterfaceDeclAhead 完全同款。
-    fun isAnnotationDeclAhead() -> bool {
+    fn isAnnotationDeclAhead() -> bool {
         rtn peekAt(modifierRun()).kind == "KW_ANNOTATION"
     }
 
     // 三种 import：点分路径（JVM 类）、字符串路径（rsf 源文件）、module 目录
-    fun parseImport() -> Node {
+    fn parseImport() -> Node {
         var kw = advance()
         var isModule = kw.kind == "KW_MODULE"
 
@@ -854,7 +854,7 @@ public class Parser(tokens : Token[]) {
 
     // ============================================================ 枚举
 
-    fun parseEnumDecl() -> Node {
+    fn parseEnumDecl() -> Node {
         var control = "DEFAULT"
         if (isControlKeyword(peek().kind)) { control = controlName(advance().kind) }
         var enumTok = expect("KW_ENUM", "enum 声明缺少 'enum'")
@@ -884,7 +884,7 @@ public class Parser(tokens : Token[]) {
 
     // annotations：声明前收到的注解序列（`@Marker public class C { }`）；空表也要挂（count=0），
     // 而且**挂在最后**（位置索引铁律：Interp.rsf:792/805/888/919 与 Backend.rsf:5692 用位置读孩子）。
-    fun parseClassDecl(annotations : Node) -> Node {
+    fn parseClassDecl(annotations : Node) -> Node {
         // 阶段 25 K5a-fix：类头的权限修饰词与继承修饰词**任意穿插**（`public class` 与
         // `open public class` 等价），与 Kotlin 版 Parser.kt:669 的循环一一对应。
         // 权限修饰词仍然只收一个；被权限词隔开的几段继承修饰词由 mergeInheritMods 合起来
@@ -1052,7 +1052,7 @@ public class Parser(tokens : Token[]) {
 
     // 次构造：`constructor(参数) { ... }`。没有返回类型、不能写权限修饰词、不能 static。
     // annotations：构造器声明前的注解表（类体里带注解的构造器在语法层就被拒，这里只是照签名带过来）。
-    fun parseConstructor(className : string, annotations : Node) -> Node {
+    fn parseConstructor(className : string, annotations : Node) -> Node {
         if (isControlKeyword(peek().kind)) {
             failAt(peek(), "constructor 不能写权限修饰词：构造器只能通过 new 调用")
         }
@@ -1096,7 +1096,7 @@ public class Parser(tokens : Token[]) {
     // Parser.kt:790 的 parseInheritModifiers 一一对应：同一个词写两遍、`open` 与 `final`
     // 同时写、`abstract` 与另两个一起写，都在**这里**当场判失败（报错位置指到后面那个词）。
     // ⇒ 三个词**至多一个为真**。`super` 不在这条通路上（它是表达式接收者，不是修饰词）。
-    fun parseInheritModifiers(kindWord : string) -> InheritMods {
+    fn parseInheritModifiers(kindWord : string) -> InheritMods {
         var sawFinal = false
         var sawAbstract = false
         while (isInheritKeyword(peek().kind) && !failed) {
@@ -1119,7 +1119,7 @@ public class Parser(tokens : Token[]) {
 
     // 两段修饰词合并（Kotlin 版 mergeInherit，Parser.kt:1724）：修饰词与注解可以夹着写
     // （`open @M final fun f()`），所以 parseFuncDecl 的收集循环可能前后收到两段。
-    fun mergeInheritMods(cur : InheritMods, kindWord : string) -> InheritMods {
+    fn mergeInheritMods(cur : InheritMods, kindWord : string) -> InheritMods {
         var next = parseInheritModifiers(kindWord)
         if (cur.isFinal && next.isFinal) { failAt(peek(), kindWord + " 上 'final' 写了两遍——写一次就够了") }
         if (cur.isAbstract && next.isAbstract) { failAt(peek(), kindWord + " 上 'abstract' 写了两遍——写一次就够了") }
@@ -1138,7 +1138,7 @@ public class Parser(tokens : Token[]) {
     // 类头 `:` 子句：父类可选（**最多一个**），父接口 0..n 个。
     // 判据是**语法**的（「类型引用后面紧跟着 `(`」），Kotlin 版 parseSuperClause
     // （Parser.kt:850）同口径：「这个名字到底是不是一份可以继承的类」留给语义层。
-    fun parseSuperClause(className : string) -> SuperClause {
+    fn parseSuperClause(className : string) -> SuperClause {
         if (!check("COLON")) {
             rtn new SuperClause("", "", new Node(NodeKind.ARGS), new Node(NodeKind.SUPERS).countTag())
         }
@@ -1173,7 +1173,7 @@ public class Parser(tokens : Token[]) {
     // 只看两项：IDENT 加上紧跟的 `(`——因为父类的实参表是**必须写的**（DESIGN-25 §2），
     // 「带括号的类型名」在 `:` 子句里只可能是父类。泛型父类要把 `&<...>` 尖括号对跳过去，
     // 再看后面是不是构造实参表的 `(`（Kotlin 版 isBaseAhead，Parser.kt:893）。
-    fun isBaseAhead() -> bool {
+    fn isBaseAhead() -> bool {
         if (!check("IDENT")) { rtn false }
         var n = 1
         if (peekAt(n).kind == "AMP") {
@@ -1200,7 +1200,7 @@ public class Parser(tokens : Token[]) {
 
     // 父类构造实参表：`Base(实参)`。**必须写**——没有括号直接报错（DESIGN-25 §2）。
     // 返回的是一个还没打 count 的 ARGS 节点，由调用方 countTag 后挂到 SUPER_CLASS 下面。
-    fun parseSuperArgs(className : string) -> Node {
+    fn parseSuperArgs(className : string) -> Node {
         if (!check("LPAREN")) {
             failAt(peek(), "类 '" + className + "' 的父类后面必须写出构造实参：写法是 `: 父类名(实参)` 或 `: 父类名()`（父类可能没有无参构造器，所以这一对括号不能省），实际读到 '" + peek().text + "'")
             rtn new Node(NodeKind.ARGS)
@@ -1223,7 +1223,7 @@ public class Parser(tokens : Token[]) {
     // 三条当场判失败（与 Kotlin 版 parseSupertypeItems 同口径，文案不要求一致）：
     // 父类型带 `?`、父类型不是类型名（例如 `:` 后面直接跟 `{`）、父类型是内置类型名或数组。
     // 类型本身交给 parseTypeRef 解析，免得正例的显示文本与别处的类型写法不一致。
-    fun parseSupertypeList() -> Node {
+    fn parseSupertypeList() -> Node {
         var supers = new Node(NodeKind.SUPERS)
         // Kotlin 版 `supers()` 的那一行**总是**带 `count=`（没有父类型就是 SUPERS count=0），
         // 所以这里两条出口都要打 count：早点返回的那条也不能漏。
@@ -1234,7 +1234,7 @@ public class Parser(tokens : Token[]) {
 
     // 父类型列表本体。`stopAtBase` = 碰到「带实参表的父类」就停下、把它留给调用方
     // （Kotlin 版 parseSupertypeItems(owner, stopAtBase)，Parser.kt:1011）。
-    fun parseSupertypeItems(supers : Node, stopAtBase : bool) -> Node {
+    fn parseSupertypeItems(supers : Node, stopAtBase : bool) -> Node {
         var going = true
         while (going && !failed) {
             if (stopAtBase && isBaseAhead()) {
@@ -1275,7 +1275,7 @@ public class Parser(tokens : Token[]) {
     // 接口体里**只能写方法**：不能有字段、不能有构造器、不能 static、不能写非 public 的权限修饰词。
     // 方法可以没有体（抽象方法，dump 里不打 BLOCK），也可以有体（默认方法）；接口方法允许 override。
     // annotations：声明前收到的注解序列（`@Marker interface I { }`），空表也挂（count=0），挂在最后
-    fun parseInterfaceDecl(annotations : Node) -> Node {
+    fn parseInterfaceDecl(annotations : Node) -> Node {
         var control = "DEFAULT"
         if (isControlKeyword(peek().kind)) { control = controlName(advance().kind) }
         expect("KW_INTERFACE", "interface 声明缺少 'interface'")
@@ -1351,7 +1351,7 @@ public class Parser(tokens : Token[]) {
                         // 上面已经报过错、报错位置已定住：别再往下解析成员
                     } else {
                         if (peekAt(offset).kind != "KW_FUN") {
-                            failAt(peek(), "接口里只能写方法（格式是 'fun 名字(参数) 返回子句'，可以有方法体），实际读到 '" + peek().text + "'")
+                            failAt(peek(), "接口里只能写方法（格式是 'fn 名字(参数) 返回子句'，可以有方法体），实际读到 '" + peek().text + "'")
                         } else {
                             var mem = parseFuncDecl(methodAnnotations)
                             if (mem.line < 1) { mem.line = memberLine }
@@ -1383,7 +1383,7 @@ public class Parser(tokens : Token[]) {
 
     // 声明前的注解序列：`@Marker @Other("x") public class C { }`。
     // 收不到就返回**空表本身**（dump 成 `ANNOTATION_USES count=0`），由调用方挂到节点最后。
-    fun parseAnnotations() -> Node {
+    fn parseAnnotations() -> Node {
         var list = new Node(NodeKind.ANNOTATION_USES)
         collectLeadingAnnotations(list)
         rtn list
@@ -1391,7 +1391,7 @@ public class Parser(tokens : Token[]) {
 
     // 往已经建好的表里再收一轮 `@...`。抽出来是因为「函数修饰词之间」也要能写注解，
     // 需要重复调用（与 Kotlin 版 collectLeadingAnnotations 同口径）。
-    fun collectLeadingAnnotations(into : Node) -> void {
+    fn collectLeadingAnnotations(into : Node) -> void {
         while (check("AT") && !failed) {
             into.add(parseAnnotationUse())
         }
@@ -1399,7 +1399,7 @@ public class Parser(tokens : Token[]) {
 
     // 一个使用点：`@Marker` / `@a.b` / `@Outer::Inner("hi", count = 3)`。
     // 名字里的 `.` 与 `::` 都拼成点分形式（跟 Kotlin 版一样：`name + "." + 段`）。
-    fun parseAnnotationUse() -> Node {
+    fn parseAnnotationUse() -> Node {
         var atTok = expect("AT", "注解要写在 '@' 后面")
         var nameTok = expect("IDENT", "'@' 后面缺少注解名（写法是 @Marker 或 @Marker(...)）")
         var name = nameTok.text
@@ -1422,7 +1422,7 @@ public class Parser(tokens : Token[]) {
     // 两种实参用**两个节点名**区分（与 AstDump.kt 的 POSITIONAL_ARG / NAMED_ARG 一一对应）：
     // 具名式的判据是「IDENT 后面紧跟 ASSIGN」（记号表里没有复合赋值，这个前瞻不会误伤）。
     // 空表照实打 `count=0`：`@M` 与 `@M()` 在 AST 里分不出，别发明区分。
-    fun parseAnnotationArgs() -> Node {
+    fn parseAnnotationArgs() -> Node {
         expect("LPAREN", "注解实参表缺少 '('")
         var args = new Node(NodeKind.ANNOTATION_ARGS)
         var sawNamed = false
@@ -1460,7 +1460,7 @@ public class Parser(tokens : Token[]) {
     // 元素表**只有写了 '(' 才收**（`annotation M { }` 与 `annotation M() { }` 都是空表，分不出）；
     // 注解体里至多一个 companion entity，别的成员（fun / var / constructor）是语法错误——
     // 在 parser 层就报，不留给语义层。annotations：声明前的注解序列（元注解 `@Meta annotation M`）。
-    fun parseAnnotationDecl(annotations : Node) -> Node {
+    fn parseAnnotationDecl(annotations : Node) -> Node {
         var control = "DEFAULT"
         if (isControlKeyword(peek().kind)) { control = controlName(advance().kind) }
         expect("KW_ANNOTATION", "注解声明缺少 'annotation'")
@@ -1493,7 +1493,7 @@ public class Parser(tokens : Token[]) {
     // 伴生实体自己也能带注解，但**语义层忽略**（与 Kotlin 版 parseAnnotationBody 一样：
     // 收下就丢掉，AST 里 CompanionEntityDecl 根本没有注解字段），所以这里不把结果往上挂。
     // 解析出来的 COMPANION 直接挂到 owner（ANNOTATION 节点）上，位置紧跟在 ANNOTATION_ELEMENTS 之后。
-    fun parseAnnotationBody(annotationName : string, owner : Node) -> void {
+    fn parseAnnotationBody(annotationName : string, owner : Node) -> void {
         parseAnnotations()
         if (check("KW_COMPANION")) {
             owner.add(parseCompanionEntity(annotationName))
@@ -1506,7 +1506,7 @@ public class Parser(tokens : Token[]) {
 
     // 元素表：`(value : string = "x", count : int = 0,)`——**允许尾逗号**，重名在解析期报错。
     // 重名只能拿数组线性查（rsf 还没有 HashSet，与类型参数那段同一个写法）。
-    fun parseAnnotationElementList(annotationName : string) -> Node {
+    fn parseAnnotationElementList(annotationName : string) -> Node {
         expect("LPAREN", "注解 '" + annotationName + "' 的元素表缺少 '('")
         var elements = new Node(NodeKind.ANNOTATION_ELEMENTS)
         var seenNames = new string[8]
@@ -1541,7 +1541,7 @@ public class Parser(tokens : Token[]) {
 
     // 一个元素：名字已经被调用方吃掉，这里接 `: 类型` 与可省的 `= 默认值`。
     // 有默认值才挂一棵表达式子树（照 FIELD 的 initializer 那样打，与 AstDump.kt 一致）。
-    fun parseAnnotationElement(nameTok : Token) -> Node {
+    fn parseAnnotationElement(nameTok : Token) -> Node {
         expect("COLON", "注解元素 '" + nameTok.text + "' 要写成「名字 : 类型」，类型不能省")
         var ty = parseSuffixType("注解元素 '" + nameTok.text + "' 的类型要写成「名字 : 类型」")
         var hasDefault = false
@@ -1566,7 +1566,7 @@ public class Parser(tokens : Token[]) {
     //（与 Kotlin 版 validateAnnotationDefault / isDefaultConstantLiteral 同口径）。
     // 枚举常量 / 注解 / 数组默认值 v1 不支持 ⇒ 这里直接判失败。
     // 注意 rsf 的 isLiteralKind 少了 BOOL_LIT/NULL_LIT，所以这里逐个列全，不用它。
-    fun parseAnnotationDefault(owner : string) -> Node {
+    fn parseAnnotationDefault(owner : string) -> Node {
         var e = parseExpr()
         var ok = false
         if (e.kind == NodeKind.INT_LIT || e.kind == NodeKind.LONG_LIT || e.kind == NodeKind.FLOAT_LIT ||
@@ -1592,7 +1592,7 @@ public class Parser(tokens : Token[]) {
     // 伴生实体：`companion entity [名字] [: 父接口, ...] { 普通类体 }`。
     // 名字可省（匿名，dump 里打占位 `name=-`）；父接口子句复用第 1 刀的 parseSupertypeList()；
     // 体就是普通类体（字段 / 方法 / 构造器），复用同一批解析函数。
-    fun parseCompanionEntity(annotationName : string) -> Node {
+    fn parseCompanionEntity(annotationName : string) -> Node {
         var companionTok = expect("KW_COMPANION", "伴生实体缺少 'companion'")
         expect("KW_ENTITY", "companion 后面缺少 'entity'（伴生实体要写成 companion entity [名字] [: 父接口] { ... }）")
 
@@ -1656,7 +1656,7 @@ public class Parser(tokens : Token[]) {
 
     // 字段：`var 名字 : 类型 = 初值`（类型与初值都必须写）
     // annotations：声明前收到的注解序列（`@Marker var f : int = 0`），空表也挂（count=0），挂在最后
-    fun parseFieldDecl(annotations : Node) -> Node {
+    fn parseFieldDecl(annotations : Node) -> Node {
         var kwTok = advance()
         var mutable = kwTok.kind == "KW_VAR"
         var nameTok = expect("IDENT", "字段缺少名字：写法是 '" + kwTok.text + " 名字 : 类型 = 初值'")
@@ -1683,7 +1683,7 @@ public class Parser(tokens : Token[]) {
     // 函数自己的修饰词之间**还能**再写注解（`@M public fun f()` / `public @M fun f()`），
     // 所以进来之后、每吃下一个修饰词之后都再收一轮（与 Kotlin 版 collectLeadingAnnotations 同口径）。
     // 注解列表挂在**最后**（PARAMS → [BLOCK] → ANNOTATION_USES）。
-    fun parseFuncDecl(annotations : Node) -> Node {
+    fn parseFuncDecl(annotations : Node) -> Node {
         var anns = annotations
         var control = "DEFAULT"
         var isOverride = false
@@ -1731,14 +1731,14 @@ public class Parser(tokens : Token[]) {
         }
 
         if (peek().kind != "KW_FUN") {
-            failAt(peek(), "顶层只能写函数声明，格式是 '[public|protected|private] [static] [override] [final|abstract] fun [类型] 名字() 返回子句 函数体'")
+            failAt(peek(), "顶层只能写函数声明，格式是 '[public|protected|private] [static] [override] [final|abstract] fn [类型] 名字() 返回子句 函数体'")
             rtn emptyFunc(control, isStatic, isOverride)
         }
         advance()   // fun
 
         // 曾经写反的修饰符位置
         if (isControlKeyword(peek().kind) || isStaticKeyword(peek().kind) || isOverrideKeyword(peek().kind) || isInheritKeyword(peek().kind)) {
-            failAt(peek(), "修饰符要写在 fun 前面：改成 '" + peek().text + " fun ...'")
+            failAt(peek(), "修饰符要写在 fn 前面：改成 '" + peek().text + " fn ...'")
         }
 
         // <MainType>：fun 之后、函数名之前的类型槽，缺省 void
@@ -1786,10 +1786,10 @@ public class Parser(tokens : Token[]) {
         } else {
             if (inherit.isAbstract) {
                 if (check("LBRACE")) {
-                    failAt(peek(), "抽象方法不能写函数体：'abstract fun 名字(...)' 只写签名，没有 '{ ... }'。要么把 'abstract' 删掉、把体留下，要么把体删掉（DESIGN-25 §6）")
+                    failAt(peek(), "抽象方法不能写函数体：'abstract fn 名字(...)' 只写签名，没有 '{ ... }'。要么把 'abstract' 删掉、把体留下，要么把体删掉（DESIGN-25 §6）")
                 } else {
                     if (retStyle == "OMITTED") {
-                        failAt(peek(), "抽象方法要写出返回子句：'abstract fun 名字(...) -> 返回类型'。没有体就没有返回值可以推断，返回类型必须写出来（DESIGN-25 §6）")
+                        failAt(peek(), "抽象方法要写出返回子句：'abstract fn 名字(...) -> 返回类型'。没有体就没有返回值可以推断，返回类型必须写出来（DESIGN-25 §6）")
                     }
                 }
             } else {
@@ -1823,7 +1823,7 @@ public class Parser(tokens : Token[]) {
         rtn n
     }
 
-    fun emptyFunc(control : string, isStatic : bool, isOverride : bool) -> Node {
+    fn emptyFunc(control : string, isStatic : bool, isOverride : bool) -> Node {
         var n = new Node(NodeKind.FUNC)
             .put("control", control)
             .put("static", boolText(isStatic))
@@ -1843,7 +1843,7 @@ public class Parser(tokens : Token[]) {
     }
 
     // 参数表：`(int a, b : string)`。两种风格靠记号前瞻分流，同一个表里可以混写。
-    fun parseParamList(missingParen : string) -> Node {
+    fn parseParamList(missingParen : string) -> Node {
         expect("LPAREN", missingParen)
         var params = new Node(NodeKind.PARAMS)
         if (!check("RPAREN")) {
@@ -1857,7 +1857,7 @@ public class Parser(tokens : Token[]) {
         rtn params.countTag()
     }
 
-    fun parseParam() -> Node {
+    fn parseParam() -> Node {
         var t = peek()
 
         // 1. Kotlin 风格：名字 : 类型
@@ -1882,7 +1882,7 @@ public class Parser(tokens : Token[]) {
     }
 
     // `名字 : 类型` 里冒号后面那个类型槽（局部变量、字段、Kotlin 风格参数共用）
-    fun parseSuffixType(hint : string) -> TypeInfo {
+    fn parseSuffixType(hint : string) -> TypeInfo {
         var t = peek()
         if (!isTypeKeyword(t.kind) && t.kind != "IDENT" && t.kind != "QUESTION") {
             failAt(t, hint)
@@ -1892,7 +1892,7 @@ public class Parser(tokens : Token[]) {
     }
 
     // 类型引用：可空 `?` 前缀、泛型实参 `&<...>`、嵌套类型 `注解名::伴生名`、数组后缀 `[]`（可叠多层）
-    fun parseTypeRef() -> TypeInfo {
+    fn parseTypeRef() -> TypeInfo {
         var nullable = matchOne("QUESTION")
         var t = peek()
         var name = ""
@@ -1956,7 +1956,7 @@ public class Parser(tokens : Token[]) {
     }
 
     // 类型实参表 `&<int>` / `&<string, int>` / `&<Box&<int>>`；返回的是**内部**文本
-    fun parseTypeArgs() -> string {
+    fn parseTypeArgs() -> string {
         advance()   // &
         expect("LT", "'&' 后面缺少 '<'：类型实参要写成 '&<实参类型>'（单独的 '<' 是比较运算）")
         var out = ""
@@ -1976,7 +1976,7 @@ public class Parser(tokens : Token[]) {
 
     // ============================================================ 语句
 
-    fun parseBlock() -> Node {
+    fn parseBlock() -> Node {
         expect("LBRACE", "函数体需要以 '{' 开始")
         var b = new Node(NodeKind.BLOCK)
         while (!check("RBRACE") && !check("EOF") && !failed) {
@@ -1989,14 +1989,14 @@ public class Parser(tokens : Token[]) {
 
     // 语句节点的行号 = 这条语句**第一个 token** 的行号（与 Kotlin 版 `at` 同口径）。
     // 表达式里的节点不带行号（只有语句节点需要），行号由 parseStmt 统一补。
-    fun parseStmt() -> Node {
+    fn parseStmt() -> Node {
         var ln = peek().line
         var n = parseStmtInner()
         if (n.line < 1) { n.line = ln }
         rtn n
     }
 
-    fun parseStmtInner() -> Node {
+    fn parseStmtInner() -> Node {
         var t = peek()
         var k = t.kind
 
@@ -2089,7 +2089,7 @@ public class Parser(tokens : Token[]) {
     }
 
     // 表达式语句，顺带认出两种赋值目标：`p.x = 1`（成员）与 `a[i] = 1`（下标）
-    fun finishExprStmt(e : Node) -> Node {
+    fn finishExprStmt(e : Node) -> Node {
         if (check("ASSIGN")) {
             if (e.kind == NodeKind.MEMBER) {
                 advance()   // =
@@ -2111,7 +2111,7 @@ public class Parser(tokens : Token[]) {
         rtn stmt
     }
 
-    fun parseAssign() -> Node {
+    fn parseAssign() -> Node {
         var nameTok = advance()
         advance()   // =
         var value = parseExpr()
@@ -2120,7 +2120,7 @@ public class Parser(tokens : Token[]) {
         rtn n
     }
 
-    fun parseVarDecl() -> Node {
+    fn parseVarDecl() -> Node {
         var kwTok = advance()
         var mutable = kwTok.kind == "KW_VAR"
         var nameTok = expect("IDENT", "'" + kwTok.text + "' 后面缺少变量名")
@@ -2145,7 +2145,7 @@ public class Parser(tokens : Token[]) {
 
     // `rtn` / `return`：后面跟不跟值，靠「右大括号 / 分号 / 文件结束 / 换行了」判断
     // （rsf 不靠换行分词，所以这里必须看行号，否则下一行的语句会被当成返回值）
-    fun parseReturn() -> Node {
+    fn parseReturn() -> Node {
         var rtnTok = advance()
         var next = peek()
         if (next.kind == "RBRACE" || next.kind == "EOF" || next.kind == "SEMI" || next.line != rtnTok.line) {
@@ -2156,7 +2156,7 @@ public class Parser(tokens : Token[]) {
         rtn n
     }
 
-    fun parseFail() -> Node {
+    fn parseFail() -> Node {
         var failTok = advance()
         var next = peek()
         if (next.kind == "RBRACE" || next.kind == "EOF" || next.kind == "SEMI" || next.line != failTok.line) {
@@ -2169,7 +2169,7 @@ public class Parser(tokens : Token[]) {
     }
 
     // `try { ... } catch (e : string) { ... }`（也收老写法 `catch (e string)`）
-    fun parseTry() -> Node {
+    fn parseTry() -> Node {
         advance()   // try
         var body = parseBody("try")
 
@@ -2204,12 +2204,12 @@ public class Parser(tokens : Token[]) {
         rtn n
     }
 
-    fun catchTypeError(name : string) -> string {
+    fn catchTypeError(name : string) -> string {
         rtn "catch 的错误变量类型只能是 string。两种写法都可以：Kotlin 风格 'catch (" + name + " : string)'，或者 Java 风格 'catch (" + name + " string)'"
     }
 
     // if：花括号块、`c : 语句`、以及「三目出现在语句位置」（值被丢弃）
-    fun parseIfStmt() -> Node {
+    fn parseIfStmt() -> Node {
         advance()   // if
         var cond = parseExpr()
 
@@ -2234,7 +2234,7 @@ public class Parser(tokens : Token[]) {
     }
 
     // else 后面：另一个 if（形成 else-if 链），或者一个普通体
-    fun parseElseBody() -> Node {
+    fn parseElseBody() -> Node {
         if (check("KW_IF")) {
             // 走 parseStmt 而不是直接 parseIfStmt：链上的每个 if 都要带**自己那一行**行号
             // （Kotlin 的 LineNumberTable 里 else-if 的条件属于 else-if 所在行）
@@ -2248,7 +2248,7 @@ public class Parser(tokens : Token[]) {
 
     // if / while / for / case / else / try / catch 的体：花括号块，或者冒号后面的单条语句
     // （单条语句也被包成一个只有一条语句的块，于是下游只有一种「体」形状）
-    fun parseBody(what : string) -> Node {
+    fn parseBody(what : string) -> Node {
         if (check("LBRACE")) {
             var lb = peek().line
             var blk = parseBlock()
@@ -2269,7 +2269,7 @@ public class Parser(tokens : Token[]) {
     }
 
     // 三目的后半截：`? 值1 : 值2`
-    fun parseIfTail(condition : Node) -> Node {
+    fn parseIfTail(condition : Node) -> Node {
         expect("QUESTION", "三目运算符需要 '?'，写法是 'if 条件 ? 值1 : 值2'")
         var whenTrue = parseExpr()
         expect("COLON", "三目运算符缺少 ':'（写法是 'if 条件 ? 值1 : 值2'）")
@@ -2282,7 +2282,7 @@ public class Parser(tokens : Token[]) {
     }
 
     // 枚举分派（阶段 19c；阶段 21 起分支不写 `case`）：`switch (值) { 枚举名.值名 : 语句 / else : 语句 }`
-    fun parseSwitch() -> Node {
+    fn parseSwitch() -> Node {
         var switchTok = advance()   // switch
         expect("LPAREN", "'switch' 后面需要 '('（写法是 switch (值) { ... }）")
         var subject = parseExpr()
@@ -2352,7 +2352,7 @@ public class Parser(tokens : Token[]) {
     }
 
     // 构造器委托 `this(实参)`
-    fun parseThisCall() -> Node {
+    fn parseThisCall() -> Node {
         advance()   // this
         expect("LPAREN", "'this' 后面需要 '('（构造器委托写成 this(实参)）")
         var args = new Node(NodeKind.ARGS)
@@ -2372,7 +2372,7 @@ public class Parser(tokens : Token[]) {
     // 阶段 25：父类构造器委托 `super(实参)`（Kotlin 版 parseSuperCall，Parser.kt:2184）。
     // 与 this(实参) 完全同形，只是节点换成 SUPER_CALL——dump 是 `SUPER_CALL argc=N` + ARGS。
     // 「只能写第一句」「与 this(...) 互斥」是语义层的判据，留给 K5b/K5c。
-    fun parseSuperCall() -> Node {
+    fn parseSuperCall() -> Node {
         advance()   // super
         expect("LPAREN", "'super' 后面需要 '('（父类构造器委托写成 super(实参)）")
         var args = new Node(NodeKind.ARGS)
@@ -2396,7 +2396,7 @@ public class Parser(tokens : Token[]) {
     // 单独一个 `super` 没有值可取，必须跟方法调用（rsf 不支持 `super.字段`）。
     // **节点复用 NodeKind.SUPER**：dump 名 `SUPER` 本来就同时被「接口父类型」
     // （`SUPER name=… display=… typeArgs=…`）与「super 表达式」（`SUPER target=…`）用。
-    fun parseSuperExpr() -> Node {
+    fn parseSuperExpr() -> Node {
         // `super(接口名)`
         if (check("LPAREN")) {
             advance()   // '('
@@ -2425,7 +2425,7 @@ public class Parser(tokens : Token[]) {
     // `super.成员名(实参)`：只认方法调用（Kotlin 版 parseSuperMember，Parser.kt:2847）。
     // 落成的是普通 MEMBER 节点（与 parsePostfix 里 `a.b(实参)` 同形），
     // 接收者孩子就是上面那个 SUPER 节点。
-    fun parseSuperMember(sup : Node, who : string) -> Node {
+    fn parseSuperMember(sup : Node, who : string) -> Node {
         expect("DOT", "'" + who + "' 后面需要 '.'：写法是 " + who + ".方法名(实参)")
         var nameTok = expect("IDENT", "'" + who + ".' 后面需要成员名")
         if (!check("LPAREN")) {
@@ -2450,7 +2450,7 @@ public class Parser(tokens : Token[]) {
 
     // ============================================================ for
 
-    fun parseFor() -> Node {
+    fn parseFor() -> Node {
         var forTok = advance()   // for
         expect("LPAREN", "'for' 后面需要 '('")
         if (peek().kind == "IDENT" && checkAt(1, "KW_IN")) {
@@ -2459,7 +2459,7 @@ public class Parser(tokens : Token[]) {
         rtn parseForClassic()
     }
 
-    fun parseForClassic() -> Node {
+    fn parseForClassic() -> Node {
         var init = new Node(NodeKind.BLOCK)
         if (!check("SEMI")) {
             var going = true
@@ -2519,7 +2519,7 @@ public class Parser(tokens : Token[]) {
         rtn outer.countTag()
     }
 
-    fun parseForClauseStmt() -> Node {
+    fn parseForClauseStmt() -> Node {
         var t = peek()
         if (isVarKeyword(t.kind)) { rtn parseVarDecl() }
         if (t.kind == "KW_LET") {
@@ -2532,7 +2532,7 @@ public class Parser(tokens : Token[]) {
 
     // `for (i in 起点..终点 step 步长)` —— 与 Kotlin 版**逐字对应**地解糖。
     // 终点与步长只求值一次（和 Java / Kotlin 一致），步长为负就自动变成递减。
-    fun parseForIn(forTok : Token) -> Node {
+    fn parseForIn(forTok : Token) -> Node {
         var nameTok = advance()   // IDENT
         advance()                   // in
 
@@ -2589,15 +2589,15 @@ public class Parser(tokens : Token[]) {
         rtn outer.countTag()
     }
 
-    fun varNode(name : string) -> Node {
+    fn varNode(name : string) -> Node {
         rtn new Node(NodeKind.VAR).put("name", escapeValue(name))
     }
 
-    fun intNode(value : string) -> Node {
+    fn intNode(value : string) -> Node {
         rtn new Node(NodeKind.INT_LIT).put("value", value)
     }
 
-    fun binaryNode(op : string, left : Node, right : Node) -> Node {
+    fn binaryNode(op : string, left : Node, right : Node) -> Node {
         var n = new Node(NodeKind.BINARY).put("op", op)
         n.add(left)
         n.add(right)
@@ -2609,9 +2609,9 @@ public class Parser(tokens : Token[]) {
     // 优先级从松到紧（与 Java / Kotlin 完全一致）：
     //   ?:  <  ||  <  &&  <  == !=  <  < > <= >=  <  + -  <  * / %  <  一元  <  后缀
 
-    fun parseExpr() -> Node { rtn parseElvis() }
+    fn parseExpr() -> Node { rtn parseElvis() }
 
-    fun parseElvis() -> Node {
+    fn parseElvis() -> Node {
         var left = parseOr()
         while (matchOne("ELVIS") && !failed) {
             var right = parseOr()
@@ -2623,7 +2623,7 @@ public class Parser(tokens : Token[]) {
         rtn left
     }
 
-    fun parseOr() -> Node {
+    fn parseOr() -> Node {
         var left = parseAnd()
         while (matchOne("OROR") && !failed) {
             var right = parseAnd()
@@ -2632,7 +2632,7 @@ public class Parser(tokens : Token[]) {
         rtn left
     }
 
-    fun parseAnd() -> Node {
+    fn parseAnd() -> Node {
         var left = parseEquality()
         while (matchOne("ANDAND") && !failed) {
             var right = parseEquality()
@@ -2641,7 +2641,7 @@ public class Parser(tokens : Token[]) {
         rtn left
     }
 
-    fun parseEquality() -> Node {
+    fn parseEquality() -> Node {
         var left = parseComparison()
         while (isEqualityKind(peek().kind) && !failed) {
             var op = advance().kind
@@ -2650,7 +2650,7 @@ public class Parser(tokens : Token[]) {
         rtn left
     }
 
-    fun parseComparison() -> Node {
+    fn parseComparison() -> Node {
         var left = parseTerm()
         while (isComparisonKind(peek().kind) && !failed) {
             var op = advance().kind
@@ -2659,7 +2659,7 @@ public class Parser(tokens : Token[]) {
         rtn left
     }
 
-    fun parseTerm() -> Node {
+    fn parseTerm() -> Node {
         var left = parseFactor()
         while (isAddKind(peek().kind) && !failed) {
             var op = advance().kind
@@ -2668,7 +2668,7 @@ public class Parser(tokens : Token[]) {
         rtn left
     }
 
-    fun parseFactor() -> Node {
+    fn parseFactor() -> Node {
         var left = parseUnary()
         while (isMulKind(peek().kind) && !failed) {
             var op = advance().kind
@@ -2677,7 +2677,7 @@ public class Parser(tokens : Token[]) {
         rtn left
     }
 
-    fun parseUnary() -> Node {
+    fn parseUnary() -> Node {
         if (check("MINUS") || check("BANG")) {
             var opTok = advance()
             var operand = parseUnary()
@@ -2689,7 +2689,7 @@ public class Parser(tokens : Token[]) {
     }
 
     // 后缀：`!!`、`.`（成员）、`[i]`（下标）。三者同一个循环，所以 a[i][j]、p.f[0].g!! 自然层层套。
-    fun parsePostfix() -> Node {
+    fn parsePostfix() -> Node {
         var e = parsePrimary()
         var going = true
         while (going && !failed) {
@@ -2789,7 +2789,7 @@ public class Parser(tokens : Token[]) {
     // （`null is A` 恒 false、`null as A` 抛、`null ?as A` 得 null，见 DESIGN-24 §3 的 Q2），
     // 目标再写 `?` 不会带来任何区别，只会让人误会「有 '?' 才是安全的那一种」——
     // 所以直接在语法层拒掉。
-    fun parseCastTarget(opText : string) -> TypeInfo {
+    fn parseCastTarget(opText : string) -> TypeInfo {
         var t = peek()
         // `?` 单拎出来报：否则会落到下面「需要一个目标类型」那条，把人引向
         // 「该写什么类型」而不是「不许写 ?」，而 n1 的判据看的就是这条口径。
@@ -2818,7 +2818,7 @@ public class Parser(tokens : Token[]) {
 
     // `failAt` 文案里那个「实际读到的记号」：口径对齐 Kotlin 版 Token.describe()
     // （EOF 说「文件结束」、标识符带引号说明、字面量原样、其余打记号原文）。
-    fun tokenDescribe(t : Token) -> string {
+    fn tokenDescribe(t : Token) -> string {
         if (t.kind == "EOF") { rtn "文件结束" }
         if (t.kind == "IDENT") { rtn "标识符 '" + t.text + "'" }
         if (t.kind == "INT_LIT" || t.kind == "LONG_LIT" || t.kind == "FLOAT_LIT" ||
@@ -2829,7 +2829,7 @@ public class Parser(tokens : Token[]) {
     }
 
     // 去掉首字符（`?A` -> `A`）。只在「可空目标」那条错误文案里用，语义是 String.removePrefix。
-    fun dropFirstChar(s : string) -> string {
+    fn dropFirstChar(s : string) -> string {
         if (s.length() <= 1) { rtn "" }
         rtn s.substring(1, s.length())
     }
@@ -2839,7 +2839,7 @@ public class Parser(tokens : Token[]) {
     // 写完一个转换/判型后立刻看一眼下一个记号：若是 `as` / `?as` / `is` / `!is` 就报错。
     // 理由：`a as A as B` 的结论等价于 `a as B`（判型只认最后那个类型），
     // 中间那层既不改变结果、也不做额外检查，链下去只让人误会它「逐层收窄」。
-    fun expectNoChainedCast(opText : string) -> void {
+    fn expectNoChainedCast(opText : string) -> void {
         var t = peek()
         var next = ""
         if (t.kind == "KW_AS") { next = "as" }
@@ -2852,7 +2852,7 @@ public class Parser(tokens : Token[]) {
             "确实需要两步就分开写（`var x = a as A` 再 `x as B`）")
     }
 
-    fun parsePrimary() -> Node {
+    fn parsePrimary() -> Node {
         var t = peek()
         var k = t.kind
 
@@ -2966,7 +2966,7 @@ public class Parser(tokens : Token[]) {
 
     // `new 类名(实参)` / `new 类名&<T>(实参)` / `new T[n]` / `new T[n][m]`
     // 两条路靠「类型后面跟的是 '(' 还是 '['」区分，没有歧义。
-    fun parseNewExpr() -> Node {
+    fn parseNewExpr() -> Node {
         var t = peek()
         if (!isTypeKeyword(t.kind) && t.kind != "IDENT") {
             failAt(t, "'new' 后面需要类名（new Point(1, 2)）或者数组类型（new int[5]）")
@@ -3024,7 +3024,7 @@ public class Parser(tokens : Token[]) {
 
 // 解析一份源码。**合法输入上与 Kotlin 版 Parser 建出结构相同的树**。
 // 失败时不抛（rsf 版不用异常）：返回一个 kind = ERROR 的节点，消息在 text 里。
-public fun parseSource(source : string) -> Node {
+public fn parseSource(source : string) -> Node {
     var ts = lex(source)
     if (ts.length == 0) {
         // 词法就挂了：Kotlin 版这时抛的是 RsfError，rsf 版把词法消息落进 ERROR 节点
@@ -3044,7 +3044,7 @@ public fun parseSource(source : string) -> Node {
 }
 
 // 判定一份源码能不能解析（对拍「两边都失败」那条边界用的）
-public fun parseFailed(source : string) -> bool {
+public fn parseFailed(source : string) -> bool {
     var ts = lex(source)
     if (ts.length == 0) { rtn true }
     var p = new Parser(ts)
@@ -3054,7 +3054,7 @@ public fun parseFailed(source : string) -> bool {
 }
 
 // 解析失败时的消息（没失败就是空串）
-public fun parseErrorMessage(source : string) -> string {
+public fn parseErrorMessage(source : string) -> string {
     var ts = lex(source)
     if (ts.length == 0) { rtn lexError(source) }
     var p = new Parser(ts)
@@ -3063,32 +3063,32 @@ public fun parseErrorMessage(source : string) -> string {
 }
 
 // 读文件再解析（路径用 / 分隔；不写死任何绝对路径）
-public fun parseFile(path : string) -> !Node {
+public fn parseFile(path : string) -> !Node {
     var text = readText(path)!!
     rtn parseSource(text)
 }
 
 // ================================================================ dump
 
-fun astLine(node : Node, depth : int) -> string {
+fn astLine(node : Node, depth : int) -> string {
     var head = repeatText("  ", depth) + kindName(node.kind)
     if (node.text.length() > 0) { head = head + " " + node.text }
     rtn head
 }
 
-public fun dumpAstAt(node : Node, depth : int) -> void {
+public fn dumpAstAt(node : Node, depth : int) -> void {
     println(astLine(node, depth))
     for (var i = 0; i < node.childCount; i = i + 1) {
         dumpAstAt(node.children[i], depth + 1)
     }
 }
 
-public fun dumpAst(node : Node) -> void {
+public fn dumpAst(node : Node) -> void {
     dumpAstAt(node, 0)
 }
 
 // 与 dumpAst 同样的内容，但拼成一个字符串返回（测试与工具用起来更方便）
-public fun astTextAt(node : Node, depth : int) -> string {
+public fn astTextAt(node : Node, depth : int) -> string {
     var out = astLine(node, depth) + "\n"
     for (var i = 0; i < node.childCount; i = i + 1) {
         out = out + astTextAt(node.children[i], depth + 1)
@@ -3096,7 +3096,7 @@ public fun astTextAt(node : Node, depth : int) -> string {
     rtn out
 }
 
-public fun astText(node : Node) -> string {
+public fn astText(node : Node) -> string {
     rtn astTextAt(node, 0)
 }
 

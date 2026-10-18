@@ -1,22 +1,22 @@
 public interface Greeter {
-    fun greet() -> string
+    fn greet() -> string
 }
 
 class Dog : Greeter {
-    public fun greet() -> string {
+    public fn greet() -> string {
         rtn "woof"
     }
 }
 
-fun hello(g : Greeter) -> string {
+fn hello(g : Greeter) -> string {
     rtn g.greet()
 }
 
-fun must() -> !Greeter {
+fn must() -> !Greeter {
     rtn new Dog()
 }
 
-fun main() -> void {
+fn main() -> void {
     println(hello(new Dog()))
     var g : Greeter = must() ?: new Dog()
     println(g.greet())

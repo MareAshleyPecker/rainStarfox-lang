@@ -27,7 +27,7 @@
 // ---------------------------------------------------------------- 数组当参数 / 返回值
 
 // 数组当参数：类型写成 int[]
-fun sum(xs : int[]) -> int {
+fn sum(xs : int[]) -> int {
     var total = 0
     for (var i = 0; i < xs.length; i = i + 1) {
         total = total + xs[i]
@@ -36,7 +36,7 @@ fun sum(xs : int[]) -> int {
 }
 
 // 引用语义：传进来的是**同一个**数组，改元素调用方看得见
-fun fill(xs : int[], value : int) -> void {
+fn fill(xs : int[], value : int) -> void {
     for (var i = 0; i < xs.length; i = i + 1) {
         xs[i] = value
     }
@@ -44,7 +44,7 @@ fun fill(xs : int[], value : int) -> void {
 }
 
 // 数组当返回值：可以在函数里按运行期长度分配
-fun makeSquares(n : int) -> int[] {
+fn makeSquares(n : int) -> int[] {
     var out = new int[n]
     for (var i = 0; i < n; i = i + 1) {
         out[i] = i * i
@@ -53,7 +53,7 @@ fun makeSquares(n : int) -> int[] {
 }
 
 // 二维数组当参数：`int[][]` 是「元素为 int[] 的数组」
-fun sumGrid(grid : int[][]) -> int {
+fn sumGrid(grid : int[][]) -> int {
     var total = 0
     for (var r = 0; r < grid.length; r = r + 1) {
         for (var c = 0; c < grid[r].length; c = c + 1) {
@@ -70,7 +70,7 @@ class Bag {
     var items : int[] = new int[2]
     imutvar label : string = "bag"
 
-    fun total() -> int {
+    fn total() -> int {
         rtn items[0] + items[1]
     }
 }
@@ -84,19 +84,19 @@ class Point {
         y = y0
     }
 
-    fun sum() -> int { rtn x + y }
+    fn sum() -> int { rtn x + y }
 }
 
 // 泛型类：类型参数也能套数组（`Box&<int[]>` 这种实参是允许的）
 class Box&<T> {
     var value : T = 0
-    fun get() -> T { rtn value }
-    fun set(v : T) -> void { value = v }
+    fn get() -> T { rtn value }
+    fn set(v : T) -> void { value = v }
 }
 
 // ---------------------------------------------------------------- 入口
 
-fun main() -> void {
+fn main() -> void {
     // ------------------------------------------------------------ 基础类型数组
     println("== 基础类型数组 ==")
     var a : int[] = new int[5]

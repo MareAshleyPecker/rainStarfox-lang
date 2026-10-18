@@ -1,12 +1,12 @@
 import java.lang.Runnable
 
 class Job : Runnable {
-    public fun run() -> void {
+    public fn run() -> void {
         println("running")
     }
 }
 
-fun main() -> void {
+fn main() -> void {
     var j : Runnable = new Job()
     j.run()
     rtn

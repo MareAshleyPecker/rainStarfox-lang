@@ -4,14 +4,14 @@ import java.util.Comparator
 // 注意：Java 编译器会给它生成桥方法 compare(Object,Object)；
 // rsf 编译器要不要也发桥，是 M4 要判的（这个探针就是去撞那一枪）。
 class ByValue : Comparator&<string> {
-    public fun compare(a : string, b : string) -> int {
+    public fn compare(a : string, b : string) -> int {
         var x = parseInt(a) ?: 0
         var y = parseInt(b) ?: 0
         rtn x - y
     }
 }
 
-fun main() -> void {
+fn main() -> void {
     var c : Comparator&<string> = new ByValue()
     println(intToString(c.compare("5", "3")))
     println(intToString(c.compare("3", "5")))

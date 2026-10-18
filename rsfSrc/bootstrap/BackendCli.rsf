@@ -22,12 +22,12 @@ import "Sources.rsf"
 import java.io.File
 import java.lang.System
 
-fun propOr(key : string, dflt : string) -> string {
+fn propOr(key : string, dflt : string) -> string {
     var given : ?string = System.getProperty(key)
     rtn given ?: dflt
 }
 
-fun stripExt(name : string) -> string {
+fn stripExt(name : string) -> string {
     if (name.length() > 4 && name.substring(name.length() - 4, name.length()) == ".rsf") {
         rtn name.substring(0, name.length() - 4)
     }
@@ -35,7 +35,7 @@ fun stripExt(name : string) -> string {
 }
 
 // 文件基名（去掉目录与 .rsf），与 Kotlin 版 Rsf.deriveClassName 同一口径
-fun baseNameOf(path : string) -> string {
+fn baseNameOf(path : string) -> string {
     var i = path.length() - 1
     while (i >= 0) {
         var c = path.charAt(i)
@@ -47,7 +47,7 @@ fun baseNameOf(path : string) -> string {
     rtn stripExt(path)
 }
 
-fun main() -> void {
+fn main() -> void {
     var file = propOr("rsf.backend.file", "")
     if (file.length() == 0) {
         System.err.println("[rsf-17d] 用法: java -Drsf.backend.file=<源.rsf> [-Drsf.backend.out=<目录>] [-Drsf.backend.name=<类名>] -cp \"out;build/libs/rainStarfox-0.9.0.jar\" BackendCli")

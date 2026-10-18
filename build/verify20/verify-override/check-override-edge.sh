@@ -11,20 +11,20 @@ norm() { printf '%s' "$1" | tr -d '\r'; }
 
 cat > "$SRC/e_multi.rsf" <<'EOF'
 public interface A {
-    fun say() -> string
+    fn say() -> string
 }
 
 public interface B {
-    fun say() -> string
+    fn say() -> string
 }
 
 class C : A, B {
-    override public fun say() -> string {
+    override public fn say() -> string {
         rtn "c"
     }
 }
 
-fun main() -> void {
+fn main() -> void {
     var a : A = new C()
     var b : B = new C()
     println(a.say())
@@ -35,24 +35,24 @@ EOF
 
 cat > "$SRC/e_default_conflict.rsf" <<'EOF'
 public interface A {
-    fun say() -> string {
+    fn say() -> string {
         rtn "a"
     }
 }
 
 public interface B {
-    fun say() -> string {
+    fn say() -> string {
         rtn "b"
     }
 }
 
 class C : A, B {
-    override public fun say() -> string {
+    override public fn say() -> string {
         rtn "c"
     }
 }
 
-fun main() -> void {
+fn main() -> void {
     println(new C().say())
     rtn
 }
@@ -60,13 +60,13 @@ EOF
 
 cat > "$SRC/e_default_override.rsf" <<'EOF'
 public interface Named {
-    fun name() -> string {
+    fn name() -> string {
         rtn "n"
     }
 }
 
 public interface Person : Named {
-    override fun name() -> string {
+    override fn name() -> string {
         rtn "p"
     }
 }
@@ -74,7 +74,7 @@ public interface Person : Named {
 class P : Person {
 }
 
-fun main() -> void {
+fn main() -> void {
     var n : Named = new P()
     println(n.name())
     rtn
@@ -83,51 +83,51 @@ EOF
 
 cat > "$SRC/e_private.rsf" <<'EOF'
 public interface Greeter {
-    fun greet(name : string) -> string
+    fn greet(name : string) -> string
 }
 
 class Dog : Greeter {
-    private override fun greet(name : string) -> string {
+    private override fn greet(name : string) -> string {
         rtn "woof"
     }
 }
 
-fun main() -> void {
+fn main() -> void {
     rtn
 }
 EOF
 
 cat > "$SRC/e_private_nokw.rsf" <<'EOF'
 public interface Greeter {
-    fun greet(name : string) -> string
+    fn greet(name : string) -> string
 }
 
 class Dog : Greeter {
-    private fun greet(name : string) -> string {
+    private fn greet(name : string) -> string {
         rtn "woof"
     }
 }
 
-fun main() -> void {
+fn main() -> void {
     rtn
 }
 EOF
 
 cat > "$SRC/e_static.rsf" <<'EOF'
 public interface Greeter {
-    fun greet(name : string) -> string
+    fn greet(name : string) -> string
 }
 
 class Dog : Greeter {
-    public fun greet(name : string) -> string {
+    public fn greet(name : string) -> string {
         rtn "woof"
     }
-    override static fun helper() -> void {
+    override static fn helper() -> void {
         rtn
     }
 }
 
-fun main() -> void {
+fn main() -> void {
     rtn
 }
 EOF

@@ -1909,7 +1909,7 @@ class BytecodeCompiler(
 
         if (isEntry(fn) && returnType != RsfType.VOID) {
             warnings += "入口函数 main 的返回类型是 ${returnType.rsfName}，" +
-                "JVM 只认 void，这个类不能用 `java` 直接启动（写法：fun main() -> void）"
+                "JVM 只认 void，这个类不能用 `java` 直接启动（写法：fn main() -> void）"
         }
         if (fn.name == "main" && fn.params.isNotEmpty()) {
             warnings += "main 带了 ${fn.params.size} 个参数，JVM 启动器只认无参的 " +

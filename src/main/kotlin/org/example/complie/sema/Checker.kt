@@ -350,7 +350,7 @@ class Checker(
             if (fn.mainType.name != "void") {
                 throw err(
                     "<MainType> 目前只支持 void（实际是 '${fn.mainType.name}'）。" +
-                        "它是 fun 之后、函数名之前的类型槽，留给将来的接收者类型/类作用域用。",
+                        "它是 fn 之后、函数名之前的类型槽，留给将来的接收者类型/类作用域用。",
                     fn.mainType.at,
                 )
             }
@@ -821,7 +821,7 @@ class Checker(
                     throw err(
                         "类 '${info.decl.name}' 的 '${m.name}' 和父类 '${owner.decl.name}' 的 " +
                             "${describeSignature(parentMethod)} 同签名了，但没写 override。" +
-                            "rsf 不许遮蔽（DESIGN-25 §5）——要覆盖它就写成 'override fun ${m.name}(...)'，" +
+                            "rsf 不许遮蔽（DESIGN-25 §5）——要覆盖它就写成 'override fn ${m.name}(...)'，" +
                             "只是重名就换个名字",
                         m.at,
                     )
@@ -1384,7 +1384,7 @@ class Checker(
             throw err(
                 "接口 '${iface.decl.name}' 里没有带实现（默认方法）的 '${expr.name}'：" +
                     "super(${iface.decl.name}).${expr.name}(...) 只能用来指明「要哪个接口那一份默认实现」。" +
-                    "抽象方法必须由类自己实现，就在类里写一个 'override fun ${expr.name}(...)'",
+                    "抽象方法必须由类自己实现，就在类里写一个 'override fn ${expr.name}(...)'",
                 expr.at,
             )
         }
@@ -2239,7 +2239,7 @@ class Checker(
                 if (m.isStatic) {
                     throw err(
                         "接口 '${decl.name}' 里的方法不能是 static 的——接口方法都是实例方法，" +
-                            "要靠实现类的对象调。写成 fun ${m.name}(...) 就行",
+                            "要靠实现类的对象调。写成 fn ${m.name}(...) 就行",
                         m.at,
                     )
                 }
@@ -3439,7 +3439,7 @@ class Checker(
                 // 两个无参 main：说「入口歧义」比说「描述符相同」更贴近用户的意图
                 if (owner == null && name == "main" && d.params.isEmpty()) {
                     throw err(
-                        "入口函数 main 只能有一个：这里声明了两个无参的 fun main()" +
+                        "入口函数 main 只能有一个：这里声明了两个无参的 fn main()" +
                             "（前一个在第 ${prev.at.line} 行）。JVM 只认一个入口，" +
                             "rsf 也不知道该从哪一个开始跑——把其中一个改名，或者写成 " +
                             "main(参数)（带参数的 main 是合法的普通函数，只是不能当入口）",

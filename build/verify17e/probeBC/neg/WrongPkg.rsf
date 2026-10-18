@@ -1,5 +1,5 @@
 pkg a.b
 
-fun main() {
+fn main() {
     println("never")
 }

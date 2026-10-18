@@ -30,13 +30,13 @@ import java.lang.System
 // `System.getProperty` 在 rsf 里的声明类型是 `string`，但属性不存在时实际返回 null ——
 // 直接 `.length()` 会在**编译产物**上抛 NullPointerException（17a 踩过一次），
 // 所以要用 `?string` 接住再兜底。
-fun pickPath() -> string {
+fn pickPath() -> string {
     var given : ?string = System.getProperty("rsf.ast.file")
     var path = given ?: "rsfSrc/lang/enums.rsf"
     rtn path
 }
 
-fun main() -> void {
+fn main() -> void {
     var path = pickPath()
 
     // 出口口径**保持原样**：

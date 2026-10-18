@@ -1,22 +1,22 @@
 public interface A {
-    fun say() -> string {
+    fn say() -> string {
         rtn "a"
     }
 }
 
 public interface B {
-    fun say() -> string {
+    fn say() -> string {
         rtn "b"
     }
 }
 
 class C : A, B {
-    override public fun say() -> string {
+    override public fn say() -> string {
         rtn "c"
     }
 }
 
-fun main() -> void {
+fn main() -> void {
     println(new C().say())
     rtn
 }

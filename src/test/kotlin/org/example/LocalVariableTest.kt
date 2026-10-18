@@ -37,12 +37,12 @@ class LocalVariableTest {
         val dir = compile(
             """
             class Calc {
-                fun sum(a : int, b : int, c : int) -> int {
+                fn sum(a : int, b : int, c : int) -> int {
                     rtn a + b + c
                 }
             }
 
-            fun main() -> void { println("ok") }
+            fn main() -> void { println("ok") }
             """,
             "RsfLvtParam",
         )
@@ -61,7 +61,7 @@ class LocalVariableTest {
     fun `var 局部变量带名字和真实槽位且入口 main 的偏移算进去`() {
         val dir = compile(
             """
-            fun main() -> void {
+            fn main() -> void {
                 var a : int = 1
                 var b : string = "s"
                 println(b + a)
@@ -90,7 +90,7 @@ class LocalVariableTest {
                 var y : int = y
             }
 
-            fun main() -> void { println("ok") }
+            fn main() -> void { println("ok") }
             """,
             "RsfLvtCtor",
         )
@@ -108,10 +108,10 @@ class LocalVariableTest {
         val dir = compile(
             """
             public interface Greeter {
-                fun greet(name : string) -> string
+                fn greet(name : string) -> string
             }
 
-            fun main() -> void { println("ok") }
+            fn main() -> void { println("ok") }
             """,
             "RsfLvtAbstract",
         )
@@ -127,7 +127,7 @@ class LocalVariableTest {
     fun `内层遮蔽时同名不同槽两条都登记`() {
         val dir = compile(
             """
-            fun main() -> void {
+            fn main() -> void {
                 var x : int = 1
                 {
                     var x : int = 99
@@ -154,14 +154,14 @@ class LocalVariableTest {
     fun `catch 绑定算局部变量且槽位取自异常表`() {
         val dir = compile(
             """
-            public fun parse(text : string) -> !int {
+            public fn parse(text : string) -> !int {
                 if (text.length() == 0) {
                     fail "空字符串没法转数字"
                 }
                 rtn 42
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var before : int = 7
                 try {
                     var n : int = parse("")!!

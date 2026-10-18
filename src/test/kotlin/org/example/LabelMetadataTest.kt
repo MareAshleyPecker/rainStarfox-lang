@@ -50,7 +50,7 @@ class LabelMetadataTest {
     fun `有标签的方法带 RsfLabels 且 value 是声明顺序`() {
         val dir = compile(
             """
-            fun one() -> void {
+            fn one() -> void {
                 `loop`:
                 println("one")
                 goto `出口`
@@ -59,7 +59,7 @@ class LabelMetadataTest {
                 rtn
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 one()
                 println("main")
             }
@@ -80,17 +80,17 @@ class LabelMetadataTest {
     fun `两个方法的注解互不串联`() {
         val dir = compile(
             """
-            fun a() -> void {
+            fn a() -> void {
                 `重新开始`:
                 rtn
             }
 
-            fun b() -> void {
+            fn b() -> void {
                 `结束`:
                 rtn
             }
 
-            fun c() -> void {
+            fn c() -> void {
                 rtn
             }
             """.trimIndent(),
@@ -108,7 +108,7 @@ class LabelMetadataTest {
     fun `特殊字符标签名原样出现在 value 里`() {
         val dir = compile(
             """
-            fun main() -> void {
+            fn main() -> void {
                 var n = 0
                 `a.b${'$'}c@d/e`:
                 n = n + 1
@@ -133,7 +133,7 @@ class LabelMetadataTest {
     fun `只有内部标签的方法不发注解`() {
         val dir = compile(
             """
-            fun main() -> void {
+            fn main() -> void {
                 try {
                     fail "boom"
                 } catch (e : string) {
@@ -156,7 +156,7 @@ class LabelMetadataTest {
     fun `不生成 RsfLabels 注解接口类且类照常执行`() {
         val dir = compile(
             """
-            fun main() -> void {
+            fn main() -> void {
                 `go`:
                 println("run-ok")
                 rtn
@@ -190,7 +190,7 @@ class LabelMetadataTest {
     /** 词法：`LABEL_NAME` 的 lexeme 是**去掉一对反引号**之后的名字。 */
     @Test
     fun `反引号标签名的 lexeme 不含引号`() {
-        val src = SourceFile.of("<label-lex>", "fun main() -> void {\n    `a-b.c`:\n    rtn\n}")
+        val src = SourceFile.of("<label-lex>", "fn main() -> void {\n    `a-b.c`:\n    rtn\n}")
         val tok = Rsf.tokens(src).first { it.kind == TokenKind.LABEL_NAME }
         assertEquals("a-b.c", tok.lexeme)
         assertEquals(2, tok.line, "位置取开引号那个字符（第 2 行行首缩进后）")
@@ -203,7 +203,7 @@ class LabelMetadataTest {
     fun `空的反引号标签名报错`() {
         assertMessage("标签名不能是空的") {
             """
-            fun main() -> void {
+            fn main() -> void {
                 ``:
                 rtn
             }
@@ -216,7 +216,7 @@ class LabelMetadataTest {
     fun `未收尾的反引号标签名报错`() {
         assertMessage("反引号标签名没有收尾") {
             """
-            fun main() -> void {
+            fn main() -> void {
                 `abc:
                 rtn
             }
@@ -229,7 +229,7 @@ class LabelMetadataTest {
     fun `表达式位置的反引号报错`() {
         assertMessage("反引号只用来写标签名") {
             """
-            fun main() -> void {
+            fn main() -> void {
                 var x = `abc`
                 rtn
             }
@@ -242,7 +242,7 @@ class LabelMetadataTest {
     fun `变量名不能用反引号`() {
         assertMessage("反引号只用来写标签名") {
             """
-            fun main() -> void {
+            fn main() -> void {
                 var `名字` = 1
                 rtn
             }
@@ -255,7 +255,7 @@ class LabelMetadataTest {
     fun `反引号与普通写法算同一个标签名`() {
         assertMessage("标签 'finish' 在函数 'main' 里重复定义") {
             """
-            fun main() -> void {
+            fn main() -> void {
                 `finish`:
                 finish:
                 rtn
@@ -269,12 +269,12 @@ class LabelMetadataTest {
     fun `跨函数 goto 反引号标签找不到`() {
         assertMessage("goto 的标签 '目标' 在函数 'main' 里没有定义") {
             """
-            fun one() -> void {
+            fn one() -> void {
                 `目标`:
                 rtn
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 goto `目标`
             }
             """
@@ -286,7 +286,7 @@ class LabelMetadataTest {
     fun `goto 后面缺标签名报错`() {
         assertMessage("'goto' 后面缺少标签名") {
             """
-            fun main() -> void {
+            fn main() -> void {
                 goto 1
                 rtn
             }

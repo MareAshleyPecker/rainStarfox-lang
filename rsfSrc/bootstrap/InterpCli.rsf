@@ -24,13 +24,13 @@ import "Sources.rsf"
 import java.lang.System
 
 // 挑输入：-Drsf.interp.file 给了就用它，没给就跑去仓库里的一个示例（相对路径）
-fun pickPath() -> string {
+fn pickPath() -> string {
     var given : ?string = System.getProperty("rsf.interp.file")
     var path = given ?: "rsfSrc/lang/main.rsf"
     rtn path
 }
 
-fun main() -> void {
+fn main() -> void {
     var path = pickPath()
 
     // 17e：装载交给 Sources.rsf（它自己读入口文件、递归 import、并成一棵树）。

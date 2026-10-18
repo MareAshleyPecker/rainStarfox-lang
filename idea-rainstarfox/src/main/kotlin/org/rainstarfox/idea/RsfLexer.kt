@@ -199,7 +199,7 @@ class RsfLexer : Lexer() {
      */
     private fun classify(raw: List<Tok>, text: CharSequence, backticked: Set<Int>): List<Tok> {
         fun lexemeOf(t: Tok): String = text.subSequence(t.start, t.end).toString()
-        fun isFun(t: Tok?): Boolean = t != null && t.type == RsfTokens.CONTROL_KEYWORD && lexemeOf(t) == "fun"
+        fun isFun(t: Tok?): Boolean = t != null && t.type == RsfTokens.CONTROL_KEYWORD && lexemeOf(t) == "fn"
 
         val typeNames = typeNamePositions(raw, text)
 
@@ -324,7 +324,7 @@ class RsfLexer : Lexer() {
         fun lexemeOf(t: Tok): String = text.subSequence(t.start, t.end).toString()
         fun isDeclKeyword(t: Tok): Boolean =
             t.type == RsfTokens.CONTROL_KEYWORD &&
-                (lexemeOf(t) == "fun" || lexemeOf(t) == "constructor" || lexemeOf(t) == "class")
+                (lexemeOf(t) == "fn" || lexemeOf(t) == "constructor" || lexemeOf(t) == "class")
 
         // 注：`&` `<` `>` 在插件里没有单独的记号类型，都归在 OPERATION，所以这里
         // 得连字面量一起看——只放过泛型用的那三个，别的运算符一出现就说明不是声明头

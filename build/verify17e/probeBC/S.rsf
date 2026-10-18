@@ -1,9 +1,9 @@
 class H {
-    public static fun risky() -> !int {
+    public static fn risky() -> !int {
         rtn 9
     }
 }
 
-public fun main() {
+public fn main() {
     println("s=" + intToString(H.risky() ?: 0))
 }
