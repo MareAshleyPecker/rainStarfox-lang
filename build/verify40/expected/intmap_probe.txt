@@ -1,0 +1,5 @@
+3 one minus
+true false
+uno
+true false 2
+42 39 ?

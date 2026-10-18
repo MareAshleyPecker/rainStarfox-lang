@@ -1,0 +1,103 @@
+// 阶段 50：核心标准库 · 整数键哈希表 IntMap
+//
+// `HashMap` 只收 string 键（自举链只需要那个），但写普通程序时 int 键更常见：
+// 编号表、坐标压平、稀疏数组都用得上。实现与 HashMap 同一套：开放寻址 + 线性探测
+// + 2 倍扩容，删除时把同簇重新插回。
+pub class IntMap&<T> {
+    var keys : int[] = new int[8]
+    var vals : T[] = new T[8]
+    var used : bool[] = new bool[8]
+    var n : int = 0
+
+    pub fn size() -> int { rtn n }
+
+    pub fn isEmpty() -> bool { rtn n == 0 }
+
+    // 乘一个奇数再取正：连续键也能散开；-2147483648 取反还是自己，单独归零
+    pub fn hashOf(k : int) -> int {
+        var h = k * 31 + 17
+        if (h == -2147483647 - 1) { rtn 0 }
+        if (h < 0) { h = -h }
+        rtn h
+    }
+
+    pub fn slotOf(k : int) -> int {
+        var cap = keys.length
+        var i = hashOf(k) % cap
+        while (used[i]) {
+            if (keys[i] == k) { rtn i }
+            i = (i + 1) % cap
+        }
+        rtn i
+    }
+
+    pub fn put(k : int, v : T) -> void {
+        if ((n + 1) * 4 > keys.length * 3) { rehash() }
+        var i = slotOf(k)
+        if (!used[i]) {
+            used[i] = true
+            keys[i] = k
+            n = n + 1
+        }
+        vals[i] = v
+    }
+
+    pub fn get(k : int) -> ?T {
+        var cap = keys.length
+        var i = hashOf(k) % cap
+        while (used[i]) {
+            if (keys[i] == k) { rtn vals[i] }
+            i = (i + 1) % cap
+        }
+        rtn null
+    }
+
+    pub fn containsKey(k : int) -> bool {
+        var cap = keys.length
+        var i = hashOf(k) % cap
+        while (used[i]) {
+            if (keys[i] == k) { rtn true }
+            i = (i + 1) % cap
+        }
+        rtn false
+    }
+
+    pub fn remove(k : int) -> bool {
+        var cap = keys.length
+        var i = hashOf(k) % cap
+        while (used[i]) {
+            if (keys[i] == k) {
+                used[i] = false
+                n = n - 1
+                var j = (i + 1) % cap
+                while (used[j]) {
+                    var kk = keys[j]
+                    var vv = vals[j]
+                    used[j] = false
+                    n = n - 1
+                    put(kk, vv)
+                    j = (j + 1) % cap
+                }
+                rtn true
+            }
+            i = (i + 1) % cap
+        }
+        rtn false
+    }
+
+    pub fn rehash() -> void {
+        var oldKeys = keys
+        var oldVals = vals
+        var oldUsed = used
+        var cap = oldKeys.length * 2
+        keys = new int[cap]
+        vals = new T[cap]
+        used = new bool[cap]
+        n = 0
+        var i = 0
+        while (i < oldKeys.length) {
+            if (oldUsed[i]) { put(oldKeys[i], oldVals[i]) }
+            i = i + 1
+        }
+    }
+}

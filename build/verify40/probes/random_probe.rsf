@@ -1,0 +1,19 @@
+import "../../../rsfSrc/core/Random.rsf"
+
+fn main() -> void {
+    var r : Random = new Random()
+    r.seed(42)
+    println("" + r.nextInt() + " " + r.nextInt() + " " + r.nextInt())
+    r.seed(42)
+    println("" + r.nextInt() + " " + r.nextInt())
+    r.seed(7)
+    var xs = new int[5]
+    var i = 0
+    while (i < 5) {
+        xs[i] = i
+        i = i + 1
+    }
+    r.shuffle(xs)
+    println("" + xs[0] + " " + xs[1] + " " + xs[2] + " " + xs[3] + " " + xs[4])
+    println("" + r.nextBelow(10) + " " + r.nextBool() + " " + r.nextRange(5, 5))
+}

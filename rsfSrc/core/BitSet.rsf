@@ -1,0 +1,92 @@
+// 阶段 50：核心标准库 · 位集合 BitSet
+//
+// 语言没有位运算符，这里同样用算术：第 i 位落在 words[i / 32] 的第 (i % 32) 位上，
+// 置位就是加 2^(i%32)、清位就是减。容量在 reset(n) 时定死（不做自动扩容，够用且可预期）。
+pub class BitSet {
+    var words : int[] = new int[1]
+    var nbits : int = 0
+
+    // 容量（位数）
+    pub fn size() -> int { rtn nbits }
+
+    pub fn isEmpty() -> bool { rtn count() == 0 }
+
+    pub fn reset(bits : int) -> void {
+        var n = bits
+        if (n < 0) { n = 0 }
+        nbits = n
+        var w = (n + 31) / 32
+        if (w == 0) { w = 1 }
+        words = new int[w]
+    }
+
+    pub fn set(i : int) -> void {
+        if (i < 0 || i >= nbits) { rtn }
+        var w = i / 32
+        var b = i % 32
+        if (!hasBit(words[w], b)) { words[w] = words[w] + pow2(b) }
+    }
+
+    pub fn clear(i : int) -> void {
+        if (i < 0 || i >= nbits) { rtn }
+        var w = i / 32
+        var b = i % 32
+        if (hasBit(words[w], b)) { words[w] = words[w] - pow2(b) }
+    }
+
+    // 第 i 位是否为 1
+    pub fn get(i : int) -> bool {
+        if (i < 0 || i >= nbits) { rtn false }
+        rtn hasBit(words[i / 32], i % 32)
+    }
+
+    pub fn clearAll() -> void {
+        var i = 0
+        while (i < words.length) {
+            words[i] = 0
+            i = i + 1
+        }
+    }
+
+    // 置位总数
+    pub fn count() -> int {
+        var c = 0
+        var i = 0
+        while (i < nbits) {
+            if (get(i)) { c = c + 1 }
+            i = i + 1
+        }
+        rtn c
+    }
+
+    // 从 from 开始第一个置位的下标；没有给 -1
+    pub fn nextSetBit(from : int) -> int {
+        var i = from
+        if (i < 0) { i = 0 }
+        while (i < nbits) {
+            if (get(i)) { rtn i }
+            i = i + 1
+        }
+        rtn -1
+    }
+
+    fn pow2(n : int) -> int {
+        var p = 1
+        var i = 0
+        while (i < n) {
+            p = p * 2
+            i = i + 1
+        }
+        rtn p
+    }
+
+    fn hasBit(word : int, b : int) -> bool {
+        if (b == 31) { rtn word < 0 }
+        var d = pow2(b)
+        var q = word / d
+        if (word < 0 && q * d != word) { q = q - 1 }
+        var r = q % 2
+        if (r < 0) { r = r + 2 }
+        rtn r == 1
+    }
+}

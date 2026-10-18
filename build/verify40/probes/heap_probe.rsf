@@ -1,0 +1,16 @@
+import "../../../rsfSrc/core/IntHeap.rsf"
+
+fn main() -> void {
+    var h : IntHeap = new IntHeap()
+    h.push(5)
+    h.push(1)
+    h.push(9)
+    h.push(3)
+    h.push(7)
+    println("" + h.size() + " " + (h.peek() ?: -1))
+    println("" + (h.pop() ?: -1) + " " + (h.pop() ?: -1) + " " + (h.pop() ?: -1))
+    var s = h.sorted()
+    println("" + s[0] + " " + s[1])
+    var e : IntHeap = new IntHeap()
+    println("" + (e.pop() ?: -99) + " " + e.isEmpty() + " " + e.size())
+}

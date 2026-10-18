@@ -1,0 +1,20 @@
+import "../../../rsfSrc/core/BitSet.rsf"
+
+fn main() -> void {
+    var b : BitSet = new BitSet()
+    b.reset(70)
+    b.set(0)
+    b.set(5)
+    b.set(31)
+    b.set(32)
+    b.set(69)
+    println("" + b.size() + " " + b.count() + " " + b.get(31) + " " + b.get(30))
+    println("" + b.nextSetBit(1) + " " + b.nextSetBit(33) + " " + b.nextSetBit(70))
+    b.clear(0)
+    b.clear(69)
+    println("" + b.count() + " " + b.isEmpty())
+    b.clearAll()
+    println("" + b.isEmpty() + " " + b.count())
+    b.set(100)
+    println("" + b.count())
+}

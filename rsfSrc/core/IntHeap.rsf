@@ -1,0 +1,90 @@
+// 阶段 50：核心标准库 · 最小堆 IntHeap
+//
+// 泛型堆需要比较器，v1 的泛型函数缺口还没补，所以先做 int 版：
+// 优先队列、Top-K、Dijkstra 的待办表都用它。
+pub class IntHeap {
+    var data : int[] = new int[8]
+    var n : int = 0
+
+    pub fn size() -> int { rtn n }
+
+    pub fn isEmpty() -> bool { rtn n == 0 }
+
+    pub fn clear() -> void { n = 0 }
+
+    pub fn peek() -> ?int {
+        if (n == 0) { rtn null }
+        rtn data[0]
+    }
+
+    pub fn push(x : int) -> void {
+        if (n == data.length) { grow() }
+        data[n] = x
+        n = n + 1
+        var i = n - 1
+        while (i > 0) {
+            var parent = (i - 1) / 2
+            if (data[parent] <= data[i]) { break }
+            swap(parent, i)
+            i = parent
+        }
+    }
+
+    pub fn pop() -> ?int {
+        if (n == 0) { rtn null }
+        var top = data[0]
+        n = n - 1
+        data[0] = data[n]
+        var i = 0
+        while (true) {
+            var left = i * 2 + 1
+            if (left >= n) { break }
+            var small = left
+            var right = left + 1
+            if (right < n && data[right] < data[left]) { small = right }
+            if (data[i] <= data[small]) { break }
+            swap(i, small)
+            i = small
+        }
+        rtn top
+    }
+
+    // 堆序拷贝（不是排好序的数组）；要升序用 sorted()
+    pub fn toArray() -> int[] {
+        var out = new int[n]
+        var i = 0
+        while (i < n) {
+            out[i] = data[i]
+            i = i + 1
+        }
+        rtn out
+    }
+
+    // 逐个 pop 出来（会清空堆）
+    pub fn sorted() -> int[] {
+        var out = new int[n]
+        var i = 0
+        while (i < out.length) {
+            var v = pop()
+            out[i] = v ?: 0
+            i = i + 1
+        }
+        rtn out
+    }
+
+    fn swap(i : int, j : int) -> void {
+        var t = data[i]
+        data[i] = data[j]
+        data[j] = t
+    }
+
+    fn grow() -> void {
+        var bigger = new int[data.length * 2]
+        var i = 0
+        while (i < n) {
+            bigger[i] = data[i]
+            i = i + 1
+        }
+        data = bigger
+    }
+}

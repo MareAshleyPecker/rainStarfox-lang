@@ -1,0 +1,19 @@
+import "../../../rsfSrc/core/IntMap.rsf"
+
+fn main() -> void {
+    var m : IntMap&<string> = new IntMap&<string>()
+    m.put(1, "one")
+    m.put(2, "two")
+    m.put(-3, "minus")
+    println("" + m.size() + " " + (m.get(1) ?: "?") + " " + (m.get(-3) ?: "?"))
+    println("" + m.containsKey(2) + " " + m.containsKey(9))
+    m.put(1, "uno")
+    println(m.get(1) ?: "?")
+    println("" + m.remove(2) + " " + m.remove(2) + " " + m.size())
+    var i = 0
+    while (i < 40) {
+        m.put(i * 7, "" + i)
+        i = i + 1
+    }
+    println("" + m.size() + " " + (m.get(273) ?: "?") + " " + (m.get(700) ?: "?"))
+}
