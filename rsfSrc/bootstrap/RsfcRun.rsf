@@ -1,0 +1,56 @@
+// rainStarfox 阶段 36c：自举驱动的 `run` 子命令（对齐 Kotlin `rsf run`：成功时只打程序自己的 stdout）
+//
+// 跑：rsf build rsfSrc/bootstrap/RsfcRun.rsf -o build/verify36/self
+//     java -Drsf.rsfc.file=<源.rsf> -cp "build/verify36/self;<jar>" RsfcRun
+
+import "Interp.rsf"
+import "Sources.rsf"
+
+import java.lang.System
+
+fn pickRunFile() -> string {
+    var given : ?string = System.getProperty("rsf.rsfc.file")
+    if (given == null) {
+        System.err.println("usage: java -Drsf.rsfc.file=<源.rsf> -cp <out>;<jar> RsfcRun")
+        System.exit(2)
+        rtn ""
+    }
+    rtn given!!
+}
+
+fn main() -> void {
+    var path = pickRunFile()
+    var ast : Node = new Node(NodeKind.ERROR)
+    var loaded = false
+    var message = ""
+    try {
+        ast = loadProgram(path)!!
+        loaded = true
+    } catch (loadError : string) {
+        message = loadError
+        loaded = false
+    }
+    if (!loaded) {
+        if (message.startsWith("读不到文件：")) {
+            System.err.println(message)
+        } else {
+            System.err.println("运行期错误: " + message)
+        }
+        System.exit(1)
+        rtn
+    }
+    try {
+        runProgram(ast)!!
+    } catch (e : string) {
+        if (isSignal(e) && signalKind(e) == "X") {
+            System.err.println("运行期错误: " + signalPayload(e))
+        } else if (isSignal(e)) {
+            System.err.println("运行期错误: 内部信号 " + signalKind(e) + " 没有被接住")
+        } else {
+            System.err.println("运行期错误: " + e)
+        }
+        System.exit(1)
+        rtn
+    }
+    rtn
+}

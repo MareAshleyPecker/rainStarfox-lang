@@ -1505,4 +1505,12 @@ IDEA 高亮表与它的快照（`EditorKeywordParityTest` 盯着），但不进�
 现在写它会在顶层报「阶段 22 的预留关键字（数学类）：语法还没拍板」，当名字用也会被拦下。
 语法本身仍未拍板，本节其余内容不变。
 
+## 第 35–37 刀：自举 Checker 收尾与闭环（2026-10-18）
 
+35a 补继承/接口边界（父类构造实参、`super.x` 父类链、抽象类不能 `new`、接口方法必须 public 实例方法），
+对拍 40/40 逐字节一致（`build/verify32/checkcli-parity.sh`）。36a 加入 caret 源码片段，40/40 整段一致；
+36b 自举 `Rsfc.rsf` 提供 `-Drsf.rsfc.file` 的 check 驱动，36c 由 `RsfcBuild.rsf`/`RsfcRun.rsf` 提供
+`build -o` 与 `run`；`build/verify36/run-probes.sh` 三段（check/build/run）全 0。
+37 用 `build/verify37/abc.sh` 跑自举闭环：A 用 Kotlin 编译器编自举链 → B 用 A 编自己 → C 用 B 编自己，
+**A ≡ B ≡ C（40 个 class 逐字节相同）**，且 C 编出的 ok_min 与 Kotlin 编出的逐字节相同。
+剩下的缺口只有 `J1` 类数（自举 CLI 每份各带一套内联副本）与 `rsfc run` 的 stderr 文案细节。

@@ -1,0 +1,141 @@
+// rainStarfox 阶段 36c：自举驱动的 `build` 子命令（输出口径对齐 Kotlin `rsf build`）
+//
+// 跑：rsf build rsfSrc/bootstrap/RsfcBuild.rsf -o build/verify36/self
+//     java -Drsf.rsfc.file=<源.rsf> -Drsf.rsfc.out=<目录> -cp "build/verify36/self;<jar>" RsfcBuild
+//
+// 与 BackendCli 的区别只在**输出文案**：这里学 Kotlin `rsf build`——
+//   `[rsf] 已生成 <路径>` 每个类一行，最后 `[rsf] 运行: java -cp <目录> <入口类>`
+// 17e 的判据台仍用 BackendCli 的 `[rsf-17d]` 文案，两者互不影响。
+
+import "Backend.rsf"
+import "Sources.rsf"
+
+import java.io.File
+import java.lang.System
+
+fn propOr(key : string, dflt : string) -> string {
+    var given : ?string = System.getProperty(key)
+    rtn given ?: dflt
+}
+
+fn stripExtOf(name : string) -> string {
+    if (name.length() > 4 && name.substring(name.length() - 4, name.length()) == ".rsf") {
+        rtn name.substring(0, name.length() - 4)
+    }
+    rtn name
+}
+
+fn baseNameOf(path : string) -> string {
+    var i = path.length() - 1
+    while (i >= 0) {
+        var c = path.charAt(i)
+        if (c == '/' || c == '\\') { rtn stripExtOf(tailText(path, i + 1)) }
+        i = i - 1
+    }
+    rtn stripExtOf(path)
+}
+
+fn tailText(s : string, from : int) -> string {
+    var out = ""
+    var i = from
+    while (i < s.length()) {
+        out = out + s.charAt(i)
+        i = i + 1
+    }
+    rtn out
+}
+
+fn main() -> void {
+    var file = propOr("rsf.rsfc.file", "")
+    if (file.length() == 0) {
+        System.err.println("usage: java -Drsf.rsfc.file=<源.rsf> -Drsf.rsfc.out=<目录> -cp <out>;<jar> RsfcBuild")
+        System.exit(2)
+        rtn
+    }
+    var outDir = propOr("rsf.rsfc.out", "out")
+    var base = baseNameOf(file)
+    var name = propOr("rsf.rsfc.name", "")
+    if (name.length() == 0) { name = base }
+
+    var ast : Node = new Node(NodeKind.ERROR)
+    var loaded = false
+    var message = ""
+    try {
+        ast = loadProgram(file)!!
+        loaded = true
+    } catch (loadError : string) {
+        message = loadError
+        loaded = false
+    }
+    if (!loaded) {
+        System.err.println(message)
+        System.exit(1)
+        rtn
+    }
+
+    var g = new Gen(name)
+    compileProgram(g, ast, base + ".rsf")
+    if (g.failed) {
+        System.err.println(g.message)
+        System.exit(1)
+        rtn
+    }
+
+    var dir = new File(outDir)
+    dir.mkdirs()
+    if (g.pkgPrefix != "") {
+        var pdir = new File(outDir + "/" + g.pkgPrefix)
+        pdir.mkdirs()
+    }
+
+    var sep = "/"
+
+    var n = backendCount(g)
+    var i = 0
+    while (i < n) {
+        var target = outDir + sep + backendNameAt(g, i) + ".class"
+        var bytes = backendBytesAt(g, i)
+        var writeOk = false
+        try {
+            writeBytes(target, bytes)
+            writeOk = true
+        } catch (writeError : string) {
+            writeOk = false
+        }
+        if (!writeOk) {
+            System.err.println("写不出 " + target)
+            System.exit(1)
+            rtn
+        }
+        println("[rsf] 已生成 " + target)
+        i = i + 1
+    }
+    if (hasEntryFn(ast)) {
+        var launch = name
+        if (g.pkgPrefix != "") { launch = g.pkgPrefix + "/" + name }
+        println("[rsf] 运行: java -cp " + outDir + " " + launch)
+    } else {
+        System.err.println("[rsf] 警告: 源文件里没有 main 函数，生成的类不能用 java 直接启动")
+    }
+}
+
+// 入口判定与 Rsfc 的 check 一致：顶层有一个叫 main 的函数
+fn childOfKind(n : Node, kind : NodeKind) -> ?Node {
+    var i = 0
+    while (i < n.childCount) {
+        if (n.children[i].kind == kind) { rtn n.children[i] }
+        i = i + 1
+    }
+    rtn null
+}
+
+fn hasEntryFn(prg : Node) -> bool {
+    var funcs = childOfKind(prg, NodeKind.FUNCS)
+    if (funcs == null) { rtn false }
+    var i = 0
+    while (i < funcs!!.childCount) {
+        if (prop(funcs!!.children[i], "name") == "main") { rtn true }
+        i = i + 1
+    }
+    rtn false
+}

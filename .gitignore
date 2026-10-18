@@ -159,3 +159,9 @@ bin/
 @{code=*
 ### Mac OS ###
 .DS_Store
+!/build/verify37/
+/build/verify37/**
+!/build/verify37/**/
+!/build/verify37/**/*.sh
+!/build/verify37/**/*.py
+!/build/verify37/**/*.md

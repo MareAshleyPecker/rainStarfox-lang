@@ -44,7 +44,55 @@ run_check() {
   [ "$bad" -eq 0 ]
 }
 
+# 阶段 36c：`build -o` 对拍（stdout 归一化分隔符后逐字节 + class 目录 diff -r）
+run_build() {
+  local total=0 bad=0
+  for f in "$REPO"/build/verify32/okcorpus/*.rsf; do
+    total=$((total+1))
+    local n; n="$(basename "$f" .rsf)"
+    rm -rf "$HERE/bk.$n" "$HERE/bs.$n"
+    ( cd "$HERE" && java $JOPT -jar "../../$JAR" build "$f" -o "bk.$n" 2>&1 ) | sed -e $'s/$//' | tr '\\' '/' > "$HERE/.bk"
+    ( cd "$HERE" && java $JOPT -Drsf.rsfc.file="$f" -Drsf.rsfc.out="bs.$n" -cp "self;../../$JAR" RsfcBuild 2>&1 )       | sed -e $'s/$//' | tr '\\' '/' | sed "s#bs\.$n#bk.$n#g" > "$HERE/.bs"
+    if ! diff -q "$HERE/.bk" "$HERE/.bs" > /dev/null; then
+      bad=$((bad+1)); echo "   $n 的 build 输出不同"; diff "$HERE/.bk" "$HERE/.bs" | head -6 | sed 's/^/      /'
+    elif ! diff -r "$HERE/bk.$n" "$HERE/bs.$n" > /dev/null; then
+      bad=$((bad+1)); echo "   $n 的 class 不同"
+    fi
+  done
+  rm -f "$HERE"/.bk "$HERE"/.bs
+  echo "==== Rsfc build：语料 $total 份  不同 $bad ===="
+  [ "$bad" -eq 0 ]
+}
+
+# 阶段 36c：`run` 对拍（只比 stdout + 退出码；stderr 文案差异不在本刀范围）
+run_run() {
+  local total=0 bad=0
+  for f in "$REPO"/build/verify32/okcorpus/*.rsf; do
+    total=$((total+1))
+    local n; n="$(basename "$f" .rsf)"
+    java $JOPT -jar "$JAR" run "$f" > "$HERE/.rk" 2>/dev/null; local kc=$?
+    ( cd "$HERE" && java $JOPT -Drsf.rsfc.file="$f" -cp "self;../../$JAR" RsfcRun > "$HERE/.rs" 2>/dev/null ); local sc=$?
+    sed -e $'s/$//' < "$HERE/.rk" > "$HERE/.rkn"
+    sed -e $'s/$//' < "$HERE/.rs" > "$HERE/.rsn"
+    if [ "$kc" != "$sc" ] || ! diff -q "$HERE/.rkn" "$HERE/.rsn" > /dev/null; then
+      bad=$((bad+1)); echo "   $n 的 run 不同"; diff "$HERE/.rkn" "$HERE/.rsn" | head -6 | sed 's/^/      /'
+    fi
+  done
+  rm -f "$HERE"/.rk "$HERE"/.rs "$HERE"/.rkn "$HERE"/.rsn
+  echo "==== Rsfc run：语料 $total 份  不同 $bad ===="
+  [ "$bad" -eq 0 ]
+}
+
 case "${1:-all}" in
-  check|all) build_self; run_check ;;
+  check) build_self; run_check ;;
+  build) build_self; run_build ;;
+  run) build_self; run_run ;;
+  all)
+    build_self
+    run_check; a=$?
+    run_build; b=$?
+    run_run; c=$?
+    [ $((a+b+c)) -eq 0 ]
+    ;;
   *) echo "用法: run-probes.sh [check|all]"; exit 2 ;;
 esac
