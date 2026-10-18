@@ -699,6 +699,8 @@ public class Parser(tokens : Token[]) {
 
     fn hasFailed() -> bool { rtn failed }
     fn errorMessage() -> string { rtn failMessage }
+    fn errorLine() -> int { rtn failLine }
+    fn errorCol() -> int { rtn failCol }
 
     // 从节点的 `k=v` 属性串里取一个值。**只给不含空格的短值用**（名字、类型参数表这类）：
     // 扫到空格或结尾就停。带空格的类型文本（`(int) -> int`）要走 Backend/Interp 那边
@@ -3328,6 +3330,26 @@ public fn parseErrorMessage(source : string) -> string {
     var p = new Parser(ts)
     p.parseProgram()
     rtn p.errorMessage()
+}
+
+// 解析失败时的行 / 列（1 基）；没失败或词法阶段就挂了给 -1。
+// 阶段 32c 的 `CheckCli` 要用它把失败翻成 `file:行:列: error[parser]: 文案`。
+public fn parseErrorLine(source : string) -> int {
+    var ts = lex(source)
+    if (ts.length == 0) { rtn -1 }
+    var p = new Parser(ts)
+    p.parseProgram()
+    if (!p.hasFailed()) { rtn -1 }
+    rtn p.errorLine()
+}
+
+public fn parseErrorCol(source : string) -> int {
+    var ts = lex(source)
+    if (ts.length == 0) { rtn -1 }
+    var p = new Parser(ts)
+    p.parseProgram()
+    if (!p.hasFailed()) { rtn -1 }
+    rtn p.errorCol()
 }
 
 // 读文件再解析（路径用 / 分隔；不写死任何绝对路径）

@@ -1,0 +1,79 @@
+// rainStarfox 阶段 32c：自举链的 `check` 入口（与 Kotlin `rsf check` 同口径）
+//
+// 契约（DESIGN-32 §1）：
+//   成功 → stdout 打 `[rsf] 检查通过: <文件名>`，退出 0
+//   失败 → stderr 打 `file:行:列: error[阶段]: 文案` + 源码片段与脱字符，退出 1
+//
+// 32c 只接**词法/语法**这层（Parser.rsf 能给的那一类）；语义检查（Checker）在 33–35 补上，
+// 届时这里换成「解析 → 语义 → 报第一处错」。
+//
+// 跑：rsf build rsfSrc/bootstrap/CheckCli.rsf -o build/verify32/self
+//     java -Drsf.check.file=<源.rsf> -cp "build/verify32/self;build/libs/rainStarfox-0.9.0.jar" CheckCli
+
+import "Parser.rsf"
+import "Diag.rsf"
+
+import java.lang.System
+
+// 只取文件名（报错口径与 Kotlin `SourceFile.name` 一致：先按 '/'、再按 '\\' 取尾段）
+fn baseName(path : string) -> string {
+    var i = path.length() - 1
+    while (i >= 0) {
+        var c = path.charAt(i)
+        if (c == '/' || c == '\\') { rtn rangeText(path, i + 1) }
+        i = i - 1
+    }
+    rtn path
+}
+
+fn rangeText(s : string, from : int) -> string {
+    var out = ""
+    var i = from
+    while (i < s.length()) {
+        out = out + s.charAt(i)
+        i = i + 1
+    }
+    rtn out
+}
+
+fn pickPath() -> string {
+    var given : ?string = System.getProperty("rsf.check.file")
+    if (given == null) {
+        System.err.println("usage: java -Drsf.check.file=<path.rsf> -cp <out>;<jar> CheckCli")
+        System.exit(2)
+        rtn ""
+    }
+    rtn given!!
+}
+
+fn main() -> void {
+    var path = pickPath()
+    var name = baseName(path)
+
+    var text = ""
+    var readOk = true
+    try {
+        text = readText(path)!!
+    } catch (readError : string) {
+        readOk = false
+    }
+    if (!readOk) {
+        System.err.println("error[cli]: cannot read file: " + path)
+        System.exit(1)
+        rtn
+    }
+
+    var ast = parseSource(text)
+    if (ast.kind == NodeKind.ERROR) {
+        // 词法阶段就挂了时 Parser 给的行列是 -1：诊断会退化成 `file: error[...]`
+        var line = parseErrorLine(text)
+        var col = parseErrorCol(text)
+        var detail = parseErrorMessage(text)
+        var d = new Diag(name, "parser", detail, line, col)
+        System.err.println(d.render(text))
+        System.exit(1)
+        rtn
+    }
+
+    println("[rsf] 检查通过: " + name)
+}
