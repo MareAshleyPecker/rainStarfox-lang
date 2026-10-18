@@ -1,0 +1,5 @@
+hello, rsf!
+n = 42
+same
+not equal
+no newline

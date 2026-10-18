@@ -1279,12 +1279,30 @@ a_skip_init.rsf:5:13: error[checker]: 读到变量 'x' 时它可能还没被赋�
 rsf run   <file.rsf>                        解释执行，不生成 .class
 rsf build <file.rsf> [-o <dir>] [-n 类名]    编译成 .class（默认输出到 out/）
 rsf build <file.rsf> --dump                 顺便打印生成的字节码（ASM 文本）
+rsf build <file.rsf> --c [-o <dir>]          生成单文件 C99（native 线，见下节）
 rsf check <file.rsf>                        只做检查，列出函数表
 rsf lex   <file.rsf>                        打印 token 流
 rsf lsp                                     语言服务器（stdio 上的 LSP，给编辑器用）
 rsf repl                                    交互式解释器
 rsf help | version
 ```
+
+### C 后端（native 线，阶段 52）
+
+`rsf build x.rsf --c -o out` 把整份程序摊成**一个 C99 文件** `out/x.c`，自带运行时
+（字符串拼接、`print`/`println`、`intToString`），不依赖任何 rsf 库：
+
+```bat
+rsf build hello.rsf --c -o out
+gcc out\hello.c -o out\hello.exe
+out\hello.exe
+```
+
+- 判据是「解释器 stdout vs 原生 exe stdout 逐字节相同」：`bash build/verify52/run-probes.sh all`。
+- v1 只收 int / long / bool / string、顶层函数（不重载）、`if`/`while`/`for`、递归、
+  `print`/`println`、字符串 `+` 与 `==`；类 / 枚举 / 接口 / 数组 / 浮点 / 错误返回都还没接，
+  遇到会报 `error[native]`。
+- 指针（`&` / `*`）留在这条线上做，见 `DESIGN-23.md` 与 `DESIGN-52.md`。
 
 ### REPL 的会话模型
 
@@ -1491,6 +1509,7 @@ gradlew.bat verifyPlugin          :: 官方校验器静态检查
 | 30 | **函数类型与 `lam`**：`(int, string) -> bool` / `?(int) -> int`，字面量 `lam(x : int) -> int { … }`，值捕获只许 `imutvar`/形参/`this`；JVM 走按 arity 生成的 `__RsfFn<n>` SAM 接口 + `LambdaMetafactory` | ✅ 2026-10-18（30a `d2d124e` 前端 / 30b `822e600` Kotlin 两端 / 30c `f54dcf8` 自举链；判据 `build/verify30/` 6 正例 + 5 负例 + 两端 class 逐字节零差异；581 tests；关键字 56→57） |
 | 31 | **泛型函数**（v1）：`fn id&<T>(x : T) -> T`，调用点按实参推导、JVM 擦成 `Object`；泛型方法不能 `override`/`abstract`、构造器不能泛型、`T[]` 只接引用元素数组 | ✅ 2026-10-18（31a `3317a0b` 前端+语义 / 31b `5700962` Kotlin 两端 / 31c `cf252e2` 自举链；判据 `build/verify31/`：6 正例 + 6 负例 + 两端 6 份 class 逐字节零差异；604 tests） |
 | 23 | 显式指针（`&` 取地址 / `*` 解引用，C 风格） | ⏸ 2026-10-18 用户定：JVM 上不实现，整体移交 native（`DESIGN-23.md`） |
+| 52 | **C 后端（native 线第一刀）**：`rsf build --c` 出单文件 C99，gcc 编成原生 exe | ✅ 2026-10-18（`DESIGN-52.md`；判据 `build/verify52/` 4 份语料 stdout 逐字节相同；类/数组/浮点/指针待接） |
 | 24 | 类型转换与类型判断（`as` / `?as` / `is` / `!is`） | ✅ 2026-10-18（24a `076aeee` / 24b `5b5d7aa` / 24c `707cbe3` / 24d `51bd707`；判据 `build/verify24/`：9 正例 + 8 负例 + 自举解释器对拍 14 份） |
 
 ### 19c：为 17b 补的三样（enum / switch / `&&` `||`）

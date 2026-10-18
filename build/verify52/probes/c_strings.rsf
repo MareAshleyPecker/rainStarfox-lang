@@ -1,0 +1,17 @@
+// 阶段 52：C 后端探针 2 —— 字符串、拼接、比较、intToString
+fn greet(name : string) -> string {
+    rtn "hello, " + name + "!"
+}
+
+fn main() -> void {
+    var who : string = "rsf"
+    println(greet(who))
+    println("n = " + intToString(42))
+    var a : string = "abc"
+    var b : string = "ab" + "c"
+    if (a == b) { println("same") } else { println("diff") }
+    if (a != "abd") { println("not equal") }
+    print("no newline")
+    println("")
+    rtn
+}

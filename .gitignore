@@ -168,3 +168,12 @@ bin/
 !/build/verify41/**/*.sh
 !/build/verify41/**/*.py
 !/build/verify41/**/*.md
+
+### 判据台（阶段 52：C 后端）###
+!/build/verify52/
+/build/verify52/**
+!/build/verify52/**/
+!/build/verify52/**/*.sh
+!/build/verify52/**/*.rsf
+!/build/verify52/expected/
+!/build/verify52/expected/*.txt

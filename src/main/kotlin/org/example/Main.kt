@@ -7,6 +7,7 @@ import org.example.complie.diag.SourceFile
 import org.example.complie.interp.Interpreter
 import org.example.complie.interp.RsfFailure
 import org.example.complie.lsp.EditorSupport
+import org.example.complie.native.CBackend
 import org.example.complie.sema.SemanticModel
 import org.example.complie.util.input
 import java.io.File
@@ -66,6 +67,7 @@ class Cli {
         var outDir = File("out")
         var className: String? = null
         var dump = false
+        var cMode = false
         val positional = ArrayList<String>()
 
         var i = 0
@@ -81,16 +83,31 @@ class Cli {
                     i++
                 }
                 "--dump" -> dump = true
+                "--c" -> cMode = true
                 else -> positional.add(a)
             }
             i++
         }
 
-        val file = requireFile(positional.firstOrNull(), "build <file.rsf> [-o <dir>] [-n <类名>] [--dump]")
+        val file = requireFile(
+            positional.firstOrNull(),
+            "build <file.rsf> [-o <dir>] [-n <类名>] [--dump] [--c]",
+        )
         val loaded = Rsf.load(file)
         val source = loaded.root
         val model = Rsf.analyze(loaded)
         val name = className ?: Rsf.deriveClassName(source)
+
+        if (cMode) {
+            for (warning in model.warnings) System.err.println("[rsf] 警告: $warning")
+            val text = CBackend(model).emit()
+            outDir.mkdirs()
+            val out = File(outDir, "$name.c")
+            out.writeText(text, Charsets.UTF_8)
+            println("[rsf] 已生成 ${out.path}")
+            println("[rsf] 编译: gcc ${out.path} -o ${File(outDir, "$name.exe").path}")
+            return 0
+        }
 
         val result = Rsf.build(model, source, name, outDir)
         for (warning in model.warnings) System.err.println("[rsf] 警告: $warning")

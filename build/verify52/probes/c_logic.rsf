@@ -1,0 +1,23 @@
+// 阶段 52：C 后端探针 3 —— 布尔、三目、break/continue、嵌套循环
+fn main() -> void {
+    var n : int = 0
+    var i : int = 0
+    while (i < 10) {
+        i = i + 1
+        if (i % 2 == 0) { continue }
+        n = n + i
+        if (n > 20) { break }
+    }
+    println(n)
+    var flag : bool = n > 10 && i < 100
+    println(flag)
+    println(!flag)
+    var x : int = if flag ? 1 : 2
+    println(x)
+    var k : int = 0
+    for (a in 0..2 step 1) {
+        for (b in 0..2 step 1) { k = k + 1 }
+    }
+    println(k)
+    rtn
+}
