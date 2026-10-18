@@ -22,12 +22,14 @@ public class CheckFailure(detail : string, line : int, col : int) {
 }
 
 // 函数签名（参数类型用文本存，够用；类型运算交给 Types.rsf）
-public class FnSig(name : string, retText : string, paramTexts : string[], paramNames : string[]) {
+public class FnSig(name : string, retText : string, paramTexts : string[], paramNames : string[], typeParamNames : string[]) {
     var name : string = name
     var retText : string = retText
     var paramTexts : string[] = paramTexts
     var paramNames : string[] = paramNames
     var paramCount : int = paramTexts.length
+    var typeParamNames : string[] = typeParamNames
+    var typeParamCount : int = typeParamNames.length
 
     // `f(a : int, b : int)`：报「候选有 N 个」时逐条印出来
     public fn signatureText() -> string {
@@ -54,6 +56,8 @@ public class Checker(failure : ?CheckFailure) {
     var labelCount : int = 0
     var curRetText : string = "void"
     var curVoid : bool = true
+    var curExpect : string = ""
+    var curBodyHasTypeParam : bool = false
     var scopes : Scopes = new Scopes()
 
     // ---------------------------------------------------------------- 类型文本
@@ -136,7 +140,17 @@ public class Checker(failure : ?CheckFailure) {
                     j = j + 1
                 }
             }
-            var sig = new FnSig(nodeProp(fnode, "name"), nodeProp(fnode, "retType"), ptexts, pnames)
+            var tpNames : string[] = new string[0]
+            var tpNode = childNodeOf(fnode, NodeKind.TYPE_PARAMS)
+            if (tpNode != null) {
+                tpNames = new string[tpNode!!.childCount]
+                var t = 0
+                while (t < tpNode!!.childCount) {
+                    tpNames[t] = nodeProp(tpNode!!.children[t], "name")
+                    t = t + 1
+                }
+            }
+            var sig = new FnSig(nodeProp(fnode, "name"), nodeProp(fnode, "retType"), ptexts, pnames, tpNames)
             pushFn(sig)
             i = i + 1
         }
@@ -180,6 +194,7 @@ public class Checker(failure : ?CheckFailure) {
             curFnName = nodeProp(fnode, "name")
             curRetText = nodeProp(fnode, "retType")
             curVoid = curRetText == "void"
+            curBodyHasTypeParam = childNodeOf(fnode, NodeKind.TYPE_PARAMS) != null
             scopes = new Scopes()
             var paramsNode = childNodeOf(fnode, NodeKind.PARAMS)
             if (paramsNode != null) {
@@ -492,6 +507,7 @@ public class Checker(failure : ?CheckFailure) {
             failAt("函数 '" + curFnName + "' 是 void 函数，不能 rtn 一个 " + got + " 值（写成 'rtn' 或 'rtn null'）", stmt)
             rtn
         }
+        if (curBodyHasTypeParam) { rtn }
         if (!acceptsText(got, curRetText)) {
             failAt("返回类型不匹配：'" + curFnName + "' 声明返回 " + curRetText + "）实际 rtn 的是 " + got, stmt)
         }
@@ -500,7 +516,10 @@ public class Checker(failure : ?CheckFailure) {
     fn checkVarDecl(stmt : Node) -> void {
         var declared = nodeProp(stmt, "type")
         var typed = nodeProp(stmt, "typed") == "true"
+        var savedExpect = curExpect
+        if (typed) { curExpect = declared }
         var initType = checkExpr(stmt.children[0])
+        curExpect = savedExpect
         if (scopes.lookupCurrent(nodeProp(stmt, "name")) != null) {
             failAt("变量 '" + nodeProp(stmt, "name") + "' 在同一个作用域里重复声明", stmt)
             rtn
@@ -513,7 +532,9 @@ public class Checker(failure : ?CheckFailure) {
             failAt("不能把 " + initType + " 赋给 " + declared + " 变量 '" + nodeProp(stmt, "name") + "'", stmt)
             rtn
         }
-        scopes.declare(symOf(nodeProp(stmt, "name"), "local", declared, stmt.line, stmt.col))
+        var kindWord = "imutvar"
+        if (nodeProp(stmt, "mutable") == "true") { kindWord = "var" }
+        scopes.declare(symOf(nodeProp(stmt, "name"), kindWord, declared, stmt.line, stmt.col))
     }
 
     fn checkAssign(stmt : Node) -> void {
@@ -548,7 +569,30 @@ public class Checker(failure : ?CheckFailure) {
             rtn sym!!.typeText
         }
         if (e.kind == NodeKind.CALL) { rtn checkCall(e) }
+        if (e.kind == NodeKind.INDEX) {
+            var baseType = checkExpr(e.children[0])
+            if (baseType.length() > 2 && baseType.substring(baseType.length() - 2, baseType.length()) == "[]") {
+                rtn dropTwoTail(baseType)
+            }
+            rtn "void"
+        }
+        if (e.kind == NodeKind.IS) { rtn checkIs(e) }
+        if (e.kind == NodeKind.LAMBDA) { rtn checkLambda(e) }
         if (e.kind == NodeKind.NEW) { rtn nodeProp(e, "class") }
+        if (e.kind == NodeKind.NEW_ARRAY) {
+            var dim = 0
+            while (dim < e.childCount) {
+                checkExpr(e.children[dim])
+                dim = dim + 1
+            }
+            var suffix = ""
+            var d2 = 0
+            while (d2 < e.childCount) {
+                suffix = suffix + "[]"
+                d2 = d2 + 1
+            }
+            rtn nodeProp(e, "elem") + suffix
+        }
         if (e.kind == NodeKind.MEMBER) { rtn checkMember(e) }
         if (e.kind == NodeKind.BINARY) { rtn checkBinary(e) }
         var i = 0
@@ -579,6 +623,13 @@ public class Checker(failure : ?CheckFailure) {
                 }
                 rtn "void"
             }
+            var fsym = scopes.lookup(name)
+            if (fsym != null && containsSub(fsym!!.typeText, "->")) {
+                if (argc != 0) {
+                    failAt("函数值 '" + name + "' 一个参数都不收", e)
+                }
+                rtn retPartOf(fsym!!.typeText)
+            }
             failAt("未定义的函数 '" + name + "'", e)
             rtn "void"
         }
@@ -586,6 +637,7 @@ public class Checker(failure : ?CheckFailure) {
             failAt("调用 '" + name + "' 的参数个数不对：实际给了 " + ("" + argc) + " 个，候选有 1 个 —— " + sig!!.signatureText(), e)
             rtn "void"
         }
+        if (sig!!.typeParamCount > 0) { rtn bindGenericCall(e, sig!!, types, argc) }
         var k = 0
         while (k < argc) {
             if (!acceptsText(types[k], sig!!.paramTexts[k])) {
@@ -702,6 +754,111 @@ public class Checker(failure : ?CheckFailure) {
     fn acceptsText(from : string, to : string) -> bool {
         rtn typeOfText(to).accepts(typeOfText(from))
     }
+
+    // ------------------------------------------------------------ 阶段 33d：IS / lambda / 泛型推导
+
+    fn checkIs(e : Node) -> string {
+        var tgt = childNodeOf(e, NodeKind.TARGET)
+        if (tgt != null && containsSub(nodeProp(tgt!!, "type"), "->")) {
+            failAt("'is' 的目标不能是函数类型（DESIGN-30）", e)
+            rtn "void"
+        }
+        checkExpr(e.children[0])
+        rtn "bool"
+    }
+
+    fn captureScan(n : Node) -> void {
+        if (failure != null) { rtn }
+        if (n.kind == NodeKind.VAR) {
+            var nm = nodeProp(n, "name")
+            var sym = scopes.lookup(nm)
+            if (sym != null && sym!!.kind == "var") {
+                failAt("lambda 只能值捕获：'" + nm + "' 是 var（DESIGN-30）——改成 imutvar，或者把它当参数传进来", n)
+                rtn
+            }
+        }
+        var i = 0
+        while (i < n.childCount) {
+            captureScan(n.children[i])
+            i = i + 1
+        }
+    }
+
+    fn checkLambda(e : Node) -> string {
+        var fnType = curExpect
+        if (!containsSub(fnType, "->")) { fnType = "" }
+        var declaredRet = nodeProp(e, "ret")
+        if (fnType == "" && declaredRet == "") {
+            failAt("lambda 的参数类型推不出来：参数上写类型，或者把 lambda 赋给一个声明了函数类型的变量（DESIGN-30）", e)
+            rtn "void"
+        }
+        var lambdaRet = declaredRet
+        if (lambdaRet == "") { lambdaRet = retPartOf(fnType) }
+        var body = childNodeOf(e, NodeKind.BLOCK)
+        if (body == null) { rtn "void" }
+        scopes.enter()
+        var j = 0
+        while (j < e.childCount && e.children[j].kind == NodeKind.PARAM) {
+            var prm = e.children[j]
+            scopes.declare(symOf(nodeProp(prm, "name"), "param", nodeProp(prm, "type"), prm.line, prm.col))
+            j = j + 1
+        }
+        captureScan(body!!)
+        if (failure != null) { scopes.leave(); rtn "void" }
+        var savedRet = curRetText
+        var savedVoid = curVoid
+        curRetText = lambdaRet
+        curVoid = lambdaRet == "void"
+        checkBlock(body!!)
+        curRetText = savedRet
+        curVoid = savedVoid
+        scopes.leave()
+        if (fnType != "") { rtn fnType }
+        rtn lambdaRet
+    }
+
+    fn bindPattern(e : Node, pat : string, act : string, names : string[], vals : string[], bound : bool[]) -> void {
+        var p = pat
+        var a = act
+        if (p.length() > 0 && p.charAt(0) == '?') { p = dropOne(p) }
+        if (a.length() > 0 && a.charAt(0) == '?') { a = dropOne(a) }
+        if (p.length() > 2 && a.length() > 2 && p.substring(p.length() - 2, p.length()) == "[]" && a.substring(a.length() - 2, a.length()) == "[]") {
+            var pe = dropTwoTail(p)
+            var ae = dropTwoTail(a)
+            var pi = typeParamIndexIn(pe, names)
+            if (pi >= 0 && isPrimTypeName(ae)) {
+                failAt("泛型参数 '" + pe + "' 绑到了基本类型 '" + ae + "'：'" + pe + "[]' 在 JVM 上擦成 Object[]，装不下基本类型数组（DESIGN-31 §8）——把实参换成引用元素数组（例如 string[] 或类数组）", e)
+                rtn
+            }
+            bindPattern(e, pe, ae, names, vals, bound)
+            rtn
+        }
+        var idx = typeParamIndexIn(p, names)
+        if (idx >= 0 && !bound[idx]) {
+            vals[idx] = a
+            bound[idx] = true
+        }
+    }
+
+    fn bindGenericCall(e : Node, sig : FnSig, types : string[], argc : int) -> string {
+        var vals : string[] = new string[sig.typeParamCount]
+        var bound : bool[] = new bool[sig.typeParamCount]
+        var k = 0
+        while (k < argc) {
+            bindPattern(e, sig.paramTexts[k], types[k], sig.typeParamNames, vals, bound)
+            if (failure != null) { rtn "void" }
+            k = k + 1
+        }
+        var m = 0
+        while (m < sig.typeParamCount) {
+            if (!bound[m]) {
+                failAt("类型参数 '" + sig.typeParamNames[m] + "' 推不出来：它只出现在返回类型里，让它出现在某个参数类型里（例如 'fn f(x : T) -> T'）", e)
+                rtn "void"
+            }
+            m = m + 1
+        }
+        rtn substSimple(sig.retText, sig.typeParamNames, vals)
+    }
 }
 
 // 取第一个指定种类的孩子（没有就是 null）
@@ -715,38 +872,49 @@ public fn childNodeOf(n : Node, kind : NodeKind) -> ?Node {
 }
 
 // 从属性串里取 `k=v`
+fn propIsWord(c : char) -> bool {
+    if (c >= 'a' && c <= 'z') { rtn true }
+    if (c >= 'A' && c <= 'Z') { rtn true }
+    if (c >= '0' && c <= '9') { rtn true }
+    rtn c == '_'
+}
+
+fn propKeyStartsAt(t : string, i : int) -> bool {
+    var len = t.length()
+    if (i >= len) { rtn false }
+    if (t.charAt(i) != ' ') { rtn false }
+    var j = i + 1
+    var n = 0
+    var going = true
+    while (j < len && going) {
+        if (propIsWord(t.charAt(j))) {
+            j = j + 1
+            n = n + 1
+        } else {
+            going = false
+        }
+    }
+    if (n == 0 || j >= len) { rtn false }
+    rtn t.charAt(j) == '='
+}
+
+// 属性串是 "k=v k=v"：值里可以有空格（函数类型 `(int) -> int`），
+// 只有「空格 + 标识符 + `=`」才算下一个属性的开头（与 Backend.rsf 的 prop 同一套）。
 public fn nodeProp(n : Node, key : string) -> string {
+    var t = n.text
     var i = 0
-    while (i < n.text.length()) {
-        var j = i
-        while (j < n.text.length() && n.text.charAt(j) != ' ') { j = j + 1 }
-        var seg = ""
-        var k = i
-        while (k < j) {
-            seg = seg + n.text.charAt(k)
-            k = k + 1
-        }
-        var eq = ""
-        var q = 0
-        while (q < seg.length() && seg.charAt(q) != '=') { q = q + 1 }
-        if (q < seg.length()) {
-            var keyPart = ""
-            var r = 0
-            while (r < q) {
-                keyPart = keyPart + seg.charAt(r)
-                r = r + 1
-            }
-            if (keyPart == key) {
-                var valOut = ""
-                var v = q + 1
-                while (v < seg.length()) {
-                    valOut = valOut + seg.charAt(v)
-                    v = v + 1
-                }
-                rtn valOut
-            }
-        }
-        i = j + 1
+    var len = t.length()
+    while (i < len) {
+        var keyStart = i
+        while (i < len && t.charAt(i) != '=') { i = i + 1 }
+        if (i >= len) { rtn "" }
+        var k = t.substring(keyStart, i)
+        i = i + 1
+        var valStart = i
+        while (i < len && !propKeyStartsAt(t, i)) { i = i + 1 }
+        var v = t.substring(valStart, i)
+        if (k == key) { rtn v }
+        i = i + 1
     }
     rtn ""
 }
@@ -837,4 +1005,63 @@ public fn checkSource(text : string) -> ?CheckFailure {
     var c = new Checker(null)
     c.check(ast)
     rtn c.failure
+}
+
+// ---------------------------------------------------------------- 阶段 33d：纯字符串/类型名工具
+
+public fn containsSub(s : string, sub : string) -> bool {
+    var i = 0
+    while (i + sub.length() <= s.length()) {
+        if (s.substring(i, i + sub.length()) == sub) { rtn true }
+        i = i + 1
+    }
+    rtn false
+}
+
+fn dropOne(s : string) -> string {
+    rtn s.substring(1, s.length())
+}
+
+fn dropTwoTail(s : string) -> string {
+    rtn s.substring(0, s.length() - 2)
+}
+
+// `(int) -> bool` 的返回部分（`->` 之后、去掉空白）
+public fn retPartOf(fnType : string) -> string {
+    var i = 0
+    while (i + 1 < fnType.length()) {
+        if (fnType.charAt(i) == '-' && fnType.charAt(i + 1) == '>') {
+            var j = i + 2
+            while (j < fnType.length() && fnType.charAt(j) == ' ') { j = j + 1 }
+            rtn fnType.substring(j, fnType.length())
+        }
+        i = i + 1
+    }
+    rtn "void"
+}
+
+fn isPrimTypeName(t : string) -> bool {
+    if (t == "int" || t == "long" || t == "short" || t == "byte" || t == "char" || t == "float" || t == "double" || t == "bool") { rtn true }
+    rtn false
+}
+
+fn typeParamIndexIn(name : string, names : string[]) -> int {
+    var i = 0
+    while (i < names.length) {
+        if (names[i] == name) { rtn i }
+        i = i + 1
+    }
+    rtn -1
+}
+
+// 只处理 33d 需要的三种形状：`T`、`T[]`、`?T`
+fn substSimple(t : string, names : string[], vals : string[]) -> string {
+    var i = 0
+    while (i < names.length) {
+        if (t == names[i]) { rtn vals[i] }
+        if (t == names[i] + "[]") { rtn vals[i] + "[]" }
+        if (t == "?" + names[i]) { rtn "?" + vals[i] }
+        i = i + 1
+    }
+    rtn t
 }

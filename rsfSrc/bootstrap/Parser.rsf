@@ -2978,20 +2978,20 @@ public class Parser(tokens : Token[]) {
                             rtn safeNode
                         }
                         if (check("KW_IS")) {
-                            advance()
+                            var isKw = advance()
                             var isTarget = parseCastTarget("is")
                             expectNoChainedCast("is")
-                            var isNode = new Node(NodeKind.IS).put("negated", boolText(false))
+                            var isNode = new Node(NodeKind.IS).at(isKw).put("negated", boolText(false))
                             isNode.add(e)
                             isNode.add(new Node(NodeKind.TARGET).put("type", isTarget.text()))
                             rtn isNode
                         }
                         if (check("BANG") && checkAt(1, "KW_IS")) {
                             advance()
-                            advance()
+                            var negIsKw = advance()
                             var negTarget = parseCastTarget("!is")
                             expectNoChainedCast("!is")
-                            var negNode = new Node(NodeKind.IS).put("negated", boolText(true))
+                            var negNode = new Node(NodeKind.IS).at(negIsKw).put("negated", boolText(true))
                             negNode.add(e)
                             negNode.add(new Node(NodeKind.TARGET).put("type", negTarget.text()))
                             rtn negNode
