@@ -52,7 +52,8 @@ object Rsf {
     // ------------------------------------------------------------------ 多文件
 
     /** 从文件加载，展开 import / module。[baseDir] 见 [SourceLoader.load]。 */
-    fun load(file: File, baseDir: File? = null): LoadedProgram = SourceLoader().load(file, baseDir)
+    fun load(file: File, baseDir: File? = null, text: String? = null): LoadedProgram =
+        SourceLoader().load(file, baseDir, text)
 
     /** 检查一个已经展开好的多文件程序。 */
     fun analyze(loaded: LoadedProgram): SemanticModel =

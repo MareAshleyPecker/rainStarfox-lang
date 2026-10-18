@@ -130,6 +130,40 @@ class RsfLspClient private constructor(
         }.filter { it.label.isNotEmpty() }
     }
 
+    /** 跳转目标（0 基，LSP 口径）。 */
+    data class Location(val path: String, val line: Int, val character: Int)
+
+    /**
+     * 跳转定义（Ctrl+点）。
+     *
+     * 解析不到回 null——编辑器会保持原地不动，比跳到一个猜出来的位置强。
+     */
+    fun definition(uri: String, text: String, line: Int, character: Int): Location? {
+        syncDocument(uri, text)
+        val params = "{\"textDocument\":{\"uri\":${quote(uri)}},\"position\":{\"line\":$line,\"character\":$character}}"
+        val json = request("textDocument/definition", params) ?: return null
+        val root = RsfJson.parse(json) as? Map<String, Any?> ?: return null
+        val targetUri = RsfJson.string(root, "uri")
+        if (targetUri.isEmpty()) return null
+        val start = RsfJson.objectAt(root, "range")?.let { RsfJson.objectAt(it, "start") } ?: return null
+        return Location(
+            path = fromUri(targetUri),
+            line = RsfJson.int(start, "line", 0),
+            character = RsfJson.int(start, "character", 0),
+        )
+    }
+
+    /** 悬停文档：服务器给的是 markdown，渲染交给调用方（[RsfMarkdown]）。没有声明就回 null。 */
+    fun hover(uri: String, text: String, line: Int, character: Int): String? {
+        syncDocument(uri, text)
+        val params = "{\"textDocument\":{\"uri\":${quote(uri)}},\"position\":{\"line\":$line,\"character\":$character}}"
+        val json = request("textDocument/hover", params) ?: return null
+        val root = RsfJson.parse(json) as? Map<String, Any?> ?: return null
+        val contents = RsfJson.objectAt(root, "contents") ?: return null
+        val value = RsfJson.string(contents, "value")
+        return value.ifEmpty { null }
+    }
+
     /** 光标扫到这儿时把当前缓冲区同步过去（打开/改动都走 didChange）。 */
     private fun syncDocument(uri: String, text: String) {
         synchronized(versions) {
@@ -314,6 +348,24 @@ class RsfLspClient private constructor(
         }
 
         /** `D:\a\b.rsf` → `file:///D:/a/b.rsf`（LSP 的盘符不带百分号编码）。 */
+        /** URI 还原成本地路径（与 [toUri] 对称：`file:///D:/a%20b.rsf` → `D:/a b.rsf`）。 */
+        fun fromUri(uri: String): String {
+            var rest = uri
+            for (prefix in listOf("file:///", "file://", "file:")) {
+                if (rest.startsWith(prefix)) {
+                    rest = rest.substring(prefix.length)
+                    break
+                }
+            }
+            val decoded = try {
+                java.net.URLDecoder.decode(rest, "UTF-8")
+            } catch (_: Exception) {
+                rest
+            }
+            // file:///D:/x 去掉前缀后是 D:/x；file://server/share 会剩 server/share，按 UNC 拼
+            return if (decoded.length >= 2 && decoded[1] == ':') decoded.replace("/", java.io.File.separator) else decoded
+        }
+
         fun toUri(path: String): String {
             val normalized = path.replace('\\', '/')
             val encoded = normalized.split('/').mapIndexed { i, seg ->

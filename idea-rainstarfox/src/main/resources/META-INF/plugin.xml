@@ -40,6 +40,16 @@
         <completion.contributor language="rainStarfox"
                                 implementationClass="org.rainstarfox.idea.RsfCompletionContributor"/>
 
+        <!-- Ctrl+点跳转：问语言服务器要声明位置 -->
+        <gotoDeclarationHandler implementation="org.rainstarfox.idea.RsfGotoDeclarationHandler"/>
+
+        <!-- 悬停文档（RDoc）：声明上方的 /// 行 -->
+        <lang.documentationProvider language="rainStarfox"
+                                    implementation="org.rainstarfox.idea.RsfDocumentationProvider"/>
+
+        <!-- 样板（live templates）：fn / lam / class / ... 按 Tab 展开 -->
+        <defaultLiveTemplatesProvider implementation="org.rainstarfox.idea.RsfLiveTemplates"/>
+
         <!-- 设置 -->
         <applicationService serviceImplementation="org.rainstarfox.idea.RsfSettings"/>
         <applicationConfigurable parentId="tools"

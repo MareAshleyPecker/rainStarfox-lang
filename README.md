@@ -1258,6 +1258,11 @@ java -cp out arrays
 ```
 // 行注释
 /* 块注释 */
+
+/// RDoc：写在声明正上方，悬停时显示（`rsf lsp` 的 hover）
+pub fn add(a : int, b : int) -> int {
+    rtn a + b
+}
 ```
 
 ---

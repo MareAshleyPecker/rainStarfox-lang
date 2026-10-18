@@ -93,4 +93,19 @@ class EditorKeywordParityTest {
             )
         }
     }
+
+    @Test
+    fun `编译器每个关键字都在补全表里`() {
+        val compiler = compilerKeywords()
+        val editorSupport = read("src/main/kotlin/org/example/complie/lsp/EditorSupport.kt")
+        // `mathematic` 是保留字但语法没定（BOOTSTRAP 里已移出计划），补全里不列它是故意的
+        val missing = compiler
+            .filter { it != "mathematic" }
+            .filter { !editorSupport.contains("\"$it\"") }
+            .sorted()
+        assertTrue(
+            missing.isEmpty(),
+            "lsp/EditorSupport.kt 的补全表缺这些关键字（补 KEYWORDS 或 TYPES）：$missing",
+        )
+    }
 }

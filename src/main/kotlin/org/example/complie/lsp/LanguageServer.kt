@@ -6,7 +6,6 @@ import java.io.OutputStream
 import java.io.PrintStream
 import java.net.URLDecoder
 import java.net.URLEncoder
-import java.nio.file.Files
 
 /**
  * rainStarfox 的语言服务器（LSP over stdio）。
@@ -19,9 +18,10 @@ import java.nio.file.Files
  * - 全量同步：`didOpen` / `didChange` / `didClose`
  * - 诊断：`textDocument/diagnostic`（拉取）；同时在开/改之后 `publishDiagnostics` 推送
  * - 补全：`textDocument/completion`
+ * - 跳转定义：`textDocument/definition`（Ctrl+点）
+ * - 悬停文档：`textDocument/hover`（RDoc：声明正上方连续的 `///` 行）
  *
- * **不做**的：跳转定义、引用、重命名、格式化。这些要先用上语义模型里的符号位置，
- * 属于下一刀；接口形状已经留好（见 [dispatch]）。
+ * **不做**的：引用、重命名、格式化、增量同步。
  *
  * 协议层（分帧、JSON）在 [JsonRpc] / [JsonParser]，这里只管方法分发。
  */
@@ -93,8 +93,8 @@ class LanguageServer(
 
         "textDocument/diagnostic" -> diagnostic(params)
         "textDocument/completion" -> completion(params)
-        // 编辑器会发这些，回个空结果让它别等
-        "textDocument/definition", "textDocument/hover" -> JsonValue.Null
+        "textDocument/definition" -> definition(params)
+        "textDocument/hover" -> hover(params)
         "$/cancelRequest", "workspace/didChangeConfiguration", "workspace/didChangeWatchedFiles" -> null
         else -> {
             log.println("[rsf-lsp] 忽略未知方法 $method")
@@ -110,6 +110,8 @@ class LanguageServer(
                     "completionProvider" to JsonValue.Obj(
                         linkedMapOf("triggerCharacters" to JsonValue.Arr(listOf(JsonValue.Str(".")))),
                     ),
+                    "definitionProvider" to JsonValue.Bool(true),
+                    "hoverProvider" to JsonValue.Bool(true),
                     "diagnosticProvider" to JsonValue.Obj(
                         linkedMapOf(
                             "interFileDependencies" to JsonValue.Bool(true),
@@ -181,30 +183,20 @@ class LanguageServer(
 
     private fun diagnosticsOf(uri: String): List<LocatedDiag> {
         val path = uriToPath(uri) ?: return emptyList()
+        val file = File(path)
         val doc = documents[uri]
-        val temp = doc?.let { writeTemp(it) }
-        val file = temp ?: File(path)
         return try {
-            val baseDir = File(path).parentFile ?: File(".").absoluteFile
-            EditorSupport.diagnostics(file, baseDir).map { d ->
-                // 临时文件的名字不该出现在编辑器里：落在临时文件里的那条报回文档自己的 URI
-                val owner = if (d.file == file.path) uri else pathToUri(d.file)
+            val baseDir = file.parentFile ?: File(".").absoluteFile
+            // 正文用内存里的（未保存也算数），路径仍用真实文件：包声明校验要按
+            // 「文件在哪个目录」判，把它挪到 Temp 下会误报 `pkg` 位置不对。
+            EditorSupport.diagnostics(file, baseDir, doc?.text).map { d ->
+                val owner = if (d.file == file.path || d.file == file.canonicalPath) uri else pathToUri(d.file)
                 LocatedDiag(owner, d.line, d.col, d.endCol, d.severity, d.phase, d.message)
             }
         } catch (e: Exception) {
             log.println("[rsf-lsp] 检查 $uri 时出错：${e.message}")
             emptyList()
-        } finally {
-            temp?.delete()
         }
-    }
-
-    /** 未保存的缓冲区交给编译器时要落个临时文件（import 仍按真实目录找）。 */
-    private fun writeTemp(doc: Doc): File {
-        val temp = Files.createTempFile("rsf-lsp-", ".rsf").toFile()
-        temp.writeText(doc.text, Charsets.UTF_8)
-        temp.deleteOnExit()
-        return temp
     }
 
     // ------------------------------------------------------------------ 补全
@@ -215,10 +207,9 @@ class LanguageServer(
         val character = params.obj("position")?.int("character") ?: 0
         val path = uriToPath(uri) ?: return JsonValue.Arr(emptyList())
         val doc = documents[uri]
-        val temp = doc?.let { writeTemp(it) }
-        try {
-            val file = temp ?: File(path)
-            val baseDir = File(path).parentFile ?: File(".").absoluteFile
+        run {
+            val file = File(path)
+            val baseDir = file.parentFile ?: File(".").absoluteFile
             val items = EditorSupport
                 .completions(file, doc?.text, line + 1, character + 1, baseDir)
                 .map { item ->
@@ -233,10 +224,85 @@ class LanguageServer(
             return JsonValue.Obj(
                 linkedMapOf("isIncomplete" to JsonValue.Bool(false), "items" to JsonValue.Arr(items)),
             )
-        } finally {
-            temp?.delete()
         }
     }
+
+    // ------------------------------------------------------------------ 跳转与悬停
+
+    /**
+     * `textDocument/definition`：Ctrl+点。
+     *
+     * 只回**声明位置**，不做「引用」，也不猜：解析不到就回 `null`，编辑器会保持原地不动
+     * （比跳到一个错地方好）。
+     */
+    fun definition(params: JsonValue): JsonValue {
+        val uri = params.str("textDocument", "uri") ?: return JsonValue.Null
+        val line = params.obj("position")?.int("line") ?: return JsonValue.Null
+        val character = params.obj("position")?.int("character") ?: 0
+        val symbol = symbolAt(uri, line, character) ?: return JsonValue.Null
+        return JsonValue.Obj(
+            linkedMapOf(
+                "uri" to JsonValue.Str(pathToUri(symbol.file)),
+                "range" to symbolRange(symbol),
+            ),
+        )
+    }
+
+    /** `textDocument/hover`：悬停显示 RDoc（没有注释就只显示签名和定义位置）。 */
+    fun hover(params: JsonValue): JsonValue {
+        val uri = params.str("textDocument", "uri") ?: return JsonValue.Null
+        val line = params.obj("position")?.int("line") ?: return JsonValue.Null
+        val character = params.obj("position")?.int("character") ?: 0
+        val path = uriToPath(uri)
+        val baseDir = path?.let { File(it).parentFile }?.absolutePath
+        val symbol = symbolAt(uri, line, character) ?: return JsonValue.Null
+        return JsonValue.Obj(
+            linkedMapOf(
+                "contents" to JsonValue.Obj(
+                    linkedMapOf(
+                        "kind" to JsonValue.Str("markdown"),
+                        "value" to JsonValue.Str(RsfSymbols.hoverMarkdown(symbol, baseDir)),
+                    ),
+                ),
+                "range" to symbolRange(symbol),
+            ),
+        )
+    }
+
+    /** 光标处解析到一个声明；未保存的缓冲区先落临时文件，解析完把文件名换回文档自己的路径。 */
+    private fun symbolAt(uri: String, line0: Int, character0: Int): RsfSymbols.RsfSymbol? {
+        val path = uriToPath(uri) ?: return null
+        val file = File(path)
+        val doc = documents[uri]
+        return try {
+            val baseDir = file.parentFile ?: File(".").absoluteFile
+            val loaded = org.example.complie.Rsf.load(file, baseDir, doc?.text)
+            val root = loaded.root
+            val symbol = RsfSymbols.resolveAt(loaded, root, line0, character0) ?: return null
+            if (symbol.file == root.path || symbol.file == file.canonicalPath) symbol.copy(file = path) else symbol
+        } catch (e: Exception) {
+            log.println("[rsf-lsp] 解析 $uri 的符号时出错：${e.message}")
+            return null
+        }
+    }
+
+    /** 声明名字的区间（0 基）。 */
+    private fun symbolRange(symbol: RsfSymbols.RsfSymbol): JsonValue = JsonValue.Obj(
+        linkedMapOf(
+            "start" to JsonValue.Obj(
+                linkedMapOf(
+                    "line" to JsonValue.Num((symbol.line - 1).coerceAtLeast(0).toDouble()),
+                    "character" to JsonValue.Num((symbol.column - 1).coerceAtLeast(0).toDouble()),
+                ),
+            ),
+            "end" to JsonValue.Obj(
+                linkedMapOf(
+                    "line" to JsonValue.Num((symbol.line - 1).coerceAtLeast(0).toDouble()),
+                    "character" to JsonValue.Num((symbol.column - 1 + symbol.length).coerceAtLeast(0).toDouble()),
+                ),
+            ),
+        ),
+    )
 
     /** LSP 的 CompletionItemKind 编号（不是字符串）。 */
     private fun kindOf(kind: String): Int = when (kind) {

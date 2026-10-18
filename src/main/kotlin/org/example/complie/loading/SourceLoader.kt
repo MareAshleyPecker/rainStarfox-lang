@@ -92,8 +92,15 @@ class SourceLoader {
      * 此时它真实的 import 相对目录得从外面指定（临时文件所在目录没有意义）。
      * 被导入的文件仍然按各自的目录解析。
      */
-    fun load(rootFile: File, baseDir: File? = null): LoadedProgram {
-        val root = SourceFile.of(rootFile.canonicalFile)
+    fun load(rootFile: File, baseDir: File? = null, text: String? = null): LoadedProgram {
+        // text 不为空 = 「盘上那份不是正文」：编辑器里有未保存的缓冲区。
+        // 路径必须用**真实文件**的（包声明校验、import 相对路径都按它算），
+        // 否则 `pkg testbag` 会因为临时目录在 Temp 下而误报。
+        val root = if (text != null) {
+            SourceFile.of(rootFile.canonicalFile.path, text)
+        } else {
+            SourceFile.of(rootFile.canonicalFile)
+        }
         rootDir = baseDir?.canonicalFile ?: rootFile.canonicalFile.parentFile
         loadFile(rootFile.canonicalFile, root, baseDir?.canonicalFile)
         return LoadedProgram(

@@ -63,10 +63,10 @@ object EditorSupport {
      * 前端是「遇错即停」，所以 error 最多一条；warning 全部收集。
      * `file` 是绝对路径——import 展开后别的文件里的错也在这里，调用方按它分流。
      */
-    fun diagnostics(file: File, baseDir: File?): List<Located> {
+    fun diagnostics(file: File, baseDir: File?, text: String? = null): List<Located> {
         val out = ArrayList<Located>()
         try {
-            val loaded = Rsf.load(file, baseDir)
+            val loaded = Rsf.load(file, baseDir, text)
             val model = Rsf.analyze(loaded)
             for (d in model.diagnostics) {
                 val src = loaded.files.firstOrNull { it.name == d.file } ?: loaded.root
@@ -138,7 +138,7 @@ object EditorSupport {
         var ownFunctions: List<FuncDecl> = emptyList()
         var allFunctions: List<FuncDecl> = emptyList()
         runCatching {
-            val loaded = Rsf.load(file, baseDir)
+            val loaded = Rsf.load(file, baseDir, text)
             allFunctions = loaded.functions
         }
         runCatching {
@@ -368,6 +368,11 @@ class Completer(
             // 阶段 21：注解声明与它的伴生实体。三个都是硬关键字——写进补全表，
             // 同时也是「标在声明前面的 @ 连同名字一起高亮」那件事的词汇面。
             "annotation", "companion", "entity",
+            // 阶段 24 的转换/判断（`x as Foo` / `x is Foo`）——两个都是硬关键字，
+            // 补全表一直漏着，写的时候只能靠记忆
+            "as", "is",
+            // 阶段 30 的 lambda 字面量：`lam(x : int) -> int { … }`
+            "lam",
             // `let` 在词法器里仍然是保留字（写了会得到「let 已经换成 var 与 imutvar」
             // 的提示），所以补全表也留着它，但 detail 会标成已废弃
             "let",
