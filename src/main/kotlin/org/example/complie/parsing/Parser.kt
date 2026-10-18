@@ -2064,7 +2064,12 @@ class Parser(
 
             t.kind == TokenKind.KW_GOTO -> {
                 advance()
-                val label = expect(TokenKind.IDENT, "'goto' 后面缺少标签名")
+                val label = peek()
+                // 阶段 28a：`goto `任意字符``（LABEL_NAME）与 `goto 名字`（IDENT）等价。
+                if (label.kind != TokenKind.IDENT && label.kind != TokenKind.LABEL_NAME) {
+                    throw error(label, "'goto' 后面缺少标签名（实际读到 ${label.describe()}）")
+                }
+                advance()
                 GotoStmt(label.lexeme, t.at)
             }
 
@@ -2102,11 +2107,18 @@ class Parser(
 
             t.kind == TokenKind.IDENT && peek(1).kind == TokenKind.ASSIGN -> parseAssign()
 
-            t.kind == TokenKind.IDENT && peek(1).kind == TokenKind.COLON -> {
+            // 标签声明（阶段 28a）：`名字:` 与 `` `任意字符`: `` 等价，两种记号都收。
+            // LABEL_NAME 的 lexeme 已经是去掉反引号之后的名字，所以查重 / goto 解析
+            // 全都落在同一个名字上（`` `finish` `` 与 `finish` 是同一个标签）。
+            (t.kind == TokenKind.IDENT || t.kind == TokenKind.LABEL_NAME) &&
+                peek(1).kind == TokenKind.COLON -> {
                 advance()
                 advance() // ':'
                 LabelStmt(t.lexeme, t.at)
             }
+
+            // 走到这里说明反引号写在了不该写的位置（不是行首 `名字:`、也不是 goto 后面）
+            t.kind == TokenKind.LABEL_NAME -> throw labelNameOnlyError(t)
 
             else -> finishExprStmt(parseExpr())
         }
@@ -2480,6 +2492,9 @@ class Parser(
             advance()
         } else {
             val t = peek()
+            // 阶段 28a：反引号只给标签名用——`var `名字` = 1` 不是「忘了写名字」，
+            // 而是把反引号当成了标识符语法，专门说清楚（别的声明位置同理，见 expect）。
+            if (t.kind == TokenKind.LABEL_NAME) throw labelNameOnlyError(t)
             val hint = if (t.kind == TokenKind.KW_MATHEMATIC) {
                 // 数学类的预留关键字（语法还没定）：这里要说清它不是「少写了名字」
                 "；'mathematic' 是保留关键字（数学类预留），语法还没定，现在还不能当名字用"
@@ -3021,6 +3036,10 @@ class Parser(
                 inner
             }
 
+            // 阶段 28a：反引号只给标签名用——表达式位置出现 `名字` 专门报一条，
+            // 不许当成普通标识符（DESIGN-28 §1）。
+            TokenKind.LABEL_NAME -> throw labelNameOnlyError(t)
+
             else -> throw error(t, "这里需要一个表达式，实际是 ${t.describe()}")
         }
     }
@@ -3053,10 +3072,26 @@ class Parser(
     private fun expect(kind: TokenKind, message: String): Token {
         if (!check(kind)) {
             val t = peek()
+            // 阶段 28a：反引号只给标签名用。撞进任何「等标识符 / 等关键字」的位置
+            // （`var `x``、`fun `f`()` 之类）都给专门文案，而不是干巴巴的
+            // 「实际读到 标签名 'x'」——后者会让人以为这个位置本来能收反引号。
+            if (t.kind == TokenKind.LABEL_NAME) throw labelNameOnlyError(t)
             throw error(t, "$message（实际读到 ${t.describe()}）")
         }
         return advance()
     }
+
+    /**
+     * 反引号写错位置时的统一报错（阶段 28a）。
+     *
+     * 文案是工单 §3 定死的：必须逐字含 `反引号只用来写标签名`。
+     * 合法位置只有两处——语句首 `` `名字`: `` 与 `goto` 后面。
+     */
+    private fun labelNameOnlyError(t: Token): RsfError = error(
+        t,
+        "反引号只用来写标签名（合法写法只有 `名字:` 与 goto `名字` 两种），" +
+            "变量 / 字段 / 函数名不能用反引号",
+    )
 
     private fun error(t: Token, message: String): RsfError =
         RsfError("parser", message, t.line, t.column, source)

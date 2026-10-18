@@ -2318,6 +2318,37 @@ class BytecodeCompiler(
 
         // 体发完、visitMaxs 之前：发 LVT 的结束标签，再逐条写表（见 beginLvt）
         endLvt(mv, lvt)
+
+        // 阶段 28a：再把标签名写进 @RsfLabels（同样必须在 visitMaxs 之前）
+        emitLabelMetadata(mv, fn)
+    }
+
+    /**
+     * 阶段 28a：把本方法的用户标签名按**声明顺序**写成 runtime-visible 注解
+     * `@RsfLabels(value = string[])`。
+     *
+     * 收集口径（工单 §4）：直接按 `body.instructions` 的顺序扫 [ILabel]，不去重
+     * （重名已被 Checker 拦在语义阶段）。`Lowering` 给内部标签留了 `'\u0000'` 前缀
+     * （`Lowering.kt:301-302` 的 `fresh()`），那不是用户写的标签，这里一律滤掉——
+     * 否则每个带 try/catch 或 `when` 的方法都会凭空多出一条注解、字节全变。
+     *
+     * 描述符 `LRsfLabels;` 是**悬空**的：故意不生成 `RsfLabels` 注解接口类
+     * （DESIGN-28 §2），所以反射读它会 `TypeNotPresentException`，只有 ASM /
+     * `javap -v` 这类字节码级工具看得见。
+     *
+     * 没有标签的方法**一个字节都不发**（连注解都不出现）⇒ 旧语料的产出逐字节不变。
+     */
+    private fun emitLabelMetadata(mv: MethodVisitor, fn: FuncDecl) {
+        val names = ArrayList<String>()
+        for (instr in model.loweredOf(fn).instructions) {
+            if (instr is ILabel && !instr.label.startsWith(SYNTHETIC_LABEL_PREFIX)) names += instr.label
+        }
+        if (names.isEmpty()) return
+        val av: AnnotationVisitor = mv.visitAnnotation("LRsfLabels;", true)
+        val arr = av.visitArray("value")
+        for (name in names) arr.visit(null, name)
+        arr.visitEnd()
+        av.visitEnd()
     }
 
     // ------------------------------------------------------------------ 表达式
@@ -3877,6 +3908,14 @@ class BytecodeCompiler(
     // ASM 的常量都在 Opcodes 接口里；这里显式列出用到的，避免整文件 Opcodes. 前缀。
 
     private companion object {
+        /**
+         * 阶段 28a：`Lowering` 给**内部**标签留的前缀（`Lowering.kt:301-302` 的
+         * `fresh()` 写的是 `"\u0000$kind.$n"`）——用户标签永远撞不上它。
+         *
+         * `@RsfLabels` 只收用户写的标签名，所以扫指令流时要按这个前缀滤一遍。
+         */
+        const val SYNTHETIC_LABEL_PREFIX = "\u0000"
+
         /**
          * 阶段 24：`as` 的判型辅助方法名与描述符。
          *

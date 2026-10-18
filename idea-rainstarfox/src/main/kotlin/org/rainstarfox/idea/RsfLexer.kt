@@ -77,6 +77,9 @@ class RsfLexer : Lexer() {
 
     private fun scan(text: CharSequence, from: Int, to: Int): List<Tok> {
         val out = ArrayList<Tok>()
+        // 反引号标签名（阶段 28a）在 out 里的下标：classify 那趟不走「类型 / 调用」
+        // 的猜测，直接给普通名字色——标签本来就是这个颜色（普通 `loop:` 也是）。
+        val backticked = HashSet<Int>()
         var i = from
         while (i < to) {
             val c = text[i]
@@ -136,6 +139,20 @@ class RsfLexer : Lexer() {
                     out.add(Tok(start, i, RsfTokens.CHARACTER))
                 }
 
+                // 反引号标签名（阶段 28a）：`a-b:` 与 goto `a-b`。
+                // 只扫到同一行的下一个反引号；没等到收尾就吃到行尾——编辑器这边
+                // 永不抛异常（报错交给编译器的「反引号标签名没有收尾」）。
+                c == '`' -> {
+                    val start = i
+                    i++
+                    while (i < to && text[i] != '`' && text[i] != '\n') i++
+                    if (i < to && text[i] == '`') i++
+                    backticked.add(out.size)
+                    // token 区间**含**两个反引号：只吃名字的话，那两个引号会各自
+                    // 掉进 BAD_CHARACTER，编辑器里就一片红。
+                    out.add(Tok(start, i, RsfTokens.IDENTIFIER))
+                }
+
                 c.isDigit() -> {
                     val start = i
                     while (i < to && text[i].isDigit()) i++
@@ -170,7 +187,7 @@ class RsfLexer : Lexer() {
                 }
             }
         }
-        return classify(out, text)
+        return classify(out, text, backticked)
     }
 
     /**
@@ -180,7 +197,7 @@ class RsfLexer : Lexer() {
      * 类型位置（见 [typeNamePositions]）优先于其它分类：`var p : Point` 里的 `Point`
      * 必须上成类型色，而不是普通标识符。
      */
-    private fun classify(raw: List<Tok>, text: CharSequence): List<Tok> {
+    private fun classify(raw: List<Tok>, text: CharSequence, backticked: Set<Int>): List<Tok> {
         fun lexemeOf(t: Tok): String = text.subSequence(t.start, t.end).toString()
         fun isFun(t: Tok?): Boolean = t != null && t.type == RsfTokens.CONTROL_KEYWORD && lexemeOf(t) == "fun"
 
@@ -189,6 +206,12 @@ class RsfLexer : Lexer() {
         val out = ArrayList<Tok>(raw.size)
         for ((n, t) in raw.withIndex()) {
             if (t.type != RsfTokens.IDENTIFIER) {
+                out.add(t)
+                continue
+            }
+            // 反引号标签名（阶段 28a）：位置一旦确定就是标签声明或 goto 的目标，
+            // 不参与「类型名 / 函数调用」那套猜测，恒为普通名字色（与 `loop:` 一致）。
+            if (n in backticked) {
                 out.add(t)
                 continue
             }

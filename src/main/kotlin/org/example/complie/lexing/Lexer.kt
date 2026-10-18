@@ -116,6 +116,7 @@ class Lexer(private val source: SourceFile) {
                 c.isDigit() -> out.add(readNumber(at))
                 c == '"' -> out.add(readString(at))
                 c == '\'' -> out.add(readCharLiteral(at))
+                c == '`' -> out.add(readLabelName(at))
                 isIdentStart(c) -> out.add(readIdentOrKeyword(at))
                 else -> out.add(readPunct(at))
             }
@@ -166,6 +167,46 @@ class Lexer(private val source: SourceFile) {
             }
         }
     }
+
+    /**
+     * 反引号标签名（阶段 28a）：扫到**同一行**的下一个反引号为止，lexeme 是去引号后的名字。
+     *
+     * 反引号里允许空格、中文与 `-` `.` `$` `@` `/` `:` 等任何非反引号、非换行字符，
+     * 一律**不做**标识符字符检查（DESIGN-28 §1：反引号只给标签名用，不扩大标识符面）。
+     *
+     * 三种报错，位置都取**开引号**那个字符（用户一眼能看到是哪个反引号写坏了）：
+     * 空名、到行尾没等到收尾反引号、名字里出现换行（按「没有收尾」处理）。
+     * 名字里再出现反引号的情况在词法上不可能分辨——第一个反引号就是收尾，
+     * 多出来的那个会在 parser 里按「反引号只用来写标签名」报错。
+     */
+    private fun readLabelName(at: SourceLine): Token {
+        advance() // 开引号
+        val sb = StringBuilder()
+        while (true) {
+            if (pos >= text.length) throw unclosedLabelError(at)
+            val c = text[pos]
+            if (c == '`') {
+                advance()
+                break
+            }
+            if (c == '\n' || c == '\r') throw unclosedLabelError(at)
+            sb.append(advance())
+        }
+        if (sb.isEmpty()) {
+            throw RsfError(
+                "lexer",
+                "标签名不能是空的（写法是 `名字:`，反引号里至少一个字符）",
+                at.line, at.column, source,
+            )
+        }
+        return Token(TokenKind.LABEL_NAME, sb.toString(), at)
+    }
+
+    private fun unclosedLabelError(at: SourceLine): RsfError = RsfError(
+        "lexer",
+        "反引号标签名没有收尾（标签名要写成 `名字:`，收尾的 '`' 不能漏、也不能跨行）",
+        at.line, at.column, source,
+    )
 
     private fun isIdentStart(c: Char): Boolean = c.isLetter() || c == '_'
 

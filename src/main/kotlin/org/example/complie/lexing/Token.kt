@@ -247,6 +247,16 @@ enum class TokenKind(val text: String) {
      */
     OROR("||"),
 
+    /**
+     * 反引号标签名（阶段 28a）：`` `a-b` `` 的 [Token.lexeme] 是**去掉一对反引号之后**
+     * 的名字（`a-b`），不含引号。
+     *
+     * 只许出现在两处：语句首 `` `名字`: `` 的标签声明、`goto` 后面的跳转目标。
+     * 其它任何位置出现在 parser 里都报「反引号只用来写标签名」——反引号不扩大
+     * 标识符面（变量 / 字段 / 函数名仍只收 Unicode 字母、数字、下划线）。
+     */
+    LABEL_NAME("反引号标签名"),
+
     EOF("文件结束"),
     ;
 
@@ -311,6 +321,7 @@ data class Token(
     fun describe(): String = when (kind) {
         TokenKind.EOF -> "文件结束"
         TokenKind.IDENT -> "标识符 '$lexeme'"
+        TokenKind.LABEL_NAME -> "标签名 '$lexeme'"
         TokenKind.INT_LIT, TokenKind.LONG_LIT, TokenKind.FLOAT_LIT,
         TokenKind.DOUBLE_LIT, TokenKind.STRING_LIT, TokenKind.CHAR_LIT -> lexeme
         else -> "'${kind.text}'"
