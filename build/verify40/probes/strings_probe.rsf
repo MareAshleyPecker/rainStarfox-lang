@@ -1,0 +1,24 @@
+import "../../../rsfSrc/core/Strings.rsf"
+
+fn main() -> void {
+    println("" + Strings.count("banana", "ana") + " " + Strings.count("aaa", "aa") + " " + Strings.count("abc", ""))
+    println(Strings.replace("a-b-c", "-", "+") + " " + Strings.replace("abc", "", "x"))
+    println("" + Strings.equalsIgnoreCase("Rain", "rain") + " " + Strings.equalsIgnoreCase("Rain", "Rai"))
+    println("" + Strings.startsWithIgnoreCase("RainStarFox", "rain") + " " + Strings.startsWithIgnoreCase("Rain", "sun"))
+    println(Strings.capitalize("rsf") + " " + Strings.uncapitalize("Rsf") + " " + Strings.reverse("abc"))
+    println(Strings.ellipsis("rainstarfox", 7) + " " + Strings.ellipsis("rain", 7) + " " + Strings.ellipsis("abcdef", 3))
+    println(Strings.center("x", 5, '-') + "|" + Strings.center("ab", 6, '.') + "|")
+    println("[" + Strings.trimStart("  hi  ") + "][" + Strings.trimEnd("  hi  ") + "]")
+    println("" + Strings.isDigits("123") + " " + Strings.isDigits("12a") + " " + Strings.isDigits(""))
+    var ws = Strings.words("  a  bb\tc ")
+    println("" + ws.length)
+    var i = 0
+    var line = ""
+    while (i < ws.length) {
+        if (i > 0) { line = line + "|" }
+        line = line + ws[i]
+        i = i + 1
+    }
+    println(line)
+    println("" + Strings.words("   ").length)
+}

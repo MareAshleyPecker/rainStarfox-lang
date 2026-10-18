@@ -1,0 +1,180 @@
+// 阶段 40：核心标准库 · 32 位整数位运算 Bits
+//
+// rsf 语言没有 `&`/`|`/`^`/`<<`/`>>` 运算符（`&` 只用于泛型实参），
+// 所以这里全部用算术实现：除以 2^n 取位、乘 2^n 左移。
+// 口径：int 是 32 位二补数，与 JVM 一致；负数按位模式处理。
+pub class Bits {
+    // 2 的 n 次方；n 超出 0..30 时返回 0/-2147483648 这类回绕值，调用方自己保证范围
+    pub stc fn pow2(n : int) -> int {
+        var p = 1
+        var i = 0
+        while (i < n) {
+            p = p * 2
+            i = i + 1
+        }
+        rtn p
+    }
+
+    // 第 i 位（0 是最低位）；unsigned 口径，负数的高位也算 1
+    pub stc fn bitAt(x : int, i : int) -> int {
+        if (i == 31) {
+            if (x < 0) { rtn 1 }
+            rtn 0
+        }
+        var d = pow2(i)
+        var q = x / d
+        if (x < 0 && q * d != x) { q = q - 1 }
+        var b = q % 2
+        if (b < 0) { b = b + 2 }
+        rtn b
+    }
+
+    pub stc fn shl(x : int, n : int) -> int {
+        if (n <= 0) { rtn x }
+        if (n >= 32) { rtn 0 }
+        if (n == 31) {
+            if (x % 2 == 0) { rtn 0 }
+            rtn -2147483647 - 1
+        }
+        rtn x * pow2(n)
+    }
+
+    // 算术右移（负数补 1）
+    pub stc fn shr(x : int, n : int) -> int {
+        if (n <= 0) { rtn x }
+        if (n >= 31) {
+            if (x < 0) { rtn -1 }
+            rtn 0
+        }
+        var d = pow2(n)
+        var q = x / d
+        if (x < 0 && q * d != x) { q = q - 1 }
+        rtn q
+    }
+
+    // 逻辑右移（负数当无符号数看）
+    pub stc fn ushr(x : int, n : int) -> int {
+        if (n <= 0) { rtn x }
+        if (n == 31) {
+            if (x < 0) { rtn 1 }
+            rtn 0
+        }
+        if (n >= 32) { rtn 0 }
+        var d = pow2(n)
+        var q = x / d
+        if (x < 0 && q * d != x) { q = q - 1 }
+        if (x < 0) { q = q + pow2(32 - n) }
+        rtn q
+    }
+
+    pub stc fn and(a : int, b : int) -> int {
+        var out = 0
+        var i = 0
+        while (i < 32) {
+            if (bitAt(a, i) == 1 && bitAt(b, i) == 1) {
+                out = out + pow2(i)
+            }
+            i = i + 1
+        }
+        rtn out
+    }
+
+    pub stc fn or(a : int, b : int) -> int {
+        var out = 0
+        var i = 0
+        while (i < 32) {
+            if (bitAt(a, i) == 1 || bitAt(b, i) == 1) {
+                out = out + pow2(i)
+            }
+            i = i + 1
+        }
+        rtn out
+    }
+
+    pub stc fn xor(a : int, b : int) -> int {
+        var out = 0
+        var i = 0
+        while (i < 32) {
+            if (bitAt(a, i) != bitAt(b, i)) {
+                out = out + pow2(i)
+            }
+            i = i + 1
+        }
+        rtn out
+    }
+
+    // 按位取反：~x == -1 - x
+    pub stc fn not(x : int) -> int { rtn -1 - x }
+
+    pub stc fn popCount(x : int) -> int {
+        var c = 0
+        var i = 0
+        while (i < 32) {
+            c = c + bitAt(x, i)
+            i = i + 1
+        }
+        rtn c
+    }
+
+    pub stc fn isPow2(x : int) -> bool {
+        if (x <= 0) { rtn false }
+        rtn and(x, x - 1) == 0
+    }
+
+    // 最低位的 1（x 为 0 时返回 0）
+    pub stc fn lowestBit(x : int) -> int {
+        if (x == 0) { rtn 0 }
+        rtn and(x, -x)
+    }
+
+    // 最高位的 1（x 为 0 时返回 0）
+    pub stc fn highestBit(x : int) -> int {
+        var i = 31
+        while (i >= 0) {
+            if (bitAt(x, i) == 1) { rtn pow2(i) }
+            i = i - 1
+        }
+        rtn 0
+    }
+
+    // 固定 32 位二进制串
+    pub stc fn toBinary(x : int) -> string {
+        var out = ""
+        var i = 31
+        while (i >= 0) {
+            if (bitAt(x, i) == 1) { out = out + '1' } else { out = out + '0' }
+            i = i - 1
+        }
+        rtn out
+    }
+
+    // 去掉前导 0 的二进制串（0 仍给 "0"）
+    pub stc fn toBinaryShort(x : int) -> string {
+        var out = ""
+        var started = false
+        var i = 31
+        while (i >= 0) {
+            if (bitAt(x, i) == 1) {
+                out = out + '1'
+                started = true
+            } else {
+                if (started) { out = out + '0' }
+            }
+            i = i - 1
+        }
+        if (!started) { rtn "0" }
+        rtn out
+    }
+
+    // 固定 8 位十六进制串（小写）
+    pub stc fn toHex(x : int) -> string {
+        var out = ""
+        var i = 7
+        while (i >= 0) {
+            var v = bitAt(x, i * 4) + bitAt(x, i * 4 + 1) * 2 + bitAt(x, i * 4 + 2) * 4 + bitAt(x, i * 4 + 3) * 8
+            if (v < 10) { out = out + toChar(48 + v) } else { out = out + toChar(97 + v - 10) }
+            i = i - 1
+        }
+        rtn out
+    }
+}

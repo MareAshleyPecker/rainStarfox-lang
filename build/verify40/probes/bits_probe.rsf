@@ -1,0 +1,14 @@
+import "../../../rsfSrc/core/Bits.rsf"
+
+fn main() -> void {
+    println("" + Bits.shl(1, 4) + " " + Bits.shr(256, 3) + " " + Bits.ushr(-1, 1))
+    println("" + Bits.shr(-7, 1) + " " + Bits.ushr(-8, 2) + " " + Bits.shl(-3, 2))
+    println("" + Bits.and(12, 10) + " " + Bits.or(12, 10) + " " + Bits.xor(12, 10) + " " + Bits.not(5))
+    println("" + Bits.popCount(255) + " " + Bits.popCount(-1) + " " + Bits.isPow2(64) + " " + Bits.isPow2(48))
+    println("" + Bits.lowestBit(40) + " " + Bits.highestBit(40) + " " + Bits.lowestBit(0) + " " + Bits.highestBit(0))
+    println(Bits.toBinary(5))
+    println(Bits.toBinary(-1))
+    println(Bits.toBinaryShort(0) + " " + Bits.toBinaryShort(40))
+    println(Bits.toHex(255) + " " + Bits.toHex(-1) + " " + Bits.toHex(-559038737))
+    println("" + Bits.shl(1, 31) + " " + Bits.shr(-1, 31) + " " + Bits.ushr(1, 31) + " " + Bits.shl(3, 31))
+}

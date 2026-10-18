@@ -2936,7 +2936,13 @@ pub class Interp(prog : Node) {
     pub fn stringMember(s : string, nm : string, args : Val[]) -> !Val {
         if (nm == "length") { rtn vInt(s.length()) }
         if (nm == "charAt") { rtn vChar(s.charAt(intOf(args[0]))) }
-        if (nm == "substring") { rtn vStr(s.substring(intOf(args[0]), intOf(args[1]))) }
+        if (nm == "substring") {
+            // 阶段 40：`s.substring(1)` 的单参重载也要支持（Strings.rsf 的 capitalize 用）
+            if (args.length == 1) { rtn vStr(s.substring(intOf(args[0]))) }
+            rtn vStr(s.substring(intOf(args[0]), intOf(args[1])))
+        }
+        if (nm == "toUpperCase") { rtn vStr(s.toUpperCase()) }
+        if (nm == "toLowerCase") { rtn vStr(s.toLowerCase()) }
         if (nm == "isEmpty") { rtn vBool(s.length() == 0) }
         if (nm == "contains") { rtn vBool(indexOfTextIn(s, render(args[0])!!) >= 0) }
         if (nm == "equals") { rtn vBool(s == render(args[0])!!) }

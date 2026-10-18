@@ -1,0 +1,12 @@
+1 1 0
+a+b+c abc
+true false
+true false
+Rsf rsf cba
+rain... rain abc
+--x--|..ab..|
+[hi  ][  hi]
+true false false
+3
+a|bb|c
+0

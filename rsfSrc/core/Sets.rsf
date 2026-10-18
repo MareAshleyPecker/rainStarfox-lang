@@ -1,0 +1,107 @@
+// 阶段 40：核心标准库 · 集合 Set<T>
+//
+// 线性存储 + 去重（顺序插入，重复 add 不改变内容），不依赖哈希：
+// 元素只要求能 `==` 比较（引用/字符串/装箱后的基本类型都行）。
+// v1 没有迭代器，遍历用 size() + get(i)；要 O(1) 的字符串键查找请用 HashMap。
+pub class Set&<T> {
+    var items : T[] = new T[4]
+    var n : int = 0
+
+    pub fn size() -> int { rtn n }
+
+    pub fn isEmpty() -> bool { rtn n == 0 }
+
+    pub fn clear() -> void { n = 0 }
+
+    pub fn get(i : int) -> T { rtn items[i] }
+
+    pub fn toArray() -> T[] {
+        var out : T[] = new T[n]
+        var i = 0
+        while (i < n) {
+            out[i] = items[i]
+            i = i + 1
+        }
+        rtn out
+    }
+
+    pub fn contains(x : T) -> bool { rtn indexOf(x) >= 0 }
+
+    fn indexOf(x : T) -> int {
+        var i = 0
+        while (i < n) {
+            if (items[i] == x) { rtn i }
+            i = i + 1
+        }
+        rtn -1
+    }
+
+    // 新元素返回 true，已存在返回 false
+    pub fn add(x : T) -> bool {
+        if (contains(x)) { rtn false }
+        if (n == items.length) { grow() }
+        items[n] = x
+        n = n + 1
+        rtn true
+    }
+
+    pub fn remove(x : T) -> bool {
+        var i = indexOf(x)
+        if (i < 0) { rtn false }
+        var k = i
+        while (k + 1 < n) {
+            items[k] = items[k + 1]
+            k = k + 1
+        }
+        n = n - 1
+        rtn true
+    }
+
+    fn grow() -> void {
+        var bigger : T[] = new T[items.length * 2]
+        var i = 0
+        while (i < n) {
+            bigger[i] = items[i]
+            i = i + 1
+        }
+        items = bigger
+    }
+
+    // 并集：先拷自己，再把 other 里没有的加进来
+    pub fn unionWith(other : Set&<T>) -> Set&<T> {
+        var out : Set&<T> = new Set&<T>()
+        var i = 0
+        while (i < n) {
+            out.add(items[i])
+            i = i + 1
+        }
+        var j = 0
+        while (j < other.size()) {
+            out.add(other.get(j))
+            j = j + 1
+        }
+        rtn out
+    }
+
+    // 交集
+    pub fn intersectWith(other : Set&<T>) -> Set&<T> {
+        var out : Set&<T> = new Set&<T>()
+        var i = 0
+        while (i < n) {
+            if (other.contains(items[i])) { out.add(items[i]) }
+            i = i + 1
+        }
+        rtn out
+    }
+
+    // 差集：自己减去 other
+    pub fn difference(other : Set&<T>) -> Set&<T> {
+        var out : Set&<T> = new Set&<T>()
+        var i = 0
+        while (i < n) {
+            if (!other.contains(items[i])) { out.add(items[i]) }
+            i = i + 1
+        }
+        rtn out
+    }
+}

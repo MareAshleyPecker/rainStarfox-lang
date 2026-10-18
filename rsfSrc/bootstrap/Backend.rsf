@@ -492,7 +492,10 @@ pub class BType(base : string, name : string, nullable : bool, depth : int) {
             var a : BType[] = new BType[extraArgs.length]
             var i = 0
             while (i < extraArgs.length) {
-                a[i] = extraArgs[i].substAll(subst)
+                // 类型实参里**自己就是类型参数**的那一格（`Box&<T>` 的 T）也要换掉：
+                // 直接递归 substAll 只会把外层抄一遍，T 仍然是 T —— 阶段 40 的
+                // `Set&<T>.unionWith` 就是在这儿把 `Set&<string>` 落成了 `Set&<T>`。
+                a[i] = substApply(extraArgs[i], subst)
                 i = i + 1
             }
             t.extraArgs = a
@@ -647,6 +650,21 @@ fn sameType(a : BType, b : BType) -> bool {
         }
         if (a.fnRet == null || b.fnRet == null) { rtn a.fnRet == null && b.fnRet == null }
         rtn sameType(a.fnRet!!, b.fnRet!!)
+    }
+    rtn true
+}
+
+// 阶段 40：「要不要补 CHECKCAST」这一处必须按 Kotlin 版 `RsfType` 的 `==` 走——
+// 它**连类型实参一起比**。`Set&<T>.unionWith` 的声明返回是 `Set&<T>`、调用点的
+// 静态类型是 `Set&<string>`，两者擦除后同名但 Kotlin 判为不等，于是发一条
+// `CHECKCAST Set`；只看 base/name 会把这刀吞掉，两份 class 就不逐字节相同了。
+fn sameTypeDeep(a : BType, b : BType) -> bool {
+    if (!sameType(a, b)) { rtn false }
+    if (a.extraArgs.length != b.extraArgs.length) { rtn false }
+    var i = 0
+    while (i < a.extraArgs.length) {
+        if (!sameTypeDeep(a.extraArgs[i], b.extraArgs[i])) { rtn false }
+        i = i + 1
     }
     rtn true
 }
@@ -3179,6 +3197,7 @@ fn stringMember(nm : string, argc : int) -> ?Mem2 {
     if (nm == "toLowerCase" && argc == 0) { rtn new Mem2("java/lang/String", "toLowerCase", "()Ljava/lang/String;", tString(), memP0(), false) }
     if (nm == "trim" && argc == 0) { rtn new Mem2("java/lang/String", "trim", "()Ljava/lang/String;", tString(), memP0(), false) }
     if (nm == "charAt" && argc == 1) { rtn new Mem2("java/lang/String", "charAt", "(I)C", tChar(), memP1(tInt()), false) }
+    if (nm == "substring" && argc == 1) { rtn new Mem2("java/lang/String", "substring", "(I)Ljava/lang/String;", tString(), memP1(tInt()), false) }
     if (nm == "substring" && argc == 2) { rtn new Mem2("java/lang/String", "substring", "(II)Ljava/lang/String;", tString(), memP2(tInt(), tInt()), false) }
     if (nm == "equals" && argc == 1) { rtn new Mem2("java/lang/String", "equals", "(Ljava/lang/Object;)Z", tBool(), memP1(tExternal("java/lang/Object")), false) }
     if (nm == "contains" && argc == 1) { rtn new Mem2("java/lang/String", "contains", "(Ljava/lang/CharSequence;)Z", tBool(), memP1(tExternal("java/lang/CharSequence")), false) }
@@ -6022,7 +6041,7 @@ fn emitGenericResultCast(g : Gen, mv : MethodVisitor, declared : BType, want : B
 }
 
 fn emitResultCast(g : Gen, mv : MethodVisitor, declared : BType, want : BType) -> void {
-    if (sameType(declared, want)) { rtn }
+    if (sameTypeDeep(declared, want)) { rtn }
     if (want.isVoid() || want.isNullLit()) { rtn }
     // 类体内部：`T` 本来就是 Object，不需要转。但 `T[]` **要**转——
     // 它擦除后是 `[Ljava/lang/Object;`，有自己的描述符
