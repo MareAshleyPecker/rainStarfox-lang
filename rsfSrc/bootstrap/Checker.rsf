@@ -234,7 +234,10 @@ public class Checker(failure : ?CheckFailure) {
                              childNodeOf(node, NodeKind.ABSTRACT) != null,
                              isIface, "", node.line, node.col)
         var sc = childNodeOf(node, NodeKind.SUPER_CLASS)
-        if (sc != null) { ci.parent = nodeProp(sc!!, "name") }
+        if (sc != null) {
+            ci.parent = nodeProp(sc!!, "name")
+            ci.setSuper(sc!!)
+        }
         var supers = childNodeOf(node, NodeKind.SUPERS)
         if (supers != null) {
             var k = 0
@@ -265,7 +268,9 @@ public class Checker(failure : ?CheckFailure) {
                                       childNodeOf(fnode, NodeKind.BLOCK) == null,
                                       nodeProp(fnode, "override") == "true",
                                       childNodeOf(fnode, NodeKind.BLOCK) != null,
-                                      fnode.line, fnode.col)
+                                      fnode.line, fnode.col,
+                                      nodeProp(fnode, "ctor") == "true")
+                mi.setFnNode(fnode)
                 ci.addMeth(mi)
                 j = j + 1
             }
@@ -347,6 +352,41 @@ public class Checker(failure : ?CheckFailure) {
                 rtn
             }
         }
+        // 父类构造实参：`class B : A("s")` 的类型要对得上 A 的构造器形参
+        if (c.superNode != null) {
+            var p2 = findCls(c.parent)
+            if (p2 != null) {
+                var sargs = childNodeOf(c.superNode!!, NodeKind.ARGS)
+                var sargc = 0
+                if (sargs != null) { sargc = sargs!!.childCount }
+                if (sargc > 0) {
+                    var ctor = ctorOf(p2!!, sargc)
+                    if (ctor != null) {
+                        var q2 = 0
+                        while (q2 < sargc) {
+                            var aType = checkExpr(sargs!!.children[q2])
+                            if (failure != null) { rtn }
+                            var want = ctor!!.paramTexts[q2]
+                            if (!acceptsText(want, aType)) {
+                                failAtLC(c.parent + "(...) 的 第 " + ("" + (q2 + 1)) + " 个实参类型不对：需要 " + want + "，实际给人 " + aType, c.line, c.col)
+                                rtn
+                            }
+                            q2 = q2 + 1
+                        }
+                    }
+                }
+            }
+        }
+        // `super.xxx()` 只能指向父类链上真有的方法
+        var sj = 0
+        while (sj < c.methCount && failure == null) {
+            var sm = c.meths[sj]
+            if (sm.hasBody) {
+                var sb = childNodeOf(sm.fnNode!!, NodeKind.BLOCK)
+                if (sb != null) { superWalk(c, sb!!) }
+            }
+            sj = sj + 1
+        }
         var j = 0
         while (j < c.methCount && failure == null) {
             var m = c.meths[j]
@@ -385,7 +425,7 @@ public class Checker(failure : ?CheckFailure) {
                 rtn
             }
         }
-        if (!c.isIface) {
+        if (!c.isIface && !c.isAbstract) {
             var miss = ""
             var n = 0
             var q = 0
@@ -395,9 +435,15 @@ public class Checker(failure : ?CheckFailure) {
                     var k = 0
                     while (k < iface!!.methCount) {
                         var im = iface!!.meths[k]
-                        if (!im.hasBody && c.ownMeth(im.name, im.argCount) == null) {
+                        var om = c.ownMeth(im.name, im.argCount)
+                        if (!im.hasBody && om == null) {
                             n = n + 1
                             miss = miss + "\n  - " + im.fullText() + "（来自 接口 '" + iface!!.name + "'）"
+                        } else if (!im.hasBody && om != null && (om!!.isPrivate || om!!.isStatic)) {
+                            var kw = "private"
+                            if (om!!.isStatic) { kw = "static" }
+                            failAtLC("类 '" + c.name + "' 里的 '" + om!!.name + "' 是 " + kw + " 方法，实现不了接口要求的 " + im.fullText() + "（来自 接口 '" + iface!!.name + "'）：接口方法必须是 public 的实例方法（不写修饰词就是 public）", om!!.line, om!!.col)
+                            rtn
                         }
                         k = k + 1
                     }
@@ -408,6 +454,87 @@ public class Checker(failure : ?CheckFailure) {
                 failAtLC("类 '" + c.name + "' 没有实现接口要求的全部方法，还缺 " + ("" + n) + " 个：" + miss + "\n（在类里写一个同名、同参数类型、同返回类型的方法就补上了；接口里写了方法体（默认方法）的不用实现）", c.line, c.col)
                 rtn
             }
+        }
+    }
+
+    fn ctorOf(c : ClsInfo, argc : int) -> ?MethInfo {
+        var i = 0
+        while (i < c.methCount) {
+            var m = c.meths[i]
+            if (m.isCtor && m.argCount == argc) { rtn m }
+            i = i + 1
+        }
+        rtn null
+    }
+
+    // 抽象类还没实现的成员（本类声明的 + 继承来的 + 接口要求的），用 `、` 连起来
+    fn abstractMissing(c : ClsInfo) -> string {
+        var out = ""
+        var k = 0
+        while (k < c.methCount) {
+            var m = c.meths[k]
+            if (m.isAbstract) {
+                if (out.length() > 0) { out = out + "、" }
+                out = out + m.sigText() + "（本类声明的）"
+            }
+            k = k + 1
+        }
+        var pn = c.parent
+        while (pn.length() > 0) {
+            var p = findCls(pn)
+            if (p == null) { pn = "" }
+            else {
+                var k2 = 0
+                while (k2 < p!!.methCount) {
+                    var am = p!!.meths[k2]
+                    if (am.isAbstract && c.ownMeth(am.name, am.argCount) == null) {
+                        if (out.length() > 0) { out = out + "、" }
+                        out = out + am.sigText() + "（父类 '" + p!!.name + "' 的）"
+                    }
+                    k2 = k2 + 1
+                }
+                pn = p!!.parent
+            }
+        }
+        var q = 0
+        while (q < c.ifaceCount) {
+            var iface = findCls(c.ifaces[q])
+            if (iface != null) {
+                var k3 = 0
+                while (k3 < iface!!.methCount) {
+                    var im = iface!!.meths[k3]
+                    if (!im.hasBody && c.ownMeth(im.name, im.argCount) == null) {
+                        if (out.length() > 0) { out = out + "、" }
+                        out = out + im.fullText() + "（来自 接口 '" + iface!!.name + "'）"
+                    }
+                    k3 = k3 + 1
+                }
+            }
+            q = q + 1
+        }
+        rtn out
+    }
+
+    fn superWalk(c : ClsInfo, n : Node) -> void {
+        if (failure != null) { rtn }
+        if (n.kind == NodeKind.MEMBER && n.childCount > 0 && n.children[0].kind == NodeKind.SUPER) {
+            var nm = nodeProp(n, "name")
+            var argc = 0
+            var args = childNodeOf(n, NodeKind.ARGS)
+            if (args != null) { argc = args!!.childCount }
+            if (inheritedMeth(c.parent, nm, argc) == null) {
+                var hint = ""
+                if (c.ownMeth(nm, argc) != null) {
+                    hint = "（'" + nm + "' 只在 '" + c.name + "' 自己这里，直接写 " + nm + "(...) 就行）"
+                }
+                failAtLC("类 '" + c.name + "' 的父类链上没有方法 '" + nm + "'：super." + nm + "(...) 走的是父类那一份实现" + hint, n.line, n.col)
+                rtn
+            }
+        }
+        var i = 0
+        while (i < n.childCount) {
+            superWalk(c, n.children[i])
+            i = i + 1
         }
     }
 
@@ -629,7 +756,14 @@ public class Checker(failure : ?CheckFailure) {
         }
         if (e.kind == NodeKind.IS) { rtn checkIs(e) }
         if (e.kind == NodeKind.LAMBDA) { rtn checkLambda(e) }
-        if (e.kind == NodeKind.NEW) { rtn nodeProp(e, "class") }
+        if (e.kind == NodeKind.NEW) {
+            var cname = nodeProp(e, "class")
+            var cl = findCls(cname)
+            if (cl != null && cl!!.isAbstract) {
+                failAt("'" + cname + "' 是抽象类，不能 new——抽象类只能当父类，要用一个把抽象成员都实现的子类（abstract class " + cname + "）。它还没实现的有：" + abstractMissing(cl!!), e)
+            }
+            rtn cname
+        }
         if (e.kind == NodeKind.NEW_ARRAY) {
             var dim = 0
             while (dim < e.childCount) {
@@ -990,7 +1124,7 @@ public fn nodeProp(n : Node, key : string) -> string {
 // 一个方法/接口方法的签名（报错文案要印 `tag()` / `id(T)` / `run() -> int`）
 public class MethInfo(name : string, argCount : int, paramTexts : string[], retText : string,
                       isStatic : bool, isPrivate : bool, isAbstract : bool, isOverride : bool,
-                      hasBody : bool, line : int, col : int) {
+                      hasBody : bool, line : int, col : int, isCtor : bool) {
     var name : string = name
     var argCount : int = argCount
     var paramTexts : string[] = paramTexts
@@ -1000,8 +1134,12 @@ public class MethInfo(name : string, argCount : int, paramTexts : string[], retT
     var isAbstract : bool = isAbstract
     var isOverride : bool = isOverride
     var hasBody : bool = hasBody
+    var isCtor : bool = isCtor
+    var fnNode : ?Node = null
     var line : int = line
     var col : int = col
+
+    public fn setFnNode(n : Node) -> void { fnNode = n }
 
     public fn sigText() -> string {
         var out = name + "("
@@ -1030,6 +1168,9 @@ public class ClsInfo(name : string, isFinal : bool, isAbstract : bool, isIface :
     var ifaceCount : int = 0
     var meths : MethInfo[] = new MethInfo[4]
     var methCount : int = 0
+    var superNode : ?Node = null
+
+    public fn setSuper(n : Node) -> void { superNode = n }
 
     public fn addIface(nm : string) -> void {
         if (ifaceCount >= ifaces.length) {

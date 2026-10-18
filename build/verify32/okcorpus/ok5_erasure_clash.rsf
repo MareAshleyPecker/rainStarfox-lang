@@ -1,0 +1,8 @@
+class C {
+    fn f(x : string) -> void { println(x) }
+    fn f&<T>(x : T) -> void { println("g") }
+}
+fn main() {
+    var c : C = new C()
+    c.f("a")
+}

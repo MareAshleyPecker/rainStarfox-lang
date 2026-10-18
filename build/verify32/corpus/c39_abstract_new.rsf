@@ -1,0 +1,6 @@
+abstract class A {
+    abstract fn hi() -> void
+}
+fn main() {
+    var a : A = new A()
+}

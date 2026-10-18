@@ -1,0 +1,8 @@
+class A {
+    constructor(x : int) { }
+}
+class B : A("s") {
+}
+fn main() {
+    var b : B = new B()
+}

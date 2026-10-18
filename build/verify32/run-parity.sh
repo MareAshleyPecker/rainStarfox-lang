@@ -21,7 +21,8 @@ kotlin_check() {
 }
 
 self_check() {
-  java $JOPT -Drsf.check.file="$1" -cp "$SELF;$JAR" CheckCli 2>&1 >/dev/null
+  # MSYS bash 会把绝对路径 classpath 里的 `;` 吃掉（见项目笔记），改用相对路径 + 子 shell
+  ( cd "$ROOT" && java $JOPT -Drsf.check.file="$1" -cp "self;../../build/libs/rainStarfox-0.9.0.jar" CheckCli 2>&1 >/dev/null )
 }
 
 freeze() {

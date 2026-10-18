@@ -3229,6 +3229,7 @@ public class Parser(tokens : Token[]) {
     // `new 类名(实参)` / `new 类名&<T>(实参)` / `new T[n]` / `new T[n][m]`
     // 两条路靠「类型后面跟的是 '(' 还是 '['」区分，没有歧义。
     fn parseNewExpr() -> Node {
+        var newTok = prevToken()
         var t = peek()
         if (!isTypeKeyword(t.kind) && t.kind != "IDENT") {
             failAt(t, "'new' 后面需要类名（new Point(1, 2)）或者数组类型（new int[5]）")
@@ -3276,7 +3277,7 @@ public class Parser(tokens : Token[]) {
         }
         expect("RPAREN", "'new " + ty.text() + "' 的参数表没有闭合，缺少 ')'")
 
-        var n = new Node(NodeKind.NEW).put("class", escapeValue(ty.name)).put("typeArgs", ty.argsOrDash())
+        var n = new Node(NodeKind.NEW).put("class", escapeValue(ty.name)).put("typeArgs", ty.argsOrDash()).at(newTok)
         n.add(args.countTag())
         rtn n
     }

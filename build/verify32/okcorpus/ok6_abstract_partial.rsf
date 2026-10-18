@@ -1,0 +1,8 @@
+interface I {
+    fn hi() -> void
+}
+abstract class A : I {
+}
+fn main() {
+    println("ok")
+}

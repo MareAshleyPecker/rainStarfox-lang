@@ -1,0 +1,9 @@
+class A {
+    fn hi() -> void {
+        super.hi()
+    }
+}
+fn main() {
+    var a : A = new A()
+    a.hi()
+}
