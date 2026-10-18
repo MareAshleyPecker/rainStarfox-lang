@@ -1,0 +1,186 @@
+// rainStarfox 阶段 36b：自举链的统一驱动入口（`check` 先落地，`build`/`run` 在 36c）
+//
+// 目标：与 Kotlin 版 `rsf check` 的输出逐字节一致——
+//   `[rsf] 检查通过: <文件名>`
+//   每个顶层函数一行：`      <control 左对齐 10> [static ]fn[<mainType> ]<name>(<p : t, …>) <返回子句>`
+//   每个类一行：`      <control 左对齐 10> class <名字> { <字段 : 类型, …> }` + 方法行（17 空格 + 种类 + 签名）
+//   末行：`      入口: main ✓` 或 `      入口: 没有 main（只能 check/build，不能 run）`
+//
+// 跑：rsf build rsfSrc/bootstrap/Rsfc.rsf -o build/verify36/self
+//     java -Drsf.rsfc.cmd=check -Drsf.rsfc.file=<源.rsf> -cp "build/verify36/self;<jar>" Rsfc
+
+import "Parser.rsf"
+import "Checker.rsf"
+import "Diag.rsf"
+
+import java.lang.System
+
+fn fileNameOf(path : string) -> string {
+    var i = path.length() - 1
+    while (i >= 0) {
+        var c = path.charAt(i)
+        if (c == '/' || c == '\\') { rtn tailFrom(path, i + 1) }
+        i = i - 1
+    }
+    rtn path
+}
+
+fn tailFrom(s : string, from : int) -> string {
+    var out = ""
+    var i = from
+    while (i < s.length()) {
+        out = out + s.charAt(i)
+        i = i + 1
+    }
+    rtn out
+}
+
+fn padTo(s : string, width : int) -> string {
+    var out = s
+    while (out.length() < width) { out = out + " " }
+    rtn out
+}
+
+// 缺省那一档显示成 public（与 Kotlin `ControlType.label` 一致）
+fn controlLabel(kind : string) -> string {
+    if (kind == "PRIVATE") { rtn "private" }
+    if (kind == "PROTECTED") { rtn "protected" }
+    rtn "public"
+}
+
+fn sigOf(fnode : Node) -> string {
+    var control = padTo(controlLabel(nodeProp(fnode, "control")), 10)
+    var st = ""
+    if (nodeProp(fnode, "static") == "true") { st = "static " }
+    var mainT = nodeProp(fnode, "main")
+    var mt = ""
+    if (mainT != "void") { mt = " " + mainT }
+    var ps = ""
+    var pnode = childNodeOf(fnode, NodeKind.PARAMS)
+    if (pnode != null) {
+        var i = 0
+        while (i < pnode!!.childCount) {
+            if (i > 0) { ps = ps + ", " }
+            ps = ps + nodeProp(pnode!!.children[i], "name") + " : " + nodeProp(pnode!!.children[i], "type")
+            i = i + 1
+        }
+    }
+    var ret = ""
+    if (nodeProp(fnode, "ret") == "OMITTED") {
+        ret = "(缺省) " + nodeProp(fnode, "retType")
+    } else {
+        ret = "-> " + nodeProp(fnode, "retType")
+    }
+    rtn control + " " + st + "fn" + mt + " " + nodeProp(fnode, "name") + "(" + ps + ") " + ret
+}
+
+fn fieldsText(cnode : Node) -> string {
+    var out = ""
+    var fs = childNodeOf(cnode, NodeKind.FIELDS)
+    if (fs != null) {
+        var i = 0
+        while (i < fs!!.childCount) {
+            if (i > 0) { out = out + ", " }
+            out = out + nodeProp(fs!!.children[i], "name") + " : " + nodeProp(fs!!.children[i], "type")
+            i = i + 1
+        }
+    }
+    rtn out
+}
+
+fn printClass(cnode : Node) -> void {
+    var control = padTo(controlLabel(nodeProp(cnode, "control")), 10)
+    println("      " + control + " class " + nodeProp(cnode, "name") + " { " + fieldsText(cnode) + " }")
+    var ms = childNodeOf(cnode, NodeKind.METHODS)
+    if (ms != null) {
+        var i = 0
+        while (i < ms!!.childCount) {
+            var m = ms!!.children[i]
+            var kind = "方法"
+            if (nodeProp(m, "ctor") == "true") { kind = "构造器" }
+            else if (nodeProp(m, "static") == "true") { kind = "静态方法" }
+            println("                 " + kind + " " + trimSig(sigOf(m)))
+            i = i + 1
+        }
+    }
+}
+
+// Kotlin 侧 `signatureOf(m).trim()` 只去掉首尾空白，内部对齐空格保留
+fn trimSig(s : string) -> string {
+    var a = 0
+    while (a < s.length() && s.charAt(a) == ' ') { a = a + 1 }
+    var b = s.length()
+    while (b > a && s.charAt(b - 1) == ' ') { b = b - 1 }
+    rtn s.substring(a, b)
+}
+
+fn printCheck(prg : Node, name : string) -> void {
+    println("[rsf] 检查通过: " + name)
+    var funcs = childNodeOf(prg, NodeKind.FUNCS)
+    var hasMain = false
+    if (funcs != null) {
+        var i = 0
+        while (i < funcs!!.childCount) {
+            var fnode = funcs!!.children[i]
+            println("      " + sigOf(fnode))
+            if (nodeProp(fnode, "name") == "main") { hasMain = true }
+            i = i + 1
+        }
+    }
+    var cs = childNodeOf(prg, NodeKind.CLASSES)
+    if (cs != null) {
+        var j = 0
+        while (j < cs!!.childCount) {
+            printClass(cs!!.children[j])
+            j = j + 1
+        }
+    }
+    if (hasMain) {
+        println("      入口: main ✓")
+    } else {
+        println("      入口: 没有 main（只能 check/build，不能 run）")
+    }
+}
+
+fn pickFile() -> string {
+    var given : ?string = System.getProperty("rsf.rsfc.file")
+    if (given == null) {
+        System.err.println("usage: java -Drsf.rsfc.cmd=<check> -Drsf.rsfc.file=<path.rsf> -cp <out>;<jar> Rsfc")
+        System.exit(2)
+        rtn ""
+    }
+    rtn given!!
+}
+
+fn main() -> void {
+    var path = pickFile()
+    var name = fileNameOf(path)
+    var text = ""
+    var readOk = true
+    try {
+        text = readText(path)!!
+    } catch (readError : string) {
+        readOk = false
+    }
+    if (!readOk) {
+        System.err.println("error[cli]: cannot read file: " + path)
+        System.exit(1)
+        rtn
+    }
+
+    var ast = parseSource(text)
+    if (ast.kind == NodeKind.ERROR) {
+        var d = new Diag(name, "parser", parseErrorMessage(text), parseErrorLine(text), parseErrorCol(text))
+        System.err.println(d.render(text))
+        System.exit(1)
+        rtn
+    }
+    var bad : ?CheckFailure = checkSource(text)
+    if (bad != null) {
+        var d2 = new Diag(name, "checker", bad!!.detail, bad!!.line, bad!!.col)
+        System.err.println(d2.render(text))
+        System.exit(1)
+        rtn
+    }
+    printCheck(ast, name)
+}

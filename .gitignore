@@ -97,6 +97,12 @@
 !/build/verify31/**/*.rsf
 !/build/verify31/**/*.md
 !/build/verify31/**/expected/**
+!/build/verify36/
+/build/verify36/**
+!/build/verify36/**/
+!/build/verify36/**/*.sh
+!/build/verify36/**/*.py
+!/build/verify36/**/*.md
 !/build/verify32/
 /build/verify32/**
 !/build/verify32/**/
