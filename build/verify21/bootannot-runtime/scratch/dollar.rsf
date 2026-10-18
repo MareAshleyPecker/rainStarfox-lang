@@ -1,0 +1,8 @@
+fun main() -> void {
+    var s : string = "Marker$Impl"
+    println(s)
+    var t : string = "__rsf_ann$Demo$tag"
+    println(t)
+    println("a$b" + "$")
+    rtn
+}

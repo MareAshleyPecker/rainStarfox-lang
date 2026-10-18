@@ -1,0 +1,10 @@
+import java.util.HashMap
+
+fun main() -> void {
+    var m : HashMap&<string, int> = new HashMap()
+    m.put("a", 1)
+    m.put("b", 2)
+    println(intToString(m.size()))
+    println(intToString(m.get("a")!!))
+    rtn
+}

@@ -1,0 +1,14 @@
+pkg a.b
+
+interface Greeter {
+    fun greet() -> string
+}
+
+class Dog : Greeter {
+    fun greet() -> string { rtn "woof" }
+}
+
+fun main() -> void {
+    var d : Dog = new Dog()
+    println(d.greet())
+}

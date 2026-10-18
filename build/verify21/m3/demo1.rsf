@@ -1,0 +1,34 @@
+enum Level { LOW, HIGH }
+
+annotation Marker(value : string = "x", count : int = 0, level : Level) {
+    companion entity Impl {
+        var hits : int = 0
+        fun describe() -> string {
+            return value + "/" + count
+        }
+    }
+}
+
+@Marker(value = "cls", count = 7, level = Level.HIGH)
+class Demo {
+    @Marker("field", 2, Level.LOW)
+    var tag : string = "t"
+
+    @Marker("only", level = Level.LOW)
+    var bare : string = "b"
+
+    @Marker(value = "method", count = 1, level = Level.HIGH)
+    fun greet() -> string {
+        return "hi"
+    }
+}
+
+fun main() -> void {
+    var m : Marker = new Marker("hi", 3, Level.LOW)
+    println(m.value + " " + m.count)
+    println(m.value())
+    println(m.count())
+    var c : Marker::Impl = new Marker("z", 9, Level.HIGH)
+    println(c.describe())
+    println(c.hits)
+}

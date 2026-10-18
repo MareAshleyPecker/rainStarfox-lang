@@ -1,0 +1,9 @@
+class Dog(name : string) {
+  var legs : int = 4
+  fun greet(who : string) -> string { rtn "woof " + who }
+  fun bark() -> void { println("woof") }
+}
+fun main() -> void {
+  var d = new Dog("rex")
+  d.
+}

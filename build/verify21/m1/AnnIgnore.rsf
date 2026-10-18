@@ -1,0 +1,16 @@
+public annotation Marker(value : string = "x", count : int = 0) {
+    companion entity Impl {
+        var hits : int = 0
+        fun describe() -> string { rtn "Marker(" + value + ")" }
+    }
+}
+
+@Marker(value = "hi", count = 3)
+class Greeter {
+    @Marker("field")
+    var spot : int = 1
+    @Marker
+    fun go() -> void { println("go") }
+}
+
+fun main() -> void { println("hi") }

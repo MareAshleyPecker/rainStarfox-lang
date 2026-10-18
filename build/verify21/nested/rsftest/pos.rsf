@@ -1,0 +1,21 @@
+annotation Marker {
+    companion entity Impl : Runnable {
+        fun run() -> void {
+            rtn
+        }
+    }
+}
+
+class Uses {
+    @Marker var holder : Marker::Impl = new Marker()
+    var list : Marker::Impl[] = new Marker::Impl[2]
+    fun make(m : Marker::Impl) -> void {
+        m.run()
+        rtn
+    }
+}
+
+fun take(v : Marker::Impl) -> void {
+    v.run()
+    rtn
+}

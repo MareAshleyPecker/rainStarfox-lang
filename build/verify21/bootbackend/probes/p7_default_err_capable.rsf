@@ -1,0 +1,15 @@
+interface I {
+    fn get() -> !string {
+        rtn "ok"
+    }
+}
+
+class C : I {
+}
+
+fn main() -> void {
+    var c = new C()
+    var s = c.get() ?: "fb"
+    println(s)
+    rtn
+}

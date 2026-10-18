@@ -1,0 +1,17 @@
+annotation Marker(value : string = "x", count : int = 0) {
+    companion entity Impl : Runnable {
+        fn run() -> void {
+            println(value + " x" + intToString(count))
+            rtn
+        }
+    }
+}
+
+@Marker(value = "hi", count = 3)
+class Greeter { }
+
+fn main() -> void {
+    var m = new Marker("hi", 3)
+    m.run()
+    rtn
+}

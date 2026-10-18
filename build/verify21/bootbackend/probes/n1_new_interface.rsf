@@ -1,0 +1,8 @@
+public interface I {
+    fn f() -> int
+}
+fn main() -> void {
+    var i : I = new I()
+    println(intToString(i.f()))
+    rtn
+}

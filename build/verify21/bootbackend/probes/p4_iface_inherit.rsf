@@ -1,0 +1,23 @@
+public interface Base {
+    fn id() -> int
+}
+public interface Named : Base {
+    fn name() -> string
+    fn describe() -> string {
+        rtn name() + "#" + intToString(id())
+    }
+}
+class Person : Named {
+    fn id() -> int {
+        rtn 7
+    }
+    fn name() -> string {
+        rtn "p"
+    }
+}
+fn main() -> void {
+    var n : Named = new Person()
+    println(n.describe())
+    println(intToString(n.id()))
+    rtn
+}

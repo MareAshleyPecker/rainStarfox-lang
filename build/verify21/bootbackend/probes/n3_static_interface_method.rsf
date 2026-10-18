@@ -1,0 +1,13 @@
+interface I {
+    static fn tag() -> string {
+        rtn "S"
+    }
+}
+
+class C : I {
+}
+
+fn main() -> void {
+    println(C.tag())
+    rtn
+}

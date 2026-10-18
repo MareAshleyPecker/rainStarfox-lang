@@ -1,0 +1,21 @@
+public interface A {
+    fn a() -> string
+}
+public interface B {
+    fn b() -> string
+}
+class Both : A, B {
+    override fn a() -> string {
+        rtn "A"
+    }
+    override fn b() -> string {
+        rtn "B"
+    }
+}
+fn main() -> void {
+    var x : Both = new Both()
+    println(x.a() + x.b())
+    var a : A = new Both()
+    println(a.a())
+    rtn
+}

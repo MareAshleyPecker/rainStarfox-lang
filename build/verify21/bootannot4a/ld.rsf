@@ -1,0 +1,29 @@
+import "Parser.rsf"
+import java.lang.System
+
+fun pad2(d : int) -> string {
+    var p = ""
+    var i = 0
+    while (i < d) { p = p + "  "; i = i + 1 }
+    rtn p
+}
+
+fun walk(n : Node, d : int) -> void {
+    var show = false
+    if (n.kind == NodeKind.ANNOTATION || n.kind == NodeKind.ANNOTATION_ELEMENT) { show = true }
+    if (n.kind == NodeKind.ANNOTATION_ELEMENTS || n.kind == NodeKind.COMPANION) { show = true }
+    if (n.kind == NodeKind.ANNOTATION_USE || n.kind == NodeKind.CLASS || n.kind == NodeKind.FIELD) { show = true }
+    if (n.kind == NodeKind.FUNC || n.kind == NodeKind.RETURN) { show = true }
+    if (show) { println(pad2(d) + kindName(n.kind) + " line=" + intToString(n.line) + " | " + n.text) }
+    var i = 0
+    while (i < n.childCount) { walk(n.children[i], d + 1); i = i + 1 }
+}
+
+fun main() -> void {
+    var p : ?string = System.getProperty("rsf.ast.file")
+    var path = p ?: "rsfSrc/lang/enums.rsf"
+    var text = readText(path)!!
+    var ast = parseSource(text)
+    walk(ast, 0)
+    rtn
+}

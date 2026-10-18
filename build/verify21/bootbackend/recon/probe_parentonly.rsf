@@ -1,0 +1,17 @@
+// 探针 2：只有父类型子句（父类型是个普通类，v1 里应当报「类继承不支持」）
+class Greeter {
+    fun greet() -> string {
+        rtn "hi"
+    }
+}
+
+class Dog : Greeter {
+    fun bark() -> string {
+        rtn "woof"
+    }
+}
+
+fun main() -> void {
+    var d = new Dog()
+    println(d.bark())
+}

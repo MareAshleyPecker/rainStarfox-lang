@@ -1,0 +1,28 @@
+annotation Meta { companion entity Impl { fn tag() -> string { rtn "meta" } } }
+
+@Meta
+annotation Doc(label : string = "t") {
+    companion entity Impl {
+        fn show() -> string { rtn "doc:" + label }
+    }
+}
+
+interface Named { fn name() -> string }
+
+@Doc(label = "cls")
+class Thing : Named {
+    @Doc(label = "fld")
+    var title : string = "L"
+
+    @Doc(label = "mth")
+    fn name() -> string { rtn "thing" }
+}
+
+fn main() -> void {
+    var m = new Doc("mth")
+    println(m.show())
+    var t : Thing = new Thing()
+    println(t.name())
+    println(t.title)
+    rtn
+}

@@ -1,0 +1,16 @@
+public interface Calc {
+    fn twice(x : int) -> int
+    fn quad(x : int) -> int {
+        rtn twice(twice(x))
+    }
+}
+class Doubler : Calc {
+    fn twice(x : int) -> int {
+        rtn x + x
+    }
+}
+fn main() -> void {
+    var c : Calc = new Doubler()
+    println(intToString(c.quad(3)))
+    rtn
+}

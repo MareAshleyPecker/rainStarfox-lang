@@ -1,0 +1,15 @@
+enum Color { RED, GREEN, BLUE }
+
+fun name(c : Color) -> string {
+    switch (c) {
+        Color.RED : rtn "红"
+        Color.GREEN : rtn "绿"
+        else : rtn "别的"
+    }
+}
+
+fun main() -> void {
+    println(name(Color.RED))
+    println(name(Color.BLUE))
+    rtn
+}

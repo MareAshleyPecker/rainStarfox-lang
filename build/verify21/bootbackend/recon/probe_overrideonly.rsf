@@ -1,0 +1,11 @@
+// 探针 3：类里写 override（无 interface）——单独隔离 KW_OVERRIDE 的影响
+class Dog {
+    override fun greet() -> string {
+        rtn "woof"
+    }
+}
+
+fun main() -> void {
+    var d = new Dog()
+    println(d.greet())
+}

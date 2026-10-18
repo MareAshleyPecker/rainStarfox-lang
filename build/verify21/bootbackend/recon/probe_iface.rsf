@@ -1,0 +1,19 @@
+// 探针 1：接口声明 + 实现类 + 接口变量调用（阶段 20/21 的合法源）
+public interface Greeter {
+    fun greet() -> string
+    fun loud() -> string {
+        rtn greet() + "!"
+    }
+}
+
+class Dog : Greeter {
+    override fun greet() -> string {
+        rtn "woof"
+    }
+}
+
+fun main() -> void {
+    var g : Greeter = new Dog()
+    println(g.greet())
+    println(g.loud())
+}

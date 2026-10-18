@@ -1,0 +1,23 @@
+annotation Tag(name : string = "def", level : int = 7, on : bool = true) {
+    companion entity Impl {
+        fn show() -> string {
+            var flag : string = "off"
+            if (on) { flag = "on" }
+            rtn name + "/" + intToString(level) + "/" + flag
+        }
+    }
+}
+
+@Tag
+class Plain { }
+
+@Tag(name = "custom")
+class Named { }
+
+fn main() -> void {
+    var a = new Tag()
+    var b = new Tag("hey", 2, false)
+    println(a.show())
+    println(b.show())
+    rtn
+}

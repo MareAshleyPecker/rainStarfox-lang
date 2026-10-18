@@ -1,0 +1,19 @@
+annotation Conf(first : string, second : int = 5) {
+    companion entity Impl {
+        fn dump() -> string { rtn first + "#" + intToString(second) }
+    }
+}
+
+@Conf("pos", second = 9)
+class C1 { }
+
+@Conf(first = "named")
+class C2 { }
+
+fn main() -> void {
+    var a = new Conf("pos", 9)
+    var b = new Conf("named", 5)
+    println(a.dump())
+    println(b.dump())
+    rtn
+}

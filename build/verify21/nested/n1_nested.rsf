@@ -1,0 +1,15 @@
+annotation Marker(value : string = "x") {
+    companion entity Impl : Runnable {
+        fun run() -> void { println("run:" + value) }
+        fun tag() -> string { rtn "tag:" + value }
+    }
+}
+
+fun main() -> void {
+    var m : Marker::Impl = new Marker::Impl("hi")
+    m.run()
+    println(m.tag())
+    var n : Marker::Impl = new Marker("yo")
+    n.run()
+    rtn
+}

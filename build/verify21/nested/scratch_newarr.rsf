@@ -1,0 +1,12 @@
+annotation Marker {
+    companion entity Impl {
+        fun run() -> void { rtn }
+    }
+}
+
+fun main() -> void {
+    var list : Marker::Impl[] = new Marker::Impl[2]
+    var m : Marker::Impl = new Marker::Impl()
+    var plain : ?Marker::Impl = null
+    rtn
+}

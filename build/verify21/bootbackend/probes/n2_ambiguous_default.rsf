@@ -1,0 +1,21 @@
+public interface A {
+    fn v() -> string {
+        rtn "A"
+    }
+}
+public interface B : A {
+    fn v() -> string {
+        rtn "B"
+    }
+}
+class C : B {
+}
+fn main() -> void {
+    var c : C = new C()
+    println(c.v())
+    var b : B = new C()
+    println(b.v())
+    var a : A = new C()
+    println(a.v())
+    rtn
+}

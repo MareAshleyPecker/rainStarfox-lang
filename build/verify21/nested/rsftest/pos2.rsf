@@ -1,0 +1,10 @@
+annotation Marker {
+    companion entity Impl : Runnable {
+        fun run() -> void {
+            rtn
+        }
+    }
+}
+class Uses {
+    $v
+}

@@ -1,0 +1,16 @@
+pkg app.meta
+
+annotation Tag(value : string = "t") {
+    companion entity Impl {
+        fun show() -> string { rtn value }
+    }
+}
+
+@Tag("cls")
+class Box { }
+
+fun main() -> void {
+    var t : Tag::Impl = new Tag("hi")
+    println(t.show())
+    rtn
+}

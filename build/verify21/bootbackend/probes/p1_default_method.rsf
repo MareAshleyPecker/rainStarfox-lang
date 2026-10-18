@@ -1,0 +1,18 @@
+public interface Greeter {
+    fn greet(n : string) -> string
+    fn shout(n : string) -> string {
+        rtn greet(n) + "!"
+    }
+}
+class Dog : Greeter {
+    public fn greet(n : string) -> string {
+        rtn "woof"
+    }
+}
+fn main() -> void {
+    var d : Dog = new Dog()
+    println(d.shout("a"))
+    var g : Greeter = new Dog()
+    println(g.shout("b"))
+    rtn
+}

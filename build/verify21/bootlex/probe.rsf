@@ -1,0 +1,9 @@
+public interface Greeter {
+    fun greet() -> string
+}
+override fun f() -> void { }
+annotation Marker(value : string = "x") { }
+companion entity Impl { }
+entity E
+mathematic Math
+@Marker("hi")

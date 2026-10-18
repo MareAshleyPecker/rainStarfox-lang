@@ -1,0 +1,10 @@
+enum Kind { A, B }
+
+fun main() -> void {
+    var k = Kind.A
+    switch (k) {
+        case Kind.A : println("a")
+        case Kind.B : println("b")
+    }
+    rtn
+}

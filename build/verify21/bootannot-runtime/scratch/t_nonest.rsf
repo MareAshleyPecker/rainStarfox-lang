@@ -1,0 +1,14 @@
+annotation Marker(value : string = "x") {
+    companion entity Impl {
+        fun show() -> string { rtn value }
+    }
+}
+
+@Marker("hi")
+class G { }
+
+fun main() -> void {
+    var m : Marker::Impl = new Marker("hi")
+    println("ok")
+    rtn
+}
