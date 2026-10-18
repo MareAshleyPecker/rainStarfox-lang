@@ -1,0 +1,7 @@
+class A {
+    private fn secret() -> int { rtn 1 }
+}
+fn main() {
+    var a : A = new A()
+    println("" + a.secret())
+}

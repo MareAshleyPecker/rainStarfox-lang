@@ -1,0 +1,8 @@
+abstract class B {
+    abstract fn run() -> int
+}
+class D : B() {
+}
+fn main() {
+    var d : D = new D()
+}

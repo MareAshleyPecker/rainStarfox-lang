@@ -1,0 +1,6 @@
+fn f() -> int {
+    rtn "s"
+}
+fn main() {
+    println("" + f())
+}

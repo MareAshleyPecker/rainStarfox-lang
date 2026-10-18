@@ -1,0 +1,7 @@
+class A {
+    var v : int = 0
+}
+fn main() {
+    var a : A = new A()
+    var b : A = a as ?A
+}

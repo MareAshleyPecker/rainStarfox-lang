@@ -1,0 +1,93 @@
+// rainStarfox 阶段 32a：类型层的对拍探针（自举侧）
+//
+// 与 Kotlin 侧 `src/test/kotlin/org/example/TypeProbe.kt` 打出的文本必须逐字节相同。
+// 跑：rsf build rsfSrc/bootstrap/TypeProbe.rsf -o build/verify32/probeout
+//     java -Dstdout.encoding=UTF-8 -cp build/verify32/probeout TypeProbe
+
+import "Types.rsf"
+
+import java.lang.System
+
+fn flag(b : bool) -> string {
+    if (b) { rtn "1" }
+    rtn "0"
+}
+
+fn boxArgs(elem : RType) -> RType[] {
+    var one : RType[] = new RType[1]
+    one[0] = elem
+    rtn one
+}
+
+fn noArgs() -> RType[] {
+    rtn new RType[0]
+}
+
+fn main() -> void {
+    var labels : string[] = new string[16]
+    var types : RType[] = new RType[16]
+
+    labels[0] = "int"
+    types[0] = tInt()
+    labels[1] = "?int"
+    types[1] = tInt().asNullable()
+    labels[2] = "long"
+    types[2] = tLong()
+    labels[3] = "byte"
+    types[3] = tByte()
+    labels[4] = "char"
+    types[4] = tChar()
+    labels[5] = "void"
+    types[5] = tVoid()
+    labels[6] = "null"
+    types[6] = tNull()
+    labels[7] = "string"
+    types[7] = tString()
+    labels[8] = "?string"
+    types[8] = tString().asNullable()
+    labels[9] = "int[]"
+    types[9] = tInt().arrayOf(1)
+    labels[10] = "int[][]"
+    types[10] = tInt().arrayOf(2)
+    labels[11] = "Box&<int>"
+    types[11] = new RType("EXTERNAL", false, "demo/Box", boxArgs(tInt()), 0)
+    labels[12] = "?Box&<string>"
+    types[12] = new RType("EXTERNAL", true, "demo/Box", boxArgs(tString()), 0)
+    labels[13] = "T"
+    types[13] = tParam("T")
+    labels[14] = "T[]"
+    types[14] = tParam("T").arrayOf(1)
+    labels[15] = "Object"
+    types[15] = tObject("java/lang/Object")
+
+    var i = 0
+    while (i < labels.length) {
+        var t = types[i]
+        println(
+            labels[i] + "|" + t.name() + "|" + t.desc() + "|" + ("" + t.slots()) + "|" +
+            flag(t.prim()) + "|" + flag(t.numeric()) + "|" + flag(t.arith()) + "|" +
+            flag(t.external()) + "|" + flag(t.typeParamQ()) + "|" + flag(t.nullableQ()) + "|" +
+            flag(t.voidQ()) + "|" + flag(t.nullLit()) + "|" + t.printDesc()
+        )
+        i = i + 1
+    }
+
+    println("--- accepts ---")
+    i = 0
+    while (i < types.length) {
+        var j = 0
+        while (j < types.length) {
+            println(("" + i) + " " + ("" + j) + " " + flag(types[i].accepts(types[j])))
+            j = j + 1
+        }
+        i = i + 1
+    }
+
+    println("--- substitute T -> int ---")
+    i = 0
+    while (i < types.length) {
+        var r = types[i].substitute("T", tInt())
+        println(labels[i] + " -> " + r.name() + " " + r.desc())
+        i = i + 1
+    }
+}

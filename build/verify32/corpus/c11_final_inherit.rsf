@@ -1,0 +1,8 @@
+final class B {
+    var v : int = 0
+}
+class D : B() {
+}
+fn main() {
+    var d : D = new D()
+}

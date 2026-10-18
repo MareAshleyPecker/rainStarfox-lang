@@ -1,0 +1,9 @@
+class B {
+    public final fn tag() -> int { rtn 1 }
+}
+class D : B() {
+    public fn tag() -> int { rtn 2 }
+}
+fn main() {
+    var d : D = new D()
+}

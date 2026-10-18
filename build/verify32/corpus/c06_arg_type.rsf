@@ -1,0 +1,4 @@
+fn f(a : int) -> int { rtn a }
+fn main() {
+    println("" + f("s"))
+}

@@ -1,0 +1,6 @@
+fn f() -> void {
+    rtn 1
+}
+fn main() {
+    f()
+}

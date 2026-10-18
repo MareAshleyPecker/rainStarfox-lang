@@ -1,0 +1,356 @@
+// rainStarfox 阶段 32a：类型层（`RsfType` 的自举版）
+//
+// 与 Kotlin 侧 `src/main/kotlin/org/example/complie/sema/RsfType.kt` 一一对应：
+// 基础类型（base，用字符串常量）+ 可空性 + 泛型实参 + 数组维度。
+//
+// 判据是 `build/verify32/type-parity.sh`：本文件的 `TypeProbe.rsf` 与 Kotlin 侧
+// `src/test/kotlin/org/example/TypeProbe.kt` 打出的文本必须逐字节相同。
+//
+// 为什么把基础类型写成字符串而不是枚举：rsf 的枚举成员不能带载荷（名字/描述符/槽位），
+// 而这些表以后还要被 Checker（阶段 33–35）共用，用 if 链查表最省事。
+
+// 基础类型常量（与 Kotlin `RsfBase` 的枚举名同拼写，方便对照阅读）
+public fn baseVoid() -> string { rtn "VOID" }
+public fn baseBool() -> string { rtn "BOOL" }
+public fn baseByte() -> string { rtn "BYTE" }
+public fn baseChar() -> string { rtn "CHAR" }
+public fn baseInt() -> string { rtn "INT" }
+public fn baseLong() -> string { rtn "LONG" }
+public fn baseFloat() -> string { rtn "FLOAT" }
+public fn baseDouble() -> string { rtn "DOUBLE" }
+public fn baseString() -> string { rtn "STRING" }
+public fn baseNull() -> string { rtn "NULL" }
+public fn baseExternal() -> string { rtn "EXTERNAL" }
+public fn baseTypeParam() -> string { rtn "TYPE_PARAM" }
+
+// —— 基础类型的三张表：名字 / 非空描述符 / 槽位 ——
+
+fn baseName(b : string) -> string {
+    if (b == "VOID") { rtn "void" }
+    if (b == "BOOL") { rtn "bool" }
+    if (b == "BYTE") { rtn "byte" }
+    if (b == "CHAR") { rtn "char" }
+    if (b == "INT") { rtn "int" }
+    if (b == "LONG") { rtn "long" }
+    if (b == "FLOAT") { rtn "float" }
+    if (b == "DOUBLE") { rtn "double" }
+    if (b == "STRING") { rtn "string" }
+    if (b == "NULL") { rtn "null" }
+    // EXTERNAL 与 TYPE_PARAM 的名字存在 extName 里，这里只是占位
+    if (b == "TYPE_PARAM") { rtn "T" }
+    rtn ""
+}
+
+fn baseDesc(b : string) -> string {
+    if (b == "VOID") { rtn "V" }
+    if (b == "BOOL") { rtn "Z" }
+    if (b == "BYTE") { rtn "B" }
+    if (b == "CHAR") { rtn "C" }
+    if (b == "INT") { rtn "I" }
+    if (b == "LONG") { rtn "J" }
+    if (b == "FLOAT") { rtn "F" }
+    if (b == "DOUBLE") { rtn "D" }
+    if (b == "STRING") { rtn "Ljava/lang/String;" }
+    if (b == "NULL") { rtn "Ljava/lang/String;" }
+    rtn "Ljava/lang/Object;"
+}
+
+fn baseSlots(b : string) -> int {
+    if (b == "VOID") { rtn 0 }
+    if (b == "LONG") { rtn 2 }
+    if (b == "DOUBLE") { rtn 2 }
+    rtn 1
+}
+
+fn baseIsPrim(b : string) -> bool {
+    if (b == "BOOL") { rtn true }
+    if (b == "BYTE") { rtn true }
+    if (b == "CHAR") { rtn true }
+    if (b == "INT") { rtn true }
+    if (b == "LONG") { rtn true }
+    if (b == "FLOAT") { rtn true }
+    if (b == "DOUBLE") { rtn true }
+    rtn false
+}
+
+fn baseIsNumeric(b : string) -> bool {
+    if (b == "INT") { rtn true }
+    if (b == "LONG") { rtn true }
+    if (b == "FLOAT") { rtn true }
+    if (b == "DOUBLE") { rtn true }
+    rtn false
+}
+
+fn baseIsArith(b : string) -> bool {
+    if (baseIsNumeric(b)) { rtn true }
+    if (b == "BYTE") { rtn true }
+    if (b == "CHAR") { rtn true }
+    rtn false
+}
+
+fn baseBoxed(b : string) -> string {
+    if (b == "BOOL") { rtn "Ljava/lang/Boolean;" }
+    if (b == "BYTE") { rtn "Ljava/lang/Byte;" }
+    if (b == "CHAR") { rtn "Ljava/lang/Character;" }
+    if (b == "INT") { rtn "Ljava/lang/Integer;" }
+    if (b == "LONG") { rtn "Ljava/lang/Long;" }
+    if (b == "FLOAT") { rtn "Ljava/lang/Float;" }
+    if (b == "DOUBLE") { rtn "Ljava/lang/Double;" }
+    rtn baseDesc(b)
+}
+
+// 隐式加宽表（与 Kotlin `widenTargets` 同）：`char` 一个口子都不开
+fn widenOk(from : string, to : string) -> bool {
+    if (from == "BYTE") {
+        if (to == "INT") { rtn true }
+        if (to == "LONG") { rtn true }
+        if (to == "FLOAT") { rtn true }
+        if (to == "DOUBLE") { rtn true }
+        rtn false
+    }
+    if (from == "INT") {
+        if (to == "LONG") { rtn true }
+        if (to == "FLOAT") { rtn true }
+        if (to == "DOUBLE") { rtn true }
+        rtn false
+    }
+    if (from == "LONG") {
+        if (to == "FLOAT") { rtn true }
+        if (to == "DOUBLE") { rtn true }
+        rtn false
+    }
+    if (from == "FLOAT") { rtn to == "DOUBLE" }
+    rtn false
+}
+
+fn repeatText(s : string, n : int) -> string {
+    var out = ""
+    var i = 0
+    while (i < n) {
+        out = out + s
+        i = i + 1
+    }
+    rtn out
+}
+
+// —— 类型本体 ——
+
+public class RType(base : string, nullable : bool, extName : string, targs : RType[], depth : int) {
+    var base : string = base
+    var nullable : bool = nullable
+    var extName : string = extName
+    var targs : RType[] = targs
+    var depth : int = depth
+
+    // `java/lang/Math` → `Math`；类型参数占位 → 它的名字（`T`）
+    public fn simpleName() -> string {
+        if (base == "TYPE_PARAM") { rtn extName }
+        if (base == "EXTERNAL") {
+            var slash = lastSlash(extName)
+            if (slash < 0) { rtn extName }
+            rtn substring(extName, slash + 1, extName.length())
+        }
+        if (base == "STRING") { rtn "string" }
+        rtn baseName(base)
+    }
+
+    public fn typeParamQ() -> bool {
+        rtn base == "TYPE_PARAM"
+    }
+
+    public fn arrayQ() -> bool {
+        rtn depth > 0
+    }
+
+    public fn nullableQ() -> bool {
+        rtn nullable && base != "NULL"
+    }
+
+    public fn voidQ() -> bool {
+        rtn base == "VOID"
+    }
+
+    public fn nullLit() -> bool {
+        rtn base == "NULL"
+    }
+
+    public fn prim() -> bool {
+        rtn depth == 0 && !nullable && baseIsPrim(base)
+    }
+
+    public fn numeric() -> bool {
+        rtn depth == 0 && !nullable && baseIsNumeric(base)
+    }
+
+    public fn arith() -> bool {
+        rtn depth == 0 && !nullable && baseIsArith(base)
+    }
+
+    public fn external() -> bool {
+        rtn depth == 0 && base == "EXTERNAL"
+    }
+
+    public fn slots() -> int {
+        if (depth > 0) { rtn 1 }
+        if (nullable && baseIsPrim(base)) { rtn 1 }
+        rtn baseSlots(base)
+    }
+
+    // 泛型实参不参与描述符——这正是擦除
+    fn elementDesc() -> string {
+        if (base == "EXTERNAL") { rtn "L" + extName + ";" }
+        if (base == "TYPE_PARAM") { rtn "Ljava/lang/Object;" }
+        if (nullable && baseIsPrim(base)) { rtn baseBoxed(base) }
+        rtn baseDesc(base)
+    }
+
+    public fn desc() -> string {
+        if (depth == 0) { rtn elementDesc() }
+        rtn repeatText("[", depth) + elementDesc()
+    }
+
+    // 报错用的名字：`?Box&<int>[]` 这种
+    public fn name() -> string {
+        var head = baseName(base)
+        if (base == "EXTERNAL") { head = simpleName() }
+        if (base == "TYPE_PARAM") { head = extName }
+        var mark = ""
+        if (nullable && base != "NULL") { mark = "?" }
+        var argsText = ""
+        if (targs.length > 0) {
+            argsText = "&<" + joinArgs() + ">"
+        }
+        rtn mark + head + argsText + repeatText("[]", depth)
+    }
+
+    fn joinArgs() -> string {
+        var out = ""
+        var i = 0
+        while (i < targs.length) {
+            if (i > 0) { out = out + ", " }
+            out = out + targs[i].name()
+            i = i + 1
+        }
+        rtn out
+    }
+
+    public fn printDesc() -> string {
+        if (external()) { rtn "(Ljava/lang/Object;)V" }
+        if (arrayQ()) { rtn "(Ljava/lang/Object;)V" }
+        if (base == "BYTE" && !nullable) { rtn "(I)V" }
+        rtn "(" + desc() + ")V"
+    }
+
+    public fn same(o : RType) -> bool {
+        if (base != o.base) { rtn false }
+        if (nullable != o.nullable) { rtn false }
+        if (extName != o.extName) { rtn false }
+        if (depth != o.depth) { rtn false }
+        if (targs.length != o.targs.length) { rtn false }
+        var i = 0
+        while (i < targs.length) {
+            if (!targs[i].same(o.targs[i])) { rtn false }
+            i = i + 1
+        }
+        rtn true
+    }
+
+    public fn asNullable() -> RType {
+        if (nullable || base == "VOID") { rtn this }
+        rtn new RType(base, true, extName, targs, depth)
+    }
+
+    public fn asNonNull() -> RType {
+        if (!nullable) { rtn this }
+        rtn new RType(base, false, extName, targs, depth)
+    }
+
+    public fn arrayOf(n : int) -> RType {
+        if (n == 0) { rtn this }
+        rtn new RType(base, nullable, extName, targs, depth + n)
+    }
+
+    public fn elemType() -> RType {
+        if (depth == 0) { rtn this }
+        rtn new RType(base, nullable, extName, targs, depth - 1)
+    }
+
+    // 与 Kotlin `accepts` 逐条对应（见 RsfType.kt:408-430 的注释）
+    public fn accepts(o : RType) -> bool {
+        if (base == "VOID" || o.base == "VOID") { rtn false }
+        // 类体里的类型参数占位擦成 Object，什么都放得下
+        if (typeParamQ()) { rtn true }
+        if (o.nullLit()) { rtn nullableQ() || external() }
+        if (same(o)) { rtn true }
+        if (base == o.base && extName == o.extName) {
+            rtn sameArgs(o) && depth == o.depth && nullable && !o.nullable
+        }
+        if (external() && extName == "java/lang/Object") {
+            rtn !o.prim() || (o.nullable && baseIsPrim(o.base))
+        }
+        if (arith() && o.arith()) { rtn widenOk(o.base, base) }
+        rtn false
+    }
+
+    fn sameArgs(o : RType) -> bool {
+        if (targs.length != o.targs.length) { rtn false }
+        var i = 0
+        while (i < targs.length) {
+            if (!targs[i].same(o.targs[i])) { rtn false }
+            i = i + 1
+        }
+        rtn true
+    }
+
+    // 递归替换类型参数占位：`T` → 实际类型（维度要一起搬）
+    public fn substitute(name : string, actual : RType) -> RType {
+        if (typeParamQ() && extName == name) {
+            var replaced = actual.arrayOf(depth)
+            if (nullable) { rtn replaced.asNullable() }
+            rtn replaced
+        }
+        if (targs.length == 0) { rtn this }
+        var mapped : RType[] = new RType[targs.length]
+        var i = 0
+        while (i < targs.length) {
+            mapped[i] = targs[i].substitute(name, actual)
+            i = i + 1
+        }
+        rtn new RType(base, nullable, extName, mapped, depth)
+    }
+}
+
+// —— 构造器（rsf 没有默认参数，用工厂函数） ——
+
+public fn tVoid() -> RType { rtn new RType("VOID", false, "", new RType[0], 0) }
+public fn tBool() -> RType { rtn new RType("BOOL", false, "", new RType[0], 0) }
+public fn tByte() -> RType { rtn new RType("BYTE", false, "", new RType[0], 0) }
+public fn tChar() -> RType { rtn new RType("CHAR", false, "", new RType[0], 0) }
+public fn tInt() -> RType { rtn new RType("INT", false, "", new RType[0], 0) }
+public fn tLong() -> RType { rtn new RType("LONG", false, "", new RType[0], 0) }
+public fn tFloat() -> RType { rtn new RType("FLOAT", false, "", new RType[0], 0) }
+public fn tDouble() -> RType { rtn new RType("DOUBLE", false, "", new RType[0], 0) }
+public fn tString() -> RType { rtn new RType("STRING", false, "", new RType[0], 0) }
+public fn tNull() -> RType { rtn new RType("NULL", false, "", new RType[0], 0) }
+public fn tObject(name : string) -> RType { rtn new RType("EXTERNAL", false, name, new RType[0], 0) }
+public fn tParam(name : string) -> RType { rtn new RType("TYPE_PARAM", false, name, new RType[0], 0) }
+
+// 小工具（rsf 的标准库还很薄，先放着；阶段 32 的 core stdlib 会把它们搬走）
+fn lastSlash(s : string) -> int {
+    var i = s.length() - 1
+    while (i >= 0) {
+        if (s.charAt(i) == '/') { rtn i }
+        i = i - 1
+    }
+    rtn -1
+}
+
+fn substring(s : string, from : int, to : int) -> string {
+    var out = ""
+    var i = from
+    while (i < to) {
+        out = out + s.charAt(i)
+        i = i + 1
+    }
+    rtn out
+}

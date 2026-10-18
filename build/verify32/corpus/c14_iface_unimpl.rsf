@@ -1,0 +1,8 @@
+interface I {
+    fn run() -> int
+}
+class D : I {
+}
+fn main() {
+    var d : D = new D()
+}

@@ -1,0 +1,6 @@
+fn make&<T>() -> T {
+    rtn 1
+}
+fn main() {
+    println("" + make())
+}
