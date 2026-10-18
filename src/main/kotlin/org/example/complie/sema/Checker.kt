@@ -10,6 +10,7 @@ import org.example.complie.ast.BinaryExpr
 import org.example.complie.ast.Block
 import org.example.complie.ast.BoolLit
 import org.example.complie.ast.BreakStmt
+import org.example.complie.ast.DerefAssignStmt
 import org.example.complie.ast.CallExpr
 import org.example.complie.ast.CharLit
 import org.example.complie.ast.ClassDecl
@@ -87,6 +88,7 @@ import org.example.complie.ir.IExpr
 import org.example.complie.ir.IFail
 import org.example.complie.ir.IFieldAssign
 import org.example.complie.ir.IGoto
+import org.example.complie.ir.IDerefAssign
 import org.example.complie.ir.IIndexAssign
 import org.example.complie.ir.ILabel
 import org.example.complie.ir.IReturn
@@ -5043,6 +5045,21 @@ class Checker(
                 declBindings[stmt] = binding
             }
 
+            is DerefAssignStmt -> {
+                // `*p = v`：target 已经过 type()，所以它的类型就是「指针指向的东西」。
+                val pointee = type(stmt.target)
+                val valueType = type(stmt.value)
+                if (pointee.isVoid) {
+                    throw err("不能通过 void* 写值：指针指向的东西没有类型", stmt.at)
+                }
+                if (!acceptsValue(pointee, stmt.value, valueType)) {
+                    throw err(
+                        "不能把 ${valueType.rsfName} 写进 ${pointee.rsfName} 指针指向的位置",
+                        stmt.at,
+                    )
+                }
+            }
+
             is MemberAssignStmt -> {
                 val target = stmt.target
                 if (target.arguments != null) {
@@ -5659,6 +5676,8 @@ class Checker(
             instr.stmt.target.index,
             instr.stmt.value,
         )
+        // 解引用赋值（阶段 53）：指针表达式与右值都可能读到变量
+        is IDerefAssign -> listOf(instr.stmt.target, instr.stmt.value)
         // 构造器委托的实参也要走同一套变量读取分析
         is ICtorDelegate -> instr.stmt.arguments
         // 父类构造委托（阶段 25）的实参同理
@@ -5862,6 +5881,28 @@ class Checker(
                         }
                         RsfType.BOOL
                     }
+                    // 阶段 53：`&x` 取地址（结果多一层指针），`*p` 解引用（少一层）
+                    TokenKind.AMP -> {
+                        if (!isAddressable(expr.operand)) {
+                            throw err(
+                                "只能对变量、字段、数组元素或指针目标取地址（'&'）：" +
+                                    "${operand.rsfName} 这个表达式没有存储位置",
+                                expr.at,
+                            )
+                        }
+                        operand.pointerOf(1)
+                    }
+
+                    TokenKind.STAR -> {
+                        if (!operand.isPointer) {
+                            throw err(
+                                "不能解引用 ${operand.rsfName}：'*' 只能用在指针上（例如 int* 或 Point*）",
+                                expr.at,
+                            )
+                        }
+                        operand.pointee
+                    }
+
                     else -> throw err("不认识的一元运算符 '${expr.op.text}'", expr.at)
                 }
             }
@@ -7160,6 +7201,22 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
      * 「现在正在检查哪个类的类体」的那个环境，见 [declareClasses] / [checkClassBodies]。
      */
     private fun resolveType(ref: TypeRef, env: Map<String, RsfType> = typeParams): RsfType {
+        val base = resolveBaseType(ref, env)
+        if (ref.ptrDepth == 0) return base
+        if (base.isArray) {
+            throw err(
+                "指针不能指向数组（'${ref.display()}'）：L1/L2 只做「指向单个值」，" +
+                    "数组指针与偏移留到 L3",
+                ref.at,
+            )
+        }
+        if (base.isVoid) {
+            throw err("指针不能指向 void（'${ref.display()}'）——void 没有值，取不到它的地址", ref.at)
+        }
+        return base.pointerOf(ref.ptrDepth)
+    }
+
+    private fun resolveBaseType(ref: TypeRef, env: Map<String, RsfType> = typeParams): RsfType {
         val nullable = ref.name.startsWith("?")
 
         // 阶段 30：函数类型。形参 / 返回类型逐个解析，再拼成一个 EXTERNAL 形状。
@@ -7377,6 +7434,15 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
             return isSourceSubtype(want, valueType)
         }
         return byteRangeLiteral(value) != null
+    }
+
+    /** 阶段 53：能取地址的表达式——变量、字段、数组元素、指针目标（`**pp`）。 */
+    private fun isAddressable(e: Expr): Boolean = when (e) {
+        is VarExpr -> true
+        is MemberExpr -> e.arguments == null
+        is IndexExpr -> true
+        is UnaryExpr -> e.op == TokenKind.STAR
+        else -> false
     }
 
     /** 字面量在 byte 范围内就返回它的值，否则 null（不是字面量也是 null）。 */

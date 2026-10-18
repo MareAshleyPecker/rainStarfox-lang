@@ -54,6 +54,7 @@ import org.example.complie.ir.IExpr
 import org.example.complie.ir.IFail
 import org.example.complie.ir.IFieldAssign
 import org.example.complie.ir.IGoto
+import org.example.complie.ir.IDerefAssign
 import org.example.complie.ir.IIndexAssign
 import org.example.complie.ir.ILabel
 import org.example.complie.ir.IReturn
@@ -2500,6 +2501,11 @@ class BytecodeCompiler(
                 // 接收者 → 长度 → 下标 → **越界检查** → 右值 → `*ASTORE`。
                 // 右值放在检查之后：越界时右值里的副作用一次都不能发生
                 // （JVM 上越界会直接抛，`a[i] = f()` 里的 f 根本不会跑）。
+                is IDerefAssign -> throw RsfError(
+                    "codegen",
+                    "JVM 字节码后端不支持指针（阶段 53 的指针只有解释器和 C 后端实现）：不能写 '*p = …'",
+                )
+
                 is IIndexAssign -> {
                     val target = instr.stmt.target
                     val element = model.typeOf(target)
@@ -2780,6 +2786,12 @@ class BytecodeCompiler(
                         mv.visitInsn(ICONST_1)
                         mv.visitInsn(IXOR)
                     }
+                    // 阶段 53：指针只有解释器与 C 后端实现
+                    TokenKind.AMP, TokenKind.STAR -> throw RsfError(
+                        "codegen",
+                        "JVM 字节码后端不支持指针（阶段 53 的指针只有解释器和 C 后端实现）：" +
+                            "不能写 '${expr.op.text}…'",
+                    )
                     else -> throw IllegalStateException("不认识的一元运算符 ${expr.op}")
                 }
             }

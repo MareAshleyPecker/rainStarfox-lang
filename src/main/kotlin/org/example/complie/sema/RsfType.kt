@@ -229,6 +229,13 @@ data class RsfType(
      * 所以数组的 [nullable] 永远是 false，`isNullable` 也就不会跟数组打架。
      */
     val arrayDepth: Int = 0,
+    /**
+     * 指针层数（阶段 53）：`int*` → 1、`Point**` → 2。不是指针是 0。
+     *
+     * 指针**不是** JVM 类型：字节码后端遇到 ptrDepth > 0 直接报错，
+     * 只有解释器与 C 后端（native 线）有它的语义。
+     */
+    val ptrDepth: Int = 0,
 ) {
     val rsfName: String
         get() {
@@ -246,7 +253,7 @@ data class RsfType(
                 "&<" + typeArgs.joinToString(", ") { it.rsfName } + ">"
             }
             // `Box&<int>[]`：`[]` 写在最后，和源码里的写法一致
-            return mark + head + args + "[]".repeat(arrayDepth)
+            return mark + head + args + "[]".repeat(arrayDepth) + "*".repeat(ptrDepth)
         }
 
     /** `java/lang/Math` → `Math`；类型参数占位 → 它的名字（`T`）。 */
@@ -324,6 +331,18 @@ data class RsfType(
      */
     val elementType: RsfType
         get() = if (arrayDepth == 0) this else copy(arrayDepth = arrayDepth - 1)
+
+    /** 是不是指针（阶段 53）。 */
+    val isPointer: Boolean
+        get() = ptrDepth > 0
+
+    /** 套上 [n] 层 `*`：`int` + 1 → `int*`。 */
+    fun pointerOf(n: Int = 1): RsfType =
+        if (n == 0) this else copy(ptrDepth = ptrDepth + n)
+
+    /** 去掉一层 `*`（解引用的结果类型）；不是指针时返回自己。 */
+    val pointee: RsfType
+        get() = if (ptrDepth == 0) this else copy(ptrDepth = ptrDepth - 1)
 
     /** 套上 [depth] 层 `[]`：`int` + 1 → `int[]`。 */
     fun arrayOf(depth: Int = 1): RsfType =

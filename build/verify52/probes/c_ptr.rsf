@@ -1,0 +1,33 @@
+// 阶段 53：C 后端探针 9 —— 指针（局部变量 / 形参 / 二级指针 / long / 类指针）
+class Point(x0 : int) {
+    var x : int = x0
+
+    fn get() -> int { rtn x }
+}
+
+fn bump(p : int*, by : int) -> void {
+    *p = *p + by
+}
+
+fn main() -> void {
+    var x : int = 7
+    var p : int* = &x
+    println(*p)
+    *p = 9
+    println(x)
+    bump(p, 5)
+    println(x)
+    var pp : int** = &p
+    **pp = 100
+    println(x)
+    var y : long = 40L
+    var q : long* = &y
+    *q = *q + 2L
+    println(y)
+    var pt : Point = new Point(3)
+    var cp : Point* = &pt
+    println((*cp).get())
+    (*cp).x = 11
+    println(pt.x)
+    rtn
+}

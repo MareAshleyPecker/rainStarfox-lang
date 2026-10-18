@@ -1963,7 +1963,15 @@ class Parser(
                     "而「元素可空」还没有语义。去掉 '?' 写成 '$name[]'",
             )
         }
-        return if (depth == 0) base else base.copy(arrayDepth = depth)
+        var ref = if (depth == 0) base else base.copy(arrayDepth = depth)
+        // 指针后缀（阶段 53）：`int*` / `Point*`，可以叠（`int**`，语义层按层数算）
+        var ptr = 0
+        while (check(TokenKind.STAR)) {
+            advance()
+            ptr++
+        }
+        if (ptr > 0) ref = ref.copy(ptrDepth = ptr)
+        return ref
     }
 
     /**
@@ -2314,6 +2322,13 @@ class Parser(
                 is IndexExpr -> {
                     advance() // '='
                     return IndexAssignStmt(e, parseExpr(), e.at)
+                }
+                // 阶段 53：`*p = 1` —— 解引用赋值
+                is UnaryExpr -> if (e.op == TokenKind.STAR) {
+                    advance() // '='
+                    return DerefAssignStmt(e, parseExpr(), e.at)
+                } else {
+                    ExprStmt(e, e.at)
                 }
                 else -> {}
             }
@@ -2959,7 +2974,12 @@ class Parser(
 
     private fun parseFactor(): Expr {
         var left = parseUnary()
-        while (match(TokenKind.STAR, TokenKind.SLASH, TokenKind.PERCENT)) {
+        while (true) {
+            // 阶段 53：换行处的 '*' 属于**下一条语句**（`*p = 9`），不是乘法。
+            // 语言没有分号，`&x` 之后换行写 `*p` 会被贪心解析成 `&x * p`，
+            // 所以这里把「行首的 '*'」判给解引用；代价是跨行乘法要挪到上一行。
+            if (check(TokenKind.STAR) && peek().at.line > previous().at.line) break
+            if (!match(TokenKind.STAR, TokenKind.SLASH, TokenKind.PERCENT)) break
             val op = previous().kind
             val right = parseUnary()
             left = BinaryExpr(op, left, right, left.at)
@@ -2968,6 +2988,13 @@ class Parser(
     }
 
     private fun parseUnary(): Expr {
+        // 阶段 53：`&x` 取地址、`*p` 解引用（都是前缀）。`&` 在表达式位置没有别的含义
+        // （泛型实参 `Box&<int>` 只在类型位置），`*` 在表达式开头也不可能是乘法。
+        if (match(TokenKind.AMP, TokenKind.STAR)) {
+            val opTok = previous()
+            val operand = parseUnary()
+            return UnaryExpr(opTok.kind, operand, opTok.at)
+        }
         if (match(TokenKind.MINUS, TokenKind.BANG)) {
             val opTok = previous()
             val operand = parseUnary()

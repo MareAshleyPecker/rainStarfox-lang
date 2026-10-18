@@ -8512,4 +8512,69 @@ class RsfTest {
             rtn
         }
     """.trimIndent()
+
+    @Test
+    fun `指针：取地址 解引用 写回 二级指针 类指针（解释器）`() {
+        val text = """
+            class Point(x0 : int) {
+                var x : int = x0
+
+                fn get() -> int { rtn x }
+            }
+
+            fn bump(p : int*, by : int) -> void {
+                *p = *p + by
+            }
+
+            fn main() -> void {
+                var x : int = 7
+                var p : int* = &x
+                println(*p)
+                *p = 9
+                println(x)
+                bump(p, 5)
+                println(x)
+                var pp : int** = &p
+                **pp = 100
+                println(x)
+                var y : long = 40L
+                var q : long* = &y
+                *q = *q + 2L
+                println(y)
+                var pt : Point = new Point(3)
+                var cp : Point* = &pt
+                println((*cp).get())
+                (*cp).x = 11
+                println(pt.x)
+                rtn
+            }
+        """.trimIndent()
+        val nl = Character.toString(10)
+        val expected = listOf("7", "9", "14", "100", "42", "3", "11").joinToString(nl) + nl
+        val actual = runInterpreted(text).replace(Character.toString(13), "")
+        assertEquals(expected, actual)
+    }
+
+    @Test
+    fun `指针：JVM 字节码后端显式报错`() {
+        val text = """
+            fn main() -> void {
+                var x : int = 1
+                var p : int* = &x
+                *p = 2
+                rtn
+            }
+        """.trimIndent()
+        val model = Rsf.analyze(source(text))
+        val dir = File.createTempFile("rsf-test", "").let {
+            it.delete()
+            it.mkdirs()
+            it
+        }
+        val error = assertFailsWith<RsfError> {
+            Rsf.build(model, source(text), "RsfPtrJvm", dir)
+        }
+        assertTrue(error.message!!.contains("不支持指针"), error.message)
+    }
+
 }

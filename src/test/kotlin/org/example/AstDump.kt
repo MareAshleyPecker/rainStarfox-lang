@@ -6,6 +6,7 @@ import org.example.complie.ast.AsExpr
 import org.example.complie.ast.AssignStmt
 import org.example.complie.ast.BinaryExpr
 import org.example.complie.ast.Block
+import org.example.complie.ast.DerefAssignStmt
 import org.example.complie.ast.BoolLit
 import org.example.complie.ast.BreakStmt
 import org.example.complie.ast.CallExpr
@@ -372,6 +373,13 @@ object AstDump {
 
             is IndexAssignStmt -> {
                 line(out, depth, "INDEX_ASSIGN")
+                expr(out, depth + 1, s.target)
+                expr(out, depth + 1, s.value)
+            }
+
+            // 阶段 53：`*p = 值`
+            is DerefAssignStmt -> {
+                line(out, depth, "DEREF_ASSIGN")
                 expr(out, depth + 1, s.target)
                 expr(out, depth + 1, s.value)
             }

@@ -1,10 +1,12 @@
 package org.example.complie.ir
 
+import org.example.complie.diag.RsfError
 import org.example.complie.ast.AsExpr
 import org.example.complie.ast.AssignStmt
 import org.example.complie.ast.BinaryExpr
 import org.example.complie.ast.Block
 import org.example.complie.ast.BoolLit
+import org.example.complie.ast.DerefAssignStmt
 import org.example.complie.ast.BreakStmt
 import org.example.complie.ast.CallExpr
 import org.example.complie.ast.CharLit
@@ -100,6 +102,16 @@ class IFieldAssign(val stmt: MemberAssignStmt) : Instr {
  * 表达式位置，而 IR 里的表达式本来就是 AST 节点（表达式内部没有 goto）。
  */
 class IIndexAssign(val stmt: IndexAssignStmt) : Instr {
+    override val at get() = stmt.at
+}
+
+/**
+ * `*p = 值`（阶段 53）。
+ *
+ * 单独一条指令：目标不是槽、不是字段、不是下标，而是「指针指向的那格存储」。
+ * 解释器直接写回 [RsfPointer] 的槽；C 后端发 `*p = 值;`；JVM 字节码显式报错。
+ */
+class IDerefAssign(val stmt: DerefAssignStmt) : Instr {
     override val at get() = stmt.at
 }
 
@@ -358,6 +370,7 @@ class Lowering(
             is AssignStmt -> out.add(IAssign(stmt))
             is MemberAssignStmt -> out.add(IFieldAssign(stmt))
             is IndexAssignStmt -> out.add(IIndexAssign(stmt))
+            is DerefAssignStmt -> out.add(IDerefAssign(stmt))
             is ThisCallStmt -> out.add(ICtorDelegate(stmt))
             // 阶段 25：`super(实参)` 也是一条委托边，但它是**父类**那条（见 [ISuperDelegate]）
             is SuperCallStmt -> out.add(ISuperDelegate(stmt))
@@ -948,6 +961,8 @@ private class ClosureAnalyser(
                 if (model.classModel.bareFieldWrites[stmt] != null) markThis()
                 walkExpr(stmt.value)
             }
+
+            is DerefAssignStmt -> walkExpr(stmt.target.let { (it as UnaryExpr).operand }).also { walkExpr(stmt.value) }
             is MemberAssignStmt -> {
                 walkExpr(stmt.target)
                 walkExpr(stmt.value)

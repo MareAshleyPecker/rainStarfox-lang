@@ -140,4 +140,24 @@ class CBackendTest {
         assertTrue(body.contains("self->v = v_n;"), body.take(200))
     }
 
+
+    @Test
+    fun `指针摊成 C 指针`() {
+        val c = emit(
+            """
+            fn main() -> void {
+                var x : int = 7
+                var p : int* = &x
+                *p = 9
+                println(*p)
+                rtn
+            }
+            """.trimIndent(),
+        )
+        assertTrue(c.contains("int32_t* v_p"), c)
+        assertTrue(c.contains("(&v_x)"), c)
+        assertTrue(c.contains("*(v_p) = 9;"), c)
+        assertTrue(c.contains("(*v_p)"), c)
+    }
+
 }

@@ -51,6 +51,12 @@ data class TypeRef(
      * 可空函数类型的 `?` 写在 [name] 上（`"?fn"`），和别的类型的老约定一致。
      */
     val fnRet: TypeRef? = null,
+    /**
+     * 指针层数（阶段 53）：`int*` → 1。不是指针是 0（老调用点一个字都不用改）。
+     *
+     * 只在 native / 解释器一侧有语义：JVM 字节码后端遇到 [ptrDepth] > 0 直接报错。
+     */
+    val ptrDepth: Int = 0,
 ) : Node {
     /** 是不是函数类型（阶段 30）：只看 [fnRet] 非 null。 */
     val isFunctionType: Boolean get() = fnRet != null
@@ -72,11 +78,12 @@ data class TypeRef(
             // `[]` 在整体最后面——`[]` 时整体要先加一层括号（`((int) -> int)[]`）。
             val sig = "(" + fnParams.joinToString(", ") { it.display() } + ") -> " + ret.display()
             val marked = if (name.startsWith("?")) "?$sig" else sig
-            return if (arrayDepth == 0) marked else "($marked)" + "[]".repeat(arrayDepth)
+            val shaped = if (arrayDepth == 0) marked else "($marked)" + "[]".repeat(arrayDepth)
+            return shaped + "*".repeat(ptrDepth)
         }
         val base = if (typeArgs.isEmpty()) name else "$name&<" + typeArgs.joinToString(", ") { it.display() } + ">"
         val whole = if (nested == null) base else "$base::$nested"
-        return whole + "[]".repeat(arrayDepth)
+        return whole + "[]".repeat(arrayDepth) + "*".repeat(ptrDepth)
     }
 }
 
@@ -804,6 +811,22 @@ data class AssignStmt(    val name: String,
  * 单独一个节点而不是复用 [AssignStmt]：那个只管局部变量/参数的槽位，赋值目标是一个
  * 绑定；这个的赋值目标是一次成员解析（字段），两者的语义检查和降级路径都不一样。
  */
+/**
+ * `*p = expr` / `*self.next = expr`（阶段 53）：解引用赋值。
+ *
+ * 又一个独立赋值节点，理由与 [MemberAssignStmt] / [IndexAssignStmt] 一样：
+ * 目标不是绑定、不是字段、不是下标，而是「指针指向的那格存储」。
+ * - 解释器：把值写回指针的词法单元（[RsfPointer.set]）；
+ * - C 后端：`*p = value;`；
+ * - JVM 字节码：不支持，显式报错。
+ */
+data class DerefAssignStmt(
+    /** 一定是 `UnaryExpr(STAR, …)`。 */
+    val target: Expr,
+    val value: Expr,
+    override val at: SourceLine,
+) : Stmt
+
 data class MemberAssignStmt(
     /** 一定是 [MemberExpr]，且 `arguments` 为 null（不能给方法赋值）。 */
     val target: MemberExpr,

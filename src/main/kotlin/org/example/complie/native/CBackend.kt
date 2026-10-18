@@ -9,6 +9,7 @@ import org.example.complie.ast.CallExpr
 import org.example.complie.ast.CharLit
 import org.example.complie.ast.ClassDecl
 import org.example.complie.ast.ContinueStmt
+import org.example.complie.ast.DerefAssignStmt
 import org.example.complie.ast.EnumDecl
 import org.example.complie.ast.Expr
 import org.example.complie.ast.ExprStmt
@@ -146,7 +147,13 @@ class CBackend(private val model: SemanticModel) {
 
     private fun cType(type: RsfType): String {
         if (type.arrayDepth > 1) fail("多维数组")
-        if (type.arrayDepth == 1) return "rsf_arr"
+        if (type.arrayDepth == 1) {
+            if (type.ptrDepth > 0) fail("指针数组")
+            return "rsf_arr"
+        }
+        // 阶段 53：指针就是 C 的指针——基础类型直接加 `*`，
+        // 类本来就已经是 `rsf_cls_X*`（引用），指针再叠一层就是 `rsf_cls_X**`。
+        if (type.ptrDepth > 0) return cType(type.copy(ptrDepth = 0)) + "*".repeat(type.ptrDepth)
         return when (type.base) {
             RsfBase.VOID -> "void"
             RsfBase.INT -> "int32_t"
@@ -180,16 +187,8 @@ class CBackend(private val model: SemanticModel) {
         return sb.toString()
     }
 
-    private fun elemCType(type: RsfType): String = when (type.base) {
-        RsfBase.INT -> "int32_t"
-        RsfBase.LONG -> "int64_t"
-        RsfBase.BOOL -> "bool"
-        RsfBase.STRING -> "rsf_str"
-        RsfBase.CHAR -> "uint16_t"
-        RsfBase.BYTE -> "int8_t"
-        RsfBase.EXTERNAL -> classPointer(type)
-        else -> fail("数组元素类型 '${type.base.rsfName}'")
-    }
+    /** 数组元素（或指针指向的值）在 C 里的类型——交给 [cType] 统一算，含指针层。 */
+    private fun elemCType(type: RsfType): String = cType(type.copy(arrayDepth = 0))
 
     private fun elementOf(type: RsfType): RsfType =
         if (type.arrayDepth > 0) type.copy(arrayDepth = type.arrayDepth - 1) else type
@@ -296,6 +295,11 @@ class CBackend(private val model: SemanticModel) {
                 pad(indent) + "${paramName(s.name)} = ${expr(s.value)};\n"
             }
         }
+        is DerefAssignStmt -> {
+            val target = s.target as? UnaryExpr ?: fail("解引用赋值")
+            pad(indent) + "*(" + expr(target.operand) + ") = " + expr(s.value) + ";" + NL
+        }
+
         is MemberAssignStmt -> {
             if (model.classModel.fieldWrites[s] == null) fail("成员赋值")
             pad(indent) + expr(s.target.receiver) + "->" + s.target.name + " = " + expr(s.value) + ";\n"
@@ -443,7 +447,11 @@ class CBackend(private val model: SemanticModel) {
     private fun newArray(e: NewArrayExpr): String {
         if (e.dimensions.size != 1) fail("多维数组")
         val base = baseOf(e.elementType)
-        val type = if (base == RsfBase.EXTERNAL) RsfType(base, externalName = e.elementType.name) else RsfType(base)
+        val type = if (base == RsfBase.EXTERNAL) {
+            RsfType(base, externalName = e.elementType.name, ptrDepth = e.elementType.ptrDepth)
+        } else {
+            RsfType(base, ptrDepth = e.elementType.ptrDepth)
+        }
         val elemSize = elemCType(type)
         return "rsf_arr_new(${expr(e.dimensions[0])}, (int64_t)sizeof($elemSize))"
     }
@@ -464,6 +472,9 @@ class CBackend(private val model: SemanticModel) {
     private fun unary(e: UnaryExpr): String {
         val operand = expr(e.operand)
         return when (e.op) {
+            // 阶段 53：取地址 / 解引用——C 里就是同形写法，零成本
+            TokenKind.AMP -> "(&$operand)"
+            TokenKind.STAR -> "(*$operand)"
             TokenKind.MINUS -> "(-$operand)"
             TokenKind.PLUS -> "($operand)"
             TokenKind.BANG -> "(!$operand)"

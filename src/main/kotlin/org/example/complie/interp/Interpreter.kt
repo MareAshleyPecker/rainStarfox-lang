@@ -35,6 +35,7 @@ import org.example.complie.interop.ResolvedMethod
 import org.example.complie.ir.Capture
 import org.example.complie.ir.ClosureScopes
 import org.example.complie.ir.IAssign
+import org.example.complie.ir.IDerefAssign
 import org.example.complie.ir.IBranch
 import org.example.complie.ir.ICtorDelegate
 import org.example.complie.ir.IExpr
@@ -85,6 +86,21 @@ import java.util.IdentityHashMap
  * 这种跨语言异常的差异本版**不做**（要做就得把 JVM 的异常表整张搬进解释器，
  * 等于把 Java 异常也纳入 rsf 的语义）。本版只保证 rsf 自己的 `fail` 两端一致。
  */
+/**
+ * 阶段 53 的「指针值」：指向某个栈帧的某个槽。
+ *
+ * 为什么不包成一个可写单元：解释器的变量就住在 `slots` 数组里，指针直接记
+ * 「哪个数组 + 哪个下标」就能读到、也能写回——和 C 里 `int*` 的可观察行为一致
+ * （`*p = 5` 之后 `x` 也变），而不用给每个变量额外装箱。
+ *
+ * 生命周期：槽数组随栈帧存活；把指针带到帧外（返回出去）会读到已失效的槽——
+ * v1 不检查这一点，与 C 的悬垂指针是同一类「自己负责」的边界。
+ */
+class RsfPointer(val slots: Array<Any?>, val slot: Int) {
+    override fun toString(): String = "&slot$slot"
+}
+
+
 class RsfFailure(val msg: String) : RuntimeException(msg) {
 
     /**
@@ -361,6 +377,14 @@ class Interpreter(
                         }
                         val value = eval(instr.stmt.value, slots, body)
                         obj.fields[field.index] = coerce(value, field.type)
+                        pc++
+                    }
+
+                    // `*p = 值`（阶段 53）：写指针指向的那个槽
+                    is IDerefAssign -> {
+                        val pointer = eval(instr.stmt.target.let { (it as UnaryExpr).operand }, slots, body) as? RsfPointer
+                            ?: throw RsfError("interp", "解引用的目标不是指针", instr.at.line, instr.at.column, null)
+                                        pointer.slots[pointer.slot] = eval(instr.stmt.value, slots, body)
                         pc++
                     }
 
@@ -2161,6 +2185,14 @@ class Interpreter(
     }
 
     private fun evalUnary(expr: UnaryExpr, slots: Array<Any?>, body: LoweredFunction): Any? {
+        // 阶段 53：`&x` 不**求值** x（未初始化的变量也能取地址），只记下它的槽；
+        // `*p` 是读指针指向的那个槽。
+        if (expr.op == TokenKind.AMP) return addressOf(expr.operand, slots, body)
+        if (expr.op == TokenKind.STAR) {
+            val pointer = eval(expr.operand, slots, body) as? RsfPointer
+                ?: throw RsfError("interp", "解引用的目标不是指针", expr.at.line, expr.at.column, null)
+            return pointer.slots[pointer.slot]
+        }
         val v = eval(expr.operand, slots, body)
         return when (expr.op) {
             // 结果类型由 Checker 定好了：byte / char 取负之后是 int，所以这里按**结果**分派
@@ -2176,6 +2208,33 @@ class Interpreter(
             else -> throw IllegalStateException("不认识的一元运算符 ${expr.op}")
         }
     }
+
+    /**
+     * 阶段 53：取地址。解释器里没有真地址，指针就是「哪个栈帧的哪个槽」——
+     * 写回时直接写槽，和真指针的可观察行为一致。
+     *
+     * v1 只接**局部变量/形参**（`&x`）与「指针的指针」（`&*p` 原样返回）。
+     * 字段（`&this.x`）与数组元素（`&a[i]`）暂时显式报错，等 L3 再补。
+     */
+    private fun addressOf(target: Expr, slots: Array<Any?>, body: LoweredFunction): RsfPointer = when (target) {
+        is VarExpr -> {
+            if (model.classModel.fieldReads[target] != null) {
+                unsupported("解释器暂不支持对字段取地址（&this.字段）", target)
+            }
+            val binding = model.bindingOf(target)
+            RsfPointer(slots, slotOf(binding, slots))
+        }
+        is UnaryExpr -> if (target.op == TokenKind.STAR) {
+            eval(target.operand, slots, body) as? RsfPointer
+                ?: throw RsfError("interp", "'&*p' 里的 p 不是指针", target.at.line, target.at.column, null)
+        } else {
+            unsupported("只能对变量取地址（&x）：${target.op.text} 的结果没有存储位置", target)
+        }
+        else -> unsupported("解释器暂只支持对局部变量/形参取地址（&x）", target)
+    }
+
+    private fun unsupported(problem: String, at: Expr): Nothing =
+        throw RsfError("interp", problem, at.at.line, at.at.column, null)
 
     private fun evalBinary(expr: BinaryExpr, slots: Array<Any?>, body: LoweredFunction): Any? {
         val op = expr.op
@@ -2298,6 +2357,8 @@ class Interpreter(
         // 阶段 13：数组是 JVM 上真实的数组对象，原样带着——元素类型由静态类型管，
         // 而「元素类型对不对」Checker 已经查过了（这里再装箱/拆箱只会引入分歧）。
         if (t.isArray) return v
+        // 阶段 53：指针值（RsfPointer）原样存着——它不是任何基础类型的表示
+        if (t.isPointer) return v
         // 可空类型在解释器里就是「值可能是 null」，不需要装箱
         if (t.nullable) return if (v == null) null else coerce(v, t.asNonNull())
         return when (t.base) {
