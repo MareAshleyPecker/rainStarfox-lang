@@ -143,6 +143,9 @@ System.out.println(rsflib.greet("Java"));   // rsflib.rsf → rsflib.class
 System.out.println(rsflib.fact(5));
 ```
 
+IDEA 里不用手动配类路径：插件编译后会把 `<项目>/out` 挂成 `rsf-classes` 库，
+Java 侧写 `rsflib.greet(...)` 就不会飘红（javac 本来就编得过，红只是 IDE 索引看不见）。
+
 `rsfSrc/lang/interop/` 里有完整的双向例子（`UseRsf.java` 是**普通 Java 类**，
 放在默认包里——因为 `rsflib.rsf` 没有 `pkg`，编出来的 `rsflib` 也在默认包，
 Java 侧直接按类名调即可，**不需要 `import`**）：
@@ -1380,7 +1383,7 @@ src/test/kotlin/org/example/        测试（359 个：两端一致性、rsf 版
 ### IntelliJ IDEA 插件
 
 `idea-rainstarfox/` 是给 IntelliJ 平台写的插件（文件类型、语法高亮、实时诊断、
-代码补全、`Ctrl+点`跳转、悬停 RDoc、重命名、查找引用、一键运行/编译），
+代码补全、`Ctrl+点`跳转、悬停 RDoc、重命名、`Alt+F7` 查找引用、一键运行/编译），
 诊断、补全、跳转、重命名**全部**走常驻的 `rsf lsp`（LSP over stdio）——
 只有一份语义实现。改动用**增量同步**（`textDocumentSync = 2`），大文件改一个字符
 只发一个 range 补丁。用本机已装的

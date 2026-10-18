@@ -1,4 +1,6 @@
 ### Gradle / 构建产物 ###
+# IntelliJ 平台 Gradle 插件的本地缓存（bundledPlugin 解析出来的描述文件）
+.intellijPlatform/
 .gradle
 # 注意写成 /build/* 而不是 build/：只有「父目录本身没被整体排除」，
 # 下面才能用 ! 放行 build/verify1*/** 里的脚本与探针。

@@ -7,7 +7,7 @@ plugins {
 }
 
 group = "org.rainstarfox"
-version = "0.2.0"
+version = "0.2.1"
 
 repositories {
     mavenCentral()
@@ -20,6 +20,9 @@ dependencies {
     intellijPlatform {
         // 用本机已装的 IDEA 当 SDK —— 不下载 1GB 的 IDE 分发包。
         local("D:/WINDOWS/IDEAALL/IntelliJ IDEA 2025.3.3")
+        // Java PSI：Ctrl+点落在 java.lang.Math 这类名字上时，能交给 IDEA 的 Java 支持去解析。
+        // 运行时是可选依赖（见 plugin.xml 的 optional depends），没有 Java 插件的 IDE 照样能装。
+        bundledPlugin("com.intellij.java")
     }
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")

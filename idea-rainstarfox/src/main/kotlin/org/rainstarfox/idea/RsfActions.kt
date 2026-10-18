@@ -35,6 +35,8 @@ class RsfBuildAction : DumbAwareAction() {
         val project = event.project ?: return
         val file = rsfFileOf(event) ?: return
         RsfRunner.execute(project, file, RsfRunner.MODE_BUILD)
+        // 编译产物落在 <项目>/out：先把它挂进类路径，Java 侧下一次解析就能看到这些类
+        RsfOutputLibrary.ensure(project)
     }
 
     override fun update(event: AnActionEvent) {

@@ -3,6 +3,7 @@
 给 [rainStarfox](../../README.md)（`.rsf`）语言写的 IntelliJ 平台插件：语法高亮、实时诊断、代码补全、一键运行/编译。
 
 装在任何基于 IntelliJ 平台 2025.3（build 253）的 IDE 上都能用——IDEA、CLion、GoLand、PyCharm、RustRover 都可以，插件只依赖 `com.intellij.modules.platform`。
+装了 Java 支持的 IDE（IDEA 等）会多两项：`Ctrl+点` 能跳进 JDK / 第三方 Java 类，Java 代码里也能解析 rsf 编译出来的类。
 
 ## 它提供什么
 
@@ -12,12 +13,13 @@
 | 语法高亮 | 关键字、修饰词、类型名、函数定义/调用、内置函数、字符串、数字、注释；配色可以在 Setting → Editor → Color Scheme → rainStarfox 里逐项改 |
 | 实时诊断 | 停止输入约 0.3 秒后让语言服务器检查**编辑器里的当前文本**（不必先保存），错误划红波浪线、警告划黄波浪线、提示划灰线 |
 | 代码补全 | 关键字、类型、内置函数、跨文件函数、参数、局部变量、`Math.` 这类 JVM 成员 |
-| 跳转 | `Ctrl+点` / `Ctrl+B` 跳到声明（同文件、跨 `imp` 文件都行）；解析不到就原地不动 |
+| 跳转 | `Ctrl+点` / `Ctrl+B` 跳到声明（同文件、跨 `imp` 文件都行）；落在 Java 名字上（`Math.max`、`Integer.parseInt`、`import` 行）会跳进 JDK / 第三方类；解析不到就原地不动 |
 | 悬停文档 | 鼠标停在符号上显示签名 + **RDoc**（声明正上方连续的 `///` 行）+ 定义位置 |
 | 重命名 | `Shift+F6`：范围由语言服务器算（`textDocument/rename`），跨文件一起改；类型改名暂不支持 |
-| 查找引用 | 编辑器右键 / Tools 菜单「查找 rainStarfox 引用」：弹窗列出所有引用，点一条跳过去 |
+| 查找引用 | `Alt+F7`（标准 Find Usages）：函数、类、接口、变量都能查「被谁用」，结果进 Find 工具窗，可分组、跳转、导出 |
 | 样板 | `fn` `lam` `class` `itf` `enum` `main` `for` `while` `switch` `try` 输入缩写后按 `Tab` 展开，占位符可逐个跳改（Settings → Editor → Live Templates → rainStarfox 里可改） |
 | 运行 / 编译 | 右键或 Run 菜单里执行 `rsf run` / `rsf build`，输出进 Run 控制台，**报错行可点击跳转** |
+| Java 互操作 | 编译后自动把 `<项目>/out` 挂成 `rsf-classes` 库：Java 侧写 `rsflib.greet(...)` 不再飘红（javac 本来就编得过，之前只是 IDE 看不见） |
 | 设置 | Setting → Tools → rainStarfox：指定编译器路径、开关实时诊断与补全 |
 
 ## 诊断和补全从哪来
@@ -69,7 +71,8 @@ cd idea-rainstarfox
 ## 已知边界
 
 - **没有真正的语法树**。解析器是扁平的 token 树，所以 IDEA 的「结构」视图这类基于 PSI 的功能用不了。高亮、括号配对、注释、诊断、补全、`Ctrl+点`跳转、悬停、重命名都不依赖语法树——位置与范围一律由语言服务器给（`textDocument/*`），插件只负责应用结果。
-- **查找引用是弹窗列表，不是 Find 工具窗**：IDEA 的 Find Usages 要 `PsiReference` 索引，扁平 PSI 没有；插件给一个轻量候选列表，点了就跳。别指望它能「在整个工程里持续跟踪」。
+- **查找引用靠语言服务器**：插件接管 `FindUsagesHandler.processElementUsages`，一次查询问一次 `textDocument/references`，所以结果不是 IDEA 索引出来的「实时跟踪」；改完文件要再按一次 `Alt+F7`。
+- **Java 跳转不做类型推断**：`Math.max` 这类「类.成员」能跳；`s.length()` 里的 `s` 是 rsf 变量，插件不知道它是 `string`，点了不动。
 - **一次只报一个错**。编译器前端是遇错即停的，修掉当前这条才能看到下一条。这是编译器前端的既有设计，插件如实反映。
 - **补全的作用域过滤偏宽松**：同一个函数里在光标之前声明过的变量都会给出，宁可多给几个也不漏。文件没写完（解析失败）时退化成关键字扫描。
 - **`.rsf` 之外的文件不参与**：目前 `import` 进来的其他 JVM 语言（.java/.kt）不会带来补全。
@@ -94,7 +97,10 @@ src/main/kotlin/org/rainstarfox/idea/
     RsfDiagnostics.kt          诊断对齐（只留本文档 / 去重）
     RsfGotoDeclarationHandler.kt Ctrl+点跳转（`textDocument/definition`）
     RsfRenameHandler.kt        重命名（`textDocument/rename` → WorkspaceEdit）
-    RsfFindUsagesAction.kt     查找引用（`textDocument/references`，弹窗列表）
+    RsfFindUsagesHandler.kt     查找引用（接管 processElementUsages，结果进 Find 工具窗）
+    RsfJavaNames.kt             名字 → Java 候选全限定名（import / java.lang 规则）
+    RsfJavaGotoDeclarationHandler.kt Ctrl+点落在 Java 名字上时交给 Java PSI（可选依赖）
+    RsfOutputLibrary.kt        把 <项目>/out 挂进模块类路径（`rsf-classes` 库）
     RsfDocumentationProvider.kt 悬停文档（`textDocument/hover`）
     RsfMarkdown.kt             服务器给的 markdown → 文档弹窗的 HTML
     RsfLiveTemplates.kt        样板（/liveTemplates/rainStarfox.xml）

@@ -9,6 +9,10 @@
 
     <depends>com.intellij.modules.platform</depends>
 
+    <!-- Java 支持是**可选**的：装了就跟 Java 一样能 Ctrl+点跳进 JDK / 第三方类。
+         没有 Java 插件的 IDE（CLion / GoLand / PyCharm）照样能装，只是少了这段跳转。 -->
+    <depends optional="true" config-file="rainStarfox-java.xml">com.intellij.modules.java</depends>
+
     <extensions defaultExtensionNs="com.intellij">
         <!-- 文件类型与语言 -->
         <fileType name="rainStarfox File"
@@ -46,12 +50,20 @@
         <!-- 重命名（Shift+F6）：改哪些地方由语言服务器算（textDocument/rename） -->
         <renameHandler implementation="org.rainstarfox.idea.RsfRenameHandler"/>
 
+        <!-- Alt+F7（Find Usages）：接管 processElementUsages，结果进标准 Find 工具窗 -->
+        <findUsagesHandlerFactory implementation="org.rainstarfox.idea.RsfFindUsagesHandlerFactory"/>
+        <lang.findUsagesProvider language="rainStarfox"
+                                 implementation="org.rainstarfox.idea.RsfFindUsagesProvider"/>
+
         <!-- 悬停文档（RDoc）：声明上方的 /// 行 -->
         <lang.documentationProvider language="rainStarfox"
                                     implementation="org.rainstarfox.idea.RsfDocumentationProvider"/>
 
         <!-- 样板（live templates）：fn / lam / class / ... 按 Tab 展开 -->
         <defaultLiveTemplatesProvider implementation="org.rainstarfox.idea.RsfLiveTemplates"/>
+
+        <!-- 把 <项目>/out 挂进模块类路径：Java 侧引用 rsf 编译出的类才不飘红 -->
+        <postStartupActivity implementation="org.rainstarfox.idea.RsfOutputActivity"/>
 
         <!-- 设置 -->
         <applicationService serviceImplementation="org.rainstarfox.idea.RsfSettings"/>
@@ -71,13 +83,6 @@
             <add-to-group group-id="RunMenu" anchor="first"/>
             <add-to-group group-id="EditorPopupMenu" anchor="last"/>
             <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
-        </action>
-        <action id="Rsf.FindUsages"
-                class="org.rainstarfox.idea.RsfFindUsagesAction"
-                text="查找 rainStarfox 引用"
-                description="列出光标处声明的所有引用（LSP textDocument/references）">
-            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
-            <add-to-group group-id="ToolsMenu" anchor="last"/>
         </action>
         <action id="Rsf.BuildFile"
                 class="org.rainstarfox.idea.RsfBuildAction"

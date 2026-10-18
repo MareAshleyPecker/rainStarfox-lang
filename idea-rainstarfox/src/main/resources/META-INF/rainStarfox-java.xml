@@ -1,0 +1,7 @@
+<idea-plugin>
+    <!-- 只在装了 Java 支持的 IDE 里加载（主描述文件里 optional depends 指到这里）。
+         CLion / GoLand 这类不带 com.intellij.modules.java 的 IDE 不会碰这些类。 -->
+    <extensions defaultExtensionNs="com.intellij">
+        <gotoDeclarationHandler implementation="org.rainstarfox.idea.RsfJavaGotoDeclarationHandler"/>
+    </extensions>
+</idea-plugin>
