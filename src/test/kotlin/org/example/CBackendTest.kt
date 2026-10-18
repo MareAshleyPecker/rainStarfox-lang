@@ -73,13 +73,11 @@ class CBackendTest {
     }
 
     @Test
-    fun `类这种还没接的构造要显式报错`() {
+    fun `还没接的构造要显式报错`() {
         val error = assertThrows<RsfError> {
             emit(
                 """
-                class P {
-                    var x : int = 0
-                }
+                enum Color { Red, Green }
 
                 fn main() -> void {
                     rtn
@@ -90,4 +88,54 @@ class CBackendTest {
         assertEquals("native", error.phase)
         assertTrue(error.detail.contains("暂不支持"), error.detail)
     }
+
+    @Test
+    fun `类摊成 struct 与 self 方法`() {
+        val c = emit(
+            """
+            class Point(x0 : int) {
+                var x : int = x0
+
+                fn get() -> int { rtn x }
+
+                stc fn zero() -> int { rtn 0 }
+            }
+
+            fn main() -> void {
+                var p : Point = new Point(3)
+                println(p.get())
+                rtn
+            }
+            """.trimIndent(),
+        )
+        assertTrue(c.contains("typedef struct rsf_cls_Point {"), c)
+        assertTrue(c.contains("int32_t x;"), c)
+        assertTrue(c.contains("int32_t rsf_m_Point_get(rsf_cls_Point* self)"), c)
+        assertTrue(c.contains("int32_t rsf_st_Point_zero(void)"), c)
+        assertTrue(c.contains("rsf_new_Point_0(3)"), c)
+        assertTrue(c.contains("self->x"), c)
+    }
+
+    @Test
+    fun `构造器里字段初值先于构造体`() {
+        val c = emit(
+            """
+            class Q {
+                var v : int = 1
+
+                constructor(n : int) { v = n }
+            }
+
+            fn main() -> void {
+                var q : Q = new Q(5)
+                println(q.v)
+                rtn
+            }
+            """.trimIndent(),
+        )
+        val body = c.substringAfter("rsf_cls_Q* rsf_new_Q_0(int32_t v_n) {")
+        assertTrue(body.contains("self->v = 1;"), body.take(200))
+        assertTrue(body.contains("self->v = v_n;"), body.take(200))
+    }
+
 }

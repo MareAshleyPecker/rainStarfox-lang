@@ -6,6 +6,8 @@ import org.example.complie.ast.Block
 import org.example.complie.ast.BoolLit
 import org.example.complie.ast.BreakStmt
 import org.example.complie.ast.CallExpr
+import org.example.complie.ast.CharLit
+import org.example.complie.ast.ClassDecl
 import org.example.complie.ast.ContinueStmt
 import org.example.complie.ast.Expr
 import org.example.complie.ast.ExprStmt
@@ -15,13 +17,17 @@ import org.example.complie.ast.IfExpr
 import org.example.complie.ast.IfStmt
 import org.example.complie.ast.IndexAssignStmt
 import org.example.complie.ast.IndexExpr
-import org.example.complie.ast.MemberExpr
-import org.example.complie.ast.NewArrayExpr
 import org.example.complie.ast.IntLit
 import org.example.complie.ast.LongLit
+import org.example.complie.ast.MemberAssignStmt
+import org.example.complie.ast.MemberExpr
+import org.example.complie.ast.NewArrayExpr
+import org.example.complie.ast.NewExpr
 import org.example.complie.ast.ReturnStmt
 import org.example.complie.ast.Stmt
 import org.example.complie.ast.StringLit
+import org.example.complie.ast.ThisExpr
+import org.example.complie.ast.TypeRef
 import org.example.complie.ast.UnaryExpr
 import org.example.complie.ast.VarDeclStmt
 import org.example.complie.ast.VarExpr
@@ -31,6 +37,7 @@ import org.example.complie.lexing.TokenKind
 import org.example.complie.sema.RsfBase
 import org.example.complie.sema.RsfType
 import org.example.complie.sema.SemanticModel
+import org.example.complie.sema.UserMember
 
 /**
  * 阶段 52 的 **C 后端**（native 线的第一刀）。
@@ -41,26 +48,40 @@ import org.example.complie.sema.SemanticModel
  * 调用约定、PE 链接全交给编译器，我们只对轴『语义 → C』负责；指针那套
  * （DESIGN-23 的 L1/L2/L3）以后可以在这条线上按真地址落地。
  *
- * v1 只收一个子集，遇到不收的构造**显式报错**（不静默糊过去）：
- * int / long / bool / string、顶层函数（不重载）、if / while / for、递归、
- * `print` / `println`、字符串 `+` 与 `==` / `!=`。类、枚举、接口、错误返回、
- * 浮点、数组、内置函数都还没接。
+ * 支持范围（阶段 52c 起含类）：
+ * int / long / bool / string / 一维数组 / 类（字段 + 实例方法与静态方法 + 构造器）/
+ * 顶层函数（不重载）/ if / while / for / 递归 / print / println / 字符串 `+` 与 `==` /
+ * `intToString` 等少数内置。
+ * 类继承、接口、枚举、泛型、多维数组、浮点、错误返回都还没接，遇到**显式报错**。
  */
 class CBackend(private val model: SemanticModel) {
 
     /** 换行符用码点拼，避免源码里的转义在工具链里被二次解析。 */
     private val NL: Char = 10.toChar()
 
+    private val classes: Map<String, ClassDecl> = model.classModel.classes
+    private val ctorNames = HashMap<FuncDecl, String>()
+    private val methodNames = HashMap<FuncDecl, String>()
+    private val defaultCtorNames = HashMap<ClassDecl, String>()
+    private var currentClass: ClassDecl? = null
+
     fun emit(): String {
+        checkProgram()
+        nameEverything()
         val sb = StringBuilder()
         sb.append(RUNTIME)
-        checkProgram()
-        for (fn in model.functions.sortedBy { it.name }) sb.append(prototype(fn)).append(";\n")
+        for (cls in classes.values) sb.append(struct(cls))
+        for (fn in model.functions.sortedBy { it.name }) sb.append(protoTop(fn)).append(";\n")
+        for (cls in classes.values) {
+            for (fn in cls.methods) sb.append(protoMember(cls, fn)).append(";\n")
+            val defaultCtor = defaultCtorNames[cls]
+            if (defaultCtor != null) sb.append("rsf_cls_${cls.name}* $defaultCtor(void);"); sb.append(10.toChar())
+        }
         sb.append('\n')
-        for (fn in model.functions.sortedBy { it.name }) {
-            sb.append(prototype(fn)).append(" {\n")
-            body(fn)?.let { sb.append(it) }
-            sb.append("}\n\n")
+        for (fn in model.functions.sortedBy { it.name }) sb.append(definition(fn, null))
+        for (cls in classes.values) {
+            for (fn in cls.methods) sb.append(definition(fn, cls))
+            if (defaultCtorNames.containsKey(cls)) sb.append(defaultConstructor(cls))
         }
         val entry = model.entry ?: throw RsfError("native", "没有 main 函数，C 后端不知道从哪开始跑")
         sb.append("int main(void) {\n")
@@ -74,27 +95,54 @@ class CBackend(private val model: SemanticModel) {
         return sb.toString()
     }
 
+    private fun nameEverything() {
+        for (cls in classes.values) {
+            var ctorIndex = 0
+            for (fn in cls.methods) {
+                if (fn.isConstructor) {
+                    ctorNames[fn] = "rsf_new_${cls.name}_$ctorIndex"
+                    ctorIndex++
+                } else if (fn.isStatic) {
+                    methodNames[fn] = "rsf_st_${cls.name}_${fn.name}"
+                } else {
+                    methodNames[fn] = "rsf_m_${cls.name}_${fn.name}"
+                }
+            }
+            if (ctorIndex == 0) defaultCtorNames[cls] = "rsf_new_${cls.name}_0"
+        }
+    }
+
     // ------------------------------------------------------------------ 前置检查
 
     private fun checkProgram() {
-        if (model.classModel.classes.isNotEmpty()) fail("类")
         if (model.enums.isNotEmpty()) fail("枚举")
         if (model.interfaces.isNotEmpty()) fail("接口")
         if (model.annotations.isNotEmpty()) fail("注解")
+        if (model.superClasses.isNotEmpty()) fail("类继承")
+        if (model.superInterfaces.isNotEmpty()) fail("接口实现")
         for (fn in model.functions) {
             if (model.functionTable[fn.name]?.size ?: 0 > 1) fail("重载函数（${fn.name}）")
-            if (fn.isConstructor) fail("构造器")
+        }
+        for (cls in classes.values) {
+            if (cls.typeParams.isNotEmpty()) fail("泛型类（${cls.name}）")
+            if (cls.supertypes.isNotEmpty()) fail("类的父类型（${cls.name}）")
+            for (fn in cls.methods) if (fn.body == null) fail("无方法体（${fn.name}）")
         }
     }
 
     private fun fail(what: String): Nothing =
-        throw RsfError("native", "C 后端暂不支持：$what（阶段 52 只接了 int/long/bool/string 与顶层函数）")
+        throw RsfError("native", "C 后端暂不支持：$what（阶段 52 的 C 后端只接了 int/long/bool/string/数组/类）")
 
     // ------------------------------------------------------------------ 类型
 
-    private fun returnType(fn: FuncDecl): RsfType = model.returnTypes[fn] ?: RsfType.VOID
+    private fun returnType(fn: FuncDecl): RsfType =
+        model.returnTypes[fn] ?: model.classModel.methodReturns[fn] ?: RsfType.VOID
 
-    private fun cType(type: RsfType, at: Expr? = null): String {
+    /** 参数类型：顶层函数在 `model.paramTypes`，类方法/构造器在 `classModel.methodParams` 里。 */
+    private fun paramTypesOf(fn: FuncDecl): List<RsfType> =
+        model.paramTypes[fn] ?: model.classModel.methodParams[fn]?.map { it.type } ?: emptyList()
+
+    private fun cType(type: RsfType): String {
         if (type.arrayDepth > 1) fail("多维数组")
         if (type.arrayDepth == 1) return "rsf_arr"
         return when (type.base) {
@@ -105,28 +153,117 @@ class CBackend(private val model: SemanticModel) {
             RsfBase.STRING -> "rsf_str"
             RsfBase.CHAR -> "uint16_t"
             RsfBase.BYTE -> "int8_t"
+            RsfBase.EXTERNAL -> classPointer(type)
             else -> fail("类型 '${type.base.rsfName}'")
         }
     }
 
-    // ------------------------------------------------------------------ 函数
+    private fun classPointer(type: RsfType): String {
+        val name = type.externalName ?: fail("外部类型")
+        if (classes.containsKey(name)) return "rsf_cls_$name*"
+        fail("JVM 类型（$name）")
+    }
 
-    private fun fnName(fn: FuncDecl): String = "rsf_fn_" + fn.name
+    private fun elemCType(type: RsfType): String = when (type.base) {
+        RsfBase.INT -> "int32_t"
+        RsfBase.LONG -> "int64_t"
+        RsfBase.BOOL -> "bool"
+        RsfBase.STRING -> "rsf_str"
+        RsfBase.CHAR -> "uint16_t"
+        RsfBase.BYTE -> "int8_t"
+        RsfBase.EXTERNAL -> classPointer(type)
+        else -> fail("数组元素类型 '${type.base.rsfName}'")
+    }
 
-    private fun paramName(name: String): String = "v_" + name
+    private fun elementOf(type: RsfType): RsfType =
+        if (type.arrayDepth > 0) type.copy(arrayDepth = type.arrayDepth - 1) else type
 
-    private fun prototype(fn: FuncDecl): String {
-        val params = model.paramTypes[fn] ?: emptyList()
+    // ------------------------------------------------------------------ 类
+
+    private fun fieldTypes(cls: ClassDecl): List<RsfType> =
+        model.classModel.fieldTypes[cls] ?: cls.fields.map { fail("字段类型（${it.name}）") }
+
+    private fun struct(cls: ClassDecl): String {
+        val sb = StringBuilder()
+        sb.append("typedef struct rsf_cls_${cls.name} {\n")
+        val types = fieldTypes(cls)
+        cls.fields.forEachIndexed { i, f ->
+            sb.append("    ").append(cType(types[i])).append(' ').append(f.name).append(";\n")
+        }
+        sb.append("} rsf_cls_${cls.name};\n\n")
+        return sb.toString()
+    }
+
+    private fun protoTop(fn: FuncDecl): String {
+        val params = paramTypesOf(fn)
         val list = fn.params.mapIndexed { i, p -> "${cType(params[i])} ${paramName(p.name)}" }
         return "${cType(returnType(fn))} ${fnName(fn)}(${list.joinToString(", ").ifEmpty { "void" }})"
     }
 
-    private fun body(fn: FuncDecl): String? {
-        val block = fn.body ?: return null
+    private fun protoMember(cls: ClassDecl, fn: FuncDecl): String {
+        val params = paramTypesOf(fn)
+        val list = fn.params.mapIndexed { i, p -> "${cType(params[i])} ${paramName(p.name)}" }.toMutableList()
+        if (fn.isConstructor) {
+            val name = ctorNames[fn] ?: fail("构造器命名")
+            return "rsf_cls_${cls.name}* $name(${list.joinToString(", ").ifEmpty { "void" }})"
+        }
+        val name = methodNames[fn] ?: fail("方法命名")
+        if (!fn.isStatic) list.add(0, "rsf_cls_${cls.name}* self")
+        return "${cType(returnType(fn))} $name(${list.joinToString(", ").ifEmpty { "void" }})"
+    }
+
+    private fun definition(fn: FuncDecl, cls: ClassDecl?): String {
+        currentClass = cls
         val sb = StringBuilder()
-        for (stmt in block.statements) sb.append(stmt(stmt, 1))
+        if (cls == null) {
+            sb.append(protoTop(fn)).append(" {\n")
+            fn.body?.statements?.forEach { sb.append(stmt(it, 1)) }
+            sb.append("}\n\n")
+            currentClass = null
+            return sb.toString()
+        }
+        if (fn.isConstructor) {
+            val name = ctorNames[fn] ?: fail("构造器命名")
+            val params = paramTypesOf(fn)
+            val list = fn.params.mapIndexed { i, p -> "${cType(params[i])} ${paramName(p.name)}" }
+            sb.append("rsf_cls_${cls.name}* $name(${list.joinToString(", ").ifEmpty { "void" }}) {\n")
+            sb.append("    rsf_cls_${cls.name}* self = (rsf_cls_${cls.name}*)calloc(1, sizeof(rsf_cls_${cls.name}));\n")
+            cls.fields.forEach { f ->
+                sb.append("    self->").append(f.name).append(" = ").append(expr(f.initializer)).append(";\n")
+            }
+            fn.body?.statements?.forEach { sb.append(stmt(it, 1)) }
+            sb.append("    return self;\n")
+            sb.append("}\n\n")
+            currentClass = null
+            return sb.toString()
+        }
+        sb.append(protoMember(cls, fn)).append(" {\n")
+        fn.body?.statements?.forEach { sb.append(stmt(it, 1)) }
+        sb.append("}\n\n")
+        currentClass = null
         return sb.toString()
     }
+
+    /** 类没写构造器时，`new C()` 仍要能跑：补一个只填字段初值的默认构造器。 */
+    private fun defaultConstructor(cls: ClassDecl): String {
+        val name = defaultCtorNames[cls] ?: fail("默认构造器命名")
+        currentClass = cls
+        val sb = StringBuilder()
+        sb.append("rsf_cls_${cls.name}* $name(void) {\n")
+        sb.append("    rsf_cls_${cls.name}* self = (rsf_cls_${cls.name}*)calloc(1, sizeof(rsf_cls_${cls.name}));\n")
+        cls.fields.forEach { f ->
+            sb.append("    self->").append(f.name).append(" = ").append(expr(f.initializer)).append(";\n")
+        }
+        sb.append("    return self;\n}\n\n")
+        currentClass = null
+        return sb.toString()
+    }
+
+    // ------------------------------------------------------------------ 函数名
+
+    private fun fnName(fn: FuncDecl): String = "rsf_fn_" + fn.name
+
+    private fun paramName(name: String): String = "v_" + name
 
     // ------------------------------------------------------------------ 语句
 
@@ -135,7 +272,18 @@ class CBackend(private val model: SemanticModel) {
             val type = model.typeOf(s)
             pad(indent) + "${cType(type)} ${paramName(s.name)} = ${expr(s.initializer)};\n"
         }
-        is AssignStmt -> pad(indent) + "${paramName(s.name)} = ${expr(s.value)};\n"
+        is AssignStmt -> {
+            val field = model.classModel.bareFieldWrites[s]
+            if (field != null) {
+                pad(indent) + "self->" + s.name + " = " + expr(s.value) + ";\n"
+            } else {
+                pad(indent) + "${paramName(s.name)} = ${expr(s.value)};\n"
+            }
+        }
+        is MemberAssignStmt -> {
+            if (model.classModel.fieldWrites[s] == null) fail("成员赋值")
+            pad(indent) + expr(s.target.receiver) + "->" + s.target.name + " = " + expr(s.value) + ";\n"
+        }
         is IndexAssignStmt -> {
             val target = s.target
             val elem = elemCType(elementOf(model.typeOf(target.receiver)))
@@ -180,15 +328,14 @@ class CBackend(private val model: SemanticModel) {
         else -> fail("语句 ${s::class.simpleName}")
     }
 
-    /**
-     * `for` 在 AST 里已经是解糖后的「块 + ForStmt」，所以这里直接映射成 C 的 for。
-     * 更新语句必须是赋值（rsf 的 for 只可能是 `i = i + 1` 这类），C 的第三个槽
-     * 正好收表达式——这样 `continue` 自动落到步进上，与 rsf 语义一致。
-     */
     private fun forStmt(s: ForStmt, indent: Int): String {
         val step = when (val st = s.step) {
             null -> ""
-            is AssignStmt -> "${paramName(st.name)} = ${expr(st.value)}"
+            is AssignStmt -> if (model.classModel.bareFieldWrites[st] != null) {
+                "self->" + st.name + " = " + expr(st.value)
+            } else {
+                "${paramName(st.name)} = ${expr(st.value)}"
+            }
             else -> fail("for 的更新语句（${st::class.simpleName}）")
         }
         val cond = s.condition?.let { expr(it) } ?: ""
@@ -204,9 +351,14 @@ class CBackend(private val model: SemanticModel) {
     private fun expr(e: Expr): String = when (e) {
         is IntLit -> e.value.toString()
         is LongLit -> "${e.value}LL"
+        is CharLit -> e.value.code.toString() + "u"
         is StringLit -> stringLit(e.value)
         is BoolLit -> if (e.value) "true" else "false"
-        is VarExpr -> paramName(e.name)
+        is VarExpr -> {
+            val field = model.classModel.fieldReads[e]
+            if (field != null) "self->${e.name}" else paramName(e.name)
+        }
+        is ThisExpr -> "self"
         is UnaryExpr -> unary(e)
         is BinaryExpr -> binary(e)
         is IfExpr -> "(${expr(e.condition)} ? ${expr(e.whenTrue)} : ${expr(e.whenFalse)})"
@@ -214,22 +366,17 @@ class CBackend(private val model: SemanticModel) {
         is IndexExpr -> indexRead(e)
         is MemberExpr -> member(e)
         is NewArrayExpr -> newArray(e)
+        is NewExpr -> newObj(e)
         else -> fail("表达式 ${e::class.simpleName}")
     }
 
-    /** 数组元素的 C 类型（`int[]` → `int32_t`）；只看 [RsfType.base]。 */
-    private fun elemCType(type: RsfType): String = when (type.base) {
-        RsfBase.INT -> "int32_t"
-        RsfBase.LONG -> "int64_t"
-        RsfBase.BOOL -> "bool"
-        RsfBase.STRING -> "rsf_str"
-        RsfBase.CHAR -> "uint16_t"
-        RsfBase.BYTE -> "int8_t"
-        else -> fail("数组元素类型 '${type.base.rsfName}'")
+    private fun newObj(e: NewExpr): String {
+        val cls = model.classModel.newTargets[e] ?: fail("new 的类（${e.className}）")
+        val ctor = model.classModel.newCtors[e]
+        val name = if (ctor != null) ctorNames[ctor] ?: fail("构造器命名") else defaultCtorNames[cls] ?: fail("默认构造器命名")
+        val args = e.arguments.joinToString(", ") { expr(it) }
+        return "$name($args)"
     }
-
-    private fun elementOf(type: RsfType): RsfType =
-        if (type.arrayDepth > 0) type.copy(arrayDepth = type.arrayDepth - 1) else type
 
     private fun indexRead(e: IndexExpr): String {
         val arrayType = model.typeOf(e.receiver)
@@ -239,24 +386,37 @@ class CBackend(private val model: SemanticModel) {
 
     private fun member(e: MemberExpr): String {
         if (e.name == "length" && e.arguments == null) return "(${expr(e.receiver)}.len)"
-        fail("成员访问 '${e.name}'")
+        val receiver = expr(e.receiver)
+        return when (val resolved = model.classModel.members[e]) {
+            is UserMember.Field -> "$receiver->${e.name}"
+            is UserMember.Method -> {
+                val name = methodNames[resolved.decl] ?: fail("方法命名")
+                val args = e.arguments ?: emptyList()
+                if (resolved.decl.isStatic) {
+                    "$name(${args.joinToString(", ") { expr(it) }})"
+                } else {
+                    (listOf(receiver) + args.map { expr(it) }).joinToString(", ").let { "$name($it)" }
+                }
+            }
+            else -> fail("成员访问 '${e.name}'")
+        }
     }
 
     private fun newArray(e: NewArrayExpr): String {
         if (e.dimensions.size != 1) fail("多维数组")
-        val type = RsfType(externalNameOf(e.elementType), arrayDepth = 0)
+        val type = RsfType(baseOf(e.elementType), arrayDepth = 0)
         val elemSize = elemCType(type)
         return "rsf_arr_new(${expr(e.dimensions[0])}, (int64_t)sizeof($elemSize))"
     }
 
-    private fun externalNameOf(ref: org.example.complie.ast.TypeRef): RsfBase = when (ref.name) {
+    private fun baseOf(ref: TypeRef): RsfBase = when (ref.name) {
         "int" -> RsfBase.INT
         "long" -> RsfBase.LONG
         "bool" -> RsfBase.BOOL
         "string" -> RsfBase.STRING
         "char" -> RsfBase.CHAR
         "byte" -> RsfBase.BYTE
-        else -> fail("数组元素类型 '${ref.name}'")
+        else -> if (classes.containsKey(ref.name)) RsfBase.EXTERNAL else fail("数组元素类型 '${ref.name}'")
     }
 
     private fun unary(e: UnaryExpr): String {
@@ -295,7 +455,16 @@ class CBackend(private val model: SemanticModel) {
 
     private fun call(e: CallExpr): String {
         if (e.name == "print" || e.name == "println") return printCall(e)
-        // 内置函数只接 v1 用得到的那几个；其余（parseInt 等）显式报未支持
+        val implicit = model.classModel.implicitCalls[e]
+        if (implicit != null) {
+            val name = methodNames[implicit.decl] ?: fail("方法命名")
+            val args = e.arguments.joinToString(", ") { expr(it) }
+            return if (implicit.decl.isStatic) {
+                "$name($args)"
+            } else {
+                "$name(self${if (args.isEmpty()) "" else ", $args"})"
+            }
+        }
         when (e.name) {
             "intToString" -> return "rsf_int_to_str(${expr(e.arguments[0])})"
             "charToInt" -> return "((int32_t)${expr(e.arguments[0])})"
