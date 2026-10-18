@@ -187,6 +187,35 @@ public fn unescapeValue(s : string) -> string {
     rtn out
 }
 
+// 位置 i 处是不是**下一个属性**的开头。阶段 30c 起值里可能出现空格（函数类型的
+// 类型文本就长 `(int) -> int`），所以边界判据改成「空格 + 标识符 + '='」，
+// 与 Backend.rsf 的 keyStartsAt 同一套。
+fn attrWordChar(c : char) -> bool {
+    if (c >= 'a' && c <= 'z') { rtn true }
+    if (c >= 'A' && c <= 'Z') { rtn true }
+    if (c >= '0' && c <= '9') { rtn true }
+    rtn c == '_'
+}
+
+fn attrKeyStartsAt(t : string, i : int) -> bool {
+    var len = t.length()
+    if (i >= len) { rtn false }
+    if (t.charAt(i) != ' ') { rtn false }
+    var j = i + 1
+    var n = 0
+    var going = true
+    while (j < len && going) {
+        if (attrWordChar(t.charAt(j))) {
+            j = j + 1
+            n = n + 1
+        } else {
+            going = false
+        }
+    }
+    if (n == 0 || j >= len) { rtn false }
+    rtn t.charAt(j) == '='
+}
+
 // 取一个属性；没有就返回空串
 public fn attr(n : Node, key : string) -> string {
     var t = n.text
@@ -198,7 +227,7 @@ public fn attr(n : Node, key : string) -> string {
         var k = t.substring(keyStart, i)
         i = i + 1
         var valStart = i
-        while (i < len && t.charAt(i) != ' ') { i = i + 1 }
+        while (i < len && !attrKeyStartsAt(t, i)) { i = i + 1 }
         var v = t.substring(valStart, i)
         if (k == key) { rtn unescapeValue(v) }
         i = i + 1
@@ -239,7 +268,9 @@ fn isErrorNode(n : Node) -> bool {
 
 public enum Kind {
     NULLV, INTV, LONGV, FLOATV, DOUBLEV, BOOLV, CHARV, BYTEV,
-    STRV, OBJV, ARRV, ENUMV, LISTV, CTYPEV, FILEV
+    STRV, OBJV, ARRV, ENUMV, LISTV, CTYPEV, FILEV,
+    // 阶段 30c：函数值（`lam(...) -> T { ... }` 造出来的闭包）
+    CLOSV
 }
 
 // 数值提升的档位（和 RsfBase.rank 同一张表：byte/char 与 int 同档，先提升成 int）
@@ -279,6 +310,13 @@ public class Val(kind : Kind) {
     var av : ?Arr = null
     var lsv : ?JList = null
     var cname : string = ""
+    // 阶段 30c：闭包（Kind.CLOSV）。捕获是**值捕获**——直接抓住定义处的环境链，
+    // 名字按链查找，与 Kotlin `Interpreter.Closure`（计划 + 捕获值清单）可观察行为相同
+    // （Checker 已经禁止捕获 var，共享链与值快照在这里没有区别）。
+    var clEnv : ?Env = null
+    var clBody : ?Node = null
+    var clPnames : string[] = new string[0]
+    var clThis : ?Obj = null
 }
 
 public fn vNull() -> Val {
@@ -371,6 +409,18 @@ public fn vCType(name : string) -> Val {
 public fn vFile(path : string) -> Val {
     var v = new Val(Kind.FILEV)
     v.sv = path
+    rtn v
+}
+
+// 阶段 30c：函数值 = 捕获环境 + 形参名 + 体（块）+ 定义处的 this。
+// 与 Kotlin `Interpreter.Closure(plan, captures)` 同构：调用时开一层新帧，
+// 父链指向捕获环境，所以 lambda 体里读到外层名字仍然解析得到。
+public fn vClos(e : ?Env, body : Node, pnames : string[], self : ?Obj) -> Val {
+    var v = new Val(Kind.CLOSV)
+    v.clEnv = e
+    v.clBody = body
+    v.clPnames = pnames
+    v.clThis = self
     rtn v
 }
 
@@ -1806,6 +1856,9 @@ public class Interp(prog : Node) {
             Kind.ARRV : rtn renderArray(v.av!!)!!
             Kind.CTYPEV : rtn v.cname
             Kind.FILEV : rtn v.sv
+            // 阶段 30c：函数值。JVM 上打出来的是闭包对象的身份哈希（每次运行都不同），
+            // 两端没法保证一致，所以这条路上直接拦掉（Checker 本来也不放行）。
+            Kind.CLOSV : fail "函数值不能直接打印或拼进字符串（DESIGN-30）"
         }
         rtn "?"
     }
@@ -2110,6 +2163,8 @@ public class Interp(prog : Node) {
             // 孩子 = [操作数, TARGET]，TARGET 的 `type` 是目标类型文本（Parser.rsf:2716-2748）。
             NodeKind.AS : rtn evAs(n, env)!!
             NodeKind.IS : rtn evIs(n, env)!!
+            // 阶段 30c：`lam(x : int) -> int { ... }` 求值成一个闭包值
+            NodeKind.LAMBDA : rtn evLambda(n, env)!!
             else : fail unsupported("表达式节点 " + kindName(n.kind))
         }
         rtn vNull()
@@ -2191,6 +2246,63 @@ public class Interp(prog : Node) {
         var v = ev(kid(n, 0), env)!!
         if (v.k == Kind.NULLV) { fail makeSignal("X", "rsf: 对 null 使用了 '!!'") }
         rtn v
+    }
+
+    // 阶段 30c：lambda 求值 —— 抓住当前环境（值捕获语义见 Val.clEnv 的注释）。
+    // 孩子形状：PARAM...（可能 0 个）然后 BLOCK（见 Parser.rsf 的 parseLambda）。
+    public fn evLambda(n : Node, env : Env) -> !Val {
+        var cnt = 0
+        var body : ?Node = null
+        var i = 0
+        while (i < n.childCount) {
+            var ch = kid(n, i)
+            if (ch.kind == NodeKind.PARAM) { cnt = cnt + 1 }
+            if (ch.kind == NodeKind.BLOCK) { body = ch }
+            i = i + 1
+        }
+        if (body == null) { fail "17c 解释器：lambda 缺少块体" }
+        var pn : string[] = new string[cnt]
+        var pi = 0
+        i = 0
+        while (i < n.childCount) {
+            var ch2 = kid(n, i)
+            if (ch2.kind == NodeKind.PARAM) {
+                if (pi < cnt) { pn[pi] = attr(ch2, "name") }
+                pi = pi + 1
+            }
+            i = i + 1
+        }
+        rtn vClos(env, body!!, pn, env.thisObj())
+    }
+
+    // 调一个闭包：开一层新帧（父链 = 捕获环境），绑形参，然后跑块体。
+    // `rtn` 在块体里以 "R" 信号冒出，和 execFnBody 走同一条路。
+    public fn callClosure(cv : Val, args : Val[]) -> !Val {
+        if (cv.clBody == null) { fail "17c 解释器：函数值没有体" }
+        var e = new Env(cv.clEnv)
+        e.me = cv.clThis
+        var i = 0
+        while (i < cv.clPnames.length) {
+            var a = vNull()
+            if (i < args.length) { a = args[i] }
+            e.define(cv.clPnames[i], a)
+            i = i + 1
+        }
+        depth = depth + 1
+        if (depth > 2000) {
+            depth = depth - 1
+            fail "调用层级超过 2000 层，多半是无限递归"
+        }
+        var out = vNull()
+        var sig = ""
+        try {
+            blk(cv.clBody!!, e)!!
+        } catch (err : string) {
+            if (signalKind(err) == "R") { out = retVal } else { sig = err }
+        }
+        depth = depth - 1
+        if (sig.length() > 0) { fail sig }
+        rtn out
     }
 
     public fn evUnary(n : Node, env : Env) -> !Val {
@@ -2559,7 +2671,11 @@ public class Interp(prog : Node) {
     }
 
     public fn evCall(n : Node, env : Env) -> !Val {
-        var args = evalArgs(kid(n, 0), env)!!
+        // 阶段 30c：`f!!(21)` 是「callee 在前（0 号）、ARGS 在后（1 号）」，
+        // 普通调用只有一个孩子（ARGS 在 0 号）。
+        var argsIx = 0
+        if (n.childCount > 1) { argsIx = 1 }
+        var args = evalArgs(kid(n, argsIx), env)!!
         rtn invokeCall(attr(n, "name"), args, env)!!
     }
 
@@ -2669,6 +2785,12 @@ public class Interp(prog : Node) {
             rtn vNull()
         }
         if (isBuiltinName(nm)) { rtn callBuiltin(nm, args)!! }
+        // 阶段 30c：函数值调用（`f(1)` / `f!!(1)` —— 两种写法的 name 都是那个变量名）。
+        // 局部/形参里找到闭包就调它；否则落回原来的解析顺序。
+        var fv = env.lookup(nm)
+        if (fv != null) {
+            if (fv!!.k == Kind.CLOSV) { rtn callClosure(fv!!, args)!! }
+        }
         // 省掉 new 的构造写法（`Point(1, 2)`）：类名与函数名不可能重名
         var c = findCls(nm)
         if (c != null) { rtn constructUser(c!!, args)!! }

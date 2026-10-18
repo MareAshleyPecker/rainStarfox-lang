@@ -104,6 +104,9 @@ fn accAnnotation() -> int { rtn 8192 }
 // `ClassFormatError: Method X in class Y has illegal modifiers: 0x29`。
 // 单开一个函数就是为了让读者一眼看出这里加的是同步位而不是某个「super 标志」。
 fn accSync() -> int { rtn 32 }
+// 阶段 30c：lambda 的合成实现方法带 ACC_SYNTHETIC（0x1000 = 4096），
+// 与 Kotlin 的 `ACC_PRIVATE | ACC_STATIC | ACC_SYNTHETIC`（2|8|4096 = 4106）对齐。
+fn accSynthetic() -> int { rtn 4096 }
 
 // ============================================================ 字符串数组工具
 
@@ -136,7 +139,36 @@ fn strArrPush(a : string[], n : int, s : string) -> string[] {
 
 // ============================================================ 属性读取
 
-// 与 Interp.rsf 的 attr 同一套（属性串是 "k=v k=v"，值已转义）
+// 位置 i 处是不是**下一个属性**的开头。阶段 30c 起值里可能出现空格——函数类型的
+// 类型文本就长 `(int) -> int`——所以「值到空格为止」这条老规矩会把类型截断。
+// 新的边界判据：空格 + 标识符 + '='（属性名全是字母，值里的词不会长成这样）。
+fn isWordChar(c : char) -> bool {
+    if (c >= 'a' && c <= 'z') { rtn true }
+    if (c >= 'A' && c <= 'Z') { rtn true }
+    if (c >= '0' && c <= '9') { rtn true }
+    rtn c == '_'
+}
+
+fn keyStartsAt(t : string, i : int) -> bool {
+    var len = t.length()
+    if (i >= len) { rtn false }
+    if (t.charAt(i) != ' ') { rtn false }
+    var j = i + 1
+    var n = 0
+    var going = true
+    while (j < len && going) {
+        if (isWordChar(t.charAt(j))) {
+            j = j + 1
+            n = n + 1
+        } else {
+            going = false
+        }
+    }
+    if (n == 0 || j >= len) { rtn false }
+    rtn t.charAt(j) == '='
+}
+
+// 与 Interp.rsf 的 attr 同一套（属性串是 "k=v k=v"，值里的空格除了属性边界都算值）
 public fn prop(n : Node, key : string) -> string {
     var t = n.text
     var i = 0
@@ -147,7 +179,7 @@ public fn prop(n : Node, key : string) -> string {
         var k = t.substring(keyStart, i)
         i = i + 1
         var valStart = i
-        while (i < len && t.charAt(i) != ' ') { i = i + 1 }
+        while (i < len && !keyStartsAt(t, i)) { i = i + 1 }
         var v = t.substring(valStart, i)
         if (k == key) { rtn unesc(v) }
         i = i + 1
@@ -326,6 +358,14 @@ public class BType(base : string, name : string, nullable : bool, depth : int) {
     // 这是个还没被接收者实参替换掉的类型变量（`T`）时，这里记下它的**名字**。
     // 名字不能塞进 name（那是 JVM 内部名，desc() 要用），所以单开一个字段。
     var tpName : string = ""
+    // ---- 阶段 30c：函数类型 ----
+    // 函数类型在 JVM 上就是一个外部类型 `__RsfFn<arity>`（desc = `L__RsfFn<n>;`），
+    // 但 `(int) -> int` 与 `(string) -> int` 的内部名一模一样 —— 所以要额外记住
+    // 参数表与返回类型，比较类型时（sameType）用它们，`fnOk` 表示「这确实是个函数类型」。
+    // 与 extraArgs 一样用字段初始化而不是主构造参数，不动已有的 `new BType(...)` 调用点。
+    var fnOk : bool = false
+    var fnParams : BType[] = new BType[0]
+    var fnRet : ?BType = null
 
     constructor(base : string) {
         this(base, "", false, 0)
@@ -336,6 +376,9 @@ public class BType(base : string, name : string, nullable : bool, depth : int) {
         var t = new BType(base, name, nullable, depth)
         t.extraArgs = args
         t.tpName = tpName
+        t.fnOk = fnOk
+        t.fnParams = fnParams
+        t.fnRet = fnRet
         rtn t
     }
 
@@ -367,6 +410,9 @@ public class BType(base : string, name : string, nullable : bool, depth : int) {
     public fn substAll(subst : Subst) -> BType {
         var t = new BType(base, name, nullable, depth)
         t.tpName = tpName
+        t.fnOk = fnOk
+        t.fnParams = fnParams
+        t.fnRet = fnRet
         if (extraArgs.length > 0) {
             var a : BType[] = new BType[extraArgs.length]
             var i = 0
@@ -433,6 +479,9 @@ public class BType(base : string, name : string, nullable : bool, depth : int) {
         var t = new BType(base, name, nullable, depth - 1)
         t.extraArgs = extraArgs
         t.tpName = tpName
+        t.fnOk = fnOk
+        t.fnParams = fnParams
+        t.fnRet = fnRet
         rtn t
     }
 
@@ -442,6 +491,9 @@ public class BType(base : string, name : string, nullable : bool, depth : int) {
         var t = new BType(base, name, v, depth)
         t.extraArgs = extraArgs
         t.tpName = tpName
+        t.fnOk = fnOk
+        t.fnParams = fnParams
+        t.fnRet = fnRet
         rtn t
     }
 
@@ -507,7 +559,21 @@ fn sameType(a : BType, b : BType) -> bool {
     if (a.base != b.base) { rtn false }
     if (a.name != b.name) { rtn false }
     if (a.nullable != b.nullable) { rtn false }
-    rtn a.depth == b.depth
+    if (a.depth != b.depth) { rtn false }
+    // 阶段 30c：函数类型的内部名只带 arity（`__RsfFn1`），
+    // `(int) -> int` 与 `(string) -> int` 同名 —— 必须再比参数表与返回类型。
+    if (a.fnOk || b.fnOk) {
+        if (!a.fnOk || !b.fnOk) { rtn false }
+        if (a.fnParams.length != b.fnParams.length) { rtn false }
+        var i = 0
+        while (i < a.fnParams.length) {
+            if (!sameType(a.fnParams[i], b.fnParams[i])) { rtn false }
+            i = i + 1
+        }
+        if (a.fnRet == null || b.fnRet == null) { rtn a.fnRet == null && b.fnRet == null }
+        rtn sameType(a.fnRet!!, b.fnRet!!)
+    }
+    rtn true
 }
 
 // byte/char 一律提升成 int，其余是自己
@@ -736,6 +802,144 @@ public class Sig(name : string, node : Node, ret : BType, start : int, count : i
     var count : int = count
 }
 
+// ============================================================ 阶段 30c：闭包计划
+// lambda 的合成方法在 JVM 上是**静态**方法：描述符 = 捕获（this 第一） + 形参 + 返回。
+// 捕获清单必须在发码前就定下来（描述符要用），所以每个包围方法先跑一遍「发现」，
+// 把结果放进这些计划对象里，发码时只查表。口径逐条对齐 Kotlin 的
+// `Lowering.ClosureAnalyser`：捕获 = 首次引用顺序、this 永远在首位占 0 号槽。
+
+public class FnCap(kind : string) {
+    var kind : string = kind        // "this" / "local"
+    var name : string = ""
+    var type : BType = tVoid()
+    // 创建点所在的**外层帧**里的槽位（第二遍走包围方法体时按当时的 Scope 填）
+    var slot : int = -1
+}
+
+public class FnLevel(n : Node) {
+    var node : Node = n             // LAMBDA 节点（发码时按它反查）
+    var body : Node = n             // lambda 的块（BLOCK 节点）
+    var index : int = 0             // lambda$<包围方法>$<index>
+    var implName : string = ""
+    var params : BType[] = new BType[0]
+    var pnames : string[] = new string[0]
+    var ptexts : string[] = new string[0]   // 形参类型文本（空串 = 没写，靠期望类型补）
+    var ret : BType = tVoid()
+    var retKnown : bool = false
+    var hasThis : bool = false
+    var caps : FnCap[] = new FnCap[0]
+    var capCount : int = 0
+    // 这一帧**自己声明**的名字（形参 + 体里遇到的局部）——发现捕获时要知道
+    // 「这个名字不是我自己的」。与 Kotlin 的 Level.declared 一样是整帧一份、不随块弹出。
+    var declNames : string[] = new string[0]
+    var declTypes : BType[] = new BType[0]
+    var declCount : int = 0
+
+    public fn addCap(kind : string, name : string, t : BType) -> void {
+        var i = 0
+        while (i < capCount) {
+            if (caps[i].kind == kind && caps[i].name == name) { rtn }
+            i = i + 1
+        }
+        if (capCount >= caps.length) {
+            var bigger : FnCap[] = new FnCap[caps.length * 2 + 4]
+            var k = 0
+            while (k < capCount) {
+                bigger[k] = caps[k]
+                k = k + 1
+            }
+            caps = bigger
+        }
+        var c = new FnCap(kind)
+        c.name = name
+        c.type = t
+        caps[capCount] = c
+        capCount = capCount + 1
+    }
+
+    public fn addDecl(name : string, t : BType) -> void {
+        if (declCount >= declNames.length) {
+            var bn : string[] = new string[declNames.length * 2 + 4]
+            var bt : BType[] = new BType[declTypes.length * 2 + 4]
+            var k = 0
+            while (k < declCount) {
+                bn[k] = declNames[k]
+                bt[k] = declTypes[k]
+                k = k + 1
+            }
+            declNames = bn
+            declTypes = bt
+        }
+        declNames[declCount] = name
+        declTypes[declCount] = t
+        declCount = declCount + 1
+    }
+
+    public fn hasDecl(name : string) -> bool {
+        var i = declCount - 1
+        while (i >= 0) {
+            if (declNames[i] == name) { rtn true }
+            i = i - 1
+        }
+        rtn false
+    }
+
+    public fn declType(name : string) -> ?BType {
+        var i = declCount - 1
+        while (i >= 0) {
+            if (declNames[i] == name) { rtn declTypes[i] }
+            i = i - 1
+        }
+        rtn null
+    }
+
+    public fn arity() -> int { rtn params.length }
+
+    public fn fnType() -> BType { rtn fnTypeOf(params, ret, false) }
+}
+
+// 函数值调用点（`f(1)` / `f!!(1)`）的发射信息
+public class FnCall(nm : string) {
+    var sam : string = nm           // __RsfFn<arity>
+    var arity : int = 0
+    var params : BType[] = new BType[0]
+    var ret : BType = tVoid()
+    var slot : int = -1             // 函数值变量所在槽位（hasCallee = false 时用）
+    var fnType : BType = tVoid()    // 函数值本身的类型（槽位装载要用）
+    var callee : Node = new Node(NodeKind.ERROR)
+    var hasCallee : bool = false
+}
+
+// 规划捕获时的「打开着的 lambda 帧」栈：0 号是包围方法本身。
+// 与 Kotlin `ClosureAnalyser.levels`（只装 lambda）不同，这里把包围方法也当成一帧，
+// 因为捕获要不要继续往外传，取决于「命中帧」和「当前帧」的位置关系。
+public class LvFrames() {
+    var items : FnLevel[] = new FnLevel[8]
+    var count : int = 0
+
+    public fn push(l : FnLevel) -> void {
+        if (count >= items.length) {
+            var bigger : FnLevel[] = new FnLevel[items.length * 2]
+            var k = 0
+            while (k < count) {
+                bigger[k] = items[k]
+                k = k + 1
+            }
+            items = bigger
+        }
+        items[count] = l
+        count = count + 1
+    }
+
+    public fn pop() -> void {
+        if (count > 0) { count = count - 1 }
+    }
+
+    public fn top() -> FnLevel { rtn items[count - 1] }
+
+    public fn at(i : int) -> FnLevel { rtn items[i] }
+}
+
 public class Gen(owner : string) {
     var owner : string = owner          // 程序类内部名（写了 pkg 时已带包路径）
     // `pkg a.b` 的包前缀（`"a/b/"`）或空串。程序类与所有用户类/枚举的内部名都要
@@ -833,6 +1037,25 @@ public class Gen(owner : string) {
 
     // 当前正在遍历的是不是 static 方法（裸字段 / this 的合法性）
     var curStatic : bool = false
+
+    // ---- 阶段 30c：闭包 / 函数值 ----
+    // 正在编译的包围方法里所有 lambda 的计划（按发现顺序 = lambda$…$<k> 的 k 顺序）
+    var lvLevels : FnLevel[] = new FnLevel[4]
+    var lvCount : int = 0
+    // 本方法内已经分配给 lambda 的序号（`lambda$<方法名>$<k>` 的 k，含嵌套的）
+    var lvSeq : int = 0
+    // 实际用到的 arity（SAM 接口 `__RsfFn<n>` 只为它们生成）
+    var samArity : bool[] = new bool[64]
+    // 正在发射 lambda 的合成方法：跳过 LVT 与 @RsfLabels（Kotlin 的 lvt=null / closure!=null）
+    var lambdaMode : bool = false
+    // 正在发射「返回 Object 的 void lambda」：无值 rtn 与体末尾要发 ACONST_NULL; ARETURN
+    var voidObj : bool = false
+    // 期望类型（`var x : T = lam…` / `rtn lam…` / `x = lam…`）：lambda 省略参数类型/返回子句时靠它补
+    var expect : ?BType = null
+    // 函数值调用点 → 发射信息
+    var fnNodes : Node[] = new Node[4]
+    var fnVals : FnCall[] = new FnCall[4]
+    var fnCount : int = 0
 
     // 当前函数
     var slotCount : int = 0
@@ -1372,6 +1595,63 @@ public class Gen(owner : string) {
         rtn null
     }
 
+    // ---- 阶段 30c：闭包计划表 ----
+    public fn resetLevels() -> void { lvCount = 0 }
+
+    public fn addLevel(l : FnLevel) -> void {
+        if (lvCount >= lvLevels.length) {
+            var bigger : FnLevel[] = new FnLevel[lvLevels.length * 2 + 4]
+            var k = 0
+            while (k < lvCount) {
+                bigger[k] = lvLevels[k]
+                k = k + 1
+            }
+            lvLevels = bigger
+        }
+        lvLevels[lvCount] = l
+        lvCount = lvCount + 1
+    }
+
+    public fn levelOf(n : Node) -> ?FnLevel {
+        var i = 0
+        while (i < lvCount) {
+            if (lvLevels[i].node == n) { rtn lvLevels[i] }
+            i = i + 1
+        }
+        rtn null
+    }
+
+    public fn markArity(a : int) -> void {
+        if (a >= 0 && a < samArity.length) { samArity[a] = true }
+    }
+
+    public fn putFnCall(n : Node, f : FnCall) -> void {
+        if (fnCount >= fnNodes.length) {
+            var nn : Node[] = new Node[fnNodes.length * 2]
+            var vv : FnCall[] = new FnCall[fnVals.length * 2]
+            var k = 0
+            while (k < fnCount) {
+                nn[k] = fnNodes[k]
+                vv[k] = fnVals[k]
+                k = k + 1
+            }
+            fnNodes = nn
+            fnVals = vv
+        }
+        fnNodes[fnCount] = n
+        fnVals[fnCount] = f
+        fnCount = fnCount + 1
+    }
+
+    public fn fnCallOf(n : Node) -> ?FnCall {
+        var i = fnCount - 1
+        while (i >= 0) {
+            if (fnNodes[i] == n) { rtn fnVals[i] }
+            i = i - 1
+        }
+        rtn null
+    }
+
     public fn addOrElse(opcode : int, owner : string, target : string, targetDesc : string, params : BType[], result : BType, entryArg : bool) -> OrElse {
         var name = "__rsf_orelse$" + intToString(orSeq)
         orSeq = orSeq + 1
@@ -1393,6 +1673,119 @@ public class Gen(owner : string) {
 }
 
 // ============================================================ 类型文本 → BType
+
+// ============================================================ 阶段 30c：函数类型
+// 函数类型在 JVM 上就是一个外部类型 `__RsfFn<arity>`：`desc()` 天然给出
+// `L__RsfFn<n>;`，数组就是 `[L__RsfFn<n>;`。参数表与返回类型只用来做类型相等
+// 与 lambda 的合成方法描述符（见 BType 的 fnOk / fnParams / fnRet）。
+
+fn samName(arity : int) -> string { rtn "__RsfFn" + intToString(arity) }
+
+fn fnTypeOf(params : BType[], ret : BType, nullable : bool) -> BType {
+    var t = new BType("external", samName(params.length), nullable, 0)
+    t.fnOk = true
+    t.fnParams = params
+    t.fnRet = ret
+    rtn t
+}
+
+// 找配对的 ')'（`at` 必须是 '(' 的下标）。找不到回 -1。
+fn matchingTypeParen(text : string, at : int) -> int {
+    var depth = 0
+    var i = at
+    while (i < text.length()) {
+        var c = text.charAt(i)
+        if (c == '(') { depth = depth + 1 }
+        if (c == ')') {
+            depth = depth - 1
+            if (depth == 0) { rtn i }
+        }
+        i = i + 1
+    }
+    rtn -1
+}
+
+fn trimText(s : string) -> string {
+    var a = 0
+    var b = s.length()
+    while (a < b && s.charAt(a) == ' ') { a = a + 1 }
+    while (b > a && s.charAt(b - 1) == ' ') { b = b - 1 }
+    rtn s.substring(a, b)
+}
+
+// 按顶层逗号切分（跳过括号与泛型尖括号里的逗号）
+fn splitTypeTop(s : string) -> string[] {
+    var n = 1
+    var depth = 0
+    var i = 0
+    while (i < s.length()) {
+        var c = s.charAt(i)
+        if (c == '(' || c == '<') { depth = depth + 1 }
+        if (c == ')' || c == '>') { depth = depth - 1 }
+        if (c == ',' && depth == 0) { n = n + 1 }
+        i = i + 1
+    }
+    var out : string[] = new string[n]
+    var k = 0
+    var start = 0
+    depth = 0
+    i = 0
+    while (i < s.length()) {
+        var c2 = s.charAt(i)
+        if (c2 == '(' || c2 == '<') { depth = depth + 1 }
+        if (c2 == ')' || c2 == '>') { depth = depth - 1 }
+        if (c2 == ',' && depth == 0) {
+            out[k] = s.substring(start, i)
+            k = k + 1
+            start = i + 1
+        }
+        i = i + 1
+    }
+    out[k] = s.substring(start, s.length())
+    rtn out
+}
+
+fn looksFnType(text : string) -> bool {
+    if (text.length() == 0) { rtn false }
+    rtn text.charAt(0) == '('
+}
+
+// `(参数表) -> 返回类型` 的文本 → BType。整串被括号包住（数组形式
+// `((int) -> int)`）时按分组处理：内层再解一次。
+fn parseFnTypeText(g : Gen, text : string) -> ?BType {
+    var close = matchingTypeParen(text, 0)
+    if (close < 0) {
+        g.bad("函数类型 " + text)
+        rtn null
+    }
+    var inner = text.substring(1, close)
+    var after = close + 1
+    while (after < text.length() && text.charAt(after) == ' ') { after = after + 1 }
+    if (after >= text.length()) {
+        rtn typeOfText(g, trimText(inner))
+    }
+    if (after + 1 >= text.length() || text.charAt(after) != '-' || text.charAt(after + 1) != '>') {
+        g.bad("函数类型 " + text)
+        rtn null
+    }
+    var retText = trimText(text.substring(after + 2, text.length()))
+    var ret = typeOfText(g, retText)
+    if (ret == null) { rtn null }
+    var pt = trimText(inner)
+    var params : BType[] = new BType[0]
+    if (pt.length() > 0) {
+        var parts = splitTypeTop(pt)
+        params = new BType[parts.length]
+        var i = 0
+        while (i < parts.length) {
+            var pi = typeOfText(g, trimText(parts[i]))
+            if (pi == null) { rtn null }
+            params[i] = pi!!
+            i = i + 1
+        }
+    }
+    rtn fnTypeOf(params, ret!!, false)
+}
 
 fn canonicalBase(text : string) -> string {
     if (text == "void") { rtn "void" }
@@ -1427,6 +1820,22 @@ fn typeOfText(g : Gen, text : string) -> ?BType {
     if (nullable && depth > 0) {
         g.bad("可空数组类型 " + text)
         rtn null
+    }
+    // 阶段 30c：函数类型文本（`(int) -> int`、`() -> void`、`((int) -> int)[]`）。
+    // `?` 与 `[]` 已经在上面剥掉了，这里拿到的是「(…) -> …」或「((…))」。
+    if (looksFnType(rest)) {
+        var ft = parseFnTypeText(g, rest)
+        if (ft == null) { rtn null }
+        var fv = ft!!
+        if (depth > 0) {
+            var arr = new BType("external", fv.name, fv.nullable, depth)
+            arr.fnOk = true
+            arr.fnParams = fv.fnParams
+            arr.fnRet = fv.fnRet
+            fv = arr
+        }
+        if (nullable) { rtn fv.withNullable(true) }
+        rtn fv
     }
     // 第 5 刀：嵌套类型名 `注解名::伴生名`（`Marker::Impl`）。伴生类的 JVM 名就是
     // `注解名$伴生名`，所以先把 `::` 拆下来：base 部分照常走泛型/内置/用户类那几条路，
@@ -1641,18 +2050,6 @@ fn parseOneTypeArg(g : Gen, text : string) -> ?BType {
     var s = trimText(text)
     if (s.length() == 0) { rtn null }
     rtn typeOfText(g, s)
-}
-
-fn trimText(s : string) -> string {
-    var a = 0
-    var b = s.length()
-    while (a < b && isSpaceChar(s.charAt(a))) { a = a + 1 }
-    while (b > a && isSpaceChar(s.charAt(b - 1))) { b = b - 1 }
-    rtn s.substring(a, b)
-}
-
-fn isSpaceChar(c : char) -> bool {
-    rtn c == ' ' || c == '\t' || c == '\n' || c == '\r'
 }
 
 // `Box&<int>` 里的 `int` 那一段（不含最外层的 `&<` `>`）；格式不对给 null
@@ -1885,6 +2282,11 @@ fn jdkStatic(g : Gen, owner : string, nm : string, argv : Node) -> ?Mem2 {
         // 与 `visitLdcInsn(String)` 的 CONSTANT_Utf8 是两种常量，不能互相顶替。
         if (nm == "getObjectType" && argc == 1) {
             rtn staticM(owner, "getObjectType", "(Ljava/lang/String;)Lorg/objectweb/asm/Type;", tExternal("org/objectweb/asm/Type"), memP1(tString()))
+        }
+        // 阶段 30c：`Type.getMethodType("(…)…")` —— LambdaMetafactory 的 samMethodType /
+        // instantiatedMethodType 实参都是 MethodType 对象，必须由描述符字符串造出来。
+        if (nm == "getMethodType" && argc == 1) {
+            rtn staticM(owner, "getMethodType", "(Ljava/lang/String;)Lorg/objectweb/asm/Type;", tExternal("org/objectweb/asm/Type"), memP1(tString()))
         }
         rtn null
     }
@@ -3062,7 +3464,11 @@ public class Walker(g : Gen) {
                 sc.add(name, declared, slot0)
                 // 局部变量进 LVT（Kotlin 侧取的是**全部** IVarDecl，不看可达性；这里同理）
                 lvtAdd(g, name, declared, slot0)
+                // 阶段 30c：`var f : (int) -> int = lam(…)` —— 期望类型从这里传给 lambda
+                var savedExpect = g.expect
+                g.expect = declared
                 var it0 = walkExpr(init, sc)
+                g.expect = savedExpect
                 if (!acceptsValue(g, declared, init, it0)) {
                     g.bad("把 " + it0.desc() + " 赋给 " + declared.desc())
                     rtn
@@ -3082,7 +3488,19 @@ public class Walker(g : Gen) {
         }
         if (k == NodeKind.ASSIGN) {
             var value = st.children[0]
+            // 阶段 30c：先定目标的类型，`f = lam(…)` 才有期望类型
+            var preT : ?BType = sc.findType(prop(st, "name"))
+            if (preT == null && g.cur != null) {
+                var pw = g.cur!!.fieldOwnerInChain(prop(st, "name"))
+                if (pw != null) {
+                    var pf = pw!!.fieldOf(prop(st, "name"))
+                    if (pf != null) { preT = pf!!.type }
+                }
+            }
+            var savedExpect3 = g.expect
+            if (preT != null) { g.expect = preT!! }
             var vt = walkExpr(value, sc)
+            g.expect = savedExpect3
             var target = sc.findType(prop(st, "name"))
             if (target == null) {
                 // 裸字段赋值（实例方法/构造器里直接写 `x = ...`）→ this.x
@@ -3202,7 +3620,11 @@ public class Walker(g : Gen) {
             var ins = new Ins("return")
             ins.node = st
             if (propBool(st, "hasValue")) {
+                // 阶段 30c：`rtn lam(…)` —— 期望类型是当前函数的返回类型
+                var savedExpect2 = g.expect
+                g.expect = g.returnType
                 walkExpr(st.children[0], sc)
+                g.expect = savedExpect2
             }
             emit(ins)
             rtn
@@ -4077,7 +4499,54 @@ public class Walker(g : Gen) {
             t = pt!!
         } else if (k == NodeKind.FORCE) {
             var ot = walkExpr(e.children[0], sc)
-            t = new BType(ot.base, ot.name, false, ot.depth)
+            // 阶段 30c：`f!!` 不能丢函数类型的那几个字段（`f!!(21)` 的 callee 就是 FORCE）
+            t = ot.withNullable(false)
+        } else if (k == NodeKind.LAMBDA) {
+            var lvo = g.levelOf(e)
+            if (lvo == null) {
+                g.bad("lambda 的闭包计划丢了（内部错误）")
+                rtn tVoid()
+            }
+            var lv = lvo!!
+            // 省略的返回子句 / 参数类型：用期望的函数类型补齐（DESIGN-30：赋值左边、rtn、实参位）
+            if (!lv.retKnown) {
+                if (g.expect != null && g.expect!!.fnOk && g.expect!!.fnRet != null) {
+                    lv.ret = g.expect!!.fnRet!!
+                    lv.retKnown = true
+                } else {
+                    g.bad("lambda 的返回类型推不出来：lam(…) 后面要写 -> 类型（DESIGN-30）")
+                    rtn tVoid()
+                }
+            }
+            var pi2 = 0
+            while (pi2 < lv.params.length) {
+                if (lv.ptexts[pi2].length() == 0) {
+                    if (g.expect != null && g.expect!!.fnOk && pi2 < g.expect!!.fnParams.length) {
+                        lv.params[pi2] = g.expect!!.fnParams[pi2]
+                    } else {
+                        g.bad("lambda 的参数类型推不出来：'" + lv.pnames[pi2] + "' 没写类型，这里也没有期望的函数类型（DESIGN-30）")
+                        rtn tVoid()
+                    }
+                }
+                pi2 = pi2 + 1
+            }
+            // 捕获的源槽位与真实类型：在创建点的 Scope 里现场解析（外层帧此刻槽位已定）
+            var ci3 = 0
+            while (ci3 < lv.capCount) {
+                var c3 = lv.caps[ci3]
+                if (c3.kind != "this") {
+                    var s3 = sc.findSlot(c3.name)
+                    if (s3 < 0) {
+                        g.bad("捕获的变量 '" + c3.name + "' 找不到（内部错误）")
+                        rtn tVoid()
+                    }
+                    c3.slot = s3
+                    var ct3 = sc.findType(c3.name)
+                    if (ct3 != null) { c3.type = ct3!! }
+                }
+                ci3 = ci3 + 1
+            }
+            t = lv.fnType()
         } else if (k == NodeKind.THIS) {
             if (!requireInstanceScope("this")) { rtn tVoid() }
             var ci = g.cur
@@ -4282,8 +4751,66 @@ public class Walker(g : Gen) {
         rtn new BType("external", jc!!, false, 0)
     }
 
+    // 阶段 30c：`f(1)` / `f!!(1)` 的解析。命中返回结果类型，不命中返回 null
+    // （不命中就落回原来的「全局函数调用」那条路）。
+    // 注意这种 CALL 的两个孩子是「callee 在前、ARGS 在后」，与普通调用不同。
+    public fn walkFnValueCall(e : Node, sc : Scope) -> ?BType {
+        var name = prop(e, "name")
+        // 孩子们是「callee 在前（0 号）、ARGS 在后（1 号）」。
+        var hasCallee = e.childCount > 1
+        var fnT : ?BType = null
+        var argsIx = 0
+        if (hasCallee) {
+            var ct = walkExpr(e.children[0], sc)
+            if (ct.fnOk) { fnT = ct }
+            argsIx = 1
+        } else {
+            var vt = sc.findType(name)
+            if (vt != null) {
+                if (vt!!.fnOk) { fnT = vt }
+            }
+        }
+        if (fnT == null) { rtn null }
+        var ft = fnT!!
+        var argc = ft.fnParams.length
+        var fc = new FnCall(samName(argc))
+        fc.arity = argc
+        fc.params = ft.fnParams
+        fc.fnType = ft
+        if (ft.fnRet != null) {
+            fc.ret = ft.fnRet!!
+        } else {
+            fc.ret = tVoid()
+        }
+        fc.hasCallee = hasCallee
+        if (hasCallee) {
+            fc.callee = e.children[0]
+        } else {
+            fc.slot = sc.findSlot(name)
+        }
+        var args = e.children[argsIx]
+        if (args.childCount != argc) {
+            g.bad("函数值需要 " + intToString(argc) + " 个参数，给了 " + intToString(args.childCount) + " 个")
+            rtn fc.ret
+        }
+        var i = 0
+        while (i < args.childCount) {
+            var at = walkExpr(args.children[i], sc)
+            if (!acceptsValue(g, fc.params[i], args.children[i], at)) {
+                g.bad("函数值的参数类型不匹配：把 " + at.desc() + " 传给了 " + fc.params[i].desc())
+                rtn fc.ret
+            }
+            i = i + 1
+        }
+        g.putFnCall(e, fc)
+        rtn fc.ret
+    }
+
     public fn walkCall(e : Node, sc : Scope) -> BType {
         var name = prop(e, "name")
+        // 阶段 30c：函数值调用（`f(1)` / `f!!(1)`）要先判 —— 命中就直接给出结果类型。
+        var fnRt = walkFnValueCall(e, sc)
+        if (fnRt != null) { rtn fnRt!! }
         var args = e.children[0]
         var i = 0
         while (i < args.childCount) {
@@ -5050,6 +5577,11 @@ fn emitBuiltin(g : Gen, mv : MethodVisitor, b : Builtin2) -> void {
 
 fn emitCall(g : Gen, mv : MethodVisitor, e : Node, off : int) -> void {
     var name = prop(e, "name")
+    // 阶段 30c：函数值调用（`f(1)` / `f!!(1)`）—— 解析信息在 walkCall 里已经登记
+    if (g.fnCallOf(e) != null) {
+        emitFnValueCallAt(g, mv, e, off)
+        rtn
+    }
     var args = e.children[0]
     if (isPrintLike(name)) {
         mv.visitFieldInsn(178, "java/lang/System", "out", "Ljava/io/PrintStream;")
@@ -5583,6 +6115,11 @@ fn emitExpr(g : Gen, mv : MethodVisitor, e : Node, off : int) -> void {
         mv.visitVarInsn(25, 0)
         rtn
     }
+    if (k == NodeKind.LAMBDA) {
+        // 阶段 30c：压捕获 → invokedynamic 造 SAM 实例
+        emitLambdaAt(g, mv, e, off)
+        rtn
+    }
     if (k == NodeKind.INT_LIT) {
         pushInt(mv, parseInt(prop(e, "value")) ?: 0)
         rtn
@@ -5938,6 +6475,12 @@ fn emitIns(g : Gen, w : Walker, mv : MethodVisitor, i : int, off : int) -> void 
     }
     if (k == "return") {
         var rt = g.returnType
+        if (g.voidObj) {
+            // void lambda 的合成方法返回 Object：`rtn`（无值）也要发 `aconst_null; areturn`
+            mv.visitInsn(1)
+            mv.visitInsn(176)
+            rtn
+        }
         if (!propBool(ins.node, "hasValue")) {
             eReturnInsn(mv, rt)
             rtn
@@ -6095,6 +6638,23 @@ fn emitFunction(g : Gen, fnNode : Node) -> void {
         i = i + 1
     }
     // 阶段 28b：顶层函数体开始编译前清标签状态（见 prepBody 里的说明）
+    // 阶段 30c：体里有 lambda 就先跑一遍「发现」，把捕获与槽位定下来
+    g.resetLevels()
+    g.lvSeq = 0
+    g.lambdaMode = false
+    g.voidObj = false
+    if (hasLambdaNode(fnNode.children[1])) {
+        var pTypes : BType[] = new BType[params.childCount]
+        var pNames : string[] = new string[params.childCount]
+        var pi = 0
+        while (pi < params.childCount) {
+            pNames[pi] = prop(params.children[pi], "name")
+            pTypes[pi] = g.paramOf(sg, pi)
+            pi = pi + 1
+        }
+        planClosures(g, fnNode.children[1], name, pTypes, pNames)
+        if (g.failed) { rtn }
+    }
     var w = new Walker(g)
     w.resetLabels()
     w.walkBlock(fnNode.children[1], root)
@@ -6105,6 +6665,8 @@ fn emitFunction(g : Gen, fnNode : Node) -> void {
 
     // 异常表登记、行号表、逐条发射、缺少 rtn 的兜底全部交给 flushBody（与用户方法同一条路径）
     flushBody(g, mv, new Prep(w, reach), off, sg.ret, name)
+    // 阶段 30c：lambda 的合成方法紧跟在包围方法之后（k 升序）
+    emitLambdaMethods(g)
 }
 
 // ------------------------------------------------------------ 用户类 / 枚举
@@ -6313,7 +6875,11 @@ fn flushBody(g : Gen, mv : MethodVisitor, p : Prep, off : int, ret : BType, tail
         i = i + 1
     }
     if (reach[w.outCount]) {
-        if (ret.isVoid()) {
+        if (g.voidObj) {
+            // void lambda 的合成方法返回 Object：末尾补 `aconst_null; areturn`
+            mv.visitInsn(1)
+            mv.visitInsn(176)
+        } else if (ret.isVoid()) {
             mv.visitInsn(177)
         } else {
             mv.visitTypeInsn(187, "java/lang/IllegalStateException")
@@ -6323,7 +6889,13 @@ fn flushBody(g : Gen, mv : MethodVisitor, p : Prep, off : int, ret : BType, tail
             mv.visitInsn(191)
         }
     }
-    // 体发完、visitMaxs 之前：发 LVT 的结束标签，再按槽位升序写表（见 lvtBegin）
+    // 体发完、visitMaxs 之前：发 LVT 的结束标签，再按槽位升序写表（见 lvtBegin）。
+    // lambda 的合成方法不发 LVT / @RsfLabels（Kotlin 侧 `emitBody(..., lvt = null, closure = …)`）。
+    if (g.lambdaMode) {
+        mv.visitMaxs(0, 0)
+        mv.visitEnd()
+        rtn
+    }
     lvtEnd(g, mv, off)
     // 阶段 28b：方法级 `@RsfLabels`——value 是**声明顺序**的标签名数组。
     // 与 Kotlin BytecodeCompiler.emitLabelMetadata（:2341-2352）同一串调用、同一位置
@@ -6394,7 +6966,7 @@ fn emitUserCtor(g : Gen, ci : CInfo, m : ?CMeth) -> void {
     lvtBegin(g, mv, ci.internal)
     var p : ?Prep = null
     if (hasBody) {
-        p = prepBody(g, body, 1, params, pnames, tVoid())
+        p = prepBodyWithLambdas(g, body, 1, params, pnames, tVoid(), "<init>")
         if (p == null) { rtn }
         // `this(...)` 是**走一遍 body 时**才登记的（walkStmt 的 THIS_CALL 分支），
         // 所以这两个字段必须在 prepBody 之后再读一次 —— 提前读只会拿到 null，
@@ -6460,6 +7032,7 @@ fn emitUserCtor(g : Gen, ci : CInfo, m : ?CMeth) -> void {
     }
     if (hasBody) {
         flushBody(g, mv, p!!, 0, tVoid(), "<init>")
+        emitLambdaMethods(g)
     } else {
         mv.visitInsn(177)
         // 没有函数体：LVT 里只有 this（合成伴生构造器的形参已在上面登记）
@@ -6498,9 +7071,10 @@ fn emitUserMethod(g : Gen, ci : CInfo, m : CMeth) -> void {
     }
     var first = 0
     if (!m.isStatic) { first = 1 }
-    var p = prepBody(g, bodyOf(m.node), first, m.params, m.paramNames, m.ret)
+    var p = prepBodyWithLambdas(g, bodyOf(m.node), first, m.params, m.paramNames, m.ret, m.name)
     if (p == null) { rtn }
     flushBody(g, mv, p!!, 0, m.ret, m.name)
+    emitLambdaMethods(g)
 }
 
 // ObjectFormat（sema/Builtins.kt）的规则：可显示才 append，否则写 "..."
@@ -8011,6 +8585,429 @@ fn emitAnnPushArg(g : Gen, mv : MethodVisitor, ai : AnnInfo, i : int, v : Node) 
 }
 
 // 全程序：先收集类型与签名（函数可以互相调用 / 递归），再发射
+// ============================================================ 阶段 30c：闭包发现
+// 每个包围方法先跑一次「发现」：把方法体里所有 lambda（含嵌套）按出现顺序编号，
+// 定下每个 lambda 的捕获清单（首次引用顺序）与是否需要 this。口径逐条对齐 Kotlin 的
+// `Lowering.ClosureAnalyser`：
+//   * 捕获是**值捕获**，this 永远排第一（占 0 号槽）；
+//   * 读到的名字属于哪一帧，就把它加进**从当前帧到那一帧之间**的每一帧；
+//   * 帧自己的形参/局部不算捕获；
+//   * lambda 里裸写字段名、用 this、隐式调用本对象的实例方法，都要把 this 沿路带下来。
+
+fn hasLambdaNode(n : Node) -> bool {
+    if (n.kind == NodeKind.LAMBDA) { rtn true }
+    var i = 0
+    while (i < n.childCount) {
+        if (hasLambdaNode(n.children[i])) { rtn true }
+        i = i + 1
+    }
+    rtn false
+}
+
+// 包围方法自己也算一帧（0 号）：lambda 里读到它的形参/局部的才叫捕获
+fn planClosures(g : Gen, body : Node, hostName : string, pTypes : BType[], pNames : string[]) -> void {
+    var fr = new LvFrames()
+    var host = new FnLevel(new Node(NodeKind.ERROR))
+    host.implName = hostName
+    var i = 0
+    while (i < pNames.length) {
+        host.addDecl(pNames[i], pTypes[i])
+        i = i + 1
+    }
+    fr.push(host)
+    planWalk(g, body, fr, hostName)
+}
+
+// 用到了 this / 裸字段 / 隐式实例方法：**所有**打开着的 lambda 层都要带 this
+fn planMarkThis(g : Gen, fr : LvFrames) -> void {
+    var i = 1
+    while (i < fr.count) {
+        fr.at(i).hasThis = true
+        i = i + 1
+    }
+}
+
+// 读到一个名字：自内向外找它属于哪一帧，命中就把「从当前帧到那一帧之间」的每一帧都记上捕获。
+// 只有 lambda 层（1 号帧往后）会拿到捕获，宿主帧不收。
+fn planCaptureName(g : Gen, nm : string, fr : LvFrames) -> bool {
+    var i = fr.count - 1
+    while (i >= 0) {
+        var lv = fr.at(i)
+        if (lv.hasDecl(nm)) {
+            var t = lv.declType(nm)
+            var j = fr.count - 1
+            while (j > i) {
+                if (t != null) { fr.at(j).addCap("local", nm, t!!) }
+                j = j - 1
+            }
+            rtn true
+        }
+        i = i - 1
+    }
+    rtn false
+}
+
+fn planVar(g : Gen, n : Node, fr : LvFrames) -> void {
+    var nm = prop(n, "name")
+    if (planCaptureName(g, nm, fr)) { rtn }
+    // 不是任何帧里的名字：可能是本对象的字段（lambda 里裸写字段名）→ 需要 this
+    if (g.cur != null) {
+        if (g.cur!!.fieldOwnerInChain(nm) != null) { planMarkThis(g, fr) }
+    }
+}
+
+fn planCallThis(g : Gen, n : Node, fr : LvFrames) -> void {
+    var nm = prop(n, "name")
+    // 名字先看是不是某个帧里的局部：`f(1)` 是函数值调用（Kotlin 的 recordFnValueCall），
+    // 走的是**捕获**那条路，不是隐式 this。
+    if (planCaptureName(g, nm, fr)) { rtn }
+    if (g.cur == null) { rtn }
+    // 有 callee 孩子的调用（`f!!(1)`）实参表在 1 号；普通调用在 0 号
+    if (n.childCount < 1) { rtn }
+    var argsIx = 0
+    if (n.childCount > 1) { argsIx = 1 }
+    var argc = n.children[argsIx].childCount
+    var owner = g.cur!!.methOwnerInChain(nm, argc)
+    if (owner == null) { rtn }
+    var m = owner!!.methOf(nm, argc)
+    if (m == null) { rtn }
+    if (m!!.isStatic) { rtn }
+    planMarkThis(g, fr)
+}
+
+fn planLevel(g : Gen, n : Node, fr : LvFrames, hostName : string) -> void {
+    var lv = new FnLevel(n)
+    var cnt = 0
+    var ps = prop(n, "params")
+    if (ps.length() > 0) {
+        cnt = parseInt(ps) ?: 0
+    }
+    var pnames : string[] = new string[cnt]
+    var ptypes : BType[] = new BType[cnt]
+    var ptexts : string[] = new string[cnt]
+    var block : Node = n
+    var pi = 0
+    var i = 0
+    while (i < n.childCount) {
+        var ch = n.children[i]
+        if (ch.kind == NodeKind.PARAM) {
+            if (pi < cnt) {
+                var nm = prop(ch, "name")
+                var tx = prop(ch, "type")
+                pnames[pi] = nm
+                ptexts[pi] = tx
+                var bt = tVoid()
+                if (tx.length() > 0) {
+                    var pt = typeOfText(g, tx)
+                    if (pt != null) { bt = pt!! }
+                }
+                ptypes[pi] = bt
+            }
+            pi = pi + 1
+        } else if (ch.kind == NodeKind.BLOCK) {
+            block = ch
+        }
+        i = i + 1
+    }
+    lv.params = ptypes
+    lv.pnames = pnames
+    lv.ptexts = ptexts
+    lv.body = block
+    var rt = prop(n, "ret")
+    if (rt.length() > 0 && rt != "-") {
+        var rt0 = typeOfText(g, rt)
+        if (rt0 != null) {
+            lv.ret = rt0!!
+            lv.retKnown = true
+        }
+    }
+    lv.index = g.lvSeq
+    lv.implName = "lambda$" + hostName + "$" + intToString(g.lvSeq)
+    g.lvSeq = g.lvSeq + 1
+    g.addLevel(lv)
+    g.markArity(cnt)
+    fr.push(lv)
+    planWalk(g, block, fr, hostName)
+    fr.pop()
+}
+
+fn planWalk(g : Gen, n : Node, fr : LvFrames, hostName : string) -> void {
+    if (g.failed) { rtn }
+    var k = n.kind
+    if (k == NodeKind.LAMBDA) {
+        planLevel(g, n, fr, hostName)
+        rtn
+    }
+    if (k == NodeKind.THIS || k == NodeKind.SUPER) {
+        planMarkThis(g, fr)
+        rtn
+    }
+    if (k == NodeKind.VAR) {
+        planVar(g, n, fr)
+        rtn
+    }
+    if (k == NodeKind.CALL) {
+        planCallThis(g, n, fr)
+    }
+    if (k == NodeKind.VAR_DECL) {
+        // 初值先走（声明之前读同名变量读到的是外层，与 Kotlin 的 scopeMaps 时序一致），
+        // 再把自己的名字记进当前帧
+        var i0 = 0
+        while (i0 < n.childCount) {
+            planWalk(g, n.children[i0], fr, hostName)
+            if (g.failed) { rtn }
+            i0 = i0 + 1
+        }
+        var tx = prop(n, "type")
+        var bt = tVoid()
+        if (tx.length() > 0) {
+            var tt = typeOfText(g, tx)
+            if (tt != null) { bt = tt!! }
+        }
+        fr.top().addDecl(prop(n, "name"), bt)
+        rtn
+    }
+    var i = 0
+    while (i < n.childCount) {
+        planWalk(g, n.children[i], fr, hostName)
+        if (g.failed) { rtn }
+        i = i + 1
+    }
+}
+
+// ============================================================ 阶段 30c：描述符
+
+fn samInvokeDescriptor(arity : int) -> string {
+    var sb = "("
+    var i = 0
+    while (i < arity) {
+        sb = sb + "Ljava/lang/Object;"
+        i = i + 1
+    }
+    rtn sb + ")Ljava/lang/Object;"
+}
+
+// LambdaMetafactory 的 `instantiatedMethodType`：**基本类型要写装箱形式**
+// （泛型擦除后的 SAM 方法签名是 Object，实例化类型才是真实的 `(I)Ljava/lang/Integer;`）
+fn samBoxedDesc(t : BType) -> string {
+    if (t.isPrimitive()) { rtn boxedDesc(t.base) }
+    rtn t.desc()
+}
+
+fn curOwnerInternal(g : Gen) -> string {
+    if (g.cur != null) { rtn g.cur!!.internal }
+    rtn g.owner
+}
+
+// 合成方法 = `<init>`-无关的静态方法：捕获（this 第一）+ 形参 + 返回。
+// void lambda 的实现方法返回 `Ljava/lang/Object;`（体里发 `aconst_null; areturn`），
+// 否则它就没法满足 SAM 的 Object 返回（Kotlin 侧同一手）。
+fn implDescriptorOf(g : Gen, lv : FnLevel) -> string {
+    var sb = "("
+    // `this` 永远占 0 号槽（捕获清单里不重复记它）。
+    if (lv.hasThis) { sb = sb + "L" + curOwnerInternal(g) + ";" }
+    var i = 0
+    while (i < lv.capCount) {
+        var c = lv.caps[i]
+        if (c.kind == "this") {
+            sb = sb + "L" + curOwnerInternal(g) + ";"
+        } else {
+            sb = sb + c.type.desc()
+        }
+        i = i + 1
+    }
+    i = 0
+    while (i < lv.params.length) {
+        sb = sb + lv.params[i].desc()
+        i = i + 1
+    }
+    sb = sb + ")"
+    if (lv.ret.isVoid()) {
+        rtn sb + "Ljava/lang/Object;"
+    }
+    rtn sb + lv.ret.desc()
+}
+
+fn instantiatedDescriptor(lv : FnLevel) -> string {
+    var sb = "("
+    var i = 0
+    while (i < lv.params.length) {
+        sb = sb + samBoxedDesc(lv.params[i])
+        i = i + 1
+    }
+    sb = sb + ")"
+    if (lv.ret.isVoid()) {
+        rtn sb + "Ljava/lang/Object;"
+    }
+    rtn sb + samBoxedDesc(lv.ret)
+}
+
+fn samFactoryDescriptor(g : Gen, lv : FnLevel) -> string {
+    var sb = "("
+    if (lv.hasThis) { sb = sb + "L" + curOwnerInternal(g) + ";" }
+    var i = 0
+    while (i < lv.capCount) {
+        var c = lv.caps[i]
+        if (c.kind == "this") {
+            sb = sb + "L" + curOwnerInternal(g) + ";"
+        } else {
+            sb = sb + c.type.desc()
+        }
+        i = i + 1
+    }
+    rtn sb + ")L" + samName(lv.arity()) + ";"
+}
+
+fn lambdaMetafactoryHandle() -> Handle {
+    rtn new Handle(
+        6,
+        "java/lang/invoke/LambdaMetafactory",
+        "metafactory",
+        "(Ljava/lang/invoke/MethodHandles$Lookup;Ljava/lang/String;Ljava/lang/invoke/MethodType;Ljava/lang/invoke/MethodType;Ljava/lang/invoke/MethodHandle;Ljava/lang/invoke/MethodType;)Ljava/lang/invoke/CallSite;",
+        false
+    )
+}
+
+// lambda 表达式的值：按捕获清单压栈，然后 invokedynamic 造出 SAM 实例
+fn emitLambdaAt(g : Gen, mv : MethodVisitor, e : Node, off : int) -> void {
+    var lvo = g.levelOf(e)
+    if (lvo == null) {
+        g.bad("lambda 的闭包计划丢了（内部错误）")
+        rtn
+    }
+    var lv = lvo!!
+    if (lv.hasThis) { mv.visitVarInsn(25, 0) }
+    var i = 0
+    while (i < lv.capCount) {
+        var c = lv.caps[i]
+        if (c.kind == "this") {
+            mv.visitVarInsn(25, 0)
+        } else {
+            if (c.slot < 0) {
+                g.bad("捕获的变量 '" + c.name + "' 找不到槽位（内部错误）")
+                rtn
+            }
+            eLoadSlot(mv, c.type, c.slot + off)
+        }
+        i = i + 1
+    }
+    var args : Object[] = new Object[3]
+    args[0] = Type.getMethodType(samInvokeDescriptor(lv.arity()))
+    args[1] = new Handle(6, curOwnerInternal(g), lv.implName, implDescriptorOf(g, lv), false)
+    args[2] = Type.getMethodType(instantiatedDescriptor(lv))
+    mv.visitInvokeDynamicInsn("invoke", samFactoryDescriptor(g, lv), lambdaMetafactoryHandle(), args)
+}
+
+// 函数值调用点：CHECKCAST 到 SAM → 实参装箱 → INVOKEINTERFACE invoke → 按静态返回类型收敛
+fn emitFnValueCallAt(g : Gen, mv : MethodVisitor, e : Node, off : int) -> void {
+    var fco = g.fnCallOf(e)
+    if (fco == null) {
+        g.bad("函数值调用没有解析结果（内部错误）")
+        rtn
+    }
+    var fc = fco!!
+    if (fc.hasCallee) {
+        emitExpr(g, mv, fc.callee, off)
+    } else {
+        if (fc.slot < 0) {
+            g.bad("函数值 '" + prop(e, "name") + "' 找不到槽位（内部错误）")
+            rtn
+        }
+        eLoadSlot(mv, fc.fnType, fc.slot + off)
+    }
+    mv.visitTypeInsn(192, fc.sam)
+    var argsIx = 0
+    if (fc.hasCallee) { argsIx = 1 }
+    var args = e.children[argsIx]
+    var i = 0
+    while (i < args.childCount) {
+        var a = args.children[i]
+        emitExpr(g, mv, a, off)
+        if (i < fc.params.length) {
+            emitWiden(g, mv, tOf(g, a), fc.params[i])
+            if (fc.params[i].isPrimitive()) { eBox(mv, fc.params[i].base) }
+        }
+        i = i + 1
+    }
+    mv.visitMethodInsn(185, fc.sam, "invoke", samInvokeDescriptor(fc.arity), true)
+    if (fc.ret.isVoid()) {
+        // 声明返回 void 的函数值：SAM 的 invoke 返回 Object，值必须弹掉
+        mv.visitInsn(87)
+    } else {
+        emitResultCast(g, mv, tObject(), fc.ret)
+    }
+}
+
+// 一个包围方法的所有 lambda 合成都紧跟在它后面发（k 升序，嵌套的不单独插队）
+fn emitLambdaMethods(g : Gen) -> void {
+    if (g.lvCount == 0) { rtn }
+    var idx = 0
+    while (idx < g.lvCount) {
+        if (g.failed) { rtn }
+        var lv = g.lvLevels[idx]
+        var mv = g.cw.visitMethod(accPrivate() + accStatic() + accSynthetic(), lv.implName, implDescriptorOf(g, lv), null, null)
+        mv.visitCode()
+        var root = new Scope(null)
+        var slot = 0
+        if (lv.hasThis) { slot = 1 }
+        var i = 0
+        while (i < lv.capCount) {
+            var c = lv.caps[i]
+            if (c.kind == "this") {
+                slot = slot + 1
+            } else {
+                root.add(c.name, c.type, slot)
+                slot = slot + c.type.slots()
+            }
+            i = i + 1
+        }
+        i = 0
+        while (i < lv.params.length) {
+            root.add(lv.pnames[i], lv.params[i], slot)
+            slot = slot + lv.params[i].slots()
+            i = i + 1
+        }
+        var savedLabel = g.curLabel
+        var savedStatic = g.curStatic
+        g.curLabel = lv.implName
+        g.curMeth = null
+        g.slotCount = slot
+        g.returnType = lv.ret
+        g.lambdaMode = true
+        g.voidObj = lv.ret.isVoid()
+        if (lv.hasThis) { g.curStatic = false }
+        var w = new Walker(g)
+        w.resetLabels()
+        var savedExpect4 = g.expect
+        g.expect = null
+        w.walkBlock(lv.body, root)
+        g.expect = savedExpect4
+        if (!g.failed) {
+            linkTargets(w)
+            var reach = computeReach(w)
+            flushBody(g, mv, new Prep(w, reach), 0, lv.ret, lv.implName)
+        }
+        g.lambdaMode = false
+        g.voidObj = false
+        g.curLabel = savedLabel
+        g.curStatic = savedStatic
+        idx = idx + 1
+    }
+}
+
+// 包一层：先规划、再按原路径走第二遍（此时捕获槽位已定，边发码边填创建点的槽号）
+fn prepBodyWithLambdas(g : Gen, body : Node, firstSlot : int, pTypes : BType[], pNames : string[], ret : BType, hostName : string) -> ?Prep {
+    g.resetLevels()
+    g.lvSeq = 0
+    g.lambdaMode = false
+    g.voidObj = false
+    if (hasLambdaNode(body)) {
+        planClosures(g, body, hostName, pTypes, pNames)
+        if (g.failed) { rtn null }
+    }
+    rtn prepBody(g, body, firstSlot, pTypes, pNames, ret)
+}
+
 public fn compileProgram(g : Gen, ast : Node, sourceName : string) -> void {
     g.sourceName = sourceName
     // `pkg a.b`：程序类与**所有**用户类 / 枚举的内部名都要带包路径
@@ -8135,6 +9132,23 @@ public fn compileProgram(g : Gen, ast : Node, sourceName : string) -> void {
         emitAnnotationClass(g, g.ains[i])
         if (g.failed) { rtn }
         i = i + 1
+    }
+
+    // 阶段 30c：函数类型的 SAM 接口 `__RsfFn<n>` —— 只为**实际用到**的 arity 生成，
+    // 按 arity 升序，排在所有用户类 / 接口 / 枚举 / 注解之后（Kotlin `compile()` 的
+    // `usedArities()` 循环就在最后）。V17 接口、ACC_ABSTRACT、唯一抽象方法 `invoke`，
+    // 描述符 `(Ljava/lang/Object;…)Ljava/lang/Object;`；抽象方法**没有 Code**。
+    var ar = 0
+    while (ar < g.samArity.length) {
+        if (g.samArity[ar]) {
+            var sn = samName(ar)
+            g.newWriter(sn)
+            g.cw.visit(v17(), accPublic() + accInterface() + accAbstract(), sn, null, "java/lang/Object", null)
+            var smv = g.cw.visitMethod(accPublic() + accAbstract(), "invoke", samInvokeDescriptor(ar), null, null)
+            smv.visitEnd()
+            g.cw.visitEnd()
+        }
+        ar = ar + 1
     }
 }
 

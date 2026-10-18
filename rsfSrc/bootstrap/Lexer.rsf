@@ -261,9 +261,17 @@ fn isNumberSuffix(c : char) -> bool {
 // 56 项，只是 `KW_FUN` 那一项的字面量换成 `fn`；记号名 `KW_FUN` 按工单要求保持不动。
 // 旧词 `fun` 从这一刻起落在表外，由 readIdentOrKeyword 里那条独立判断拦下并给逐字文案
 // （与 Kotlin 版 Lexer.kt 的 LEGACY_FUN_MESSAGE 一字不差）。
+//
+// 2026-10-19（阶段 30c，函数值）：补上 `lam`（56 → 57 项），与 Kotlin 版 Lexer.kt:37 的
+// put("lam", KW_LAM) 对齐。它与 `fn` 并列——`fn` 声明函数，`lam` 写函数值字面量
+// （`lam(x : int) -> int { rtn x + 1 }`），所以只是加了一个硬关键字，别的都没动。
 
 fn keywordKind(word : string) -> string {
     if (word == "fn") { rtn "KW_FUN" }
+    // 阶段 30c：`lam`（56 → 57 项），与 Kotlin 版 Lexer.kt:37 的 put("lam", KW_LAM) 对齐。
+    // 与 `fn` 并列的硬关键字：`lam(x : int) -> int { … }` 是函数值字面量，
+    // 从此不能再当标识符用。
+    if (word == "lam") { rtn "KW_LAM" }
     if (word == "rtn") { rtn "KW_RTN" }
     if (word == "return") { rtn "KW_RETURN" }
     if (word == "import") { rtn "KW_IMPORT" }

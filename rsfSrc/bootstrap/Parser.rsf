@@ -121,7 +121,12 @@ public enum NodeKind {
     // 落点：AstDump.kt 在 AS / IS 下面多打一行 `TARGET type=<类型文本>`，而 rsf 侧的
     // dumpAst 是通用递归（没有任何 per-kind 分支），所以只能靠一个子节点把这一行带出来。
     // TARGET 的 text 就是 `type=<TypeInfo.text()>`，与 VAR / PARAM 打类型文本的口径同一套。
-    AS, IS, TARGET
+    AS, IS, TARGET,
+    // 阶段 30c：函数值字面量 `lam(x : int) -> int { … }`（自举同步第 11 刀）。同样追加在末尾。
+    // 形状与 AstDump.kt 的 LambdaExpr 分支逐字节对齐：text = `params=<n> ret=<类型文本|->`，
+    // 孩子依次是 PARAM（每个形参一行，text 是 `name=… type=…`）和最后那个 BLOCK；
+    // **没有 PARAMS 包一层** —— Kotlin 那边 lambda 的形参不打 PARAMS 行。
+    LAMBDA
 }
 
 // 枚举值 -> dump 里的名字。写成显式 switch（而不是靠 `"" + k` 拿 toString）有两个好处：
@@ -216,6 +221,8 @@ public fn kindName(k : NodeKind) -> string {
         NodeKind.AS : rtn "AS"
         NodeKind.IS : rtn "IS"
         NodeKind.TARGET : rtn "TARGET"
+        // 阶段 30c：函数值字面量
+        NodeKind.LAMBDA : rtn "LAMBDA"
     }
     // 上面那个 switch 已经穷尽了 NodeKind 的每一个值，这里只是给「函数一定有返回值」
     // 一个静态的落点（rsf 的返回值检查是看最后一条语句，不看 switch 的穷尽性）。
@@ -288,8 +295,32 @@ public class TypeInfo(name : string, args : string, depth : int, nested : string
     var args : string = args
     var depth : int = depth
     var nested : string = nested
+    // 阶段 30c：函数类型 `(int) -> int`。与 Kotlin 的 TypeRef.fnParams / fnRet 同一个口径：
+    // 函数类型的名字固定是 "fn" / "?fn"（可空），形参与返回类型另存。
+    // 形参存成**逗号分隔的类型文本**（每个元素自己已经渲染好，可以再含空格与括号），
+    // 这样 Backend 只要按深度 0 的逗号切一刀就能还原参数表。
+    var isFn : bool = false
+    var fnParams : string = ""
+    var fnRet : string = ""
+
+    // 造一个函数类型的副本（`(int) -> int` / `?(int) -> int`）
+    public fn asFn(params : string, ret : string) -> TypeInfo {
+        var t = new TypeInfo(name, args, depth, nested)
+        t.isFn = true
+        t.fnParams = params
+        t.fnRet = ret
+        rtn t
+    }
 
     public fn text() -> string {
+        // 阶段 30c：函数类型先拼签名，再挂数组后缀（与 AstDump.typeText 同一套）：
+        //   (int,int) -> int      ?(int) -> int      ((int) -> int)[]
+        if (isFn) {
+            var sig = "(" + fnParams + ") -> " + fnRet
+            if (startsWithChar(name, '?')) { sig = "?" + sig }
+            if (depth == 0) { rtn sig }
+            rtn "(" + sig + ")" + repeatText("[]", depth)
+        }
         var out = name
         if (args.length() > 0) { out = out + "&<" + args + ">" }
         if (nested.length() > 0) { out = out + "::" + nested }
@@ -669,6 +700,19 @@ public class Parser(tokens : Token[]) {
     fn hasFailed() -> bool { rtn failed }
     fn errorMessage() -> string { rtn failMessage }
 
+    // 从节点的 `k=v` 属性串里取一个值。**只给不含空格的短值用**（名字、类型参数表这类）：
+    // 扫到空格或结尾就停。带空格的类型文本（`(int) -> int`）要走 Backend/Interp 那边
+    // 的 prop/attr（它们的结束判据是「空格 + 标识符 + '='」）。
+    fn nodeProp(n : Node, key : string) -> string {
+        var mark = key + "="
+        var at = n.text.indexOf(mark)
+        if (at < 0) { rtn "" }
+        var i = at + mark.length()
+        var start = i
+        while (i < n.text.length() && n.text.charAt(i) != ' ') { i = i + 1 }
+        rtn n.text.substring(start, i)
+    }
+
     // ============================================================ 顶层
 
     fn parseProgram() -> Node {
@@ -944,7 +988,7 @@ public class Parser(tokens : Token[]) {
         // 它排进 METHODS 的**最前面**，字段与方法按源码顺序跟在后面。
         var methods = new Node(NodeKind.METHODS)
         if (check("LPAREN")) {
-            var ctorParams = parseParamList("类 '" + nameTok.text + "' 的主构造参数表没有闭合，缺少 ')'")
+            var ctorParams = parseParamList("类 '" + nameTok.text + "' 的主构造参数表没有闭合，缺少 ')'", false)
             var primary = new Node(NodeKind.FUNC)
                 .put("control", "DEFAULT")
                 .put("static", "false")
@@ -1065,7 +1109,7 @@ public class Parser(tokens : Token[]) {
         }
         advance()   // constructor
 
-        var params = parseParamList("constructor 后面缺少 '('，写法是 constructor(参数) { ... }")
+        var params = parseParamList("constructor 后面缺少 '('，写法是 constructor(参数) { ... }", false)
 
         var next = peek()
         if (next.kind == "ARROW" || next.kind == "DOUBLE_COLON" || next.kind == "COLON") {
@@ -1748,7 +1792,7 @@ public class Parser(tokens : Token[]) {
         }
 
         var nameTok = expect("IDENT", "缺少函数名")
-        var params = parseParamList("函数名 '" + nameTok.text + "' 后面缺少 '('")
+        var params = parseParamList("函数名 '" + nameTok.text + "' 后面缺少 '('", false)
 
         // 返回子句：`->` 与 `:` 等价（`::` 那条别名 2026-10-15 删掉，`::` 腾给 xxx::xx）
         var retStyle = "OMITTED"
@@ -1843,13 +1887,15 @@ public class Parser(tokens : Token[]) {
     }
 
     // 参数表：`(int a, b : string)`。两种风格靠记号前瞻分流，同一个表里可以混写。
-    fn parseParamList(missingParen : string) -> Node {
+    // 阶段 30c：`allowUntyped` —— lambda 的形参类型可以省（`lam(x) -> int { … }`），
+    // 省了就落成空类型占位，留给 Backend 按期望类型补（Kotlin 侧 Param(TypeRef(""))）。
+    fn parseParamList(missingParen : string, allowUntyped : bool) -> Node {
         expect("LPAREN", missingParen)
         var params = new Node(NodeKind.PARAMS)
         if (!check("RPAREN")) {
             var going = true
             while (going && !failed) {
-                params.add(parseParam())
+                params.add(parseParam(allowUntyped))
                 if (!matchOne("COMMA")) { going = false }
             }
         }
@@ -1857,7 +1903,7 @@ public class Parser(tokens : Token[]) {
         rtn params.countTag()
     }
 
-    fn parseParam() -> Node {
+    fn parseParam(allowUntyped : bool) -> Node {
         var t = peek()
 
         // 1. Kotlin 风格：名字 : 类型
@@ -1877,6 +1923,14 @@ public class Parser(tokens : Token[]) {
             rtn new Node(NodeKind.PARAM).put("type", ty2.text()).put("name", escapeValue(nameTok2.text))
         }
 
+        // 4. 阶段 30c：lambda 的形参可以只写名字（`lam(x) -> int`）。
+        // 注意 text 的键序是 `name=` 在前 —— AstDump 的 LambdaExpr 分支打的是
+        // `PARAM name=… type=…`，与函数的 `PARAM type=… name=…` 恰好相反。
+        if (allowUntyped && t.kind == "IDENT" && (checkAt(1, "COMMA") || checkAt(1, "RPAREN"))) {
+            var bare = advance()
+            rtn new Node(NodeKind.PARAM).put("name", escapeValue(bare.text)).put("type", "")
+        }
+
         failAt(t, "参数要写成「类型 名字」或者「名字 : 类型」")
         rtn new Node(NodeKind.PARAM).put("type", "?").put("name", "")
     }
@@ -1884,7 +1938,8 @@ public class Parser(tokens : Token[]) {
     // `名字 : 类型` 里冒号后面那个类型槽（局部变量、字段、Kotlin 风格参数共用）
     fn parseSuffixType(hint : string) -> TypeInfo {
         var t = peek()
-        if (!isTypeKeyword(t.kind) && t.kind != "IDENT" && t.kind != "QUESTION") {
+        // 阶段 30c：`(` 也要放行——`x : (int) -> int` 里的类型是函数类型
+        if (!isTypeKeyword(t.kind) && t.kind != "IDENT" && t.kind != "QUESTION" && t.kind != "LPAREN") {
             failAt(t, hint)
             rtn new TypeInfo("?", "", 0, "")
         }
@@ -1894,6 +1949,10 @@ public class Parser(tokens : Token[]) {
     // 类型引用：可空 `?` 前缀、泛型实参 `&<...>`、嵌套类型 `注解名::伴生名`、数组后缀 `[]`（可叠多层）
     fn parseTypeRef() -> TypeInfo {
         var nullable = matchOne("QUESTION")
+        // 阶段 30c：类型位置的 `(` —— 函数类型 `(int, string) -> bool` /
+        // 「给函数类型加括号再挂 `[]`」`((int) -> int)[]`。与 Kotlin 的
+        // Parser.kt:1841 `if (check(LPAREN)) return parseParenType(nullable)` 同一位置。
+        if (check("LPAREN")) { rtn parseParenType(nullable) }
         var t = peek()
         var name = ""
         var builtin = false
@@ -1953,6 +2012,103 @@ public class Parser(tokens : Token[]) {
             failAt(t, "数组类型不能写 '?'：数组本身就是引用，去掉 '?' 写成 '" + name.substring(1, name.length()) + "[]'")
         }
         rtn new TypeInfo(name, args, depth, nested)
+    }
+
+    // 类型位置的 `(`（阶段 30c）：函数类型，或者「给函数类型加括号再挂 `[]`」。
+    // 两种写法靠**配对的 `)` 后面那个记号**区分，没有歧义：
+    //   (int, string) -> bool    函数类型：`)` 后面是 `->`
+    //   () -> void               参数表可以为空
+    //   ((int) -> int)[]         分组：`)` 后面是 `[`（整体括号 + 数组后缀）
+    // 分组那一层是**必需的**：`int[] -> int` 里 `[]` 属于参数类型。
+    fn parseParenType(nullable : bool) -> TypeInfo {
+        var at = peek()
+        var closeOffset = matchingParenOffset()
+        if (closeOffset < 0) {
+            failAt(at, "函数类型要写成 '(参数类型表) -> 返回类型'（DESIGN-30）——括号没有配对，缺少 ')'")
+            rtn new TypeInfo("?", "", 0, "")
+        }
+        if (checkAt(closeOffset + 1, "ARROW")) {
+            rtn parseFunctionType(nullable, at)
+        }
+        // `)` 后面既不是 `->` 也不是 `[]`：这不是分组，就是函数类型缺了返回类型。
+        if (!checkAt(closeOffset + 1, "LBRACKET")) {
+            failAt(at, "函数类型要写成 '(参数类型表) -> 返回类型'（DESIGN-30）")
+            rtn new TypeInfo("?", "", 0, "")
+        }
+        // 分组：`((int) -> int)[]`。`?` 只能写在整个函数类型最前面（`?(int) -> int`）。
+        if (nullable) {
+            failAt(at, "'?' 要写在函数类型的最前面（?(int) -> int），不要套在括号外面")
+            rtn new TypeInfo("?", "", 0, "")
+        }
+        advance()   // (
+        var inner = parseTypeRef()
+        expect("RPAREN", "类型外面的括号没有闭合，缺少 ')'")
+        if (!inner.isFn || inner.fnRet.length() == 0) {
+            failAt(at, "类型外面的括号只能用来包函数类型（例如 ((int) -> int)[]）：'(" + inner.text() + ")' 直接写成 '" + inner.text() + "'")
+            rtn inner
+        }
+        var depth = 0
+        while (check("LBRACKET") && checkAt(1, "RBRACKET") && !failed) {
+            advance()
+            advance()
+            depth = depth + 1
+        }
+        if (depth == 0) { rtn inner }
+        var grouped = new TypeInfo(inner.name, inner.args, inner.depth + depth, inner.nested)
+        rtn grouped.asFn(inner.fnParams, inner.fnRet)
+    }
+
+    // 函数类型本体（阶段 30c）：`(` 类型列表 `)` `->` 类型。返回类型**必填**。
+    fn parseFunctionType(nullable : bool, at : Token) -> TypeInfo {
+        advance()   // (
+        var params = ""
+        if (!check("RPAREN")) {
+            var going = true
+            while (going && !failed) {
+                var p = parseTypeRef()
+                if (params.length() == 0) {
+                    params = p.text()
+                } else {
+                    params = params + "," + p.text()
+                }
+                if (!matchOne("COMMA")) { going = false }
+            }
+        }
+        expect("RPAREN", "函数类型的参数表没有闭合，缺少 ')'")
+        if (!check("ARROW")) {
+            failAt(peek(), "函数类型要写成 '(参数类型表) -> 返回类型'（DESIGN-30）")
+            rtn new TypeInfo("?", "", 0, "")
+        }
+        advance()   // ->
+        var ret = parseTypeRef()
+        var nm = "fn"
+        if (nullable) { nm = "?fn" }
+        var ft = new TypeInfo(nm, "", 0, "")
+        rtn ft.asFn(params, ret.text())
+    }
+
+    // 从当前位置（必须是 `(`）数到配对 `)` 的偏移；数不到返回 -1。
+    // 4096 的防御与 Kotlin Parser.kt:2009 的 matchingParenOffset 一致。
+    fn matchingParenOffset() -> int {
+        var depth = 0
+        var i = 0
+        var going = true
+        while (going) {
+            var k = peekAt(i).kind
+            if (k == "LPAREN") {
+                depth = depth + 1
+            } else {
+                if (k == "RPAREN") {
+                    depth = depth - 1
+                    if (depth == 0) { rtn i }
+                } else {
+                    if (k == "EOF") { rtn -1 }
+                }
+            }
+            i = i + 1
+            if (i > 4096) { rtn -1 }
+        }
+        rtn -1
     }
 
     // 类型实参表 `&<int>` / `&<string, int>` / `&<Box&<int>>`；返回的是**内部**文本
@@ -2774,7 +2930,31 @@ public class Parser(tokens : Token[]) {
                             negNode.add(new Node(NodeKind.TARGET).put("type", negTarget.text()))
                             rtn negNode
                         }
-                        going = false
+                        // 阶段 30c：`f!!(1)` —— 可空的函数值先断言非空再调用。
+                        // 只认「`!!` 之后紧跟实参表」这一种形状（非空的 `f(1)` 仍然走
+                        // IDENT→CALL 那条老路），所以不会跟别的语法打架。
+                        // CALL 节点的第二个孩子是 callee（Kotlin 的 CallExpr.callee），
+                        // name 照抄 calleeText 的口径。
+                        if (check("LPAREN") && e.kind == NodeKind.FORCE) {
+                            advance()
+                            var fargs = new Node(NodeKind.ARGS)
+                            if (!check("RPAREN")) {
+                                var fg = true
+                                while (fg && !failed) {
+                                    fargs.add(parseExpr())
+                                    if (!matchOne("COMMA")) { fg = false }
+                                }
+                            }
+                            expect("RPAREN", "调用函数值的参数表没有闭合，缺少 ')'")
+                            var fcall = new Node(NodeKind.CALL).put("name", escapeValue(calleeTextOf(e)))
+                            // dump 里 callee 排在实参表**前面**（AstDump 的 CallExpr：
+                            // 先打 callee 那一行，再打 ARGS）
+                            fcall.add(e)
+                            fcall.add(fargs.countTag())
+                            e = fcall
+                        } else {
+                            going = false
+                        }
                     }
                 }
             }
@@ -2782,8 +2962,16 @@ public class Parser(tokens : Token[]) {
         rtn e
     }
 
+    // `f!!(1)` 的调用名（照抄 Kotlin 的 calleeText，Parser.kt:3129）：
+    // 剥掉 `!!` 再看这到底是谁的名字；认不出来就给空串。
+    fn calleeTextOf(e : Node) -> string {
+        if (e.kind == NodeKind.FORCE) { rtn calleeTextOf(e.children[0]) }
+        if (e.kind == NodeKind.VAR) { rtn nodeProp(e, "name") }
+        if (e.kind == NodeKind.MEMBER) { rtn nodeProp(e, "name") }
+        rtn ""
+    }
+
     // `as` / `is` 后面的目标类型（阶段 24，自举同步 24b）。
-    //
     // 复用 parseTypeRef()，所以 `A`、`A[]`、`Box&<int>`、`A::Nested` 都能写；
     // 只多一条限制：**目标不许可空**。null 的三种行为已经被拍死
     // （`null is A` 恒 false、`null as A` 抛、`null ?as A` 得 null，见 DESIGN-24 §3 的 Q2），
@@ -2800,7 +2988,8 @@ public class Parser(tokens : Token[]) {
                 "去掉 '?' 写成 '" + opText + " ...'")
             rtn new TypeInfo("?", "", 0, "")
         }
-        if (!isTypeKeyword(t.kind) && t.kind != "IDENT") {
+        // 阶段 30c：`(` 也放行（函数类型目标）；「目标不能是函数类型」由 Checker 报
+        if (!isTypeKeyword(t.kind) && t.kind != "IDENT" && t.kind != "LPAREN") {
             failAt(t, "'" + opText + "' 后面需要一个目标类型（类名 / 接口名 / 数组类型），" +
                 "实际读到 " + tokenDescribe(t))
             rtn new TypeInfo("?", "", 0, "")
@@ -2911,6 +3100,11 @@ public class Parser(tokens : Token[]) {
             advance()
             rtn parseNewExpr()
         }
+        // 阶段 30c：`lam(...) -> T { ... }` 是函数值字面量（与 Kotlin 的
+        // parsePrimary 里 `TokenKind.KW_LAM -> parseLambda(t.at)` 同一位置）
+        if (k == "KW_LAM") {
+            rtn parseLambda()
+        }
         if (k == "IDENT") {
             advance()
             // `Box&<int>(0)`：类型实参只会出现在类型上，所以「标识符 +&<...> + (」无歧义地是一次构造
@@ -3017,6 +3211,47 @@ public class Parser(tokens : Token[]) {
         var n = new Node(NodeKind.NEW).put("class", escapeValue(ty.name)).put("typeArgs", ty.argsOrDash())
         n.add(args.countTag())
         rtn n
+    }
+
+    // 函数值字面量（阶段 30c）：`lam(x : int) -> int { rtn x + 1 }`。
+    // 形参类型与返回子句**都可以省**（省了留给 Backend 按期望类型补）。
+    // 节点形状与 AstDump.kt 的 LambdaExpr 分支逐字节对齐：
+    //   text = `params=<n> ret=<类型文本|->`，孩子依次是 PARAM… 然后 BLOCK。
+    fn parseLambda() -> Node {
+        advance()   // lam
+        var params = parseParamList("'lam' 后面需要一个形参表：写法是 lam(x : int) -> int { … }", true)
+        var ret = "-"
+        if (matchOne("ARROW")) {
+            ret = parseTypeRef().text()
+        }
+        if (!check("LBRACE")) {
+            failAt(peek(), "lambda 体要写成块：lam(…) -> 类型 { … }（写法是 lam(x : int) -> int { rtn x + 1 }）")
+            rtn errorNode()
+        }
+        var body = parseBlock()
+        var n = new Node(NodeKind.LAMBDA)
+        n.put("params", intToString(params.childCount))
+        n.put("ret", ret)
+        // PARAMS 那一层不搬进来：Kotlin 的 lambda dump 没有 PARAMS 行。
+        // 而且 lambda 的形参行是 `PARAM name=… type=…`（与函数形参的
+        // `PARAM type=… name=…` **顺序相反**），所以这里重新渲染。
+        var i = 0
+        while (i < params.childCount) {
+            var p = params.children[i]
+            n.add(new Node(NodeKind.PARAM).put("name", nodeProp(p, "name")).put("type", lambdaParamTypeOf(p)))
+            i = i + 1
+        }
+        n.add(body)
+        rtn n
+    }
+
+    // lambda 形参的 PARAM 节点是 `type=<类型> name=<名字>`，这里把类型那一段抠出来。
+    // 类型文本可能自带空格（`(int) -> int`），所以不能按空格切，要找**最后**那个 ` name=`。
+    fn lambdaParamTypeOf(p : Node) -> string {
+        var t = p.text
+        var at = t.indexOf(" name=")
+        if (at < 0) { rtn "" }
+        rtn t.substring(5, at)
     }
 }
 
