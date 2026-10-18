@@ -48,6 +48,8 @@ public class Checker(failure : ?CheckFailure) {
     var fnCount : int = 0
     var curFnName : string = ""
     var loopDepth : int = 0
+    var cls : ClsInfo[] = new ClsInfo[8]
+    var clsCount : int = 0
     var labels : string[] = new string[0]
     var labelCount : int = 0
     var curRetText : string = "void"
@@ -102,6 +104,10 @@ public class Checker(failure : ?CheckFailure) {
     }
 
     // ---------------------------------------------------------------- 报错
+
+    fn failAtLC(detail : string, line : int, col : int) -> void {
+        if (failure == null) { failure = new CheckFailure(detail, line, col) }
+    }
 
     fn failAt(detail : string, node : Node) -> void {
         if (failure != null) { rtn }
@@ -163,6 +169,9 @@ public class Checker(failure : ?CheckFailure) {
 
     public fn check(program : Node) -> void {
         declareFunctions(program)
+        collectClasses(program)
+        checkClasses()
+        if (failure != null) { rtn }
         var funcs = childNodeOf(program, NodeKind.FUNCS)
         if (funcs == null) { rtn }
         var i = 0
@@ -197,6 +206,196 @@ public class Checker(failure : ?CheckFailure) {
             }
             i = i + 1
         }
+    }
+
+
+    // ---------------------------------------------------------------- 类表与类级检查
+
+    fn addClass(node : Node, isIface : bool) -> void {
+        var ci = new ClsInfo(nodeProp(node, "name"),
+                             childNodeOf(node, NodeKind.FINAL) != null,
+                             childNodeOf(node, NodeKind.ABSTRACT) != null,
+                             isIface, "", node.line, node.col)
+        var sc = childNodeOf(node, NodeKind.SUPER_CLASS)
+        if (sc != null) { ci.parent = nodeProp(sc!!, "name") }
+        var supers = childNodeOf(node, NodeKind.SUPERS)
+        if (supers != null) {
+            var k = 0
+            while (k < supers!!.childCount) {
+                ci.addIface(nodeProp(supers!!.children[k], "name"))
+                k = k + 1
+            }
+        }
+        var ms = childNodeOf(node, NodeKind.METHODS)
+        if (ms != null) {
+            var j = 0
+            while (j < ms!!.childCount) {
+                var fnode = ms!!.children[j]
+                var plist = childNodeOf(fnode, NodeKind.PARAMS)
+                var texts : string[] = new string[0]
+                if (plist != null) {
+                    texts = new string[plist!!.childCount]
+                    var q = 0
+                    while (q < plist!!.childCount) {
+                        texts[q] = nodeProp(plist!!.children[q], "type")
+                        q = q + 1
+                    }
+                }
+                var mi = new MethInfo(nodeProp(fnode, "name"), texts.length, texts,
+                                      nodeProp(fnode, "retType"),
+                                      nodeProp(fnode, "static") == "true",
+                                      nodeProp(fnode, "control") == "PRIVATE",
+                                      childNodeOf(fnode, NodeKind.BLOCK) == null,
+                                      nodeProp(fnode, "override") == "true",
+                                      childNodeOf(fnode, NodeKind.BLOCK) != null,
+                                      fnode.line, fnode.col)
+                ci.addMeth(mi)
+                j = j + 1
+            }
+        }
+        if (clsCount >= cls.length) {
+            var bigger = new ClsInfo[cls.length * 2]
+            var i = 0
+            while (i < clsCount) { bigger[i] = cls[i]; i = i + 1 }
+            cls = bigger
+        }
+        cls[clsCount] = ci
+        clsCount = clsCount + 1
+    }
+
+    fn collectClasses(prg : Node) -> void {
+        cls = new ClsInfo[8]
+        clsCount = 0
+        var cs = childNodeOf(prg, NodeKind.CLASSES)
+        if (cs != null) {
+            var i = 0
+            while (i < cs!!.childCount) { addClass(cs!!.children[i], false); i = i + 1 }
+        }
+        var isf = childNodeOf(prg, NodeKind.INTERFACES)
+        if (isf != null) {
+            var j = 0
+            while (j < isf!!.childCount) { addClass(isf!!.children[j], true); j = j + 1 }
+        }
+    }
+
+    fn findCls(nm : string) -> ?ClsInfo {
+        var i = 0
+        while (i < clsCount) {
+            if (cls[i].name == nm) { rtn cls[i] }
+            i = i + 1
+        }
+        rtn null
+    }
+
+    fn checkClasses() -> void {
+        var i = 0
+        while (i < clsCount && failure == null) {
+            checkOneClass(cls[i])
+            i = i + 1
+        }
+    }
+
+    fn checkOneClass(c : ClsInfo) -> void {
+        if (c.parent.length() > 0) {
+            var p = findCls(c.parent)
+            if (p != null && p!!.isFinal) {
+                failAtLC("类 '" + c.name + "' 不能继承 '" + c.parent + "'：'" + c.parent + "' 是 final 的（DESIGN-27）。rsf 的类默认可以被继承，只有写了 'final' 才禁止——把父类那行的 'final' 去掉才能继承：\n  class " + c.parent + "(...) { ... }", c.line, c.col)
+                rtn
+            }
+        }
+        var j = 0
+        while (j < c.methCount && failure == null) {
+            var m = c.meths[j]
+            if (!m.isOverride) {
+                var pm = inheritedMeth(c.parent, m.name, m.argCount)
+                if (pm != null) {
+                    var own = inheritedOwnerOf(c.parent, m.name, m.argCount)
+                    failAtLC("类 '" + c.name + "' 的 '" + m.name + "' 和父类 '" + own + "' 的 " + pm!!.sigText() + " 同签名了，但没写 override。rsf 不许遮蔽（DESIGN-25 §5）——要覆盖它就写成 'override fn " + m.name + "(...)'，只是重名就换个名字", m.line, m.col)
+                    rtn
+                }
+            }
+            j = j + 1
+        }
+        if (!c.isAbstract && !c.isIface && c.parent.length() > 0) {
+            var missing = ""
+            var count = 0
+            var pn = c.parent
+            while (pn.length() > 0) {
+                var p = findCls(pn)
+                if (p == null) { pn = "" }
+                else {
+                    var k = 0
+                    while (k < p!!.methCount) {
+                        var am = p!!.meths[k]
+                        if (am.isAbstract && c.ownMeth(am.name, am.argCount) == null) {
+                            count = count + 1
+                            missing = missing + "\n  - " + am.sigText() + "（父类 '" + p!!.name + "' 的）"
+                        }
+                        k = k + 1
+                    }
+                    pn = p!!.parent
+                }
+            }
+            if (count > 0) {
+                failAtLC("类 '" + c.name + "' 还没有实现父类继承来的全部抽象方法，还缺 " + ("" + count) + " 个：" + missing + "\n（在类 '" + c.name + "' 里写一个同名、同参数类型的方法把它实现掉，或者把本类也写成 'abstract class " + c.name + "(...)'）", c.line, c.col)
+                rtn
+            }
+        }
+        if (!c.isIface) {
+            var miss = ""
+            var n = 0
+            var q = 0
+            while (q < c.ifaceCount) {
+                var iface = findCls(c.ifaces[q])
+                if (iface != null) {
+                    var k = 0
+                    while (k < iface!!.methCount) {
+                        var im = iface!!.meths[k]
+                        if (!im.hasBody && c.ownMeth(im.name, im.argCount) == null) {
+                            n = n + 1
+                            miss = miss + "\n  - " + im.fullText() + "（来自 接口 '" + iface!!.name + "'）"
+                        }
+                        k = k + 1
+                    }
+                }
+                q = q + 1
+            }
+            if (n > 0) {
+                failAtLC("类 '" + c.name + "' 没有实现接口要求的全部方法，还缺 " + ("" + n) + " 个：" + miss + "\n（在类里写一个同名、同参数类型、同返回类型的方法就补上了；接口里写了方法体（默认方法）的不用实现）", c.line, c.col)
+                rtn
+            }
+        }
+    }
+
+    fn inheritedMeth(parentName : string, nm : string, argc : int) -> ?MethInfo {
+        var pn = parentName
+        while (pn.length() > 0) {
+            var p = findCls(pn)
+            if (p == null) { rtn null }
+            var m = p!!.ownMeth(nm, argc)
+            if (m != null) { rtn m }
+            pn = p!!.parent
+        }
+        rtn null
+    }
+
+    fn inheritedOwnerOf(parentName : string, nm : string, argc : int) -> string {
+        var pn = parentName
+        while (pn.length() > 0) {
+            var p = findCls(pn)
+            if (p == null) { rtn "" }
+            if (p!!.ownMeth(nm, argc) != null) { rtn p!!.name }
+            pn = p!!.parent
+        }
+        rtn ""
+    }
+
+    fn methOfType(typeText : string, nm : string, argc : int) -> ?MethInfo {
+        var nm2 = typeText
+        if (nm2.endsWith("?")) { nm2 = nm2.substring(0, nm2.length() - 1) }
+        var c = findCls(nm2)
+        if (c == null) { rtn null }
+        rtn c!!.ownMeth(nm, argc)
     }
 
     fn checkBlock(block : Node) -> void {
@@ -349,6 +548,8 @@ public class Checker(failure : ?CheckFailure) {
             rtn sym!!.typeText
         }
         if (e.kind == NodeKind.CALL) { rtn checkCall(e) }
+        if (e.kind == NodeKind.NEW) { rtn nodeProp(e, "class") }
+        if (e.kind == NodeKind.MEMBER) { rtn checkMember(e) }
         if (e.kind == NodeKind.BINARY) { rtn checkBinary(e) }
         var i = 0
         while (i < e.childCount) {
@@ -394,6 +595,71 @@ public class Checker(failure : ?CheckFailure) {
             k = k + 1
         }
         rtn sig!!.retText
+    }
+
+
+    // 成员访问/成员调用（33c 只认「接收者是类的实例」与「接收者是类名（静态）」两种，
+    // 字段读写先按名字放过——语料还没用到）
+    fn checkMember(e : Node) -> string {
+        var nm = nodeProp(e, "name")
+        var isCall = nodeProp(e, "call") == "true"
+        var recv = e.children[0]
+        var argc = 0
+        var args = childNodeOf(e, NodeKind.ARGS)
+        if (args != null) { argc = args!!.childCount }
+
+        // `A.get()`：接收者是类名本身 ⇒ 只许调 static 方法
+        if (recv.kind == NodeKind.VAR) {
+            var rn = nodeProp(recv, "name")
+            if (scopes.lookup(rn) == null) {
+                var ownCls = findCls(rn)
+                if (ownCls != null) {
+                    var sm = ownCls!!.ownMeth(nm, argc)
+                    if (sm != null && !sm!!.isStatic) {
+                        failAt("'" + nm + "' 的调用方式不对——它不是 static 的，要先有对象：对象." + nm + "(...)", e)
+                        rtn "void"
+                    }
+                    var k = 0
+                    while (k < argc) {
+                        checkExpr(args!!.children[k])
+                        k = k + 1
+                    }
+                    if (sm != null) { rtn sm!!.retText }
+                    failAt("类 '" + rn + "' 里没有方法 '" + nm + "'", e)
+                    rtn "void"
+                }
+            }
+        }
+
+        var recvType = checkExpr(recv)
+        if (failure != null) { rtn "void" }
+        var k = 0
+        while (k < argc) {
+            checkExpr(args!!.children[k])
+            k = k + 1
+        }
+        if (failure != null) { rtn "void" }
+        var mm = methOfType(recvType, nm, argc)
+        if (mm == null) { rtn recvType }
+        if (mm!!.isPrivate && !inOwnClass(recvType)) {
+            var ownerName = baseClsName(recvType)
+            failAt("'" + nm + "' 是 " + ownerName + " 的 private 方法，只能在这个类内部使用。要让外面也能用，把它改成 protected 或 public", e)
+            rtn "void"
+        }
+        if (isCall) { rtn mm!!.retText }
+        rtn mm!!.retText
+    }
+
+    fn baseClsName(typeText : string) -> string {
+        var t = typeText
+        if (t.endsWith("?")) { t = t.substring(0, t.length() - 1) }
+        rtn t
+    }
+
+    // 当前语句是不是写在某个类的方法体里（33c 只检查顶层函数，所以恒 false；
+    // 留着是为了 34 检查类方法体时不必改调用点）
+    fn inOwnClass(typeText : string) -> bool {
+        rtn false
     }
 
     fn checkBinary(e : Node) -> string {
@@ -483,6 +749,85 @@ public fn nodeProp(n : Node, key : string) -> string {
         i = j + 1
     }
     rtn ""
+}
+
+
+// ---------------------------------------------------------------- 类模型（33c）
+
+// 一个方法/接口方法的签名（报错文案要印 `tag()` / `id(T)` / `run() -> int`）
+public class MethInfo(name : string, argCount : int, paramTexts : string[], retText : string,
+                      isStatic : bool, isPrivate : bool, isAbstract : bool, isOverride : bool,
+                      hasBody : bool, line : int, col : int) {
+    var name : string = name
+    var argCount : int = argCount
+    var paramTexts : string[] = paramTexts
+    var retText : string = retText
+    var isStatic : bool = isStatic
+    var isPrivate : bool = isPrivate
+    var isAbstract : bool = isAbstract
+    var isOverride : bool = isOverride
+    var hasBody : bool = hasBody
+    var line : int = line
+    var col : int = col
+
+    public fn sigText() -> string {
+        var out = name + "("
+        var i = 0
+        while (i < argCount) {
+            if (i > 0) { out = out + ", " }
+            out = out + paramTexts[i]
+            i = i + 1
+        }
+        rtn out + ")"
+    }
+
+    public fn fullText() -> string { rtn sigText() + " -> " + retText }
+}
+
+public class ClsInfo(name : string, isFinal : bool, isAbstract : bool, isIface : bool,
+                     parent : string, line : int, col : int) {
+    var name : string = name
+    var isFinal : bool = isFinal
+    var isAbstract : bool = isAbstract
+    var isIface : bool = isIface
+    var parent : string = parent
+    var line : int = line
+    var col : int = col
+    var ifaces : string[] = new string[4]
+    var ifaceCount : int = 0
+    var meths : MethInfo[] = new MethInfo[4]
+    var methCount : int = 0
+
+    public fn addIface(nm : string) -> void {
+        if (ifaceCount >= ifaces.length) {
+            var bigger = new string[ifaces.length * 2]
+            var i = 0
+            while (i < ifaceCount) { bigger[i] = ifaces[i]; i = i + 1 }
+            ifaces = bigger
+        }
+        ifaces[ifaceCount] = nm
+        ifaceCount = ifaceCount + 1
+    }
+
+    public fn addMeth(m : MethInfo) -> void {
+        if (methCount >= meths.length) {
+            var bigger = new MethInfo[meths.length * 2]
+            var i = 0
+            while (i < methCount) { bigger[i] = meths[i]; i = i + 1 }
+            meths = bigger
+        }
+        meths[methCount] = m
+        methCount = methCount + 1
+    }
+
+    public fn ownMeth(nm : string, argc : int) -> ?MethInfo {
+        var i = 0
+        while (i < methCount) {
+            if (meths[i].name == nm && meths[i].argCount == argc) { rtn meths[i] }
+            i = i + 1
+        }
+        rtn null
+    }
 }
 
 // 检查一份源码：通过就 rtn null，否则返回第一处错
