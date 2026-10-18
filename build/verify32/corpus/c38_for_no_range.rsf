@@ -1,6 +1,0 @@
-fn main() {
-    var xs : int[] = new int[2]
-    for (x in xs) {
-        println("" + x)
-    }
-}

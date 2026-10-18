@@ -2757,7 +2757,15 @@ pub class Parser(tokens : Token[]) {
         advance()                   // in
 
         var start = parseExpr()
-        expect("RANGE", "for-in 需要一个区间，写法是 'for (" + nameTok.text + " in 起点..终点)'。数组还不能用 for-in 遍历，按下标写：for (var i = 0; i < 数组.length; i = i + 1)（实际读到 '" + peek().text + "'）")
+
+        // 阶段 44：不是区间 ⇒ 「遍历数组」，和 Kotlin 版逐字对应地解糖。区间那条路继续往下走。
+        if (peek().kind != "RANGE") {
+            expect("RPAREN", "for 的头部没有闭合，缺少 ')'")
+            var eachBody = parseBody("for")
+            rtn desugarEachLoop(nameTok, start, eachBody, forTok)
+        }
+
+        expect("RANGE", "for-in 只认两种写法：'for (" + nameTok.text + " in 起点..终点)' 或 'for (" + nameTok.text + " in 数组)'（实际读到 '" + peek().text + "'）")
         var end = parseExpr()
 
         // step 是上下文关键字：只有出现在这里才当关键字，别处照样能叫 step
@@ -2807,6 +2815,60 @@ pub class Parser(tokens : Token[]) {
         outer.add(endDecl)
         outer.add(stepDecl)
         outer.add(loopVar)
+        outer.add(loop)
+        rtn outer.countTag()
+    }
+
+    // `for (x in 数组)`：解糖成下标循环，与 Kotlin 版逐字对应：
+    //   { imutvar __rsf_each<k> = 数组
+    //     var __rsf_i<k> = 0
+    //     for (__rsf_i<k> < __rsf_each<k>.length; __rsf_i<k> = __rsf_i<k> + 1) { imutvar x = __rsf_each<k>[__rsf_i<k>]; 循环体 } }
+    // 编号顺序：先递增 synth，再建节点（与 Kotlin 的 desugarEachLoop 一致）。
+    fn desugarEachLoop(nameTok : Token, iterable : Node, body : Node, forTok : Token) -> Node {
+        var k = synth
+        synth = synth + 1
+        var eachName = "__rsf_each" + intToString(k)
+        var indexName = "__rsf_i" + intToString(k)
+
+        var lengthMember = new Node(NodeKind.MEMBER).put("name", "length").put("call", "false").at(forTok)
+        lengthMember.add(varNode(eachName))
+        var cond = binaryNode("LT", varNode(indexName), lengthMember).at(forTok)
+
+        var stepAssign = new Node(NodeKind.ASSIGN).put("name", escapeValue(indexName)).put("synthetic", "true").at(forTok)
+        stepAssign.add(binaryNode("PLUS", varNode(indexName), intNode("1")).at(forTok))
+
+        var index = new Node(NodeKind.INDEX).at(forTok)
+        index.add(varNode(eachName))
+        index.add(varNode(indexName))
+
+        var elemDecl = new Node(NodeKind.VAR_DECL).put("name", escapeValue(nameTok.text)).put("mutable", "false").put("typed", "false").put("type", "-").at(nameTok)
+        elemDecl.add(index)
+
+        var loopBody = new Node(NodeKind.BLOCK)
+        loopBody.add(elemDecl)
+        if (body.kind == NodeKind.BLOCK) {
+            for (var i = 0; i < body.childCount; i = i + 1) {
+                loopBody.add(body.children[i])
+            }
+        } else {
+            loopBody.add(body)
+        }
+        loopBody.countTag()
+
+        var loop = new Node(NodeKind.FOR)
+        loop.add(cond)
+        loop.add(stepAssign)
+        loop.add(loopBody)
+        loop.put("hasCond", "true").put("hasStep", "true")
+
+        var eachDecl = new Node(NodeKind.VAR_DECL).put("name", eachName).put("mutable", "false")
+        eachDecl.add(iterable)
+        var idxDecl = new Node(NodeKind.VAR_DECL).put("name", indexName).put("mutable", "true")
+        idxDecl.add(intNode("0"))
+
+        var outer = new Node(NodeKind.BLOCK)
+        outer.add(eachDecl)
+        outer.add(idxDecl)
         outer.add(loop)
         rtn outer.countTag()
     }

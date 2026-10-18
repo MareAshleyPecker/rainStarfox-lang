@@ -156,7 +156,8 @@ class Cli {
         // 类也列出来：字段按声明顺序（就是运行时的字段下标），方法带签名
         for ((name, cls) in model.classModel.classes) {
             val control = cls.control.label.padEnd(10)
-            val fields = cls.fields.joinToString(", ") { "${it.name} : ${it.type.name}" }
+            // 同 signatureOf：数组维度在 arrayDepth 里，必须走 display()
+            val fields = cls.fields.joinToString(", ") { "${it.name} : ${it.type.display()}" }
             println("      $control class $name { $fields }")
             for (m in cls.methods) {
                 val kind = if (m.name == name) "构造器" else if (m.isStatic) "静态方法" else "方法"
@@ -401,7 +402,9 @@ class Cli {
     /** `<ControlType> <static> fun <MainType> 名字(参数表) <返回子句>` 的可读形式。 */
     private fun signatureOf(fn: org.example.complie.ast.FuncDecl): String {
         val mainType = if (fn.mainType.name == "void") "" else " ${fn.mainType.name}"
-        val params = fn.params.joinToString(", ") { "${it.name} : ${it.type.name}" }
+        // 用 display()：TypeRef 的数组维度单独放在 arrayDepth 里，光取 name 会把 `int[]` 印成 `int`
+        // （自举侧一直印的是 `int[]`，这里不对齐就会被 verify36 的 check 对拍抓到）
+        val params = fn.params.joinToString(", ") { "${it.name} : ${it.type.display()}" }
         // 缺省就是 public：清单里**显示成 public**，空着会让人以为「没有权限」
         val control = fn.control.label.padEnd(10)
         val static = if (fn.isStatic) "stc " else ""

@@ -1,0 +1,73 @@
+// 阶段 44 探针：数组 for-each（与 okcorpus/ok7_each.rsf 分开：这里只要输出稳定，
+// 用来钉「自举解释器 / 自举后端与 Kotlin 侧逐字节一致」）
+fn each(xs : int[]) -> int {
+    var t = 0
+    for (x in xs) {
+        t = t + x
+    }
+    rtn t
+}
+
+fn doubled(xs : int[]) -> int[] {
+    var out : int[] = new int[xs.length]
+    var i = 0
+    for (x in xs) {
+        out[i] = x * 2
+        i = i + 1
+    }
+    rtn out
+}
+
+pub class Counter {
+    var seen : int = 0
+    var items : int[] = new int[0]
+
+    constructor(xs : int[]) {
+        items = xs
+    }
+
+    pub fn count() -> int {
+        seen = 0
+        for (x in items) {
+            if (x < 0) { continue }
+            seen = seen + 1
+        }
+        rtn seen
+    }
+}
+
+fn main() -> void {
+    var xs : int[] = new int[4]
+    xs[0] = 10
+    xs[1] = 20
+    xs[2] = 30
+    xs[3] = 40
+    println(each(xs))
+
+    var names : string[] = new string[3]
+    names[0] = "a"
+    names[1] = "bb"
+    names[2] = "ccc"
+    for (s in names) {
+        println(s)
+    }
+
+    // 遍历「调用的结果」，并且它只该被求值一次
+    for (v in doubled(xs)) {
+        println(v)
+    }
+
+    // 对象数组 + continue
+    var c = new Counter(doubled(xs))
+    println(c.count())
+
+    // 嵌套 + break（内层跳出不影响外层）
+    var acc = 0
+    for (a in xs) {
+        for (b in xs) {
+            if (b > 25) { break }
+            acc = acc + a + b
+        }
+    }
+    println(acc)
+}

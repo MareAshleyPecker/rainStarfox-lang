@@ -1071,6 +1071,13 @@ pub class Checker(failure : ?CheckFailure) {
         if (mm == null) {
             var builtin = builtinMemberType(recvType, nm, isCall)
             if (builtin.length() > 0) { rtn builtin }
+            // 基本类型上没有成员：Kotlin 侧在这里就报错，自举侧以前默默把接收者类型
+            // 当成结果类型返回，于是同一份源码两端报的不是一回事（`for (x in 0)` 就是
+            // 靠这条暴露出来的）。文案与 Kotlin 的 Checker.checkMember 逐字一致。
+            if (isPrimTypeName(recvType)) {
+                failAt(recvType + " 上没有成员——它既不是 JVM 类，也不是 string", e)
+                rtn "void"
+            }
             rtn recvType
         }
         if (mm!!.isPrivate && !inOwnClass(recvType)) {

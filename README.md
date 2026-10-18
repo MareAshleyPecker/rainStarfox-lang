@@ -460,7 +460,7 @@ var maybe : ?string = null
 | 表达式语句 | `println("hi")` |
 | 块 | `{ imutvar y = 1 }` |
 | 条件 | `if (c) { ... } else { ... }` / `if c : 单条语句` |
-| 循环 | `while (c) { ... }` / `for (i in 0..9)` / `for (init; cond; step)` |
+| 循环 | `while (c) { ... }` / `for (i in 0..9)` / `for (x in 数组)` / `for (init; cond; step)` |
 | 跳出 / 下一轮 | `break` / `continue` |
 | 枚举分派 | `switch (k) { TokenKind.IDENT : ... else : ... }` |
 | 抛错 | `fail "出错了"`（只能在 `!T` 函数里，或者 `try` 里） |
@@ -548,6 +548,15 @@ for (i in 3..0 step -1) { println(i) }      // 3 2 1 0（步长为负自动递�
 
 起点、终点、步长都只求值一次（和 Java / Kotlin 一致）。`step` 是**上下文关键字**——
 只有在这个位置才当关键字，别处照样可以叫 `step`。
+
+**遍历数组** —— 数组表达式只求值一次；循环变量是 `imutvar`（不能重新赋值）：
+
+```
+for (x in xs) { println(x) }                // xs 是 T[]
+```
+
+解糖成下标循环，所以 `continue` / `break` 就是普通循环的语义。只认**数组**：
+`Vec` / `Deque` 这类容器先 `toArray()`，或者自己写 `while (it.hasNext())`。
 
 **Java 式** —— 三段都可以省略，用 `,` 分隔多项：
 

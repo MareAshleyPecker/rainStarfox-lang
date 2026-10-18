@@ -2597,13 +2597,18 @@ class Parser(
         advance() // in
 
         val start = parseExpr()
-        // 数组**不能**这样遍历（阶段 13 明确不做 `for (x in arr)`），所以这句提示
-        // 顺带把「数组要怎么写循环」说出来，省得用户对着区间语法猜
+
+        // 不是区间 ⇒ 当成「遍历数组」解糖（阶段 44）。区间那条路继续往下走。
+        if (!check(TokenKind.RANGE)) {
+            expect(TokenKind.RPAREN, "for 的头部没有闭合，缺少 ')'")
+            val body = parseBody("for")
+            return desugarEachLoop(nameTok, start, body, forTok)
+        }
+
         expect(
             TokenKind.RANGE,
-            "for-in 需要一个区间，写法是 'for (${nameTok.lexeme} in 起点..终点)'。" +
-                "数组还不能用 for-in 遍历，按下标写：" +
-                "for (var i = 0; i < 数组.length; i = i + 1)",
+            "for-in 只认两种写法：'for (${nameTok.lexeme} in 起点..终点)' 或 " +
+                "'for (${nameTok.lexeme} in 数组)'",
         )
         val end = parseExpr()
 
@@ -2644,6 +2649,59 @@ class Parser(
 
         return Block(
             listOf(endDecl, stepDecl, loopVar, ForStmt(condition, advanceStep, body, forTok.at)),
+            forTok.at,
+        )
+    }
+
+    /**
+     * `for (x in 数组) { … }`（阶段 44）。
+     *
+     * 解糖成下标循环（`k` 是保证不重名的计数器）：
+     * ```
+     * {
+     *     imutvar __rsf_each<k> = 数组
+     *     for (var __rsf_i<k> = 0; __rsf_i<k> < __rsf_each<k>.length; __rsf_i<k> = __rsf_i<k> + 1) {
+     *         imutvar x = __rsf_each<k>[__rsf_i<k>]
+     *         循环体
+     *     }
+     * }
+     * ```
+     * 数组表达式只求值一次；循环变量是 `imutvar`（与 Kotlin 的 `for (x in xs)` 一致）。
+     * **只认数组**：`Vec`/`Deque` 这类容器先 `toArray()`，或者自己写 `while (it.hasNext())`。
+     * 放在 parser 里解糖的好处是：两个后端、自举链、解释器都不需要认识「for-each」这个新东西。
+     */
+    private fun desugarEachLoop(nameTok: Token, iterable: Expr, body: Stmt, forTok: Token): Stmt {
+        val k = synthCounter++
+        val eachName = "__rsf_each$k"
+        val indexName = "__rsf_i$k"
+        fun ref(n: String) = VarExpr(n, forTok.at)
+
+        val lengthExpr = MemberExpr(ref(eachName), "length", null, forTok.at)
+        val condition = BinaryExpr(TokenKind.LT, ref(indexName), lengthExpr, forTok.at)
+        val step = AssignStmt(
+            indexName,
+            BinaryExpr(TokenKind.PLUS, ref(indexName), IntLit(1, forTok.at), forTok.at),
+            forTok.at,
+            synthetic = true,
+        )
+        val elementDecl = VarDeclStmt(
+            nameTok.lexeme,
+            IndexExpr(ref(eachName), ref(indexName), nameTok.at),
+            mutable = false,
+            at = nameTok.at,
+        )
+        val statements = if (body is Block) {
+            listOf(elementDecl) + body.statements
+        } else {
+            listOf(elementDecl, body)
+        }
+
+        return Block(
+            listOf(
+                VarDeclStmt(eachName, iterable, mutable = false, at = forTok.at),
+                VarDeclStmt(indexName, IntLit(0, forTok.at), mutable = true, at = forTok.at),
+                ForStmt(condition, step, Block(statements, forTok.at), forTok.at),
+            ),
             forTok.at,
         )
     }

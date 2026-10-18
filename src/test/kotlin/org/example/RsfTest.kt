@@ -1581,12 +1581,71 @@ class RsfTest {
     }
 
     @Test
-    fun `for-in 缺区间会报错`() {
+    fun `for-in 遍历非数组会报错`() {
+        // 阶段 44 起 `for (x in 表达式)` 是数组遍历，不再是「缺区间」的语法错；
+        // 非数组会在语义层被拦下（解糖后的 `.length` 落不到 int 上）
         val e = assertFailsWith<RsfError> {
             Rsf.analyze(source("fn main() -> void {\n    for (i in 0) { }\n    rtn\n}\n"))
         }
-        assertEquals("parser", e.phase)
-        assertTrue(e.detail.contains(".."), e.detail)
+        assertEquals("checker", e.phase)
+        assertTrue(e.detail.contains("没有成员"), e.detail)
+    }
+
+    @Test
+    fun `for-each 遍历数组 两端输出一致`() {
+        // 注：这里不写 `Row[]`（对象数组）——runCompiled 只把主类的字节码塞进自定义
+        // ClassLoader，别的类加载不到（NoClassDefFoundError: [LRow;），那是测试台的老毛病。
+        // 对象数组的覆盖放在 build/verify32/okcorpus/ok7_each.rsf 与 verify40 的 each_probe。
+        val program = """
+            fn total(xs : int[]) -> int {
+                var t = 0
+                for (x in xs) {
+                    if (x < 0) { continue }
+                    if (x > 100) { break }
+                    t = t + x
+                }
+                rtn t
+            }
+
+            fn main() -> void {
+                var xs : int[] = new int[5]
+                xs[0] = 1
+                xs[1] = -2
+                xs[2] = 3
+                xs[3] = 500
+                xs[4] = 7
+                println("total = " + total(xs))
+
+                var names : string[] = new string[2]
+                names[0] = "a"
+                names[1] = "b"
+                for (s in names) {
+                    println("name " + s)
+                }
+
+                // 空数组：循环体一次都不进
+                var empty : int[] = new int[0]
+                var seen = 0
+                for (x in empty) {
+                    seen = seen + 1
+                }
+                println("seen = " + seen)
+
+                // 嵌套：内层的变量遮蔽外层，合成名字不能撞
+                var acc = 0
+                for (a in xs) {
+                    for (b in xs) {
+                        if (b > 25) { break }
+                        acc = acc + a + b
+                    }
+                }
+                println("acc = " + acc)
+                rtn
+            }
+        """.trimIndent() + "\n"
+        val out = lines(runInterpreted(program))
+        assertEquals(listOf("total = 4", "name a", "name b", "seen = 0"), out.take(4))
+        assertEquals(normalize(runInterpreted(program)), normalize(runCompiled(program)))
     }
 
     // ------------------------------------------------------------------ for
