@@ -177,3 +177,12 @@ bin/
 !/build/verify52/**/*.rsf
 !/build/verify52/expected/
 !/build/verify52/expected/*.txt
+
+### Termux 分发包（jar 与 tar.gz 不进库，脚本进）###
+!/dist/
+/dist/*
+!/dist/termux/
+/dist/termux/*
+!/dist/termux/rsf
+!/dist/termux/install.sh
+!/dist/termux/README.md

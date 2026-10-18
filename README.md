@@ -1287,7 +1287,13 @@ rsf repl                                    交互式解释器
 rsf help | version
 ```
 
-### C 后端（native 线，阶段 52）
+### Termux（aarch64）
+
+编译器是 JVM 程序：Termux 里 `pkg install openjdk-17`，解压 `dist/rainStarfox-termux-arm64-0.9.0.tar.gz` 后跑 `./install.sh`，就有 `rsf` 命令。jar 编到 Java 17 字节码（major 61），openjdk-17 / 21 都能跑。
+
+要**原生 ARM64 可执行文件**就用 `--c`：`rsf build x.rsf --c -o out && clang out/x.c -o x`（`pkg install clang`）。编译器本体还不是原生 aarch64（要等自举链能被 C 后端完整翻译），详见 `dist/termux/README.md`。
+
+## C 后端（native 线，阶段 52）
 
 `rsf build x.rsf --c -o out` 把整份程序摊成**一个 C99 文件** `out/x.c`，自带运行时
 （字符串拼接、`print`/`println`、`intToString`），不依赖任何 rsf 库：

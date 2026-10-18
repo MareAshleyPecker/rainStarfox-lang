@@ -30,6 +30,22 @@ kotlin {
     jvmToolchain(25)
 }
 
+// 产物要能在 **JDK 17** 上跑（Termux 的 `pkg install openjdk-17` 就是 17）：
+// 工具链仍是本机的 25，但字节码目标与 API 面都压到 17 —— `-Xjdk-release=17`
+// 会拿 JDK 25 里的 ct.sym 校验，误用 18+ 的 API 直接编译失败，不会到运行期才炸。
+// 生成的 .class（rsf 自己编出来的）本来就是 V17，不用动。
+tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
+    compilerOptions.jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+    compilerOptions.freeCompilerArgs.add('-Xjdk-release=17')
+}
+
+// Java 侧（目前只有 src/main/java 下的互操作样例，若为空也保持一致）同目标，
+// 否则 Gradle 会报 "Inconsistent JVM-target compatibility" 直接失败。
+java {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+}
+
 application {
     mainClass = 'org.example.MainKt'
 }

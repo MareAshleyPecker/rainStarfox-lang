@@ -1,0 +1,19 @@
+#!/bin/sh
+# rainStarfox 启动器（Termux / 任意 Linux）
+# 用法：rsf run x.rsf | rsf build x.rsf | rsf build x.rsf --c -o out | rsf lsp …
+set -e
+SELF=$(readlink -f "$0" 2>/dev/null || echo "$0")
+DIR=$(dirname "$SELF")
+
+if [ -n "$JAVA_HOME" ] && [ -x "$JAVA_HOME/bin/java" ]; then
+    JAVA="$JAVA_HOME/bin/java"
+else
+    JAVA=java
+fi
+
+if ! command -v "$JAVA" >/dev/null 2>&1; then
+    echo "找不到 java：先跑 pkg install openjdk-17（或 21）" >&2
+    exit 127
+fi
+
+exec "$JAVA" -jar "$DIR/rainStarfox-0.9.0.jar" "$@"
