@@ -1,0 +1,7 @@
+fn main() -> void {
+    rtn
+    if (true) {
+        println("a")
+        println("b")
+    }
+}

@@ -1,0 +1,6 @@
+fn main() -> void {
+    while (true) {
+        println("loop")
+    }
+    println("dead")
+}

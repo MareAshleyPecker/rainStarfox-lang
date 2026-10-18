@@ -1,0 +1,73 @@
+// 阶段 40：核心标准库 · 排序与查找 Sorts
+//
+// 只对 int[] 做（v1 没有通用的比较协议）：稳定归并排序 + 二分查找。
+pub class Sorts {
+    pub stc fn ints(a : int[]) -> int[] {
+        if (a.length <= 1) { rtn a }
+        var mid : int = a.length / 2
+        var left = new int[mid]
+        var right = new int[a.length - mid]
+        var i = 0
+        while (i < mid) {
+            left[i] = a[i]
+            i = i + 1
+        }
+        var j = 0
+        while (j < right.length) {
+            right[j] = a[mid + j]
+            j = j + 1
+        }
+        rtn mergeInts(ints(left), ints(right))
+    }
+
+    stc fn mergeInts(a : int[], b : int[]) -> int[] {
+        var out = new int[a.length + b.length]
+        var i = 0
+        var j = 0
+        var k = 0
+        while (i < a.length && j < b.length) {
+            if (a[i] <= b[j]) {
+                out[k] = a[i]
+                i = i + 1
+            } else {
+                out[k] = b[j]
+                j = j + 1
+            }
+            k = k + 1
+        }
+        while (i < a.length) {
+            out[k] = a[i]
+            i = i + 1
+            k = k + 1
+        }
+        while (j < b.length) {
+            out[k] = b[j]
+            j = j + 1
+            k = k + 1
+        }
+        rtn out
+    }
+
+    // 已排序数组里找 x；没有返回 -1
+    pub stc fn binarySearch(a : int[], x : int) -> int {
+        var lo = 0
+        var hi = a.length - 1
+        while (lo <= hi) {
+            var mid : int = (lo + hi) / 2
+            if (a[mid] == x) { rtn mid }
+            if (a[mid] < x) { lo = mid + 1 } else { hi = mid - 1 }
+        }
+        rtn -1
+    }
+
+    pub stc fn joinInts(a : int[], sep : string) -> string {
+        var out = ""
+        var i = 0
+        while (i < a.length) {
+            if (i > 0) { out = out + sep }
+            out = out + a[i]
+            i = i + 1
+        }
+        rtn out
+    }
+}

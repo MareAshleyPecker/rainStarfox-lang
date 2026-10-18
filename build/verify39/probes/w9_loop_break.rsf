@@ -1,0 +1,9 @@
+fn main() -> void {
+    while (true) {
+        if (true) {
+            break
+        }
+        println("body")
+    }
+    println("after")
+}

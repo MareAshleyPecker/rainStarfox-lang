@@ -1,0 +1,18 @@
+// w10：catch 体整段判死（Kotlin 的 CFG 没接异常边）——体里每条语句各一条警告，嵌套的也算
+class A { }
+class B : A() { }
+class C : A() { }
+
+fn main() -> void {
+    var a : A = new C()
+    try {
+        var b : B = a as B
+        println("不可达")
+    } catch (e : string) {
+        println(e)
+        if (true) {
+            println(e)
+        }
+    }
+    rtn
+}

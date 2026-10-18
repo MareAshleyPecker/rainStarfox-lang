@@ -1,0 +1,71 @@
+// 阶段 40：核心标准库 · 双端队列 Deque<T>
+//
+// 环形缓冲区（容量 2 倍增长），只用两端都认的语法，不依赖 JDK 集合。
+// 空队列取元素返回 null，由调用方自己判。
+pub class Deque&<T> {
+    var items : T[] = new T[4]
+    var head : int = 0
+    var n : int = 0
+
+    pub fn size() -> int { rtn n }
+
+    pub fn isEmpty() -> bool { rtn n == 0 }
+
+    pub fn clear() -> void {
+        head = 0
+        n = 0
+    }
+
+    pub fn addLast(x : T) -> void {
+        if (n == items.length) { grow() }
+        items[(head + n) % items.length] = x
+        n = n + 1
+    }
+
+    pub fn addFirst(x : T) -> void {
+        if (n == items.length) { grow() }
+        head = (head - 1 + items.length) % items.length
+        items[head] = x
+        n = n + 1
+    }
+
+    pub fn peekFirst() -> ?T {
+        if (n == 0) { rtn null }
+        rtn items[head]
+    }
+
+    pub fn peekLast() -> ?T {
+        if (n == 0) { rtn null }
+        rtn items[(head + n - 1) % items.length]
+    }
+
+    pub fn removeFirst() -> ?T {
+        if (n == 0) { rtn null }
+        var v : ?T = items[head]
+        head = (head + 1) % items.length
+        n = n - 1
+        rtn v
+    }
+
+    pub fn removeLast() -> ?T {
+        if (n == 0) { rtn null }
+        var v : ?T = items[(head + n - 1) % items.length]
+        n = n - 1
+        rtn v
+    }
+
+    // 按逻辑顺序取第 i 个（0 是队首）
+    pub fn get(i : int) -> T { rtn items[(head + i) % items.length] }
+
+    fn grow() -> void {
+        var cap : int = items.length * 2
+        var next : T[] = new T[cap]
+        var i = 0
+        while (i < n) {
+            next[i] = items[(head + i) % items.length]
+            i = i + 1
+        }
+        items = next
+        head = 0
+    }
+}

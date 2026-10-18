@@ -1,0 +1,41 @@
+import "../../../rsfSrc/core/Deque.rsf"
+import "../../../rsfSrc/core/Sorts.rsf"
+
+fn main() -> void {
+    var d : Deque&<int> = new Deque&<int>()
+    d.addLast(1)
+    d.addLast(2)
+    d.addFirst(0)
+    println("" + d.size() + " " + d.peekFirst() + " " + d.peekLast())
+    var f : int = d.removeFirst()!!
+    var l : int = d.removeLast()!!
+    println("" + f + " " + l + " " + d.size() + " " + d.get(0))
+    var i = 0
+    while (i < 6) {
+        d.addLast(i * i)
+        i = i + 1
+    }
+    var k = 0
+    var sum = 0
+    while (k < d.size()) {
+        sum = sum + d.get(k)
+        k = k + 1
+    }
+    println("" + sum + " " + d.size())
+    d.clear()
+    println("" + d.isEmpty() + " " + d.size())
+
+    var xs = new int[7]
+    xs[0] = 5
+    xs[1] = -1
+    xs[2] = 3
+    xs[3] = 9
+    xs[4] = 0
+    xs[5] = 3
+    xs[6] = -7
+    var ys = Sorts.ints(xs)
+    println(Sorts.joinInts(ys, ","))
+    println("" + Sorts.binarySearch(ys, 5) + " " + Sorts.binarySearch(ys, 4))
+    var empty = new int[0]
+    println("" + Sorts.ints(empty).length + " " + Sorts.joinInts(empty, ","))
+}

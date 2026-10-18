@@ -1,0 +1,13 @@
+fn main() -> void {
+    try {
+        println("t")
+    } catch (e : string) {
+        if (true) {
+            println("c1")
+        }
+        while (false) {
+            println("c2")
+        }
+        println("c3")
+    }
+}

@@ -1,0 +1,8 @@
+fn main() -> void {
+    try {
+        rtn
+    } catch (e : string) {
+        println(e)
+    }
+    println("after")
+}

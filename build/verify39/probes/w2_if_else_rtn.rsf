@@ -1,0 +1,8 @@
+fn main() -> void {
+    if (true) {
+        rtn
+    } else {
+        rtn
+    }
+    println("dead")
+}

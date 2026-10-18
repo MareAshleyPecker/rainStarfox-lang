@@ -1,0 +1,7 @@
+fn main() -> void {
+    goto done
+    println("skipped")
+    println("skipped2")
+    done:
+    println("end")
+}

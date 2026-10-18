@@ -1,0 +1,6 @@
+fn main() -> void {
+    rtn
+    var a : int = 1
+    var b : int = a + 2
+    println("" + b)
+}

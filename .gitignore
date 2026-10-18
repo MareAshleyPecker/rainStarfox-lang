@@ -150,6 +150,7 @@ bin/
 !/build/verify39/**/*.sh
 !/build/verify39/**/*.py
 !/build/verify39/**/*.md
+!/build/verify39/**/*.rsf
 !/build/verify40/
 /build/verify40/**
 !/build/verify40/**/
