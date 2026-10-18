@@ -70,5 +70,19 @@ for f in "$HERE"/okcorpus/*.rsf; do
   fi
 done
 
-echo "==== CheckCli 对拍：parser/lexer $parser_total 份（不同 $parser_bad）  语义 $((checker_same+checker_bad)) 份（相同 $checker_same，不同 $checker_bad）  正例 $ok_total 份（不同 $ok_bad）===="
-[ $((parser_bad+ok_bad)) -eq 0 ] && [ "$parser_total" -gt 0 ]
+# 阶段 36a：完整诊断对拍（首行 + 源码片段 + caret 逐字节相同）
+full_total=0; full_bad=0
+for f in "$HERE"/corpus/*.rsf; do
+  n="$(basename "$f")"
+  full_total=$((full_total+1))
+  java $JOPT -jar "$JAR" check "$f" 2>&1 >/dev/null | tr -d '' > "$OUT/$n.kt.full"; kt_code=${PIPESTATUS[0]}
+  ( cd "$REPO" && java $JOPT -Drsf.check.file="$f" -cp "build/verify32/self;$JAR" CheckCli 2>&1 >/dev/null ) | tr -d '' > "$OUT/$n.self.full"
+  if ! diff -q "$OUT/$n.kt.full" "$OUT/$n.self.full" > /dev/null; then
+    full_bad=$((full_bad+1))
+    echo "   完整诊断 $n 不同："
+    diff -u "$OUT/$n.kt.full" "$OUT/$n.self.full" | sed -n '3,10p' | sed 's/^/      /'
+  fi
+done
+
+echo "==== CheckCli 对拍：parser/lexer $parser_total 份（不同 $parser_bad）  语义 $((checker_same+checker_bad)) 份（相同 $checker_same，不同 $checker_bad）  正例 $ok_total 份（不同 $ok_bad）  完整诊断 $full_total 份（不同 $full_bad）===="
+[ $((parser_bad+ok_bad+full_bad)) -eq 0 ] && [ "$parser_total" -gt 0 ]
