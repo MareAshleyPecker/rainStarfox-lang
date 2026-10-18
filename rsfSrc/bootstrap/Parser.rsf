@@ -1792,6 +1792,37 @@ public class Parser(tokens : Token[]) {
         }
 
         var nameTok = expect("IDENT", "缺少函数名")
+        // 阶段 31：泛型函数的类型参数表 `fn id&<T, U>(...)`（与类/接口同形，但**非空才挂**节点，
+        // 因为 AstDump 的 FUNC 分支只在写了时打 TYPE_PARAMS —— 普通函数的 dump 一个字都不能变）。
+        var fnTypeParams = new Node(NodeKind.TYPE_PARAMS)
+        var fnTpSeen = new string[4]
+        var fnTpCount = 0
+        if (check("AMP")) {
+            advance()
+            expect("LT", "'&' 后面缺少 '<'：类型参数要写成 fn " + nameTok.text + "&<T>")
+            var tpGoing = true
+            while (tpGoing && !failed) {
+                var tpTok = expect("IDENT", "类型参数需要一个名字，写法是 fn " + nameTok.text + "&<T>")
+                for (var i = 0; i < fnTpCount; i = i + 1) {
+                    if (fnTpSeen[i] == tpTok.text) {
+                        failAt(tpTok, "函数 '" + nameTok.text + "' 的类型参数 '" + tpTok.text + "' 重名了")
+                    }
+                }
+                if (tpTok.text == nameTok.text) {
+                    failAt(tpTok, "类型参数不能和函数同名（都叫 '" + nameTok.text + "'）")
+                }
+                if (fnTpCount >= fnTpSeen.length) {
+                    var biggerTp : string[] = new string[fnTpSeen.length * 2]
+                    for (var i = 0; i < fnTpCount; i = i + 1) { biggerTp[i] = fnTpSeen[i] }
+                    fnTpSeen = biggerTp
+                }
+                fnTpSeen[fnTpCount] = tpTok.text
+                fnTpCount = fnTpCount + 1
+                fnTypeParams.add(new Node(NodeKind.TYPE_PARAM).put("name", escapeValue(tpTok.text)))
+                if (!matchOne("COMMA")) { tpGoing = false }
+            }
+            expect("GT", "函数 '" + nameTok.text + "' 的类型参数表没有闭合，缺少 '>'")
+        }
         var params = parseParamList("函数名 '" + nameTok.text + "' 后面缺少 '('", false)
 
         // 返回子句：`->` 与 `:` 等价（`::` 那条别名 2026-10-15 删掉，`::` 腾给 xxx::xx）
@@ -1861,6 +1892,8 @@ public class Parser(tokens : Token[]) {
         // AstDump 的方法分支顺序是 FUNC 行 → FINAL → PARAMS → [BLOCK] → ANNOTATION_USES，
         // 而且**只在写了时**才有那一行（ABSTRACT 在方法上不打：抽象方法体现为没有 BLOCK 孩子）。
         if (inherit.isFinal) { n.add(new Node(NodeKind.FINAL)) }
+        // 阶段 31：TYPE_PARAMS 排在 PARAMS 前面（AstDump.kt:174-177 的顺序），空表不挂
+        if (fnTpCount > 0) { n.add(fnTypeParams.countTag()) }
         n.add(params)
         if (hasBody) { n.add(body) }
         n.add(anns.countTag())

@@ -293,7 +293,9 @@ public class Subst(names : string[], vals : BType[], n : int) {
 }
 
 public fn substEmpty(names : string[]) -> Subst {
-    rtn new Subst(names, new BType[names.length], 0)
+    // n **必须是** names.length：推导是逐条 substPut 写进去的，n = 0 会让 substIndexOf
+    // 一律返回 -1（曾经就是这么错的：`c.same(11)` 推不出 T）
+    rtn new Subst(names, new BType[names.length], names.length)
 }
 
 public fn substIndexOf(s : Subst, nm : string) -> int {
@@ -338,10 +340,83 @@ public fn substApply(t : BType, s : Subst) -> BType {
         var i = substIndexOf(s, t.tpName)
         // 注意方向：substTypeParam 把 this 当**占位符**（要它的 depth/nullable），
         // 参数当实参 —— 所以是在 t 上调，把实参传进去
-        if (i >= 0) { rtn t.substTypeParam(s.vals[i]) }
+        if (i >= 0 && s.used[i]) { rtn t.substTypeParam(s.vals[i]) }
     }
     if (t.extraArgs.length > 0) { rtn t.substAll(s) }
     rtn t
+}
+
+// 阶段 31：按名字把一个推断结果写进替换表（`id(5)` → T := int）。
+// `substOf` 只能按位置整批挂，函数调用是**逐个形参**对齐出来的，所以要这个单点写入。
+// 替换表里有没有真的绑上东西（普通函数也会登记一张空表，导出时别当成泛型调用）
+public fn substAnyUsed(s : Subst) -> bool {
+    var i = 0
+    while (i < s.used.length) {
+        if (s.used[i]) { rtn true }
+        i = i + 1
+    }
+    rtn false
+}
+
+public fn substPut(s : Subst, nm : string, v : BType) -> void {
+    var i = substIndexOf(s, nm)
+    if (i < 0) { rtn }
+    s.vals[i] = v
+    s.used[i] = true
+}
+
+// 阶段 31：实参类型 ↔ 声明形参类型 的对齐。只做单向绑定（DESIGN-31：v1 没有上界推导，
+// 同一个类型参数第二次出现时以第一次为准 —— 与 Kotlin `bindTypeParamPattern` 同序）。
+public fn bindTypeParam(s : Subst, decl : BType, act : BType) -> void {
+    // **数组必须先剥一层**：`T[]` 的 tpName 也是 "T"（desc() 要它），但绑定的是元素
+    // （`first(bs)` 里 `T := Box`，不是 `T := Box[]`）
+    if (decl.depth > 0 && act.depth > 0) {
+        bindTypeParam(s, decl.element(), act.element())
+        rtn
+    }
+    if (decl.tpName != "") {
+        if (!substHas(s, decl.tpName)) { substPut(s, decl.tpName, act) }
+        rtn
+    }
+    if (decl.extraArgs.length > 0 && act.extraArgs.length == decl.extraArgs.length) {
+        var i = 0
+        while (i < decl.extraArgs.length) {
+            bindTypeParam(s, decl.extraArgs[i], act.extraArgs[i])
+            i = i + 1
+        }
+    }
+}
+
+// 一个函数节点上的类型参数名表（`fn id&<T, U>` → ["T", "U"]；普通函数是空表）
+public fn fnParamNamesOf(n : Node) -> string[] {
+    var i = 0
+    while (i < n.childCount) {
+        var c = n.children[i]
+        if (c.kind == NodeKind.TYPE_PARAMS) {
+            var out = new string[c.childCount]
+            var k = 0
+            while (k < c.childCount) {
+                out[k] = unesc(prop(c.children[k], "name"))
+                k = k + 1
+            }
+            rtn out
+        }
+        i = i + 1
+    }
+    rtn new string[0]
+}
+
+// 调用点推导：`id(5)` → T := int；没绑定成功的类型参数保持擦除 Object（与 Kotlin 一致）
+public fn inferFnSubst(g : Gen, params : BType[], fnNode : Node, args : Node) -> Subst {
+    var names = fnParamNamesOf(fnNode)
+    var s = substEmpty(names)
+    if (names.length == 0) { rtn s }
+    var i = 0
+    while (i < args.childCount && i < params.length) {
+        bindTypeParam(s, params[i], tOf(g, args.children[i]))
+        i = i + 1
+    }
+    rtn s
 }
 
 // 与 Kotlin 的 RsfType 同一套判断，只是把 base 写成字符串：
@@ -960,6 +1035,15 @@ public class Gen(owner : string) {
     var sigCount : int = 0
     var paramPool : BType[] = new BType[16]
     var paramTop : int = 0
+    // ---- 阶段 31：当前正在编译的函数的类型参数（`fn id&<T>` 的 T）。
+    // 类级类型参数在 CInfo 里（`g.cur`），函数级只能随「当前函数」切换 —— 签名扫描
+    // （registerFunc / collectMethods）与函数体发射都要用，所以是 Gen 上的一个栈顶。
+    var fnParams : string[] = new string[4]
+    var fnParamCount : int = 0
+    // 每个调用点推导出来的替换（`id(5)` → T := int）：登记在节点上，发射期直接取
+    var fnSubstNodes : Node[] = new Node[8]
+    var fnSubstVals : Subst[] = new Subst[8]
+    var fnSubstCount : int = 0
 
     // 侧表：语句节点 → (类型, 槽位)；表达式节点 → 类型
     var bindNodes : Node[] = new Node[16]
@@ -1498,6 +1582,90 @@ public class Gen(owner : string) {
         rtn paramPool[s.start + i]
     }
 
+    // ---- 阶段 31：函数级类型参数 ----
+    public fn setFnParams(n : Node) -> void {
+        fnParamCount = 0
+        var i = 0
+        while (i < n.childCount) {
+            var c = n.children[i]
+            if (c.kind == NodeKind.TYPE_PARAMS) {
+                var k = 0
+                while (k < c.childCount) {
+                    if (fnParamCount >= fnParams.length) {
+                        var b : string[] = new string[fnParams.length * 2]
+                        var q = 0
+                        while (q < fnParamCount) {
+                            b[q] = fnParams[q]
+                            q = q + 1
+                        }
+                        fnParams = b
+                    }
+                    fnParams[fnParamCount] = prop(c.children[k], "name")
+                    fnParamCount = fnParamCount + 1
+                    k = k + 1
+                }
+            }
+            i = i + 1
+        }
+    }
+
+    public fn clearFnParams() -> void { fnParamCount = 0 }
+
+    public fn fnParamIndex(nm : string) -> int {
+        var i = 0
+        while (i < fnParamCount) {
+            if (fnParams[i] == nm) { rtn i }
+            i = i + 1
+        }
+        rtn -1
+    }
+
+    public fn putFnSubst(n : Node, s : Subst) -> void {
+        var i = 0
+        while (i < fnSubstCount) {
+            if (fnSubstNodes[i] == n) {
+                fnSubstVals[i] = s
+                rtn
+            }
+            i = i + 1
+        }
+        if (fnSubstCount >= fnSubstNodes.length) {
+            var bn : Node[] = new Node[fnSubstNodes.length * 2]
+            var bv : Subst[] = new Subst[fnSubstVals.length * 2]
+            var q = 0
+            while (q < fnSubstCount) {
+                bn[q] = fnSubstNodes[q]
+                bv[q] = fnSubstVals[q]
+                q = q + 1
+            }
+            fnSubstNodes = bn
+            fnSubstVals = bv
+        }
+        fnSubstNodes[fnSubstCount] = n
+        fnSubstVals[fnSubstCount] = s
+        fnSubstCount = fnSubstCount + 1
+    }
+
+    public fn fnSubstOf(n : Node) -> ?Subst {
+        var i = 0
+        while (i < fnSubstCount) {
+            if (fnSubstNodes[i] == n) { rtn fnSubstVals[i] }
+            i = i + 1
+        }
+        rtn null
+    }
+
+    // 阶段 31：Sig 的形参类型（从 paramPool 里按 start/count 取出来，给调用点对齐用）
+    public fn paramsOfSig(s : Sig) -> BType[] {
+        var out = new BType[s.count]
+        var i = 0
+        while (i < s.count) {
+            out[i] = paramPool[s.start + i]
+            i = i + 1
+        }
+        rtn out
+    }
+
     public fn findSig(name : string, argc : int) -> ?Sig {
         var i = 0
         while (i < sigCount) {
@@ -1912,6 +2080,17 @@ fn typeOfText(g : Gen, text : string) -> ?BType {
             rtn null
         }
         rtn new BType("external", anAsType!!.name, nullable, depth)
+    }
+    // 阶段 31：函数级类型参数（`fn id&<T>` 里的 T）优先于类级判断 —— 它只在这个
+    // 函数的签名与函数体里可见，含义与类级完全一样（擦成 Object，调用点补 CHECKCAST）
+    if (g.fnParamIndex(rest) >= 0) {
+        if (ta.length > 0) {
+            g.bad("类型参数不能带类型实参 " + text)
+            rtn null
+        }
+        var ftp = new BType("external", "java/lang/Object", nullable, depth)
+        ftp.tpName = rest
+        rtn ftp
     }
     // 类型参数（`T`）：擦除后就是 Object，实参在调用点由接收者补上
     if (g.cur != null && g.cur!!.typeParamIndex(rest) >= 0) {
@@ -2583,6 +2762,9 @@ public class Mem2(owner : string, name : string, desc : string, ret : BType, par
     // 擦除类型——按它做加宽才会插装箱（`Box&<int>.set(T)` 的形参在 JVM 里是 Object）
     var declParams : BType[] = new BType[0]
     var subst : ?Subst = null
+    // 阶段 31：这次调用是不是**泛型函数**（方法级 `&<T>`）。是的话结果适配要发「强制版」
+    // CHECKCAST —— 声明返回 `Box&<T>` 与静态类型 `Box&<int>` 描述符相同，但 Kotlin 版仍发 cast。
+    var genericRet : bool = false
     // 阶段 20：owner 是不是 rsf 接口 —— 是的话 opcode 记 185（INVOKEINTERFACE），
     // 且 `visitMethodInsn` 的末位布尔必须是 true。
     var itf : bool = false
@@ -4145,18 +4327,30 @@ public class Walker(g : Gen) {
                         g.bad("按类名调用实例方法 " + recvName + "." + nm + "()")
                         rtn tVoid()
                     }
+                    // 阶段 31：类名调用的静态泛型方法也按实参推导（`Calc.pick(1, 2)` → T := int）
+                    var s0 = inferFnSubst(g, m0!!.params, m0!!.node, argNode0)
+                    var p0 : BType[] = new BType[m0!!.params.length]
+                    var pk0 = 0
+                    while (pk0 < p0.length) {
+                        p0[pk0] = substApply(m0!!.params[pk0], s0)
+                        pk0 = pk0 + 1
+                    }
+                    var r0 = substApply(m0!!.ret, s0)
                     var k0 = 0
                     while (k0 < argNode0.childCount) {
-                        if (!acceptsValue(g, m0!!.params[k0], argNode0.children[k0], tOf(g, argNode0.children[k0]))) {
+                        if (!acceptsValue(g, p0[k0], argNode0.children[k0], tOf(g, argNode0.children[k0]))) {
                             g.bad(nm + " 的第 " + intToString(k0 + 1) + " 个实参类型不匹配")
                             rtn tVoid()
                         }
                         k0 = k0 + 1
                     }
-                    var mi0 = new Mem2(cls!!.internal, nm, m0!!.mdesc(), m0!!.ret, m0!!.params, true)
+                    var mi0 = new Mem2(cls!!.internal, nm, m0!!.mdesc(), r0, p0, true)
                     mi0.opcode = m0!!.opcode()
+                    mi0.origRet = m0!!.ret
+                if (fnParamNamesOf(m0!!.node).length > 0) { mi0.genericRet = true }
+                    mi0.declParams = m0!!.params
                     g.putMem(e, mi0)
-                    t = m0!!.ret
+                    t = r0
                 } else {
                     var jc0 = jdkClassInternal(g, recvName)
                     if (!isCall) {
@@ -4364,11 +4558,13 @@ public class Walker(g : Gen) {
                         }
                         // 泛型：用接收者的类型实参还原声明里的 `T`（`b.get()` → int）
                         var sub = chainSubst(uc!!, rt.extraArgs, oc!!)
-                        var uret = substApply(um!!.ret, sub)
+                        // 阶段 31：方法自己的 `&<T>` 再按实参推一轮（`c.same(11)` → T := int）
+                        var msub = inferFnSubst(g, um!!.params, um!!.node, argNode)
+                        var uret = substApply(substApply(um!!.ret, sub), msub)
                         var uparams : BType[] = new BType[um!!.params.length]
                         var pk = 0
                         while (pk < uparams.length) {
-                            uparams[pk] = substApply(um!!.params[pk], sub)
+                            uparams[pk] = substApply(substApply(um!!.params[pk], sub), msub)
                             pk = pk + 1
                         }
                         var k = 0
@@ -4383,6 +4579,7 @@ public class Walker(g : Gen) {
                         mi.opcode = um!!.opcode()
                         mi.recv = rt
                         mi.origRet = um!!.ret
+                if (fnParamNamesOf(um!!.node).length > 0) { mi.genericRet = true }
                         mi.declParams = um!!.params
                         mi.subst = sub
                         g.putMem(e, mi)
@@ -4869,15 +5066,24 @@ public class Walker(g : Gen) {
                 }
             }
             if (m != null) {
+                // 阶段 31：方法级 `&<T>` 按实参推导
+                var isub = inferFnSubst(g, m!!.params, m!!.node, args)
+                var iparams : BType[] = new BType[m!!.params.length]
+                var ipk = 0
+                while (ipk < iparams.length) {
+                    iparams[ipk] = substApply(m!!.params[ipk], isub)
+                    ipk = ipk + 1
+                }
+                var iret = substApply(m!!.ret, isub)
                 var k = 0
                 while (k < args.childCount) {
-                    if (!acceptsValue(g, m!!.params[k], args.children[k], tOf(g, args.children[k]))) {
+                    if (!acceptsValue(g, iparams[k], args.children[k], tOf(g, args.children[k]))) {
                         g.bad(name + " 的第 " + intToString(k + 1) + " 个实参类型不匹配")
                         rtn tVoid()
                     }
                     k = k + 1
                 }
-                var mi = new Mem2(mOwner.internal, name, m!!.mdesc(), m!!.ret, m!!.params, m!!.isStatic)
+                var mi = new Mem2(mOwner.internal, name, m!!.mdesc(), iret, iparams, m!!.isStatic)
                 if (mOwner.isIface) {
                     // 接口方法一律 INVOKEINTERFACE（owner 是**声明它**的那个接口）
                     mi.opcode = 185
@@ -4886,8 +5092,11 @@ public class Walker(g : Gen) {
                     mi.opcode = m!!.opcode()
                 }
                 mi.recv = new BType("external", mOwner.internal, false, 0)
+                mi.origRet = m!!.ret
+                mi.declParams = m!!.params
+                if (fnParamNamesOf(m!!.node).length > 0) { mi.genericRet = true }
                 g.putMem(e, mi)
-                rtn m!!.ret
+                rtn iret
             }
         }
         if (s == null) {
@@ -4897,6 +5106,13 @@ public class Walker(g : Gen) {
                 g.bad("函数调用 " + name + "()")
             }
             rtn tVoid()
+        }
+        // 阶段 31：泛型函数的静态返回类型按实参推导（`id(5)` 是 int，不是擦除的 Object）。
+        // 替换表登记在调用节点上，发射期取出来补 CHECKCAST / 拆箱（Kotlin 的 genericCalls 同构）。
+        if (fnParamNamesOf(s!!.node).length > 0) {
+            var fsub = inferFnSubst(g, g.paramsOfSig(s!!), s!!.node, args)
+            g.putFnSubst(e, fsub)
+            rtn substApply(s!!.ret, fsub)
         }
         rtn s!!.ret
     }
@@ -5637,6 +5853,11 @@ fn emitCall(g : Gen, mv : MethodVisitor, e : Node, off : int) -> void {
         j = j + 1
     }
     mv.visitMethodInsn(184, g.owner, sg.name, descriptorOfSig(g, sg, entry), false)
+    // 阶段 31：擦除后的返回对象 → 按推导出来的静态类型补 CHECKCAST / 拆箱
+    var fsig = g.fnSubstOf(e)
+    if (fsig != null && substAnyUsed(fsig!!)) {
+        emitGenericResultCast(g, mv, sg.ret, substApply(sg.ret, fsig!!))
+    }
 }
 
 // ============================================================ ?: 与 !!
@@ -5781,6 +6002,25 @@ fn emitElvis(g : Gen, mv : MethodVisitor, e : Node, off : int) -> void {
 // 返回值按静态类型收敛（Object → 具体类型）。
 // `declared` 是**声明**（擦除后）的返回类型，`want` 是调用点按类型实参算出来的静态类型。
 // 与 Kotlin 的 BytecodeCompiler.emitResultCast 一一对应。
+// 泛型调用专用：**即使描述符相同也要发 CHECKCAST**。
+// `wrap&<T>(v) -> Box&<T>` 擦除后是 `LBox;`，`Box&<int>` 也是 `LBox;`，但 Kotlin 版
+// 仍然发 `checkcast Box`（它的目标类型是替换后的 `Box&<int>`，与声明类型不相等），
+// 逐字节对拍要求我们照抄。
+fn emitGenericResultCast(g : Gen, mv : MethodVisitor, declared : BType, want : BType) -> void {
+    if (want.isVoid() || want.isNullLit()) { rtn }
+    if (want.isTypeParam() && !want.isArray()) { rtn }
+    if (want.isPrimitive()) {
+        mv.visitTypeInsn(192, boxWrap(want.base))
+        eUnbox(mv, want.base)
+        rtn
+    }
+    if (want.isBoxed()) {
+        mv.visitTypeInsn(192, boxWrap(want.base))
+        rtn
+    }
+    mv.visitTypeInsn(192, internalNameOf(want))
+}
+
 fn emitResultCast(g : Gen, mv : MethodVisitor, declared : BType, want : BType) -> void {
     if (sameType(declared, want)) { rtn }
     if (want.isVoid() || want.isNullLit()) { rtn }
@@ -6292,7 +6532,11 @@ fn emitExpr(g : Gen, mv : MethodVisitor, e : Node, off : int) -> void {
             // 泛型：`get()` 擦除后返回 Object，静态类型来自类型实参。
             // 结果被丢弃时不做这一步（`m.put(k, v)` 的返回值可能为 null，白白拆箱会 NPE）
             if (!disc && !mi.origRet.isVoid()) {
-                emitResultCast(g, mv, mi.origRet, tOf(g, e))
+                if (mi.genericRet) {
+                    emitGenericResultCast(g, mv, mi.origRet, tOf(g, e))
+                } else {
+                    emitResultCast(g, mv, mi.origRet, tOf(g, e))
+                }
             }
             rtn
         }
@@ -6586,24 +6830,29 @@ fn lvtEnd(g : Gen, mv : MethodVisitor, off : int) -> void {
 }
 
 fn registerFunc(g : Gen, fnNode : Node) -> void {
-    var params = fnNode.children[0]
+    // 阶段 31：签名里的 `T` 要能解析（`&<T>` 挂在 FUNC 上，所以 params 不能假定下标 0）
+    g.setFnParams(fnNode)
+    var params = paramsOf(fnNode)
     var name = prop(fnNode, "name")
     var ret = typeOfText(g, prop(fnNode, "retType"))
-    if (ret == null) { rtn }
+    if (ret == null) { g.clearFnParams() rtn }
     var start = g.paramTop
     var cnt = 0
     var i = 0
     while (i < params.childCount) {
         var pt = typeOfText(g, prop(params.children[i], "type"))
-        if (pt == null) { rtn }
+        if (pt == null) { g.clearFnParams() rtn }
         g.addParam(pt!!)
         cnt = cnt + 1
         i = i + 1
     }
     g.addSig(new Sig(name, fnNode, ret!!, start, cnt))
+    g.clearFnParams()
 }
 
 fn emitFunction(g : Gen, fnNode : Node) -> void {
+    // 阶段 31：整个函数体都在自己的类型参数作用域里发射
+    g.setFnParams(fnNode)
     var s = findSigNode(g, fnNode)
     if (s == null) {
         g.bad("函数 " + prop(fnNode, "name"))
@@ -6628,7 +6877,7 @@ fn emitFunction(g : Gen, fnNode : Node) -> void {
     // 一项（Kotlin 那边也一样），所以它不进 LVT —— 那个位置由 flushBody 的 `off` 让开。
     lvtBegin(g, mv, "")
     var root = new Scope(null)
-    var params = fnNode.children[0]
+    var params = paramsOf(fnNode)
     var i = 0
     while (i < params.childCount) {
         var pt = g.paramOf(sg, i)
@@ -6643,7 +6892,7 @@ fn emitFunction(g : Gen, fnNode : Node) -> void {
     g.lvSeq = 0
     g.lambdaMode = false
     g.voidObj = false
-    if (hasLambdaNode(fnNode.children[1])) {
+    if (hasLambdaNode(bodyOf(fnNode))) {
         var pTypes : BType[] = new BType[params.childCount]
         var pNames : string[] = new string[params.childCount]
         var pi = 0
@@ -6652,12 +6901,12 @@ fn emitFunction(g : Gen, fnNode : Node) -> void {
             pTypes[pi] = g.paramOf(sg, pi)
             pi = pi + 1
         }
-        planClosures(g, fnNode.children[1], name, pTypes, pNames)
+        planClosures(g, bodyOf(fnNode), name, pTypes, pNames)
         if (g.failed) { rtn }
     }
     var w = new Walker(g)
     w.resetLabels()
-    w.walkBlock(fnNode.children[1], root)
+    w.walkBlock(bodyOf(fnNode), root)
     if (g.failed) { rtn }
 
     linkTargets(w)
@@ -6667,6 +6916,8 @@ fn emitFunction(g : Gen, fnNode : Node) -> void {
     flushBody(g, mv, new Prep(w, reach), off, sg.ret, name)
     // 阶段 30c：lambda 的合成方法紧跟在包围方法之后（k 升序）
     emitLambdaMethods(g)
+    // 阶段 31：类型参数只属于这个函数，出去就收掉（下一个函数重新 set）
+    g.clearFnParams()
 }
 
 // ------------------------------------------------------------ 用户类 / 枚举
@@ -7071,6 +7322,7 @@ fn emitUserMethod(g : Gen, ci : CInfo, m : CMeth) -> void {
     }
     var first = 0
     if (!m.isStatic) { first = 1 }
+    g.setFnParams(m.node)
     var p = prepBodyWithLambdas(g, bodyOf(m.node), first, m.params, m.paramNames, m.ret, m.name)
     if (p == null) { rtn }
     flushBody(g, mv, p!!, 0, m.ret, m.name)
@@ -7502,6 +7754,8 @@ fn collectMethods(g : Gen, part : Node, ci : CInfo) -> void {
     while (mi < part.childCount) {
         var m = part.children[mi]
         var isCtor = propBool(m, "ctor")
+        // 阶段 31：这个方法的 `&<T>` 只在它自己的签名/体里可见
+        g.setFnParams(m)
         var ret : BType = tVoid()
         if (!isCtor) {
             var rt = typeOfText(g, prop(m, "retType"))
@@ -7520,6 +7774,7 @@ fn collectMethods(g : Gen, part : Node, ci : CInfo) -> void {
             pi = pi + 1
         }
         ci.addMeth(new CMeth(m, prop(m, "name"), pts, pns, ret, propBool(m, "static"), prop(m, "control"), isCtor, propBool(m, "primary")))
+        g.clearFnParams()
         mi = mi + 1
     }
 }
