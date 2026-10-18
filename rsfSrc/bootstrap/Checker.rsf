@@ -1,0 +1,341 @@
+// rainStarfox 阶段 33a：自举 Checker 的第一层（声明 + 最简单的表达式/语句检查）
+//
+// 判据：`build/verify32/run-parity.sh self` 里「语义已实现」的那几份必须与 Kotlin 的第一处错误
+// **逐字相同**（`build/verify32/checkcli-parity.sh` 统计）。
+//
+// 33a 覆盖：
+//   未声明的变量 / 未定义的函数 / 变量不能是 void / 不能把 X 赋给 Y 变量
+// 其余（参数个数与类型、返回、继承、接口、标签、泛型、lambda）留给 33b–35。
+//
+// 注意：这里**不做**后端的活，只做「能不能过」。
+
+import "Parser.rsf"
+import "Types.rsf"
+import "Scopes.rsf"
+import "Diag.rsf"
+
+// 一份源码的检查失败：第一处错就停（与 Kotlin Checker 一致）
+public class CheckFailure(detail : string, line : int, col : int) {
+    var detail : string = detail
+    var line : int = line
+    var col : int = col
+}
+
+// 函数签名（参数类型用文本存，够用；类型运算交给 Types.rsf）
+public class FnSig(name : string, retText : string, paramTexts : string[]) {
+    var name : string = name
+    var retText : string = retText
+    var paramTexts : string[] = paramTexts
+    var paramCount : int = paramTexts.length
+}
+
+public class Checker(failure : ?CheckFailure) {
+    var failure : ?CheckFailure = failure
+    var fns : FnSig[] = new FnSig[8]
+    var fnCount : int = 0
+    var scopes : Scopes = new Scopes()
+
+    // ---------------------------------------------------------------- 类型文本
+
+    fn typeOfText(text : string) -> RType {
+        var t = text
+        var nullable = false
+        if (t.length() > 0 && t.charAt(0) == '?') {
+            nullable = true
+            t = rangeFrom(t, 1)
+        }
+        var depth = 0
+        while (t.length() > 2 && t.charAt(t.length() - 1) == ']' && t.charAt(t.length() - 2) == '[') {
+            depth = depth + 1
+            t = rangeTo(t, t.length() - 2)
+        }
+        var empty : RType[] = new RType[0]
+        if (t == "int") { rtn new RType("INT", nullable, "", empty, depth) }
+        if (t == "long") { rtn new RType("LONG", nullable, "", empty, depth) }
+        if (t == "byte") { rtn new RType("BYTE", nullable, "", empty, depth) }
+        if (t == "char") { rtn new RType("CHAR", nullable, "", empty, depth) }
+        if (t == "float") { rtn new RType("FLOAT", nullable, "", empty, depth) }
+        if (t == "double") { rtn new RType("DOUBLE", nullable, "", empty, depth) }
+        if (t == "bool") { rtn new RType("BOOL", nullable, "", empty, depth) }
+        if (t == "string") { rtn new RType("STRING", nullable, "", empty, depth) }
+        if (t == "void") { rtn new RType("VOID", nullable, "", empty, depth) }
+        rtn new RType("EXTERNAL", nullable, t, empty, depth)
+    }
+
+    fn rangeFrom(s : string, from : int) -> string {
+        var out = ""
+        var i = from
+        while (i < s.length()) {
+            out = out + s.charAt(i)
+            i = i + 1
+        }
+        rtn out
+    }
+
+    fn rangeTo(s : string, to : int) -> string {
+        var out = ""
+        var i = 0
+        while (i < to) {
+            out = out + s.charAt(i)
+            i = i + 1
+        }
+        rtn out
+    }
+
+    // ---------------------------------------------------------------- 报错
+
+    fn failAt(detail : string, node : Node) -> void {
+        if (failure != null) { rtn }
+        failure = new CheckFailure(detail, node.line, node.col)
+    }
+
+    // ---------------------------------------------------------------- 函数表
+
+    fn declareFunctions(program : Node) -> void {
+        var funcs = childNodeOf(program, NodeKind.FUNCS)
+        if (funcs == null) { rtn }
+        var i = 0
+        while (i < funcs!!.childCount) {
+            var fnode = funcs!!.children[i]
+            var paramsNode = childNodeOf(fnode, NodeKind.PARAMS)
+            var ptexts : string[] = new string[0]
+            if (paramsNode != null) {
+                ptexts = new string[paramsNode!!.childCount]
+                var j = 0
+                while (j < paramsNode!!.childCount) {
+                    var prm = paramsNode!!.children[j]
+                    ptexts[j] = nodeProp(prm, "type")
+                    j = j + 1
+                }
+            }
+            var sig = new FnSig(nodeProp(fnode, "name"), nodeProp(fnode, "retType"), ptexts)
+            pushFn(sig)
+            i = i + 1
+        }
+    }
+
+    fn pushFn(sig : FnSig) -> void {
+        if (fnCount >= fns.length) {
+            var bigger : FnSig[] = new FnSig[fns.length * 2]
+            var i = 0
+            while (i < fnCount) {
+                bigger[i] = fns[i]
+                i = i + 1
+            }
+            fns = bigger
+        }
+        fns[fnCount] = sig
+        fnCount = fnCount + 1
+    }
+
+    fn findFn(name : string) -> ?FnSig {
+        var i = 0
+        while (i < fnCount) {
+            if (fns[i].name == name) { rtn fns[i] }
+            i = i + 1
+        }
+        rtn null
+    }
+
+    // ---------------------------------------------------------------- 遍历
+
+    public fn check(program : Node) -> void {
+        declareFunctions(program)
+        var funcs = childNodeOf(program, NodeKind.FUNCS)
+        if (funcs == null) { rtn }
+        var i = 0
+        while (i < funcs!!.childCount && failure == null) {
+            var fnode = funcs!!.children[i]
+            scopes = new Scopes()
+            var paramsNode = childNodeOf(fnode, NodeKind.PARAMS)
+            if (paramsNode != null) {
+                var j = 0
+                while (j < paramsNode!!.childCount) {
+                    var prm = paramsNode!!.children[j]
+                    scopes.declare(symOf(nodeProp(prm, "name"), "param", nodeProp(prm, "type"), prm.line, prm.col))
+                    j = j + 1
+                }
+            }
+            var body = childNodeOf(fnode, NodeKind.BLOCK)
+            if (body != null) { checkBlock(body!!) }
+            i = i + 1
+        }
+    }
+
+    fn checkBlock(block : Node) -> void {
+        scopes.enter()
+        var i = 0
+        while (i < block.childCount && failure == null) {
+            checkStmt(block.children[i])
+            i = i + 1
+        }
+        scopes.leave()
+    }
+
+    fn checkStmt(stmt : Node) -> void {
+        if (stmt.kind == NodeKind.VAR_DECL) { checkVarDecl(stmt) }
+        else if (stmt.kind == NodeKind.EXPR_STMT) { checkExpr(stmt.children[0]) }
+        else if (stmt.kind == NodeKind.ASSIGN) { checkAssign(stmt) }
+        else if (stmt.kind == NodeKind.RETURN && stmt.childCount > 0) { checkExpr(stmt.children[0]) }
+        else if (stmt.kind == NodeKind.IF || stmt.kind == NodeKind.WHILE || stmt.kind == NodeKind.FOR) {
+            checkNested(stmt)
+        } else if (stmt.kind == NodeKind.BLOCK) { checkBlock(stmt) }
+    }
+
+    fn checkNested(stmt : Node) -> void {
+        var i = 0
+        while (i < stmt.childCount && failure == null) {
+            var ch = stmt.children[i]
+            if (ch.kind == NodeKind.BLOCK) { checkBlock(ch) }
+            else if (ch.kind != NodeKind.VAR_DECL && ch.kind != NodeKind.PARAMS && ch.kind != NodeKind.CASES && ch.kind != NodeKind.ARGS && ch.kind != NodeKind.TARGET) {
+                checkExpr(ch)
+            }
+            i = i + 1
+        }
+    }
+
+    fn checkVarDecl(stmt : Node) -> void {
+        var declared = nodeProp(stmt, "type")
+        var typed = nodeProp(stmt, "typed") == "true"
+        var initType = checkExpr(stmt.children[0])
+        if (typeOfText(declared).voidQ()) {
+            failAt("变量不能是 void 类型", stmt)
+            rtn
+        }
+        if (typed && !acceptsText(initType, declared)) {
+            failAt("不能把 " + initType + " 赋给 " + declared + " 变量 '" + nodeProp(stmt, "name") + "'", stmt)
+            rtn
+        }
+        scopes.declare(symOf(nodeProp(stmt, "name"), "local", declared, stmt.line, stmt.col))
+    }
+
+    fn checkAssign(stmt : Node) -> void {
+        var sym = scopes.lookup(nodeProp(stmt, "name"))
+        var valueType = checkExpr(stmt.children[0])
+        if (sym == null) {
+            failAt("未声明的变量 '" + nodeProp(stmt, "name") + "'", stmt)
+            rtn
+        }
+        if (!acceptsText(valueType, sym!!.typeText)) {
+            failAt("不能把 " + valueType + " 赋给 " + sym!!.typeText + " 变量 '" + nodeProp(stmt, "name") + "'", stmt)
+        }
+    }
+
+    // ---------------------------------------------------------------- 表达式
+
+    fn checkExpr(e : Node) -> string {
+        if (failure != null) { rtn "void" }
+        if (e.kind == NodeKind.INT_LIT) { rtn "int" }
+        if (e.kind == NodeKind.LONG_LIT) { rtn "long" }
+        if (e.kind == NodeKind.FLOAT_LIT) { rtn "float" }
+        if (e.kind == NodeKind.DOUBLE_LIT) { rtn "double" }
+        if (e.kind == NodeKind.STRING_LIT) { rtn "string" }
+        if (e.kind == NodeKind.CHAR_LIT) { rtn "char" }
+        if (e.kind == NodeKind.BOOL_LIT) { rtn "bool" }
+        if (e.kind == NodeKind.VAR) {
+            var sym = scopes.lookup(nodeProp(e, "name"))
+            if (sym == null) {
+                failAt("未声明的变量 '" + nodeProp(e, "name") + "'", e)
+                rtn "void"
+            }
+            rtn sym!!.typeText
+        }
+        if (e.kind == NodeKind.CALL) { rtn checkCall(e) }
+        if (e.kind == NodeKind.BINARY) { rtn checkBinary(e) }
+        var i = 0
+        while (i < e.childCount) {
+            checkExpr(e.children[i])
+            i = i + 1
+        }
+        rtn "void"
+    }
+
+    fn checkCall(e : Node) -> string {
+        var name = nodeProp(e, "name")
+        var args = childNodeOf(e, NodeKind.ARGS)
+        var i = 0
+        if (args != null) {
+            while (i < args!!.childCount) {
+                checkExpr(args!!.children[i])
+                i = i + 1
+            }
+        }
+        var sig = findFn(name)
+        if (sig == null) {
+            // 内置函数：println/print 接一个 string
+            if (name == "println" || name == "print") { rtn "void" }
+            failAt("未定义的函数 '" + name + "'", e)
+            rtn "void"
+        }
+        rtn sig!!.retText
+    }
+
+    fn checkBinary(e : Node) -> string {
+        var left = checkExpr(e.children[0])
+        var right = checkExpr(e.children[1])
+        var op = nodeProp(e, "op")
+        if (op == "+" && (left == "string" || right == "string")) { rtn "string" }
+        if (op == "==" || op == "!=" || op == "<" || op == ">" || op == "<=" || op == ">=") { rtn "bool" }
+        rtn left
+    }
+
+    fn acceptsText(from : string, to : string) -> bool {
+        rtn typeOfText(to).accepts(typeOfText(from))
+    }
+}
+
+// 取第一个指定种类的孩子（没有就是 null）
+public fn childNodeOf(n : Node, kind : NodeKind) -> ?Node {
+    var i = 0
+    while (i < n.childCount) {
+        if (n.children[i].kind == kind) { rtn n.children[i] }
+        i = i + 1
+    }
+    rtn null
+}
+
+// 从属性串里取 `k=v`
+public fn nodeProp(n : Node, key : string) -> string {
+    var i = 0
+    while (i < n.text.length()) {
+        var j = i
+        while (j < n.text.length() && n.text.charAt(j) != ' ') { j = j + 1 }
+        var seg = ""
+        var k = i
+        while (k < j) {
+            seg = seg + n.text.charAt(k)
+            k = k + 1
+        }
+        var eq = ""
+        var q = 0
+        while (q < seg.length() && seg.charAt(q) != '=') { q = q + 1 }
+        if (q < seg.length()) {
+            var keyPart = ""
+            var r = 0
+            while (r < q) {
+                keyPart = keyPart + seg.charAt(r)
+                r = r + 1
+            }
+            if (keyPart == key) {
+                var valOut = ""
+                var v = q + 1
+                while (v < seg.length()) {
+                    valOut = valOut + seg.charAt(v)
+                    v = v + 1
+                }
+                rtn valOut
+            }
+        }
+        i = j + 1
+    }
+    rtn ""
+}
+
+// 检查一份源码：通过就 rtn null，否则返回第一处错
+public fn checkSource(text : string) -> ?CheckFailure {
+    var ast = parseSource(text)
+    if (ast.kind == NodeKind.ERROR) { rtn null }
+    var c = new Checker(null)
+    c.check(ast)
+    rtn c.failure
+}

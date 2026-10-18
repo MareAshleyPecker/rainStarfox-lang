@@ -11,12 +11,13 @@
 //     java -Drsf.check.file=<源.rsf> -cp "build/verify32/self;build/libs/rainStarfox-0.9.0.jar" CheckCli
 
 import "Parser.rsf"
+import "Checker.rsf"
 import "Diag.rsf"
 
 import java.lang.System
 
 // 只取文件名（报错口径与 Kotlin `SourceFile.name` 一致：先按 '/'、再按 '\\' 取尾段）
-fn baseName(path : string) -> string {
+fn fileNameOf(path : string) -> string {
     var i = path.length() - 1
     while (i >= 0) {
         var c = path.charAt(i)
@@ -48,7 +49,7 @@ fn pickPath() -> string {
 
 fn main() -> void {
     var path = pickPath()
-    var name = baseName(path)
+    var name = fileNameOf(path)
 
     var text = ""
     var readOk = true
@@ -71,6 +72,15 @@ fn main() -> void {
         var detail = parseErrorMessage(text)
         var d = new Diag(name, "parser", detail, line, col)
         System.err.println(d.render(text))
+        System.exit(1)
+        rtn
+    }
+
+    // 阶段 33：语义检查（第一处错就停）
+    var bad : ?CheckFailure = checkSource(text)
+    if (bad != null) {
+        var d2 = new Diag(name, "checker", bad!!.detail, bad!!.line, bad!!.col)
+        System.err.println(d2.render(text))
         System.exit(1)
         rtn
     }

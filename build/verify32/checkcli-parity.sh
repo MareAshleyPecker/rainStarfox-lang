@@ -30,7 +30,7 @@ self_run() {
   return $rtn
 }
 
-parser_total=0; parser_bad=0; checker_todo=0; ok_total=0; ok_bad=0
+parser_total=0; parser_bad=0; checker_same=0; checker_bad=0; ok_total=0; ok_bad=0
 
 for f in "$HERE"/corpus/*.rsf; do
   n="$(basename "$f")"
@@ -45,7 +45,13 @@ for f in "$HERE"/corpus/*.rsf; do
       diff -u "$OUT/$n.kt.err" "$OUT/$n.self.err" | sed -n '3,10p' | sed 's/^/      /'
     fi
   else
-    checker_todo=$((checker_todo+1))
+    kt_out "$f" > "$OUT/$n.kt.err"; kt_code=$?
+    self_run "$f" > "$OUT/$n.self.err" 2>&1; self_code=$?
+    if [ "$kt_code" = "$self_code" ] && diff -q "$OUT/$n.kt.err" "$OUT/$n.self.err" > /dev/null; then
+      checker_same=$((checker_same+1))
+    else
+      checker_bad=$((checker_bad+1))
+    fi
   fi
 done
 
@@ -64,5 +70,5 @@ for f in "$HERE"/okcorpus/*.rsf; do
   fi
 done
 
-echo "==== CheckCli 对拍：parser/lexer $parser_total 份（不同 $parser_bad）  语义待实现 $checker_todo 份  正例 $ok_total 份（不同 $ok_bad）===="
+echo "==== CheckCli 对拍：parser/lexer $parser_total 份（不同 $parser_bad）  语义 $((checker_same+checker_bad)) 份（相同 $checker_same，不同 $checker_bad）  正例 $ok_total 份（不同 $ok_bad）===="
 [ $((parser_bad+ok_bad)) -eq 0 ] && [ "$parser_total" -gt 0 ]

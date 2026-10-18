@@ -123,7 +123,7 @@ fn widenOk(from : string, to : string) -> bool {
     rtn false
 }
 
-fn repeatText(s : string, n : int) -> string {
+fn repeatChars(s : string, n : int) -> string {
     var out = ""
     var i = 0
     while (i < n) {
@@ -206,7 +206,7 @@ public class RType(base : string, nullable : bool, extName : string, targs : RTy
 
     public fn desc() -> string {
         if (depth == 0) { rtn elementDesc() }
-        rtn repeatText("[", depth) + elementDesc()
+        rtn repeatChars("[", depth) + elementDesc()
     }
 
     // 报错用的名字：`?Box&<int>[]` 这种
@@ -220,7 +220,7 @@ public class RType(base : string, nullable : bool, extName : string, targs : RTy
         if (targs.length > 0) {
             argsText = "&<" + joinArgs() + ">"
         }
-        rtn mark + head + argsText + repeatText("[]", depth)
+        rtn mark + head + argsText + repeatChars("[]", depth)
     }
 
     fn joinArgs() -> string {

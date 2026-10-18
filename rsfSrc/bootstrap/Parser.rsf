@@ -233,6 +233,15 @@ public fn kindName(k : NodeKind) -> string {
 
 public class Node(kind : NodeKind, text : string) {
     var kind : NodeKind = kind
+    // 阶段 33：列号（1 基，0 = 没定）。只给 Checker 报错用，**不进属性串** ⇒ dump 与对拍不受影响。
+    var col : int = 0
+
+    // 阶段 33：把源位置挂到节点上（链式写法：`new Node(...).at(tok)`）
+    public fn at(t : Token) -> Node {
+        this.line = t.line
+        this.col = t.col
+        rtn this
+    }
     // 属性串：`name=foo mutable=true`（字段之间正好一个空格）。
     // 值里的空格/换行已经在 escapeValue 里转义掉了，所以「按空格切」是无歧义的。
     var text : string = text
@@ -651,6 +660,14 @@ public class Parser(tokens : Token[]) {
     }
 
     fn peek() -> Token { rtn peekAt(0) }
+
+    // 刚消费掉的那个记号（阶段 33：给二元表达式取运算符位置用）
+    fn prevToken() -> Token {
+        var i = pos - 1
+        if (i < 0) { i = 0 }
+        if (i >= ts.length) { i = ts.length - 1 }
+        rtn ts[i]
+    }
 
     fn check(kind : string) -> bool { rtn peek().kind == kind }
 
@@ -2306,7 +2323,7 @@ public class Parser(tokens : Token[]) {
         var nameTok = advance()
         advance()   // =
         var value = parseExpr()
-        var n = new Node(NodeKind.ASSIGN).put("name", escapeValue(nameTok.text)).put("synthetic", "false")
+        var n = new Node(NodeKind.ASSIGN).put("name", escapeValue(nameTok.text)).put("synthetic", "false").at(nameTok)
         n.add(value)
         rtn n
     }
@@ -2326,6 +2343,7 @@ public class Parser(tokens : Token[]) {
 
         var init = parseExpr()
         var n = new Node(NodeKind.VAR_DECL)
+            .at(kwTok)
             .put("name", escapeValue(nameTok.text))
             .put("mutable", boolText(mutable))
             .put("typed", boolText(hasType))
@@ -2789,7 +2807,8 @@ public class Parser(tokens : Token[]) {
     }
 
     fn binaryNode(op : string, left : Node, right : Node) -> Node {
-        var n = new Node(NodeKind.BINARY).put("op", op)
+        var opTok = prevToken()
+        var n = new Node(NodeKind.BINARY).put("op", op).at(opTok)
         n.add(left)
         n.add(right)
         rtn n
@@ -3082,7 +3101,7 @@ public class Parser(tokens : Token[]) {
 
         if (k == "INT_LIT") {
             advance()
-            rtn new Node(NodeKind.INT_LIT).put("value", intLiteralText(t))
+            rtn new Node(NodeKind.INT_LIT).put("value", intLiteralText(t)).at(t)
         }
         if (k == "LONG_LIT") {
             advance()
@@ -3098,7 +3117,7 @@ public class Parser(tokens : Token[]) {
         }
         if (k == "STRING_LIT") {
             advance()
-            rtn new Node(NodeKind.STRING_LIT).put("value", escapeValue(t.text))
+            rtn new Node(NodeKind.STRING_LIT).put("value", escapeValue(t.text)).at(t)
         }
         if (k == "CHAR_LIT") {
             advance()
@@ -3169,11 +3188,11 @@ public class Parser(tokens : Token[]) {
                     }
                 }
                 expect("RPAREN", "调用 '" + t.text + "' 的参数表没有闭合，缺少 ')'")
-                var call = new Node(NodeKind.CALL).put("name", escapeValue(t.text))
+                var call = new Node(NodeKind.CALL).put("name", escapeValue(t.text)).at(t)
                 call.add(callArgs.countTag())
                 rtn call
             }
-            rtn new Node(NodeKind.VAR).put("name", escapeValue(t.text))
+            rtn new Node(NodeKind.VAR).put("name", escapeValue(t.text)).at(t)
         }
         if (k == "LPAREN") {
             advance()
