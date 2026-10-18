@@ -184,3 +184,5 @@ bin/
 !/build/verify40/**/*.py
 !/build/verify40/**/*.md
 !/build/verify40/**/*.rsf
+!/build/verify40/expected/
+!/build/verify40/expected/*.txt

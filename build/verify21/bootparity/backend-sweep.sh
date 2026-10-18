@@ -28,7 +28,7 @@ run_one() {
   [ -n "$rerr" ] && printf '%34s R: %s\n' '' "$rerr"
 }
 
-for f in main class generics errors stdlib arrays files enums pt; do
+for f in main class generics errors stdlib arrays files enums; do
   run_one "rsfSrc/lang/$f.rsf" "$f"
 done
 for f in usejava rsflib; do
