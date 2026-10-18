@@ -1,7 +1,9 @@
 package org.rainstarfox.idea
 
-import com.intellij.openapi.editor.colors.TextAttributesKey
 import com.intellij.openapi.editor.DefaultLanguageHighlighterColors
+import com.intellij.openapi.editor.colors.TextAttributesKey
+import com.intellij.openapi.editor.markup.TextAttributes
+import java.awt.Color
 
 /**
  * 颜色键。
@@ -11,6 +13,11 @@ import com.intellij.openapi.editor.DefaultLanguageHighlighterColors
  * 只有标准键里没有概念的那几个（类型名、函数名、内置函数）才自建。
  */
 object RsfTextAttributes {
+
+    /** 显式色（不跟主题走）：用户要的是「类型黄灰 / void 淡灰 / 变量浅蓝」这套固定搭配。 */
+    private fun colored(fg: Color): TextAttributes = TextAttributes().apply {
+        foregroundColor = fg
+    }
 
     val KEYWORD = TextAttributesKey.createTextAttributesKey(
         "RSF_KEYWORD",
@@ -22,10 +29,16 @@ object RsfTextAttributes {
         DefaultLanguageHighlighterColors.KEYWORD,
     )
 
-    /** `int` `double` `string` `void` 这些类型名。 */
+    /** `int` `double` `string` `byte` `char` 这些类型名：黄灰。 */
     val TYPE = TextAttributesKey.createTextAttributesKey(
         "RSF_TYPE",
-        DefaultLanguageHighlighterColors.KEYWORD,
+        colored(Color(0xA9, 0x9C, 0x6B)),
+    )
+
+    /** `void`：不产出值，颜色比普通类型更淡（浅灰）。 */
+    val VOID_TYPE = TextAttributesKey.createTextAttributesKey(
+        "RSF_VOID_TYPE",
+        colored(Color(0xBE, 0xBE, 0xBE)),
     )
 
     val FUNCTION_DECLARATION = TextAttributesKey.createTextAttributesKey(
@@ -44,9 +57,10 @@ object RsfTextAttributes {
         DefaultLanguageHighlighterColors.PREDEFINED_SYMBOL,
     )
 
+    /** 变量名与其它普通标识符：浅蓝。 */
     val IDENTIFIER = TextAttributesKey.createTextAttributesKey(
         "RSF_IDENTIFIER",
-        DefaultLanguageHighlighterColors.IDENTIFIER,
+        colored(Color(0x7F, 0xB3, 0xD5)),
     )
 
     val NUMBER = TextAttributesKey.createTextAttributesKey(

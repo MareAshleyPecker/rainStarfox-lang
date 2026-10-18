@@ -20,6 +20,7 @@ class RsfSyntaxHighlighter : SyntaxHighlighterBase() {
         RsfTokens.CONTROL_KEYWORD -> KEYWORD
         RsfTokens.MODIFIER -> MODIFIER
         RsfTokens.TYPE_KEYWORD -> TYPE
+        RsfTokens.VOID_KEYWORD -> VOID_TYPE
         // 用户类名被当类型用的位置（`var p : Point`）：跟类型关键字一个颜色
         RsfTokens.TYPE_NAME -> TYPE
         RsfTokens.FUNCTION_DECLARATION -> FUNCTION_DECLARATION
@@ -47,6 +48,7 @@ class RsfSyntaxHighlighter : SyntaxHighlighterBase() {
         private val KEYWORD = arrayOf(RsfTextAttributes.KEYWORD)
         private val MODIFIER = arrayOf(RsfTextAttributes.MODIFIER)
         private val TYPE = arrayOf(RsfTextAttributes.TYPE)
+        private val VOID_TYPE = arrayOf(RsfTextAttributes.VOID_TYPE)
         private val FUNCTION_DECLARATION = arrayOf(RsfTextAttributes.FUNCTION_DECLARATION)
         private val FUNCTION_CALL = arrayOf(RsfTextAttributes.FUNCTION_CALL)
         private val BUILTIN = arrayOf(RsfTextAttributes.BUILTIN)

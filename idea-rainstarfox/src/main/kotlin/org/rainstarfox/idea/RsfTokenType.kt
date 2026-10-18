@@ -39,8 +39,11 @@ object RsfTokens {
     /** `if` `else` `while` `for` `goto` `break` `continue` `rtn` `return`。 */
     val CONTROL_KEYWORD = RsfTokenType("CONTROL_KEYWORD")
 
-    /** `int` `long` `double` `float` `string` `bool` `void` `byte` `char`。 */
+    /** `int` `long` `double` `float` `string` `bool` `byte` `char`。 */
     val TYPE_KEYWORD = RsfTokenType("TYPE_KEYWORD")
+
+    /** `void` 单独一类：它没有值、只出现在返回子句里，配色跟别的类型区分开（淡灰）。 */
+    val VOID_KEYWORD = RsfTokenType("VOID_KEYWORD")
 
     /**
      * **用户定义的类名**被当类型用的位置（阶段 19 的后缀类型标注 `var p : Point`、

@@ -1,6 +1,8 @@
 package org.rainstarfox.idea
 
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNotNull
+import java.awt.Color
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -31,7 +33,7 @@ class RsfLexerTest {
     @Test
     fun `关键字 修饰词 类型名 各归各类`() {
         assertEquals(RsfTokens.MODIFIER.toString(), tokenOf("pub fn f() -> void", "pub"))
-        assertEquals(RsfTokens.TYPE_KEYWORD.toString(), tokenOf("fn f() -> void", "void"))
+        assertEquals(RsfTokens.VOID_KEYWORD.toString(), tokenOf("fn f() -> void", "void"))
         assertEquals(RsfTokens.CONTROL_KEYWORD.toString(), tokenOf("if (a) { rtn }", "if"))
         assertEquals(RsfTokens.CONTROL_KEYWORD.toString(), tokenOf("while (a) { break }", "while"))
     }
@@ -326,5 +328,13 @@ class RsfLexerTest {
         assertEquals(RsfTokens.TYPE_KEYWORD.toString(), tokenOf(ch, "char"))
         assertEquals(RsfTokens.CHARACTER.toString(), tokenOf("var n = '\\n'", "'\\n'"))
         assertEquals(RsfTokens.CHARACTER.toString(), tokenOf("var u = '\\u0041'", "'\\u0041'"))
+    }
+
+    @Test
+    fun `配色：类型黄灰、void 淡灰、变量浅蓝`() {
+        assertEquals(Color(0xA9, 0x9C, 0x6B), RsfTextAttributes.TYPE.defaultAttributes?.foregroundColor)
+        assertEquals(Color(0xBE, 0xBE, 0xBE), RsfTextAttributes.VOID_TYPE.defaultAttributes?.foregroundColor)
+        assertEquals(Color(0x7F, 0xB3, 0xD5), RsfTextAttributes.IDENTIFIER.defaultAttributes?.foregroundColor)
+        assertNotNull(RsfSyntaxHighlighter().getTokenHighlights(RsfTokens.VOID_KEYWORD))
     }
 }

@@ -227,7 +227,7 @@ class RsfLexer : Lexer() {
                 // fun 名字
                 isFun(previous) -> RsfTokens.FUNCTION_DECLARATION
                 // fun <类型> 名字
-                previous?.type == RsfTokens.TYPE_KEYWORD && p2 >= 0 && isFun(raw[p2]) -> RsfTokens.FUNCTION_DECLARATION
+                (previous?.type == RsfTokens.TYPE_KEYWORD || previous?.type == RsfTokens.VOID_KEYWORD) && p2 >= 0 && isFun(raw[p2]) -> RsfTokens.FUNCTION_DECLARATION
                 word in RsfKeywords.BUILTINS -> RsfTokens.BUILTIN
                 next?.type == RsfTokens.LPAREN -> RsfTokens.FUNCTION_CALL
                 else -> RsfTokens.IDENTIFIER
@@ -329,7 +329,7 @@ class RsfLexer : Lexer() {
         // 注：`&` `<` `>` 在插件里没有单独的记号类型，都归在 OPERATION，所以这里
         // 得连字面量一起看——只放过泛型用的那三个，别的运算符一出现就说明不是声明头
         fun isHeaderToken(t: Tok): Boolean = when (t.type) {
-            RsfTokens.IDENTIFIER, RsfTokens.TYPE_KEYWORD, RsfTokens.COMMA -> true
+            RsfTokens.IDENTIFIER, RsfTokens.TYPE_KEYWORD, RsfTokens.VOID_KEYWORD, RsfTokens.COMMA -> true
 
             RsfTokens.OPERATION -> lexemeOf(t) == "&" || lexemeOf(t) == "<" || lexemeOf(t) == ">"
 
@@ -384,6 +384,8 @@ class RsfLexer : Lexer() {
 
     private fun keywordType(word: String): IElementType = when (word) {
         in RsfKeywords.MODIFIERS -> RsfTokens.MODIFIER
+        // void 单独一类：它不产出值，配色要比普通类型更淡
+        "void" -> RsfTokens.VOID_KEYWORD
         in RsfKeywords.TYPES -> RsfTokens.TYPE_KEYWORD
         in RsfKeywords.CONTROL -> RsfTokens.CONTROL_KEYWORD
         else -> RsfTokens.IDENTIFIER
