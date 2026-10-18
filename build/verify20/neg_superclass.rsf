@@ -1,11 +1,11 @@
 class Base {
-    public fn id() -> int {
+    pub fn id() -> int {
         rtn 1
     }
 }
 
 class Child : Base {
-    public fn name() -> string {
+    pub fn name() -> string {
         rtn "c"
     }
 }

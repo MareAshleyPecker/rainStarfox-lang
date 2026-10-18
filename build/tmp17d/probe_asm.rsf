@@ -1,7 +1,7 @@
 // 临时探针：rsf 后端能不能编译 ASM 类的 new（17e 的前置）
 import org.objectweb.asm.Label
 
-public fn main() -> void {
+pub fn main() -> void {
     var l : Label = new Label()
     println(l.toString())
 }

@@ -10,18 +10,18 @@
 // 而这些表以后还要被 Checker（阶段 33–35）共用，用 if 链查表最省事。
 
 // 基础类型常量（与 Kotlin `RsfBase` 的枚举名同拼写，方便对照阅读）
-public fn baseVoid() -> string { rtn "VOID" }
-public fn baseBool() -> string { rtn "BOOL" }
-public fn baseByte() -> string { rtn "BYTE" }
-public fn baseChar() -> string { rtn "CHAR" }
-public fn baseInt() -> string { rtn "INT" }
-public fn baseLong() -> string { rtn "LONG" }
-public fn baseFloat() -> string { rtn "FLOAT" }
-public fn baseDouble() -> string { rtn "DOUBLE" }
-public fn baseString() -> string { rtn "STRING" }
-public fn baseNull() -> string { rtn "NULL" }
-public fn baseExternal() -> string { rtn "EXTERNAL" }
-public fn baseTypeParam() -> string { rtn "TYPE_PARAM" }
+pub fn baseVoid() -> string { rtn "VOID" }
+pub fn baseBool() -> string { rtn "BOOL" }
+pub fn baseByte() -> string { rtn "BYTE" }
+pub fn baseChar() -> string { rtn "CHAR" }
+pub fn baseInt() -> string { rtn "INT" }
+pub fn baseLong() -> string { rtn "LONG" }
+pub fn baseFloat() -> string { rtn "FLOAT" }
+pub fn baseDouble() -> string { rtn "DOUBLE" }
+pub fn baseString() -> string { rtn "STRING" }
+pub fn baseNull() -> string { rtn "NULL" }
+pub fn baseExternal() -> string { rtn "EXTERNAL" }
+pub fn baseTypeParam() -> string { rtn "TYPE_PARAM" }
 
 // —— 基础类型的三张表：名字 / 非空描述符 / 槽位 ——
 
@@ -135,7 +135,7 @@ fn repeatChars(s : string, n : int) -> string {
 
 // —— 类型本体 ——
 
-public class RType(base : string, nullable : bool, extName : string, targs : RType[], depth : int) {
+pub class RType(base : string, nullable : bool, extName : string, targs : RType[], depth : int) {
     var base : string = base
     var nullable : bool = nullable
     var extName : string = extName
@@ -143,7 +143,7 @@ public class RType(base : string, nullable : bool, extName : string, targs : RTy
     var depth : int = depth
 
     // `java/lang/Math` → `Math`；类型参数占位 → 它的名字（`T`）
-    public fn simpleName() -> string {
+    pub fn simpleName() -> string {
         if (base == "TYPE_PARAM") { rtn extName }
         if (base == "EXTERNAL") {
             var slash = lastSlash(extName)
@@ -154,43 +154,43 @@ public class RType(base : string, nullable : bool, extName : string, targs : RTy
         rtn baseName(base)
     }
 
-    public fn typeParamQ() -> bool {
+    pub fn typeParamQ() -> bool {
         rtn base == "TYPE_PARAM"
     }
 
-    public fn arrayQ() -> bool {
+    pub fn arrayQ() -> bool {
         rtn depth > 0
     }
 
-    public fn nullableQ() -> bool {
+    pub fn nullableQ() -> bool {
         rtn nullable && base != "NULL"
     }
 
-    public fn voidQ() -> bool {
+    pub fn voidQ() -> bool {
         rtn base == "VOID"
     }
 
-    public fn nullLit() -> bool {
+    pub fn nullLit() -> bool {
         rtn base == "NULL"
     }
 
-    public fn prim() -> bool {
+    pub fn prim() -> bool {
         rtn depth == 0 && !nullable && baseIsPrim(base)
     }
 
-    public fn numeric() -> bool {
+    pub fn numeric() -> bool {
         rtn depth == 0 && !nullable && baseIsNumeric(base)
     }
 
-    public fn arith() -> bool {
+    pub fn arith() -> bool {
         rtn depth == 0 && !nullable && baseIsArith(base)
     }
 
-    public fn external() -> bool {
+    pub fn external() -> bool {
         rtn depth == 0 && base == "EXTERNAL"
     }
 
-    public fn slots() -> int {
+    pub fn slots() -> int {
         if (depth > 0) { rtn 1 }
         if (nullable && baseIsPrim(base)) { rtn 1 }
         rtn baseSlots(base)
@@ -204,13 +204,13 @@ public class RType(base : string, nullable : bool, extName : string, targs : RTy
         rtn rtBaseDesc(base)
     }
 
-    public fn desc() -> string {
+    pub fn desc() -> string {
         if (depth == 0) { rtn elementDesc() }
         rtn repeatChars("[", depth) + elementDesc()
     }
 
     // 报错用的名字：`?Box&<int>[]` 这种
-    public fn name() -> string {
+    pub fn name() -> string {
         var head = baseName(base)
         if (base == "EXTERNAL") { head = simpleName() }
         if (base == "TYPE_PARAM") { head = extName }
@@ -234,14 +234,14 @@ public class RType(base : string, nullable : bool, extName : string, targs : RTy
         rtn out
     }
 
-    public fn printDesc() -> string {
+    pub fn printDesc() -> string {
         if (external()) { rtn "(Ljava/lang/Object;)V" }
         if (arrayQ()) { rtn "(Ljava/lang/Object;)V" }
         if (base == "BYTE" && !nullable) { rtn "(I)V" }
         rtn "(" + desc() + ")V"
     }
 
-    public fn same(o : RType) -> bool {
+    pub fn same(o : RType) -> bool {
         if (base != o.base) { rtn false }
         if (nullable != o.nullable) { rtn false }
         if (extName != o.extName) { rtn false }
@@ -255,28 +255,28 @@ public class RType(base : string, nullable : bool, extName : string, targs : RTy
         rtn true
     }
 
-    public fn asNullable() -> RType {
+    pub fn asNullable() -> RType {
         if (nullable || base == "VOID") { rtn this }
         rtn new RType(base, true, extName, targs, depth)
     }
 
-    public fn asNonNull() -> RType {
+    pub fn asNonNull() -> RType {
         if (!nullable) { rtn this }
         rtn new RType(base, false, extName, targs, depth)
     }
 
-    public fn arrayOf(n : int) -> RType {
+    pub fn arrayOf(n : int) -> RType {
         if (n == 0) { rtn this }
         rtn new RType(base, nullable, extName, targs, depth + n)
     }
 
-    public fn elemType() -> RType {
+    pub fn elemType() -> RType {
         if (depth == 0) { rtn this }
         rtn new RType(base, nullable, extName, targs, depth - 1)
     }
 
     // 与 Kotlin `accepts` 逐条对应（见 RsfType.kt:408-430 的注释）
-    public fn accepts(o : RType) -> bool {
+    pub fn accepts(o : RType) -> bool {
         if (base == "VOID" || o.base == "VOID") { rtn false }
         // 类体里的类型参数占位擦成 Object，什么都放得下
         if (typeParamQ()) { rtn true }
@@ -303,7 +303,7 @@ public class RType(base : string, nullable : bool, extName : string, targs : RTy
     }
 
     // 递归替换类型参数占位：`T` → 实际类型（维度要一起搬）
-    public fn substitute(name : string, actual : RType) -> RType {
+    pub fn substitute(name : string, actual : RType) -> RType {
         if (typeParamQ() && extName == name) {
             var replaced = actual.arrayOf(depth)
             if (nullable) { rtn replaced.asNullable() }
@@ -322,18 +322,18 @@ public class RType(base : string, nullable : bool, extName : string, targs : RTy
 
 // —— 构造器（rsf 没有默认参数，用工厂函数） ——
 
-public fn rtVoid() -> RType { rtn new RType("VOID", false, "", new RType[0], 0) }
-public fn rtBool() -> RType { rtn new RType("BOOL", false, "", new RType[0], 0) }
-public fn rtByte() -> RType { rtn new RType("BYTE", false, "", new RType[0], 0) }
-public fn rtChar() -> RType { rtn new RType("CHAR", false, "", new RType[0], 0) }
-public fn rtInt() -> RType { rtn new RType("INT", false, "", new RType[0], 0) }
-public fn rtLong() -> RType { rtn new RType("LONG", false, "", new RType[0], 0) }
-public fn rtFloat() -> RType { rtn new RType("FLOAT", false, "", new RType[0], 0) }
-public fn rtDouble() -> RType { rtn new RType("DOUBLE", false, "", new RType[0], 0) }
-public fn rtString() -> RType { rtn new RType("STRING", false, "", new RType[0], 0) }
-public fn rtNull() -> RType { rtn new RType("NULL", false, "", new RType[0], 0) }
-public fn rtObject(name : string) -> RType { rtn new RType("EXTERNAL", false, name, new RType[0], 0) }
-public fn rtParam(name : string) -> RType { rtn new RType("TYPE_PARAM", false, name, new RType[0], 0) }
+pub fn rtVoid() -> RType { rtn new RType("VOID", false, "", new RType[0], 0) }
+pub fn rtBool() -> RType { rtn new RType("BOOL", false, "", new RType[0], 0) }
+pub fn rtByte() -> RType { rtn new RType("BYTE", false, "", new RType[0], 0) }
+pub fn rtChar() -> RType { rtn new RType("CHAR", false, "", new RType[0], 0) }
+pub fn rtInt() -> RType { rtn new RType("INT", false, "", new RType[0], 0) }
+pub fn rtLong() -> RType { rtn new RType("LONG", false, "", new RType[0], 0) }
+pub fn rtFloat() -> RType { rtn new RType("FLOAT", false, "", new RType[0], 0) }
+pub fn rtDouble() -> RType { rtn new RType("DOUBLE", false, "", new RType[0], 0) }
+pub fn rtString() -> RType { rtn new RType("STRING", false, "", new RType[0], 0) }
+pub fn rtNull() -> RType { rtn new RType("NULL", false, "", new RType[0], 0) }
+pub fn rtObject(name : string) -> RType { rtn new RType("EXTERNAL", false, name, new RType[0], 0) }
+pub fn rtParam(name : string) -> RType { rtn new RType("TYPE_PARAM", false, name, new RType[0], 0) }
 
 // 小工具（rsf 的标准库还很薄，先放着；阶段 32 的 core stdlib 会把它们搬走）
 fn lastSlash(s : string) -> int {

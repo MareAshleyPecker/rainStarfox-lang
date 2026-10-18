@@ -31,8 +31,8 @@ class MathematicKeywordTest {
     @Test
     fun `mathematic 不是修饰词也不是类型`() {
         val k = TokenKind.KW_MATHEMATIC
-        assertTrue(!k.isControlKeyword, "mathematic 不是访问控制词（public/private/protected）")
-        assertTrue(!k.isStaticKeyword, "mathematic 不是 static")
+        assertTrue(!k.isControlKeyword, "mathematic 不是访问控制词（pub/prv/prot）")
+        assertTrue(!k.isStaticKeyword, "mathematic 不是 stc")
         assertTrue(!k.isModifierKeyword, "语法未定，先不放进修饰词集合")
         assertTrue(!k.isTypeKeyword, "语法未定，先不放进类型表")
     }

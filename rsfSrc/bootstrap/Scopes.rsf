@@ -9,19 +9,19 @@
 //
 // 判据：`build/verify32/scope-parity.sh`（Kotlin 侧 `ScopeProbe.kt` 用 map+父链当 oracle）。
 
-public class Sym(name : string, kind : string, typeText : string, line : int, column : int) {
+pub class Sym(name : string, kind : string, typeText : string, line : int, column : int) {
     var name : string = name
     var kind : string = kind
     var typeText : string = typeText
     var line : int = line
     var column : int = column
 
-    public fn text() -> string {
+    pub fn text() -> string {
         rtn name + "/" + kind + "/" + typeText
     }
 }
 
-public class Scopes() {
+pub class Scopes() {
     var names : string[] = new string[4]
     var syms : Sym[] = new Sym[4]
     var levels : int[] = new int[4]
@@ -29,12 +29,12 @@ public class Scopes() {
     // 与 Kotlin `Scope(null).depth` 对齐：顶层就是 1
     var depth : int = 1
 
-    public fn enter() -> void {
+    pub fn enter() -> void {
         depth = depth + 1
     }
 
     // 离开一层：把这一层声明的条目从尾部丢掉（声明顺序即入栈顺序）
-    public fn leave() -> void {
+    pub fn leave() -> void {
         if (depth <= 1) { rtn }
         while (count > 0 && levels[count - 1] >= depth) {
             count = count - 1
@@ -42,15 +42,15 @@ public class Scopes() {
         depth = depth - 1
     }
 
-    public fn depthNow() -> int {
+    pub fn depthNow() -> int {
         rtn depth
     }
 
-    public fn size() -> int {
+    pub fn size() -> int {
         rtn count
     }
 
-    public fn declare(s : Sym) -> bool {
+    pub fn declare(s : Sym) -> bool {
         if (lookupCurrent(s.name) != null) { rtn false }
         grow()
         names[count] = s.name
@@ -60,7 +60,7 @@ public class Scopes() {
         rtn true
     }
 
-    public fn lookupCurrent(name : string) -> ?Sym {
+    pub fn lookupCurrent(name : string) -> ?Sym {
         var i = count - 1
         while (i >= 0) {
             if (levels[i] < depth) { rtn null }
@@ -70,7 +70,7 @@ public class Scopes() {
         rtn null
     }
 
-    public fn lookup(name : string) -> ?Sym {
+    pub fn lookup(name : string) -> ?Sym {
         var i = count - 1
         while (i >= 0) {
             if (names[i] == name) { rtn syms[i] }
@@ -80,7 +80,7 @@ public class Scopes() {
     }
 
     // 第 i 条的层号（0 基），供 Checker/诊断用
-    public fn levelOf(i : int) -> int {
+    pub fn levelOf(i : int) -> int {
         rtn levels[i]
     }
 
@@ -104,6 +104,6 @@ public class Scopes() {
     }
 }
 
-public fn symOf(name : string, kind : string, typeText : string, line : int, column : int) -> Sym {
+pub fn symOf(name : string, kind : string, typeText : string, line : int, column : int) -> Sym {
     rtn new Sym(name, kind, typeText, line, column)
 }

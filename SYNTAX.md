@@ -25,7 +25,7 @@ module "plugins"         // ③ 一个目录顶层的所有 .rsf（不递归，�
 | 类别 | 关键字（共 57，与两个词法器的表逐条对齐） |
 | --- | --- |
 | 声明 | `pkg` `import` `module` `class` `interface` `enum` `annotation` `companion` `entity` `constructor` `fn` `lam` `var` `imutvar` `let`(已废，仅留报错) |
-| 修饰 | `public` `private` `protected` `static` `override` `final` `abstract` |
+| 修饰 | `pub` `prv` `prot` `stc` `override` `final` `abstract` |
 | 控制 | `if` `else` `while` `for` `in` `break` `continue` `goto` `switch` `case`(老写法) `try` `catch` `fail` `rtn` `return` |
 | 类型 / 值 / 接收者 | `void` `int` `long` `float` `double` `string` `str` `bool` `boolean` `byte` `char` `true` `false` `null` `new` `this` `super` |
 | 运算 / 预留 | `as` `is` `mathematic`(预留) |
@@ -75,12 +75,12 @@ Box&<int>                  // 泛型实参（class 级泛型）
 <权限> fn <MainType> 名字(参数表) <返回子句> { 函数体 }
 ```
 
-- 权限：`public` / `protected` / `private`，**省略 = `public`**。
+- 权限：`pub` / `prot` / `prv`，**省略 = `pub`**。
 - `<MainType>`：`fn` 之后、名字之前的那个槽位，目前只接受 `void`。
 - 返回子句省略 = `void`；可写 `-> T`、`:: T`、`!T`、`?T`。
 - 参数：`名字 : 类型`，可用 `?T`、`T[]`、`Box&<int>`、函数类型；不支持默认值与可变参数。
 - **重载**：同名不同参（按擦除后类型），挑法 = 精确匹配优先、加宽其次、**同分报错**。
-- 顶层 `static` 方法、`override`、`final`、`abstract` 都按修饰词写；`abstract` 不许有体。
+- 顶层 `stc` 方法、`override`、`final`、`abstract` 都按修饰词写；`abstract` 不许有体。
 
 ### 4.2 变量与字段
 
@@ -90,42 +90,42 @@ imutvar y : int = 1      // 不可变（只能赋一次）
 var z = 3                // 类型可省（由初值推）
 ```
 
-字段写在类体里，权限修饰词可选（省略 = `public`）；字段**不能**写 `final` / `abstract` / `open`。
+字段写在类体里，权限修饰词可选（省略 = `pub`）；字段**不能**写 `final` / `abstract` / `open`。
 
 ### 4.3 类
 
 ```rsf
-public class Point(x0 : int, y0 : int) : Base(), Greeter {   // 主构造 + 继承/实现（共用 `:`）
-    public var x : int = x0                                  // 字段初值 = 主构造的「体」
-    public imutvar tag : string = "p"
+pub class Point(x0 : int, y0 : int) : Base(), Greeter {   // 主构造 + 继承/实现（共用 `:`）
+    pub var x : int = x0                                  // 字段初值 = 主构造的「体」
+    pub imutvar tag : string = "p"
 
-    public constructor() {                                   // 次构造：不写返回类型、不写权限（阶段 30b 前的口径）
+    pub constructor() {                                   // 次构造：不写返回类型、不写权限（阶段 30b 前的口径）
         this(0, 0)                                           // 委托必须是第一句
     }
 
-    public override fn greet(name : string) -> string { rtn "hi " + name }
+    pub override fn greet(name : string) -> string { rtn "hi " + name }
 }
 ```
 
 - 继承与实现都写在同一处 `: A(), I1, I2`；父类构造实参写在 `A(...)` 里（不写就是 `A()`）。
 - `super` 三种用法：`super.f()`、`super(Iface).f()`、`super(args)`（构造器里调父构造）。
 - **默认可继承、默认可覆盖**（阶段 27）：要封住就写 `final class` / `final fn`；`abstract` 隐式开放。
-- 类头修饰顺序两种都收：`public final class` 与 `final public class`。
+- 类头修饰顺序两种都收：`pub final class` 与 `final pub class`。
 
 ### 4.4 接口
 
 ```rsf
-public interface Greeter {
+pub interface Greeter {
     fn greet(name : string) -> string                       // 抽象：不写体
     fn shout(name : string) -> string { rtn greet(name) }    // 默认方法：写体
 }
-public interface Loud : Greeter { }        // 接口继承接口，逗号分隔
+pub interface Loud : Greeter { }        // 接口继承接口，逗号分隔
 ```
 
 ### 4.5 枚举
 
 ```rsf
-public enum TokenKind {
+pub enum TokenKind {
     IDENT,
     INT_LIT,
     EOF,          // 尾逗号可省

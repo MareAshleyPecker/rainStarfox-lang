@@ -2,8 +2,8 @@
 //
 // 只用内置的字符串基本操作（length / charAt / substring / indexOf / startsWith /
 // endsWith / trim / toUpperCase / toLowerCase / replace），不引 JDK 正则、不做格式化。
-public class Text {
-    public static fn repeat(s : string, times : int) -> string {
+pub class Text {
+    pub stc fn repeat(s : string, times : int) -> string {
         if (times <= 0) { rtn "" }
         var out = ""
         var i = 0
@@ -14,7 +14,7 @@ public class Text {
         rtn out
     }
 
-    public static fn padLeft(s : string, width : int, pad : char) -> string {
+    pub stc fn padLeft(s : string, width : int, pad : char) -> string {
         if (s.length() >= width) { rtn s }
         var need = width - s.length()
         var out = ""
@@ -26,7 +26,7 @@ public class Text {
         rtn out + s
     }
 
-    public static fn padRight(s : string, width : int, pad : char) -> string {
+    pub stc fn padRight(s : string, width : int, pad : char) -> string {
         if (s.length() >= width) { rtn s }
         var need = width - s.length()
         var out = s
@@ -38,11 +38,11 @@ public class Text {
         rtn out
     }
 
-    public static fn isBlank(s : string) -> bool
+    pub stc fn isBlank(s : string) -> bool
         { rtn s.trim().length() == 0 }
 
     // 把 s 按 sep 切开（简单的顺序扫描；连续分隔符会产生空段，与 JDK split 不同）
-    public static fn split(s : string, sep : char) -> string[] {
+    pub stc fn split(s : string, sep : char) -> string[] {
         var out : string[] = new string[8]
         var n = 0
         var start = 0
@@ -77,7 +77,7 @@ public class Text {
         rtn exact
     }
 
-    public static fn join(parts : string[], sep : string) -> string {
+    pub stc fn join(parts : string[], sep : string) -> string {
         var out = ""
         var i = 0
         while (i < parts.length) {
@@ -89,7 +89,7 @@ public class Text {
     }
 
     // 从左往右数第 n 次出现的下标；找不到给 -1
-    public static fn nthIndexOf(s : string, ch : char, n : int) -> int {
+    pub stc fn nthIndexOf(s : string, ch : char, n : int) -> int {
         var seen = 0
         var i = 0
         while (i < s.length()) {
@@ -102,7 +102,7 @@ public class Text {
         rtn -1
     }
 
-    public static fn countOf(s : string, ch : char) -> int {
+    pub stc fn countOf(s : string, ch : char) -> int {
         var c = 0
         var i = 0
         while (i < s.length()) {
@@ -113,12 +113,12 @@ public class Text {
     }
 
     // 前缀/后缀剥离（不匹配就原样返回）
-    public static fn stripPrefix(s : string, prefix : string) -> string {
+    pub stc fn stripPrefix(s : string, prefix : string) -> string {
         if (s.startsWith(prefix)) { rtn s.substring(prefix.length(), s.length()) }
         rtn s
     }
 
-    public static fn stripSuffix(s : string, suffix : string) -> string {
+    pub stc fn stripSuffix(s : string, suffix : string) -> string {
         if (suffix.length() > 0 && s.endsWith(suffix)) {
             rtn s.substring(0, s.length() - suffix.length())
         }

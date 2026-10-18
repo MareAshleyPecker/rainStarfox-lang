@@ -52,14 +52,14 @@ echo "负例 $NOK/10 判失败"
 
 echo "=== 4) 正例 dump 抽查：接口 + 父类型 + 覆盖 ==="
 cat > "$OUT/pos_iface.rsf" <<'EOF'
-public interface Greeter {
+pub interface Greeter {
     fun greet(name : string) -> string
     fun shout() -> string { rtn "hi" }
 }
 interface Empty { }
 interface Box&<T> : Greeter { }
-public class Impl(x0 : int) : Greeter, Box&<int> {
-    public override fun greet(name : string) -> string { rtn name }
+pub class Impl(x0 : int) : Greeter, Box&<int> {
+    pub override fun greet(name : string) -> string { rtn name }
 }
 EOF
 java -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8 -Drsf.ast.file="$OUT/pos_iface.rsf" -cp "$OUT;$JAR" ParserCli > "$OUT/pos_iface.dump" 2>&1

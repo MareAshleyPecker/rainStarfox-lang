@@ -3,7 +3,7 @@ import java.util.Collections
 import java.util.Comparator
 
 class ByValue : Comparator&<string> {
-    public fn compare(a : string, b : string) -> int {
+    pub fn compare(a : string, b : string) -> int {
         rtn 0
     }
 }

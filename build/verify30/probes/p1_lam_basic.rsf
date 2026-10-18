@@ -1,6 +1,0 @@
-fn main() {
-    var f : (int) -> int = lam(x : int) -> int { rtn x + 1 }
-    println("" + f(41))
-    var g : (int, int) -> int = lam(a : int, b : int) -> int { rtn a * b }
-    println("" + g(6, 7))
-}

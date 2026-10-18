@@ -1,17 +1,17 @@
-public interface A {
+pub interface A {
     fn say() -> string {
         rtn "a"
     }
 }
 
-public interface B {
+pub interface B {
     fn say() -> string {
         rtn "b"
     }
 }
 
 class C : A, B {
-    override public fn say() -> string {
+    override pub fn say() -> string {
         rtn "c"
     }
 }

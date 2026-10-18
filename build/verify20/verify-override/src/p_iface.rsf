@@ -1,9 +1,9 @@
-public interface Named {
+pub interface Named {
     fn name() -> string
 }
 
-public interface Person : Named {
-    override public fn name() -> string {
+pub interface Person : Named {
+    override pub fn name() -> string {
         rtn "p"
     }
 }

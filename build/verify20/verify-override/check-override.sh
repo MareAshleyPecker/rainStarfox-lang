@@ -15,7 +15,7 @@ no()   { FAIL=$((FAIL+1)); echo "  FAIL  $1"; echo "        $2"; }
 
 # ---------- 探针源 ----------
 cat > "$SRC/p_class.rsf" <<'EOF'
-public interface Greeter {
+pub interface Greeter {
     fn greet(name : string) -> string
     fn shout(name : string) -> string {
         rtn greet(name) + "!"
@@ -23,7 +23,7 @@ public interface Greeter {
 }
 
 class Dog(name : string) : Greeter {
-    override public fn greet(n : string) -> string {
+    override pub fn greet(n : string) -> string {
         rtn "woof " + n
     }
 }
@@ -37,12 +37,12 @@ fn main() -> void {
 EOF
 
 cat > "$SRC/p_iface.rsf" <<'EOF'
-public interface Named {
+pub interface Named {
     fn name() -> string
 }
 
-public interface Person : Named {
-    override public fn name() -> string {
+pub interface Person : Named {
+    override pub fn name() -> string {
         rtn "p"
     }
 }
@@ -58,12 +58,12 @@ fn main() -> void {
 EOF
 
 cat > "$SRC/p_order1.rsf" <<'EOF'
-public interface Greeter {
+pub interface Greeter {
     fn greet(name : string) -> string
 }
 
 class Dog : Greeter {
-    override public fn greet(name : string) -> string {
+    override pub fn greet(name : string) -> string {
         rtn "woof " + name
     }
 }
@@ -75,12 +75,12 @@ fn main() -> void {
 EOF
 
 cat > "$SRC/p_order2.rsf" <<'EOF'
-public interface Greeter {
+pub interface Greeter {
     fn greet(name : string) -> string
 }
 
 class Dog : Greeter {
-    public override fn greet(name : string) -> string {
+    pub override fn greet(name : string) -> string {
         rtn "woof " + name
     }
 }
@@ -92,12 +92,12 @@ fn main() -> void {
 EOF
 
 cat > "$SRC/p_nokw.rsf" <<'EOF'
-public interface Greeter {
+pub interface Greeter {
     fn greet(name : string) -> string
 }
 
 class Dog : Greeter {
-    public fn greet(name : string) -> string {
+    pub fn greet(name : string) -> string {
         rtn "woof " + name
     }
 }
@@ -113,7 +113,7 @@ cat > "$SRC/p_jdk.rsf" <<'EOF'
 import java.lang.Runnable
 
 class Robot : Runnable {
-    override public fn run() -> void {
+    override pub fn run() -> void {
         println("running")
     }
 }
@@ -146,26 +146,26 @@ class A {
 EOF
 
 cat > "$SRC/n_nocover_class.rsf" <<'EOF'
-public interface Greeter {
+pub interface Greeter {
     fn greet(name : string) -> string
 }
 
 class Dog : Greeter {
-    public fn greet(name : string) -> string {
+    pub fn greet(name : string) -> string {
         rtn "woof"
     }
-    override public fn bark() -> void {
+    override pub fn bark() -> void {
         rtn
     }
 }
 EOF
 
 cat > "$SRC/n_nocover_iface.rsf" <<'EOF'
-public interface Named {
+pub interface Named {
     fn name() -> string
 }
 
-public interface Person : Named {
+pub interface Person : Named {
     override fn age() -> int {
         rtn 1
     }
@@ -176,10 +176,10 @@ cat > "$SRC/n_nocover_jdk.rsf" <<'EOF'
 import java.lang.Runnable
 
 class Robot : Runnable {
-    public fn run() -> void {
+    pub fn run() -> void {
         rtn
     }
-    override public fn walk() -> void {
+    override pub fn walk() -> void {
         rtn
     }
 }
@@ -234,12 +234,12 @@ neg_case n_nocover_jdk    "$SRC/n_nocover_jdk.rsf"    "接口里没有人要求 
 echo "== override 擦除性（同名源、只差关键字，三个 .class 必须逐字节相同）"
 mkdir -p "$DIR/e1" "$DIR/e2"
 cat > "$DIR/e1/OverrideErasure.rsf" <<'EOF'
-public interface Greeter {
+pub interface Greeter {
     fn greet(name : string) -> string
 }
 
 class Dog : Greeter {
-    override public fn greet(name : string) -> string {
+    override pub fn greet(name : string) -> string {
         rtn "woof " + name
     }
 }
@@ -249,7 +249,7 @@ fn main() -> void {
     rtn
 }
 EOF
-sed 's/override public fn greet/public fn greet/' "$DIR/e1/OverrideErasure.rsf" > "$DIR/e2/OverrideErasure.rsf"
+sed 's/override pub fn greet/pub fn greet/' "$DIR/e1/OverrideErasure.rsf" > "$DIR/e2/OverrideErasure.rsf"
 java "${JF[@]}" -jar "$JAR" build "$DIR/e1/OverrideErasure.rsf" -o "$DIR/e1/out" -n OverrideErasure >/dev/null 2>&1
 java "${JF[@]}" -jar "$JAR" build "$DIR/e2/OverrideErasure.rsf" -o "$DIR/e2/out" -n OverrideErasure >/dev/null 2>&1
 diff -r "$DIR/e1/out" "$DIR/e2/out" > "$DIR/erasure.diff" 2>&1

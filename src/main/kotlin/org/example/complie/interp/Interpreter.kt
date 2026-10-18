@@ -2421,7 +2421,7 @@ private object JdkParentBridge {
             throw RsfError(
                 "interp",
                 "内部错误：JDK 父类 '$parentInternal' 的构造器 $descriptor 调不动（模块系统不放行，" +
-                    "子类桥也够不着——父类构造器可能是 private 的）：" +
+                    "子类桥也够不着——父类构造器可能是 prv 的）：" +
                     (e.message ?: e.javaClass.simpleName),
                 -1, -1, null,
             )

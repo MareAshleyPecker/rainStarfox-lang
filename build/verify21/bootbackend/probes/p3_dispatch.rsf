@@ -1,4 +1,4 @@
-public interface Sound {
+pub interface Sound {
     fn say() -> string
 }
 class Cat : Sound {

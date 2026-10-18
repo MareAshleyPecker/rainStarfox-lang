@@ -83,7 +83,7 @@ object RsfKeywords {
     // （类与方法都能写），照样和 ControlType/static 一样只有高亮与补全的份。
     // 阶段 27 删掉了 `open`：类与方法默认可继承/可覆盖，`final` 反而成了收窄手段。
     val MODIFIERS = setOf(
-        "public", "protected", "private", "static", "override",
+        "pub", "prot", "prv", "stc", "override",
         "final", "abstract",
     )
 

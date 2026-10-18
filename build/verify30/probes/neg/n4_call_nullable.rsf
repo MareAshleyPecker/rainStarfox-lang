@@ -1,4 +1,0 @@
-fn main() {
-    var f : ?(int) -> int = null
-    println("" + f(1))
-}

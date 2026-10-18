@@ -1,5 +1,0 @@
-fn main() {
-    var count : int = 0
-    var f : (int) -> int = lam(x : int) -> int { rtn x + count }
-    println("" + f(1))
-}

@@ -1,10 +1,10 @@
 import java.lang.Runnable
 
 class Robot : Runnable {
-    public fn run() -> void {
+    pub fn run() -> void {
         rtn
     }
-    override public fn walk() -> void {
+    override pub fn walk() -> void {
         rtn
     }
 }

@@ -1,9 +1,9 @@
 class H {
-    public static fn risky() -> !int {
+    pub stc fn risky() -> !int {
         rtn 9
     }
 }
 
-public fn main() {
+pub fn main() {
     println("s=" + intToString(H.risky() ?: 0))
 }

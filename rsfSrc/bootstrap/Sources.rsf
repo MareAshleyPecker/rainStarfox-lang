@@ -418,7 +418,7 @@ class SrcLoader(rootDir : string) {
 
     // `module "目录"`：把目录里**所有** `*.rsf` **按文件名排序**后逐个装载。
     // 空目录（一个 .rsf 都没有）显式失败 —— 与 SourceLoader 的 entries.isEmpty 分支同一文案。
-    public fn loadModule(dir : string, impPath : string) -> !int {
+    pub fn loadModule(dir : string, impPath : string) -> !int {
         var f = new File(dir)
         var fs = f.listFiles()
         var names : string[] = new string[8]
@@ -479,7 +479,7 @@ class SrcLoader(rootDir : string) {
 
     // 装一个文件（含它 import 的源码）。isRoot 只对入口文件为 true —— 只有入口的 pkg 算数。
     // 返回装载过的文件数（rsf 没有 `!void`，所以用 `!int`）。
-    public fn loadFile(path : string, isRoot : bool) -> !int {
+    pub fn loadFile(path : string, isRoot : bool) -> !int {
         var key = srcClean(path)
         if (alreadyLoaded(key)) { rtn 0 }   // 同一文件只装一次
         remember(key)
@@ -546,7 +546,7 @@ class SrcLoader(rootDir : string) {
 
     // 拼出合并后的 PROGRAM：孩子形状 `PKG? / IMPORTS / FUNCS / CLASSES / ENUMS / INTERFACES / ANNOTATIONS`，
     // 各列表节点照旧带 `count=N` —— 与 Parser.parseProgram 建出来的树同形。
-    public fn build() -> Node {
+    pub fn build() -> Node {
         var program = new Node(NodeKind.PROGRAM)
         if (rootPkg != null) { program.add(rootPkg!!) }
 
@@ -607,7 +607,7 @@ class SrcLoader(rootDir : string) {
 
 // 装载入口文件以及它（递归）import 的全部 rsf 源码，返回一棵可以直接交给
 // `compileProgram` 的 PROGRAM 节点。失败时 `fail`，消息见文件头那三条约定。
-public fn loadProgram(entryPath : string) -> !Node {
+pub fn loadProgram(entryPath : string) -> !Node {
     var loader = new SrcLoader(srcDirOf(entryPath))
     loader.loadFile(entryPath, true)!!
     rtn loader.build()

@@ -1,6 +1,6 @@
 class A {
     var v : int = 7
-    public fn get() -> int { rtn v }
+    pub fn get() -> int { rtn v }
 }
 fn main() {
     println("" + A.get())

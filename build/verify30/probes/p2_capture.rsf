@@ -1,5 +1,0 @@
-fn main() {
-    imutvar base : int = 10
-    var add : (int) -> int = lam(x : int) -> int { rtn x + base }
-    println("" + add(5))
-}

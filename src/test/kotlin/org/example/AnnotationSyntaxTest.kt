@@ -57,8 +57,8 @@ class AnnotationSyntaxTest {
     fun `注解声明可以带权限修饰词`() {
         val program = parse(
             """
-            public annotation Marker { }
-            private annotation Hidden { }
+            pub annotation Marker { }
+            prv annotation Hidden { }
             """.trimIndent(),
         )
         assertEquals(listOf("Marker", "Hidden"), program.annotations.map { it.name })
@@ -86,7 +86,7 @@ class AnnotationSyntaxTest {
     fun `注解元素带常量默认值`() {
         val program = parse(
             """
-            public annotation Marker(value : string = "x", count : int = 0) { }
+            pub annotation Marker(value : string = "x", count : int = 0) { }
             """.trimIndent(),
         )
         val m = program.annotations[0]
@@ -245,7 +245,7 @@ class AnnotationSyntaxTest {
         val program = parse(
             """
             annotation A { }
-            public annotation B(value : int = 1) { }
+            pub annotation B(value : int = 1) { }
             fn helper() -> void { rtn }
             annotation C { }
             """.trimIndent(),
@@ -363,9 +363,9 @@ class AnnotationSyntaxTest {
                 fn run() -> void
             }
             class C : I {
-                @M public static fn a() -> void { rtn }
-                public @M static fn b() -> void { rtn }
-                public static @M fn c() -> void { rtn }
+                @M pub stc fn a() -> void { rtn }
+                pub @M stc fn b() -> void { rtn }
+                pub stc @M fn c() -> void { rtn }
                 @M override fn run() -> void { rtn }
                 override @M fn other() -> void { rtn }
             }
@@ -376,7 +376,7 @@ class AnnotationSyntaxTest {
         for (method in methods) {
             assertEquals(listOf("M"), method.annotations.map { it.name }, "方法 ${method.name} 的注解丢了")
         }
-        assertTrue(methods[0].isStatic && methods[1].isStatic && methods[2].isStatic, "static 要保持住")
+        assertTrue(methods[0].isStatic && methods[1].isStatic && methods[2].isStatic, "stc 要保持住")
         assertTrue(methods[3].isOverride && methods[4].isOverride, "override 要保持住")
     }
 
@@ -455,7 +455,7 @@ class AnnotationSyntaxTest {
     fun `解析证据：一整套注解语法的 AST 形状`() {
         val program = parse(
             """
-            public annotation Marker(value : string = "x", count : int = 0) {
+            pub annotation Marker(value : string = "x", count : int = 0) {
                 companion entity Impl : Runnable {
                     var hits : int = 0
                     fn describe() -> string { rtn "Marker(" + value + "," + count + ")" }

@@ -153,7 +153,7 @@ object AstDump {
         line(
             out, depth, "FUNC",
             "control" to f.control.name,
-            "static" to bool(f.isStatic),
+            "stc" to bool(f.isStatic),
             "main" to typeText(f.mainType),
             "name" to esc(f.name),
             "ret" to f.ret.style.name,

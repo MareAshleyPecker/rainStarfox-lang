@@ -1,9 +1,9 @@
-public interface Greeter {
+pub interface Greeter {
     fn greet(name : string) -> string
 }
 
 class Dog : Greeter {
-    public fn greet(count : int) -> string {
+    pub fn greet(count : int) -> string {
         rtn "woof"
     }
 }

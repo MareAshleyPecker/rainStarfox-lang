@@ -1,12 +1,12 @@
 // 泛型 rsf 接口：擦除之后接口方法是 ()Ljava/lang/Object;，实现类是 ()I——
 // 没有桥方法的话，`b.get()` 经接口调用会 AbstractMethodError。
 // 这条和 ok_comparator / ok_sort 撞的是同一个缺口（桥方法），只是换成了 rsf 自己声明的接口。
-public interface Box&<T> {
+pub interface Box&<T> {
     fn get() -> T
 }
 
 class IntBox : Box&<int> {
-    public fn get() -> int {
+    pub fn get() -> int {
         rtn 7
     }
 }

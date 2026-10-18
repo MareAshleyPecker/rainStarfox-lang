@@ -1,9 +1,9 @@
-public interface A {
+pub interface A {
     fn v() -> string {
         rtn "A"
     }
 }
-public interface B : A {
+pub interface B : A {
     fn w() -> string {
         rtn v() + "B"
     }

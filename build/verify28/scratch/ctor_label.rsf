@@ -4,7 +4,7 @@ class A {
         `ctor-lab`:
         n = 1
     }
-    public fun ping() -> void { println("ping") }
+    pub fun ping() -> void { println("ping") }
 }
 
 fun main() -> void {

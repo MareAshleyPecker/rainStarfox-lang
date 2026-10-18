@@ -6,7 +6,7 @@
 //
 // 这三样是为了写自举的语法器补的（见 BOOTSTRAP.md）：
 //   * 没有 `&&` / `||` 时，`if (c == '/' && peek(1) == '/')` 只能写成嵌套 if；
-//   * 没有 enum 时，TokenKind 只能靠一串 `static fun xxx() -> string` 拼字符串常量，
+//   * 没有 enum 时，TokenKind 只能靠一串 `stc fun xxx() -> string` 拼字符串常量，
 //     写错值名编译器一声不吭；
 //   * 没有 switch 时，按 kind 分派只能写成 if / else-if 长链。
 // 本文件把三者放在一起演示，并且**两条后端（解释器 / 字节码）输出逐字节一致**。

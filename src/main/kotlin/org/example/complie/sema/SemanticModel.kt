@@ -641,7 +641,7 @@ data class AnnotationAccessor(
 ) {
     /** 给人看的签名，如 `public static Marker$Impl Marker()`。 */
     fun signature(): String =
-        "public static $companionName ${annotation.name}(" +
+        "pub static $companionName ${annotation.name}(" +
             (memberName?.let { "string member" } ?: "") + ")"
 }
 

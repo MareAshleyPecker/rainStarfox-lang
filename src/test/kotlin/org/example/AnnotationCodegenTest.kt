@@ -76,7 +76,7 @@ class AnnotationCodegenTest {
         assertTrue(marker.methods.none { it.name == "<init>" }, "注解接口不能有构造器")
         assertEquals(listOf("value", "count", "level"), marker.methods.map { it.name })
         for (m in marker.methods) {
-            assertEquals(0x0401, m.access, "元素方法 '${m.name}' 应该是 public abstract")
+            assertEquals(0x0401, m.access, "元素方法 '${m.name}' 应该是 pub abstract")
         }
         assertEquals("()Ljava/lang/String;", marker.method("value").desc)
         assertEquals("()I", marker.method("count").desc)
@@ -372,7 +372,7 @@ class AnnotationCodegenTest {
         )
 
         val impl = c.read("Marker\$Impl")
-        assertEquals(Opcodes.ACC_PUBLIC or Opcodes.ACC_SUPER, impl.access, "伴生类就是普通类（public + ACC_SUPER）")
+        assertEquals(Opcodes.ACC_PUBLIC or Opcodes.ACC_SUPER, impl.access, "伴生类就是普通类（pub + ACC_SUPER）")
         assertEquals("java/lang/Object", impl.superName)
         assertEquals(listOf("Marker", "java/lang/Runnable"), impl.interfaces, "父接口 = 注解接口 + 自己写的接口")
 
@@ -385,7 +385,7 @@ class AnnotationCodegenTest {
         assertEquals(
             Opcodes.ACC_PUBLIC,
             impl.method("annotationType").access,
-            "annotationType() 是 public 的实例方法（实现 Annotation 接口的那个）",
+            "annotationType() 是 pub 的实例方法（实现 Annotation 接口的那个）",
         )
         // 元素字段 + 访问器 + 伴生实体自己的成员
         assertEquals(
@@ -485,7 +485,7 @@ class AnnotationCodegenTest {
         assertEquals(
             Opcodes.ACC_PUBLIC or Opcodes.ACC_STATIC or Opcodes.ACC_SYNCHRONIZED,
             shape.access,
-            "方案 B 的访问器是 public static synchronized（懒构造要串行化）",
+            "方案 B 的访问器是 pub stc synchronized（懒构造要串行化）",
         )
         assertEquals(0, shape.annotations.size, "访问器本身不该有注解")
 

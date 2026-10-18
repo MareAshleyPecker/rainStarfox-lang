@@ -2,17 +2,17 @@
 //
 // 开放寻址（线性探测）+ 2 倍扩容；键只支持 string（自举链与编译器前端用不到别的键）。
 // 哈希：djb2（h = 5381; h = h * 33 + c），与 SymTable 同一套。
-public class HashMap&<T> {
+pub class HashMap&<T> {
     var keys : string[] = new string[8]
     var vals : T[] = new T[8]
     var used : bool[] = new bool[8]
     var n : int = 0
 
-    public fn size() -> int { rtn n }
+    pub fn size() -> int { rtn n }
 
-    public fn isEmpty() -> bool { rtn n == 0 }
+    pub fn isEmpty() -> bool { rtn n == 0 }
 
-    public fn hashOf(s : string) -> int {
+    pub fn hashOf(s : string) -> int {
         var h = 5381
         var i = 0
         while (i < s.length()) {
@@ -23,7 +23,7 @@ public class HashMap&<T> {
         rtn h
     }
 
-    public fn slotOf(s : string) -> int {
+    pub fn slotOf(s : string) -> int {
         var cap = keys.length
         var i = hashOf(s) % cap
         while (used[i]) {
@@ -33,7 +33,7 @@ public class HashMap&<T> {
         rtn i
     }
 
-    public fn put(k : string, v : T) -> void {
+    pub fn put(k : string, v : T) -> void {
         if ((n + 1) * 4 > keys.length * 3) { rehash() }
         var i = slotOf(k)
         if (!used[i]) {
@@ -44,7 +44,7 @@ public class HashMap&<T> {
         vals[i] = v
     }
 
-    public fn get(k : string) -> ?T {
+    pub fn get(k : string) -> ?T {
         var cap = keys.length
         var i = hashOf(k) % cap
         while (used[i]) {
@@ -54,7 +54,7 @@ public class HashMap&<T> {
         rtn null
     }
 
-    public fn containsKey(k : string) -> bool {
+    pub fn containsKey(k : string) -> bool {
         var cap = keys.length
         var i = hashOf(k) % cap
         while (used[i]) {
@@ -65,7 +65,7 @@ public class HashMap&<T> {
     }
 
     // 删除：先清槽，再把后面同一簇的元素重新 put 回去（保持线性探测的查找不变量）
-    public fn remove(k : string) -> bool {
+    pub fn remove(k : string) -> bool {
         var cap = keys.length
         var i = hashOf(k) % cap
         while (used[i]) {
@@ -88,7 +88,7 @@ public class HashMap&<T> {
         rtn false
     }
 
-    public fn rehash() -> void {
+    pub fn rehash() -> void {
         var oldKeys = keys
         var oldVals = vals
         var oldUsed = used

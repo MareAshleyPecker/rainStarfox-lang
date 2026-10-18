@@ -199,10 +199,10 @@ class GenericFnTest {
                     constructor(b : int) {
                         base = b
                     }
-                    public fn same&<T>(x : T) -> T {
+                    pub fn same&<T>(x : T) -> T {
                         rtn x
                     }
-                    public static fn pick&<T>(x : T, y : T) -> T {
+                    pub stc fn pick&<T>(x : T, y : T) -> T {
                         rtn x
                     }
                 }
@@ -337,12 +337,12 @@ class GenericFnTest {
                 source(
                     """
                     class Base {
-                        public fn tag(x : int) -> int {
+                        pub fn tag(x : int) -> int {
                             rtn x
                         }
                     }
                     class Kid : Base() {
-                        public override fn tag&<T>(x : T) -> T {
+                        pub override fn tag&<T>(x : T) -> T {
                             rtn x
                         }
                     }
@@ -442,10 +442,10 @@ class GenericFnTest {
                 constructor(b : int) {
                     base = b
                 }
-                public fn same&<T>(x : T) -> T {
+                pub fn same&<T>(x : T) -> T {
                     rtn x
                 }
-                public static fn pick&<T>(x : T, y : T) -> T {
+                pub stc fn pick&<T>(x : T, y : T) -> T {
                     rtn x
                 }
             }

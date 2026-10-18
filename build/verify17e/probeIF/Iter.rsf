@@ -3,7 +3,7 @@ import java.util.ArrayList
 // 探针：接口类型接收者上的方法调用。
 // `l.iterator()` 的 owner 是类 ArrayList（invokevirtual 没问题），
 // 但返回类型 java/util/Iterator 是**接口**——`it.hasNext()` 必须发 INVOKEINTERFACE。
-public fn main() {
+pub fn main() {
     var l = new ArrayList&<string>()
     l.add("hi")
     var it = l.iterator()

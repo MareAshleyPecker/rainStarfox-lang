@@ -1,5 +1,5 @@
 class Dog {
-    public override fn greet(name : string) -> string {
+    pub override fn greet(name : string) -> string {
         rtn "woof " + name
     }
 }

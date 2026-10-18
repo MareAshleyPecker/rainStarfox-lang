@@ -1,7 +1,7 @@
 // 临时探针：rsf 后端能不能编译 HashMap 的成员调用（17e 的前置）
 import java.util.HashMap
 
-public fn main() -> void {
+pub fn main() -> void {
     var m : HashMap&<string, int> = new HashMap&<string, int>()
     m.put("a", 7)
     println(m.size())

@@ -1,7 +1,0 @@
-fn id&<T>(x : T) -> T {
-    rtn x
-}
-
-fn main() {
-    println("" + id(1))
-}

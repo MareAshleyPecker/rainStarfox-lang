@@ -272,9 +272,9 @@ data class NamedAnnotationArg(
  */
 enum class ControlType(val keyword: String) {
     DEFAULT(""),
-    PUBLIC("public"),
-    PROTECTED("protected"),
-    PRIVATE("private"),
+    PUBLIC("pub"),
+    PROTECTED("prot"),
+    PRIVATE("prv"),
     ;
 
     /**

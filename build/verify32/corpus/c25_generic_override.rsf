@@ -1,8 +1,8 @@
 class B {
-    public fn id&<T>(x : T) -> T { rtn x }
+    pub fn id&<T>(x : T) -> T { rtn x }
 }
 class D : B() {
-    public fn id&<T>(x : T) -> T { rtn x }
+    pub fn id&<T>(x : T) -> T { rtn x }
 }
 fn main() {
     var d : D = new D()

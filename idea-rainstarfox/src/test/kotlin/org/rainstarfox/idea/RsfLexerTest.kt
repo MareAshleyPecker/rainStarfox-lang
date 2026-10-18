@@ -30,7 +30,7 @@ class RsfLexerTest {
 
     @Test
     fun `关键字 修饰词 类型名 各归各类`() {
-        assertEquals(RsfTokens.MODIFIER.toString(), tokenOf("public fn f() -> void", "public"))
+        assertEquals(RsfTokens.MODIFIER.toString(), tokenOf("pub fn f() -> void", "pub"))
         assertEquals(RsfTokens.TYPE_KEYWORD.toString(), tokenOf("fn f() -> void", "void"))
         assertEquals(RsfTokens.CONTROL_KEYWORD.toString(), tokenOf("if (a) { rtn }", "if"))
         assertEquals(RsfTokens.CONTROL_KEYWORD.toString(), tokenOf("while (a) { break }", "while"))
@@ -40,7 +40,7 @@ class RsfLexerTest {
     fun `fun 后面的名字认成函数定义`() {
         assertEquals(
             RsfTokens.FUNCTION_DECLARATION.toString(),
-            tokenOf("public fn square(int n) -> int { rtn n }", "square"),
+            tokenOf("pub fn square(int n) -> int { rtn n }", "square"),
         )
         // 带返回类型的写法也不能漏
         assertEquals(
@@ -183,7 +183,7 @@ class RsfLexerTest {
         "var", "imutvar", "let",
         // 阶段 20：`interface` 是那时进的前端（这份快照当时漏抄了，插件的高亮表其实已经有一份）；
         // `override` 是阶段 20 追加的可选修饰词，和 public/static 同族
-        "public", "private", "protected", "static", "override",
+        "pub", "prv", "prot", "stc", "override",
         "class", "new", "this", "constructor", "interface",
         // 阶段 19c：枚举声明 + 枚举分派（这份快照和插件的高亮表当时都漏抄了）
         "enum", "switch", "case",
@@ -219,7 +219,7 @@ class RsfLexerTest {
         assertEquals(RsfTokens.CONTROL_KEYWORD.toString(), tokenOf("constructor(n : int) { }", "constructor"))
         assertEquals(RsfTokens.CONTROL_KEYWORD.toString(), tokenOf("var p = new Point(1, 2)", "new"))
         assertEquals(RsfTokens.CONTROL_KEYWORD.toString(), tokenOf("rtn this.value", "this"))
-        assertEquals(RsfTokens.MODIFIER.toString(), tokenOf("public static fn f() -> void { }", "static"))
+        assertEquals(RsfTokens.MODIFIER.toString(), tokenOf("pub stc fn f() -> void { }", "stc"))
     }
 
     // ------------------------------------------------------------------ 阶段 19 / 19b 的新写法

@@ -1,8 +1,0 @@
-class Box&<T>(v : T) {
-    var value : T = v
-    fn get() -> T { rtn value }
-}
-fn main() -> void {
-    var b : Box&<int> = new Box&<int>(3)
-    println("" + b.get())
-}

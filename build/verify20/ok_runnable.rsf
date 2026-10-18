@@ -1,7 +1,7 @@
 import java.lang.Runnable
 
 class Job : Runnable {
-    public fn run() -> void {
+    pub fn run() -> void {
         println("running")
     }
 }

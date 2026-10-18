@@ -1,4 +1,4 @@
-public interface I {
+pub interface I {
     fn f() -> int
 }
 fn main() -> void {

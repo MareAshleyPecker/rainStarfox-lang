@@ -43,10 +43,10 @@ private val KEYWORDS: Map<String, TokenKind> = buildMap {
     put("var", TokenKind.KW_VAR)
     put("imutvar", TokenKind.KW_IMUTVAR)
     put("let", TokenKind.KW_LET)
-    put("public", TokenKind.KW_PUBLIC)
-    put("private", TokenKind.KW_PRIVATE)
-    put("protected", TokenKind.KW_PROTECTED)
-    put("static", TokenKind.KW_STATIC)
+    put("pub", TokenKind.KW_PUBLIC)
+    put("prv", TokenKind.KW_PRIVATE)
+    put("prot", TokenKind.KW_PROTECTED)
+    put("stc", TokenKind.KW_STATIC)
     // 阶段 20 追加：可选的 override（语义照 Java 的 @Override）
     put("override", TokenKind.KW_OVERRIDE)
     // 阶段 25：类继承。final / abstract 是声明级修饰词（阶段 27 起类与方法**默认开放**，

@@ -1,4 +1,4 @@
-public interface Greeter {
+pub interface Greeter {
     fun greet() -> string
 }
 override fun f() -> void { }

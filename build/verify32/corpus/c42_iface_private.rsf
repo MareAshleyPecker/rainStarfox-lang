@@ -2,7 +2,7 @@ interface I {
     fn hi() -> void
 }
 class A : I {
-    private fn hi() -> void { println("a") }
+    prv fn hi() -> void { println("a") }
 }
 fn main() {
     println("ok")

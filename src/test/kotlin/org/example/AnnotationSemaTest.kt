@@ -842,9 +842,9 @@ class AnnotationSemaTest {
         assertEquals(3, accessors.size)
         assertEquals(
             listOf(
-                "public static Marker\$Impl Marker()",
-                "public static Marker\$Impl Marker(string member)",
-                "public static Marker\$Impl Marker(string member)",
+                "pub static Marker\$Impl Marker()",
+                "pub static Marker\$Impl Marker(string member)",
+                "pub static Marker\$Impl Marker(string member)",
             ),
             accessors.map { it.signature() },
         )

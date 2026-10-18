@@ -1,16 +1,16 @@
-public interface Base {
+pub interface Base {
     fn id() -> int
 }
 
-public interface Named : Base {
+pub interface Named : Base {
     fn name() -> string
 }
 
 class Dog : Named {
-    public fn id() -> int {
+    pub fn id() -> int {
         rtn 7
     }
-    public fn name() -> string {
+    pub fn name() -> string {
         rtn "rex"
     }
 }

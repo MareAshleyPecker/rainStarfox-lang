@@ -107,7 +107,7 @@ class LocalVariableTest {
     fun `抽象方法没有 Code 也就没有 LocalVariableTable`() {
         val dir = compile(
             """
-            public interface Greeter {
+            pub interface Greeter {
                 fn greet(name : string) -> string
             }
 
@@ -154,7 +154,7 @@ class LocalVariableTest {
     fun `catch 绑定算局部变量且槽位取自异常表`() {
         val dir = compile(
             """
-            public fn parse(text : string) -> !int {
+            pub fn parse(text : string) -> !int {
                 if (text.length() == 0) {
                     fail "空字符串没法转数字"
                 }

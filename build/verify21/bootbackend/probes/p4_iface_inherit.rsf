@@ -1,7 +1,7 @@
-public interface Base {
+pub interface Base {
     fn id() -> int
 }
-public interface Named : Base {
+pub interface Named : Base {
     fn name() -> string
     fn describe() -> string {
         rtn name() + "#" + intToString(id())

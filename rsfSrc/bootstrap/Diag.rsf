@@ -59,14 +59,14 @@ fn spaces(n : int) -> string {
     rtn out
 }
 
-public class Diag(fileName : string, phase : string, detail : string, line : int, column : int) {
+pub class Diag(fileName : string, phase : string, detail : string, line : int, column : int) {
     var fileName : string = fileName
     var phase : string = phase
     var detail : string = detail
     var line : int = line
     var column : int = column
 
-    public fn header() -> string {
+    pub fn header() -> string {
         var pos = ""
         if (line > 0 && column > 0) {
             pos = ":" + ("" + line) + ":" + ("" + column)
@@ -76,7 +76,7 @@ public class Diag(fileName : string, phase : string, detail : string, line : int
         rtn fileName + pos + ": error[" + phase + "]: " + detail
     }
 
-    public fn render(text : string) -> string {
+    pub fn render(text : string) -> string {
         var head = header()
         var row : ?string = lineTextAt(text, line)
         if (row == null) { rtn head }
@@ -91,6 +91,6 @@ public class Diag(fileName : string, phase : string, detail : string, line : int
 }
 
 // 便捷构造：`fail` 与 Checker（阶段 33–35）共用
-public fn diagAt(fileName : string, phase : string, detail : string, line : int, column : int) -> Diag {
+pub fn diagAt(fileName : string, phase : string, detail : string, line : int, column : int) -> Diag {
     rtn new Diag(fileName, phase, detail, line, column)
 }

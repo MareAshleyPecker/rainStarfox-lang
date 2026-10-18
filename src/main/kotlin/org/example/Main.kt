@@ -352,10 +352,10 @@ class Cli {
         println(
             """
             |函数
-            |  fn main() -> void { ... }             入口（ControlType 可省；省了就是 public；main 不能带参数）
-            |  public fn add(a : int, b : int) : int { rtn a + b }
-            |  public fn parse(s : string) -> !int { ... }   可能失败：出错走异常，调用方要 try / ?: / !!
-            |      访问控制写在最左，省略就是 public；-> : 两种返回写法等价（'::' 不再接受）
+            |  fn main() -> void { ... }             入口（ControlType 可省；省了就是 pub；main 不能带参数）
+            |  pub fn add(a : int, b : int) : int { rtn a + b }
+            |  pub fn parse(s : string) -> !int { ... }   可能失败：出错走异常，调用方要 try / ?: / !!
+            |      访问控制写在最左，省略就是 pub；-> : 两种返回写法等价（'::' 不再接受）
             |      参数两种风格都能写、可以混：int a / a : int；参数按 C 惯例默认可变
             |
             |语句
@@ -377,7 +377,7 @@ class Cli {
             |  { ... }                                 块，引入新作用域
             |
             |类型: void int long float double string bool byte char
-            |访问控制: public protected private（都不写 = public）
+            |访问控制: pub prot prv（都不写 = pub）
             |REPL 命令: :funcs :reset :quit
             """.trimMargin(),
         )
@@ -391,7 +391,7 @@ class Cli {
         val params = fn.params.joinToString(", ") { "${it.name} : ${it.type.name}" }
         // 缺省就是 public：清单里**显示成 public**，空着会让人以为「没有权限」
         val control = fn.control.label.padEnd(10)
-        val static = if (fn.isStatic) "static " else ""
+        val static = if (fn.isStatic) "stc " else ""
         return "$control ${static}fn$mainType ${fn.name}($params) ${fn.ret.display()}"
     }
 

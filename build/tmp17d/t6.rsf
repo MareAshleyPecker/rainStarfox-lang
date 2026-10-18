@@ -1,4 +1,4 @@
-public class Point {
+pub class Point {
     var x : int = 0
     var y : int = 0
 
@@ -7,12 +7,12 @@ public class Point {
         y = y0
     }
 
-    public fn sum() -> int {
+    pub fn sum() -> int {
         rtn x + y
     }
 }
 
-public fn distanceSquared(a : Point, b : Point) -> int {
+pub fn distanceSquared(a : Point, b : Point) -> int {
     var dx = a.x - b.x
     var dy = a.y - b.y
     rtn dx * dx + dy * dy

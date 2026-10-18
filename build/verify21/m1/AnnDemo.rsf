@@ -1,4 +1,4 @@
-public annotation Marker(value : string = "x", count : int = 0) {
+pub annotation Marker(value : string = "x", count : int = 0) {
     companion entity Impl : Runnable {
         var hits : int = 0
         fun describe() -> string { rtn "Marker(" + value + "," + count + ")" }

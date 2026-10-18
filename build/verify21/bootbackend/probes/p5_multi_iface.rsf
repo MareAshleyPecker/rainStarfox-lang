@@ -1,7 +1,7 @@
-public interface A {
+pub interface A {
     fn a() -> string
 }
-public interface B {
+pub interface B {
     fn b() -> string
 }
 class Both : A, B {

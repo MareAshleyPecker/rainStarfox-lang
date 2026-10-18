@@ -33,11 +33,11 @@ enum class TokenKind(val text: String) {
     KW_IMUTVAR("imutvar"),
     /** 旧关键字，保留只为给出迁移提示。 */
     KW_LET("let"),
-    KW_PUBLIC("public"),
-    KW_PRIVATE("private"),
-    KW_PROTECTED("protected"),
+    KW_PUBLIC("pub"),
+    KW_PRIVATE("prv"),
+    KW_PROTECTED("prot"),
     /** 静态修饰词：控制「怎么调用」（类名.方法 还是 对象.方法）。 */
-    KW_STATIC("static"),
+    KW_STATIC("stc"),
     /**
      * `override` 修饰词（阶段 20 的追加件）：只对**类/接口里的方法**有意义。
      *

@@ -1,6 +1,6 @@
 // n5：静态方法与继承修饰词互斥
 class A {
-    static final fn f() -> string { rtn "f" }
+    stc final fn f() -> string { rtn "f" }
 }
 
 fn main() -> void {

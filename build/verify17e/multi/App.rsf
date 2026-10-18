@@ -1,6 +1,6 @@
 import "lib.rsf"
 
-public fn main() {
+pub fn main() {
     var p = Point(3, 4)
     println("sum=" + intToString(p.sum()))
     println("twice=" + intToString(twice(21)))

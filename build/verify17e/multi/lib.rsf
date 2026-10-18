@@ -1,11 +1,11 @@
-public fn twice(x : int) -> int {
+pub fn twice(x : int) -> int {
     rtn x * 2
 }
 
-public class Point(int x0, int y0) {
+pub class Point(int x0, int y0) {
     imutvar x : int = x0
     imutvar y : int = y0
-    public fn sum() -> int {
+    pub fn sum() -> int {
         rtn x + y
     }
 }

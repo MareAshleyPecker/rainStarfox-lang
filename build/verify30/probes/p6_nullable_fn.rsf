@@ -1,6 +1,0 @@
-fn main() {
-    var f : ?(int) -> int = null
-    println("" + (f == null))
-    f = lam(x : int) -> int { rtn x * 2 }
-    println("" + f!!(21))
-}

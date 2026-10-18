@@ -8,7 +8,7 @@
 import "Parser.rsf"
 
 // 模块级状态必须放在类里（rsf 不允许顶层 var）
-public class WarnSink {
+pub class WarnSink {
 
         var fileName : string = ""
         var count : int = 0
@@ -125,7 +125,7 @@ public class WarnSink {
     }
 
     // 入口：遍历全程序的函数体，把不可达代码告警打到 stderr
-    public fn printWarnings(prg : Node, given : string) -> void {
+    pub fn printWarnings(prg : Node, given : string) -> void {
         fileName = tailName(given)
         var funcs = warnChildOfKind(prg, NodeKind.FUNCS)
         if (funcs == null) { rtn }

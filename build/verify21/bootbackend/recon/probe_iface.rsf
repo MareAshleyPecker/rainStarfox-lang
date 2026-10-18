@@ -1,5 +1,5 @@
 // 探针 1：接口声明 + 实现类 + 接口变量调用（阶段 20/21 的合法源）
-public interface Greeter {
+pub interface Greeter {
     fun greet() -> string
     fun loud() -> string {
         rtn greet() + "!"

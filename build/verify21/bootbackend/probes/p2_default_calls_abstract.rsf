@@ -1,4 +1,4 @@
-public interface Calc {
+pub interface Calc {
     fn twice(x : int) -> int
     fn quad(x : int) -> int {
         rtn twice(twice(x))

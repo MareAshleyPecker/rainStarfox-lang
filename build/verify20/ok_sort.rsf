@@ -8,7 +8,7 @@ import java.util.Comparator
 //             回调，Java 编译器这时靠桥方法顶住；rsf 编译器不发桥就会 AbstractMethodError。
 //   解释器端——RsfObject 不是真的 java.util.Comparator，除非解释器给它套代理。
 class ByValue : Comparator&<string> {
-    public fn compare(a : string, b : string) -> int {
+    pub fn compare(a : string, b : string) -> int {
         var x = parseInt(a) ?: 0
         var y = parseInt(b) ?: 0
         rtn x - y

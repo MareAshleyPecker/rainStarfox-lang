@@ -1,4 +1,0 @@
-fn main() {
-    var g : (int) -> string = lam(x : int) -> int { rtn x }
-    println("" + g(1))
-}

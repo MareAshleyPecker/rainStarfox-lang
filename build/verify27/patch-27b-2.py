@@ -44,10 +44,10 @@ s = sub(s,
     '}', p)
 
 s = sub(s,
-    'public class InheritMods(isOpen : bool, isFinal : bool, isAbstract : bool) {\n'
+    'pub class InheritMods(isOpen : bool, isFinal : bool, isAbstract : bool) {\n'
     '    var isOpen : bool = isOpen\n'
     '    var isFinal : bool = isFinal\n',
-    'public class InheritMods(isFinal : bool, isAbstract : bool) {\n'
+    'pub class InheritMods(isFinal : bool, isAbstract : bool) {\n'
     '    var isFinal : bool = isFinal\n', p)
 
 s = sub(s, '        var inherit = new InheritMods(false, false, false)',

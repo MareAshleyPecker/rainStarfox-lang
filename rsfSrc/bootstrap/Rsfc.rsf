@@ -2,7 +2,7 @@
 //
 // 目标：与 Kotlin 版 `rsf check` 的输出逐字节一致——
 //   `[rsf] 检查通过: <文件名>`
-//   每个顶层函数一行：`      <control 左对齐 10> [static ]fn[<mainType> ]<name>(<p : t, …>) <返回子句>`
+//   每个顶层函数一行：`      <control 左对齐 10> [stc ]fn[<mainType> ]<name>(<p : t, …>) <返回子句>`
 //   每个类一行：`      <control 左对齐 10> class <名字> { <字段 : 类型, …> }` + 方法行（17 空格 + 种类 + 签名）
 //   末行：`      入口: main ✓` 或 `      入口: 没有 main（只能 check/build，不能 run）`
 //
@@ -41,17 +41,17 @@ fn padTo(s : string, width : int) -> string {
     rtn out
 }
 
-// 缺省那一档显示成 public（与 Kotlin `ControlType.label` 一致）
+// 缺省那一档显示成 pub（与 Kotlin `ControlType.label` 一致）
 fn controlLabel(kind : string) -> string {
-    if (kind == "PRIVATE") { rtn "private" }
-    if (kind == "PROTECTED") { rtn "protected" }
-    rtn "public"
+    if (kind == "PRIVATE") { rtn "prv" }
+    if (kind == "PROTECTED") { rtn "prot" }
+    rtn "pub"
 }
 
 fn sigOf(fnode : Node) -> string {
     var control = padTo(controlLabel(nodeProp(fnode, "control")), 10)
     var st = ""
-    if (nodeProp(fnode, "static") == "true") { st = "static " }
+    if (nodeProp(fnode, "stc") == "true") { st = "stc " }
     var mainT = nodeProp(fnode, "main")
     var mt = ""
     if (mainT != "void") { mt = " " + mainT }
@@ -98,7 +98,7 @@ fn printClass(cnode : Node) -> void {
             var m = ms!!.children[i]
             var kind = "方法"
             if (nodeProp(m, "ctor") == "true") { kind = "构造器" }
-            else if (nodeProp(m, "static") == "true") { kind = "静态方法" }
+            else if (nodeProp(m, "stc") == "true") { kind = "静态方法" }
             println("                 " + kind + " " + trimSig(sigOf(m)))
             i = i + 1
         }

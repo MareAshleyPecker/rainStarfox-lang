@@ -1,9 +1,0 @@
-// 临时：验证元数报错（不是示例，放在 tools 下）
-public class Box&<T,V> {
-    var T value = 0
-}
-
-fn main() -> void {
-    var Box&<int, int> bad = new Box&<int, int>()
-    rtn
-}

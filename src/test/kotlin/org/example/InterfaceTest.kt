@@ -27,7 +27,7 @@ class InterfaceTest {
     fun `接口声明能解析出抽象方法与默认方法`() {
         val program = Rsf.parse(
             source(
-                "public interface Greeter {\n" +
+                "pub interface Greeter {\n" +
                     "    fn greet(name : string) -> string\n" +
                     "    fn shout(name : string) -> string {\n" +
                     "        rtn name\n" +
@@ -50,8 +50,8 @@ class InterfaceTest {
     fun `接口头能带类型参数与父接口`() {
         val program = Rsf.parse(
             source(
-                "public interface Base {\n    fn id() -> int\n}\n" +
-                    "public interface Box&<T> : Base {\n    fn get() -> T\n}\n",
+                "pub interface Base {\n    fn id() -> int\n}\n" +
+                    "pub interface Box&<T> : Base {\n    fn get() -> T\n}\n",
             ),
         )
 
@@ -64,11 +64,11 @@ class InterfaceTest {
     fun `类头能写多个父类型`() {
         val program = Rsf.parse(
             source(
-                "public interface A {\n    fn a() -> int\n}\n" +
-                    "public interface B {\n    fn b() -> int\n}\n" +
+                "pub interface A {\n    fn a() -> int\n}\n" +
+                    "pub interface B {\n    fn b() -> int\n}\n" +
                     "class C : A, B {\n" +
-                    "    public fn a() -> int {\n        rtn 1\n    }\n" +
-                    "    public fn b() -> int {\n        rtn 2\n    }\n" +
+                    "    pub fn a() -> int {\n        rtn 1\n    }\n" +
+                    "    pub fn b() -> int {\n        rtn 2\n    }\n" +
                     "}\n",
             ),
         )
@@ -81,11 +81,11 @@ class InterfaceTest {
     @Test
     fun `接口变量能持有实现类 并调用接口方法`() {
         val text =
-            "public interface Greeter {\n" +
+            "pub interface Greeter {\n" +
                 "    fn greet(name : string) -> string\n" +
                 "}\n" +
                 "class Dog : Greeter {\n" +
-                "    public fn greet(n : string) -> string {\n" +
+                "    pub fn greet(n : string) -> string {\n" +
                 "        rtn \"woof\"\n" +
                 "    }\n" +
                 "}\n" +
@@ -100,11 +100,11 @@ class InterfaceTest {
     @Test
     fun `接口类型的参数与返回`() {
         val text =
-            "public interface Greeter {\n" +
+            "pub interface Greeter {\n" +
                 "    fn greet(n : string) -> string\n" +
                 "}\n" +
                 "class Dog : Greeter {\n" +
-                "    public fn greet(n : string) -> string {\n" +
+                "    pub fn greet(n : string) -> string {\n" +
                 "        rtn \"woof\"\n" +
                 "    }\n" +
                 "}\n" +
@@ -124,14 +124,14 @@ class InterfaceTest {
     @Test
     fun `默认方法被实现类继承`() {
         val text =
-            "public interface Greeter {\n" +
+            "pub interface Greeter {\n" +
                 "    fn greet(n : string) -> string\n" +
                 "    fn shout(n : string) -> string {\n" +
                 "        rtn greet(n) + \"!\"\n" +
                 "    }\n" +
                 "}\n" +
                 "class Dog : Greeter {\n" +
-                "    public fn greet(n : string) -> string {\n" +
+                "    pub fn greet(n : string) -> string {\n" +
                 "        rtn \"woof\"\n" +
                 "    }\n" +
                 "}\n" +
@@ -146,17 +146,17 @@ class InterfaceTest {
     @Test
     fun `接口继承接口 子接口的实例能赋给父接口`() {
         val text =
-            "public interface Named {\n" +
+            "pub interface Named {\n" +
                 "    fn name() -> string\n" +
                 "}\n" +
-                "public interface Greeter : Named {\n" +
+                "pub interface Greeter : Named {\n" +
                 "    fn greet(n : string) -> string\n" +
                 "}\n" +
                 "class Dog : Greeter {\n" +
-                "    public fn name() -> string {\n" +
+                "    pub fn name() -> string {\n" +
                 "        rtn \"dog\"\n" +
                 "    }\n" +
-                "    public fn greet(n : string) -> string {\n" +
+                "    pub fn greet(n : string) -> string {\n" +
                 "        rtn \"woof\"\n" +
                 "    }\n" +
                 "}\n" +
@@ -173,11 +173,11 @@ class InterfaceTest {
     @Test
     fun `可空接口类型能持空与实现类`() {
         val text =
-            "public interface Greeter {\n" +
+            "pub interface Greeter {\n" +
                 "    fn greet() -> string\n" +
                 "}\n" +
                 "class Dog : Greeter {\n" +
-                "    public fn greet() -> string {\n" +
+                "    pub fn greet() -> string {\n" +
                 "        rtn \"woof\"\n" +
                 "    }\n" +
                 "}\n" +
@@ -192,18 +192,18 @@ class InterfaceTest {
     @Test
     fun `接口类型的返回可以写 mayError 子句`() {
         val text =
-            "public interface Greeter {\n" +
+            "pub interface Greeter {\n" +
                 "    fn greet() -> string\n" +
                 "}\n" +
                 "class Dog : Greeter {\n" +
-                "    public fn greet() -> string {\n" +
+                "    pub fn greet() -> string {\n" +
                 "        rtn \"woof\"\n" +
                 "    }\n" +
                 "}\n" +
-                "public fn pick() -> !Greeter {\n" +
+                "pub fn pick() -> !Greeter {\n" +
                 "    rtn new Dog()\n" +
                 "}\n" +
-                "public fn take() -> !string {\n" +
+                "pub fn take() -> !string {\n" +
                 "    var g : Greeter = pick()!!\n" +
                 "    rtn g.greet()\n" +
                 "}\n" +
@@ -221,11 +221,11 @@ class InterfaceTest {
     @Test
     fun `泛型接口能声明 实现与调用`() {
         val text =
-            "public interface Box&<T> {\n" +
+            "pub interface Box&<T> {\n" +
                 "    fn get() -> T\n" +
                 "}\n" +
                 "class IntBox : Box&<int> {\n" +
-                "    public fn get() -> int {\n" +
+                "    pub fn get() -> int {\n" +
                 "        rtn 7\n" +
                 "    }\n" +
                 "}\n" +
@@ -242,7 +242,7 @@ class InterfaceTest {
         val text =
             "import java.lang.Runnable\n" +
                 "class Robot : Runnable {\n" +
-                "    public fn run() -> void {\n" +
+                "    pub fn run() -> void {\n" +
                 "        rtn\n" +
                 "    }\n" +
                 "}\n" +
@@ -256,11 +256,11 @@ class InterfaceTest {
     @Test
     fun `接口方法的调用点记下了接口归属`() {
         val src = source(
-            "public interface Greeter {\n" +
+            "pub interface Greeter {\n" +
                 "    fn greet(n : string) -> string\n" +
                 "}\n" +
                 "class Dog : Greeter {\n" +
-                "    public fn greet(n : string) -> string {\n" +
+                "    pub fn greet(n : string) -> string {\n" +
                 "        rtn \"woof\"\n" +
                 "    }\n" +
                 "}\n" +
@@ -285,11 +285,11 @@ class InterfaceTest {
     @Test
     fun `接口类型的变量能传给接口类型的参数`() {
         val text =
-            "public interface Greeter {\n" +
+            "pub interface Greeter {\n" +
                 "    fn greet() -> string\n" +
                 "}\n" +
                 "class Dog : Greeter {\n" +
-                "    public fn greet() -> string {\n" +
+                "    pub fn greet() -> string {\n" +
                 "        rtn \"woof\"\n" +
                 "    }\n" +
                 "}\n" +
@@ -309,7 +309,7 @@ class InterfaceTest {
     @Test
     fun `接口里写字段是错误`() {
         val e = assertFailsWith<RsfError> {
-            Rsf.parse(source("public interface I {\n    var x : int = 0\n}\n"))
+            Rsf.parse(source("pub interface I {\n    var x : int = 0\n}\n"))
         }
         assertTrue(e.detail.contains("接口里只能写方法"), e.detail)
     }
@@ -319,12 +319,12 @@ class InterfaceTest {
         val e = assertFailsWith<RsfError> {
             Rsf.analyze(
                 source(
-                    "public interface Greeter {\n" +
+                    "pub interface Greeter {\n" +
                         "    fn greet(n : string) -> string\n" +
                         "    fn shout() -> string\n" +
                         "}\n" +
                         "class Dog : Greeter {\n" +
-                        "    public fn greet(n : string) -> string {\n" +
+                        "    pub fn greet(n : string) -> string {\n" +
                         "        rtn \"woof\"\n" +
                         "    }\n" +
                         "}\n",
@@ -342,11 +342,11 @@ class InterfaceTest {
         val e = assertFailsWith<RsfError> {
             Rsf.analyze(
                 source(
-                    "public interface Greeter {\n" +
+                    "pub interface Greeter {\n" +
                         "    fn greet() -> string\n" +
                         "}\n" +
                         "class Dog : Greeter {\n" +
-                        "    public fn greet() -> int {\n" +
+                        "    pub fn greet() -> int {\n" +
                         "        rtn 1\n" +
                         "    }\n" +
                         "}\n",
@@ -362,11 +362,11 @@ class InterfaceTest {
         val e = assertFailsWith<RsfError> {
             Rsf.analyze(
                 source(
-                    "public interface Greeter {\n" +
+                    "pub interface Greeter {\n" +
                         "    fn greet(n : string) -> string\n" +
                         "}\n" +
                         "class Dog : Greeter {\n" +
-                        "    public fn greet(n : int) -> string {\n" +
+                        "    pub fn greet(n : int) -> string {\n" +
                         "        rtn \"woof\"\n" +
                         "    }\n" +
                         "}\n",
@@ -382,7 +382,7 @@ class InterfaceTest {
         val e = assertFailsWith<RsfError> {
             Rsf.analyze(
                 source(
-                    "public interface Greeter {\n" +
+                    "pub interface Greeter {\n" +
                         "    fn greet() -> string\n" +
                         "}\n" +
                         "fn main() -> void {\n" +
@@ -413,10 +413,10 @@ class InterfaceTest {
     @Test
     fun `多接口同签名默认方法冲突要求显式覆盖`() {
         val conflict =
-            "public interface A {\n" +
+            "pub interface A {\n" +
                 "    fn hi() -> string {\n        rtn \"a\"\n    }\n" +
                 "}\n" +
-                "public interface B {\n" +
+                "pub interface B {\n" +
                 "    fn hi() -> string {\n        rtn \"b\"\n    }\n" +
                 "}\n" +
                 "class C : A, B {\n}\n"
@@ -429,7 +429,7 @@ class InterfaceTest {
             source(
                 conflict.replace(
                     "class C : A, B {\n}\n",
-                    "class C : A, B {\n    public fn hi() -> string {\n        rtn \"c\"\n    }\n}\n",
+                    "class C : A, B {\n    pub fn hi() -> string {\n        rtn \"c\"\n    }\n}\n",
                 ),
             ),
         )
@@ -440,10 +440,10 @@ class InterfaceTest {
         // B 继承 A 并覆盖了 hi——这份比 A 的更具体，实现类不用再写
         Rsf.analyze(
             source(
-                "public interface A {\n" +
+                "pub interface A {\n" +
                     "    fn hi() -> string {\n        rtn \"a\"\n    }\n" +
                     "}\n" +
-                    "public interface B : A {\n" +
+                    "pub interface B : A {\n" +
                     "    fn hi() -> string {\n        rtn \"b\"\n    }\n" +
                     "}\n" +
                     "class C : B {\n}\n",
@@ -456,8 +456,8 @@ class InterfaceTest {
         val e = assertFailsWith<RsfError> {
             Rsf.analyze(
                 source(
-                    "public interface A : B {\n    fn a() -> int\n}\n" +
-                        "public interface B : A {\n    fn b() -> int\n}\n",
+                    "pub interface A : B {\n    fn a() -> int\n}\n" +
+                        "pub interface B : A {\n    fn b() -> int\n}\n",
                 ),
             )
         }
@@ -468,23 +468,23 @@ class InterfaceTest {
     @Test
     fun `接口方法不能是 private`() {
         val e = assertFailsWith<RsfError> {
-            Rsf.analyze(source("public interface I {\n    private fn f() -> int {\n        rtn 1\n    }\n}\n"))
+            Rsf.analyze(source("pub interface I {\n    prv fn f() -> int {\n        rtn 1\n    }\n}\n"))
         }
-        assertTrue(e.detail.contains("只能是 public"), e.detail)
+        assertTrue(e.detail.contains("只能是 pub"), e.detail)
     }
 
     @Test
     fun `接口方法不能是 static`() {
         val e = assertFailsWith<RsfError> {
-            Rsf.analyze(source("public interface I {\n    static fn f() -> int {\n        rtn 1\n    }\n}\n"))
+            Rsf.analyze(source("pub interface I {\n    stc fn f() -> int {\n        rtn 1\n    }\n}\n"))
         }
-        assertTrue(e.detail.contains("static"), e.detail)
+        assertTrue(e.detail.contains("stc"), e.detail)
     }
 
     @Test
     fun `父类型名字写错要报找不到`() {
         val e = assertFailsWith<RsfError> {
-            Rsf.analyze(source("public interface I : Nope {\n    fn f() -> int\n}\n"))
+            Rsf.analyze(source("pub interface I : Nope {\n    fn f() -> int\n}\n"))
         }
         assertEquals("checker", e.phase)
         assertTrue(e.detail.contains("找不到"), e.detail)
@@ -493,7 +493,7 @@ class InterfaceTest {
         val e2 = assertFailsWith<RsfError> {
             Rsf.analyze(
                 source(
-                    "public enum Color {\n    RED,\n    GREEN\n}\n" +
+                    "pub enum Color {\n    RED,\n    GREEN\n}\n" +
                         "class C : Color {\n}\n",
                 ),
             )
@@ -506,11 +506,11 @@ class InterfaceTest {
         val e = assertFailsWith<RsfError> {
             Rsf.analyze(
                 source(
-                    "public interface Greeter {\n" +
+                    "pub interface Greeter {\n" +
                         "    fn greet() -> string\n" +
                         "}\n" +
                         "class Dog : Greeter {\n" +
-                        "    public fn greet() -> string {\n        rtn \"woof\"\n    }\n" +
+                        "    pub fn greet() -> string {\n        rtn \"woof\"\n    }\n" +
                         "}\n" +
                         "fn main() -> void {\n" +
                         "    var a : ?Greeter = null\n" +
@@ -529,7 +529,7 @@ class InterfaceTest {
         val e = assertFailsWith<RsfError> {
             Rsf.analyze(
                 source(
-                    "public interface Greeter {\n" +
+                    "pub interface Greeter {\n" +
                         "    fn greet() -> string {\n" +
                         "        rtn name\n" +
                         "    }\n" +
@@ -547,7 +547,7 @@ class InterfaceTest {
         val e = assertFailsWith<RsfError> {
             Rsf.analyze(
                 source(
-                    "public interface Greeter {\n" +
+                    "pub interface Greeter {\n" +
                         "    fn greet() -> string\n" +
                         "}\n" +
                         "class Dog : Greeter {\n}\n" +
@@ -565,7 +565,7 @@ class InterfaceTest {
         val e = assertFailsWith<RsfError> {
             Rsf.analyze(
                 source(
-                    "public interface Thing {\n    fn f() -> int\n}\n" +
+                    "pub interface Thing {\n    fn f() -> int\n}\n" +
                         "class Thing {\n}\n",
                 ),
             )
@@ -578,13 +578,13 @@ class InterfaceTest {
     fun `接口方法可以放心重载`() {
         Rsf.analyze(
             source(
-                "public interface Greeter {\n" +
+                "pub interface Greeter {\n" +
                     "    fn greet(n : string) -> string\n" +
                     "    fn greet(n : int) -> string\n" +
                     "}\n" +
                     "class Dog : Greeter {\n" +
-                    "    public fn greet(n : string) -> string {\n        rtn \"s\"\n    }\n" +
-                    "    public fn greet(n : int) -> string {\n        rtn \"i\"\n    }\n" +
+                    "    pub fn greet(n : string) -> string {\n        rtn \"s\"\n    }\n" +
+                    "    pub fn greet(n : int) -> string {\n        rtn \"i\"\n    }\n" +
                     "}\n" +
                     "fn main() -> void {\n" +
                     "    var g : Greeter = new Dog()\n" +
@@ -600,7 +600,7 @@ class InterfaceTest {
         val e = assertFailsWith<RsfError> {
             Rsf.analyze(
                 source(
-                    "public interface I {\n" +
+                    "pub interface I {\n" +
                         "    constructor(x : int) {\n    }\n" +
                         "}\n",
                 ),
@@ -618,7 +618,7 @@ class InterfaceTest {
         val e = assertFailsWith<RsfError> {
             Rsf.analyze(
                 source(
-                    "public interface Greeter {\n" +
+                    "pub interface Greeter {\n" +
                         "    fn greet() -> string\n" +
                         "}\n" +
                         "fn main() -> void {\n" +
@@ -635,11 +635,11 @@ class InterfaceTest {
     @Test
     fun `接口类型的局部变量能推断出声明类型`() {
         val src = source(
-            "public interface Greeter {\n" +
+            "pub interface Greeter {\n" +
                 "    fn greet() -> string\n" +
                 "}\n" +
                 "class Dog : Greeter {\n" +
-                "    public fn greet() -> string {\n        rtn \"woof\"\n    }\n" +
+                "    pub fn greet() -> string {\n        rtn \"woof\"\n    }\n" +
                 "}\n" +
                 "fn main() -> void {\n" +
                 "    var d = new Dog()\n" +
@@ -659,13 +659,13 @@ class InterfaceTest {
     fun `实现类可以有别的方法和字段`() {
         Rsf.analyze(
             source(
-                "public interface Greeter {\n" +
+                "pub interface Greeter {\n" +
                     "    fn greet() -> string\n" +
                     "}\n" +
                     "class Dog : Greeter {\n" +
                     "    var name : string = \"rex\"\n" +
                     "    var tag : int = 0\n" +
-                    "    public fn greet() -> string {\n        rtn name\n    }\n" +
+                    "    pub fn greet() -> string {\n        rtn name\n    }\n" +
                     "}\n" +
                     "fn main() -> void {\n" +
                     "    var d = new Dog()\n" +
@@ -680,7 +680,7 @@ class InterfaceTest {
     @Test
     fun `接口方法上不能写与接口同名的名字`() {
         val e = assertFailsWith<RsfError> {
-            Rsf.analyze(source("public interface I {\n    fn I() -> int\n}\n"))
+            Rsf.analyze(source("pub interface I {\n    fn I() -> int\n}\n"))
         }
         assertEquals("checker", e.phase)
         assertTrue(e.detail.contains("不能和接口同名"), e.detail)
@@ -691,11 +691,11 @@ class InterfaceTest {
         val e = assertFailsWith<RsfError> {
             Rsf.analyze(
                 source(
-                    "public interface Box&<T> {\n" +
+                    "pub interface Box&<T> {\n" +
                         "    fn get() -> T\n" +
                         "}\n" +
                         "class IntBox : Box&<int> {\n" +
-                        "    public fn get() -> int {\n        rtn 7\n    }\n" +
+                        "    pub fn get() -> int {\n        rtn 7\n    }\n" +
                         "}\n" +
                         "fn main() -> void {\n" +
                         "    var b : Box&<string> = new IntBox()\n" +
@@ -712,15 +712,15 @@ class InterfaceTest {
     fun `接口类型的参数能收实现类的子类型`() {
         Rsf.analyze(
             source(
-                "public interface Greeter {\n" +
+                "pub interface Greeter {\n" +
                     "    fn greet() -> string\n" +
                     "}\n" +
-                    "public interface Loud : Greeter {\n" +
+                    "pub interface Loud : Greeter {\n" +
                     "    fn volume() -> int\n" +
                     "}\n" +
                     "class Dog : Loud {\n" +
-                    "    public fn greet() -> string {\n        rtn \"woof\"\n    }\n" +
-                    "    public fn volume() -> int {\n        rtn 9\n    }\n" +
+                    "    pub fn greet() -> string {\n        rtn \"woof\"\n    }\n" +
+                    "    pub fn volume() -> int {\n        rtn 9\n    }\n" +
                     "}\n" +
                     "fn hello(g : Greeter) -> string {\n" +
                     "    rtn g.greet()\n" +
@@ -738,11 +738,11 @@ class InterfaceTest {
         val e = assertFailsWith<RsfError> {
             Rsf.analyze(
                 source(
-                    "public interface Greeter {\n" +
+                    "pub interface Greeter {\n" +
                         "    fn greet(n : string) -> string\n" +
                         "}\n" +
                         "class Dog : Greeter {\n" +
-                        "    public fn greet(n : string) -> string {\n        rtn \"woof\"\n    }\n" +
+                        "    pub fn greet(n : string) -> string {\n        rtn \"woof\"\n    }\n" +
                         "}\n" +
                         "fn main() -> void {\n" +
                         "    var g : Greeter = new Dog()\n" +
@@ -761,18 +761,18 @@ class InterfaceTest {
         // 后端拼 ClassWriter.visit 的 interfaces 数组就抄这一份：rsf 接口是默认包里的
         // 名字，JDK 接口是 java/lang/... 全名，rsf 泛型接口的实参已经代换好了。
         val text =
-            "public interface Greeter {\n" +
+            "pub interface Greeter {\n" +
                 "    fn greet() -> string\n" +
                 "}\n" +
-                "public interface Box&<T> {\n" +
+                "pub interface Box&<T> {\n" +
                 "    fn get() -> T\n" +
                 "}\n" +
                 "class Dog : Greeter, Runnable {\n" +
-                "    public fn greet() -> string {\n        rtn \"woof\"\n    }\n" +
-                "    public fn run() -> void {\n        rtn\n    }\n" +
+                "    pub fn greet() -> string {\n        rtn \"woof\"\n    }\n" +
+                "    pub fn run() -> void {\n        rtn\n    }\n" +
                 "}\n" +
                 "class IntBox : Box&<int> {\n" +
-                "    public fn get() -> int {\n        rtn 7\n    }\n" +
+                "    pub fn get() -> int {\n        rtn 7\n    }\n" +
                 "}\n"
         val model = Rsf.analyze(source(text))
 
@@ -794,11 +794,11 @@ class InterfaceTest {
         // 就会报「不能把 Object 赋给 Greeter 变量」。javac 给的是最近的公共父类型，
         // 语言里有了接口之后这一步必须跟上（promote 自己只认基础类型与泛型实参）。
         val src = source(
-            "public interface Greeter {\n" +
+            "pub interface Greeter {\n" +
                 "    fn greet() -> string\n" +
                 "}\n" +
                 "class Dog : Greeter {\n" +
-                "    public fn greet() -> string {\n        rtn \"woof\"\n    }\n" +
+                "    pub fn greet() -> string {\n        rtn \"woof\"\n    }\n" +
                 "}\n" +
                 "fn must() -> !Greeter {\n" +
                 "    rtn new Dog()\n" +
@@ -822,10 +822,10 @@ class InterfaceTest {
     fun `两个不相干的引用类型在 elvis 里仍然收敛到 Object`() {
         val src = source(
             "class Dog {\n" +
-                "    public fn greet() -> string {\n        rtn \"woof\"\n    }\n" +
+                "    pub fn greet() -> string {\n        rtn \"woof\"\n    }\n" +
                 "}\n" +
                 "class Cat {\n" +
-                "    public fn greet() -> string {\n        rtn \"meow\"\n    }\n" +
+                "    pub fn greet() -> string {\n        rtn \"meow\"\n    }\n" +
                 "}\n" +
                 "fn pick(flag : bool) -> ?Dog {\n" +
                 "    if (flag) {\n        rtn new Dog()\n    }\n" +
@@ -847,11 +847,11 @@ class InterfaceTest {
     @Test
     fun `接口里的 void 方法能被类实现`() {
         val src = source(
-            "public interface P {\n" +
+            "pub interface P {\n" +
                 "    fn show() -> void\n" +
                 "}\n" +
-                "public class D : P {\n" +
-                "    public fn show() -> void {\n" +
+                "pub class D : P {\n" +
+                "    pub fn show() -> void {\n" +
                 "        println(\"d\")\n" +
                 "        rtn\n" +
                 "    }\n" +
@@ -864,11 +864,11 @@ class InterfaceTest {
     @Test
     fun `void 方法不能拿别的返回类型顶替`() {
         val src = source(
-            "public interface P {\n" +
+            "pub interface P {\n" +
                 "    fn show() -> void\n" +
                 "}\n" +
-                "public class D : P {\n" +
-                "    public fn show() -> int {\n" +
+                "pub class D : P {\n" +
+                "    pub fn show() -> int {\n" +
                 "        rtn 1\n" +
                 "    }\n" +
                 "}\n",

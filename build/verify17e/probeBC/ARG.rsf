@@ -1,12 +1,12 @@
 class Calc(base : int) {
     imutvar base : int = base
 
-    public fn add(k : int) -> !int {
+    pub fn add(k : int) -> !int {
         rtn base + k
     }
 }
 
-public fn main() {
+pub fn main() {
     var c = Calc(10)
     println("a=" + intToString(c.add(5) ?: -1))
 }

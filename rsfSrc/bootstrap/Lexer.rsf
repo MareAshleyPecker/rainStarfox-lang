@@ -26,19 +26,19 @@
 // 就是一串 string 常量。好处是打印时就是那个名字；坏处是**编译器帮不上忙**——
 // 拼错一个 kind 要等对拍测试报「第 N 条不一样」才会发现。对拍测试因此格外重要。
 
-public class TokenKind {
-    public static fn eof() -> string { rtn "EOF" }
-    public static fn ident() -> string { rtn "IDENT" }
+pub class TokenKind {
+    pub stc fn eof() -> string { rtn "EOF" }
+    pub stc fn ident() -> string { rtn "IDENT" }
     // 阶段 28b：反引号标签名（`` `名字` ``）。Kotlin 版是 TokenKind.LABEL_NAME
-    public static fn labelName() -> string { rtn "LABEL_NAME" }
-    public static fn intLit() -> string { rtn "INT_LIT" }
-    public static fn longLit() -> string { rtn "LONG_LIT" }
-    public static fn floatLit() -> string { rtn "FLOAT_LIT" }
-    public static fn doubleLit() -> string { rtn "DOUBLE_LIT" }
-    public static fn stringLit() -> string { rtn "STRING_LIT" }
-    public static fn charLit() -> string { rtn "CHAR_LIT" }
+    pub stc fn labelName() -> string { rtn "LABEL_NAME" }
+    pub stc fn intLit() -> string { rtn "INT_LIT" }
+    pub stc fn longLit() -> string { rtn "LONG_LIT" }
+    pub stc fn floatLit() -> string { rtn "FLOAT_LIT" }
+    pub stc fn doubleLit() -> string { rtn "DOUBLE_LIT" }
+    pub stc fn stringLit() -> string { rtn "STRING_LIT" }
+    pub stc fn charLit() -> string { rtn "CHAR_LIT" }
     // 只在 lexSafe 里出现：Kotlin 版遇到这种输入是抛 RsfError，rsf 版没有异常可抛（见文件末尾说明）
-    public static fn illegal() -> string { rtn "ILLEGAL" }
+    pub stc fn illegal() -> string { rtn "ILLEGAL" }
 }
 
 // ---------------------------------------------------------------- 一个 token
@@ -48,16 +48,16 @@ public class TokenKind {
 // `  = 值 (类型)` 尾巴里用到，**token 流的身份不包含它**，所以这里不存值，
 // 只在 dumpToken 里按 kind / 文本形状把它还原成同样的尾巴。
 
-public class Token(kind : string, text : string, line : int, col : int) {
+pub class Token(kind : string, text : string, line : int, col : int) {
     var kind : string = kind
     var text : string = text
     var line : int = line
     var col : int = col
 
-    public fn kindName() -> string { rtn kind }
+    pub fn kindName() -> string { rtn kind }
 
     // 关键字 true / false 的 literal 是 Boolean，别的关键字是 null（不打印）。
-    public fn literalType() -> string {
+    pub fn literalType() -> string {
         if (kind == TokenKind.intLit()) { rtn "Int" }
         if (kind == TokenKind.longLit()) { rtn "Long" }
         if (kind == TokenKind.floatLit()) { rtn "Float" }
@@ -74,7 +74,7 @@ public class Token(kind : string, text : string, line : int, col : int) {
     // 数字字面量**要去掉宽度后缀**：源码写 `9000000000L`，token 文本是 `9000000000l`，
     // 但 Kotlin 版的 literal 是 Long 9000000000 —— `rsf lex` 打的是后者。
     // Float / Double 还要按 JVM 的显示规则补 `.0`（`7d` 的值是 `7.0`）。
-    public fn literalValue() -> string {
+    pub fn literalValue() -> string {
         if (kind == TokenKind.charLit()) { rtn charLiteralValue(text) }
         if (kind == TokenKind.longLit()) { rtn dropLast(text) }
         if (kind == TokenKind.floatLit()) { rtn decimalText(dropLast(text)) }
@@ -86,7 +86,7 @@ public class Token(kind : string, text : string, line : int, col : int) {
         rtn text
     }
 
-    public fn hasLiteral() -> bool {
+    pub fn hasLiteral() -> bool {
         if (kind == TokenKind.stringLit()) { rtn true }
         if (kind == TokenKind.charLit()) { rtn true }
         if (kind == TokenKind.intLit()) { rtn true }
@@ -280,10 +280,10 @@ fn keywordKind(word : string) -> string {
     if (word == "var") { rtn "KW_VAR" }
     if (word == "imutvar") { rtn "KW_IMUTVAR" }
     if (word == "let") { rtn "KW_LET" }
-    if (word == "public") { rtn "KW_PUBLIC" }
-    if (word == "private") { rtn "KW_PRIVATE" }
-    if (word == "protected") { rtn "KW_PROTECTED" }
-    if (word == "static") { rtn "KW_STATIC" }
+    if (word == "pub") { rtn "KW_PUBLIC" }
+    if (word == "prv") { rtn "KW_PRIVATE" }
+    if (word == "prot") { rtn "KW_PROTECTED" }
+    if (word == "stc") { rtn "KW_STATIC" }
     // 阶段 20：可选的 override（语义照 Java 的 @Override）
     if (word == "override") { rtn "KW_OVERRIDE" }
     // 阶段 25：类继承的四个关键字（自举同步第 6 刀）。位置与 Kotlin 版 Lexer.kt:40-43
@@ -384,7 +384,7 @@ fn punctKind(c : char) -> string {
 
 // ================================================================ 词法器本体
 
-public class Lexer(source : string) {
+pub class Lexer(source : string) {
     var src : string = source
     var pos : int = 0
     var line : int = 1
@@ -1017,16 +1017,16 @@ public class Lexer(source : string) {
         rtn copy
     }
 
-    public fn errorMessage() -> string { rtn failMessage }
+    pub fn errorMessage() -> string { rtn failMessage }
 
-    public fn hasError() -> bool { rtn failed }
+    pub fn hasError() -> bool { rtn failed }
 }
 
 // ---------------------------------------------------------------- 对外接口
 
 // 切一份源码。**与 Kotlin 版 Lexer.tokenize() 对等**：输入是合法源码时逐条相同。
 // 输入非法时 Kotlin 版抛 RsfError，这里返回空数组（rsf 侧没有异常，见 lexSafe）。
-public fn lex(source : string) -> Token[] {
+pub fn lex(source : string) -> Token[] {
     var l = new Lexer(source)
     l.run()
     rtn l.result()
@@ -1034,21 +1034,21 @@ public fn lex(source : string) -> Token[] {
 
 // 容错版：输入非法时不置空，而是把错误落成一个 ILLEGAL token 继续往下切。
 // 用它才能观察「rsf 版在非法输入下怎么走」——对拍测试里有一条专门钉住它。
-public fn lexSafe(source : string) -> Token[] {
+pub fn lexSafe(source : string) -> Token[] {
     var l = new Lexer(source, true)
     l.run()
     rtn l.result()
 }
 
 // 分词 + 出错信息（!string 为 null 表示没出错）
-public fn lexError(source : string) -> string {
+pub fn lexError(source : string) -> string {
     var l = new Lexer(source)
     l.run()
     rtn l.errorMessage()
 }
 
 // 读文件再切（路径用 / 分隔；这里不写死任何绝对路径）
-public fn lexFile(path : string) -> !Token[] {
+pub fn lexFile(path : string) -> !Token[] {
     var text = readText(path)!!
     rtn lex(text)
 }
@@ -1082,7 +1082,7 @@ fn padRight(s : string, width : int) -> string {
     rtn out
 }
 
-public fn dumpToken(t : Token) -> string {
+pub fn dumpToken(t : Token) -> string {
     var head = padLeft(intToString(t.line), 4) + ":" + padRight(intToString(t.col), 4) +
         " " + padRight(t.kindName(), 12) + " '" + t.text + "'"
     if (t.hasLiteral()) {
@@ -1091,7 +1091,7 @@ public fn dumpToken(t : Token) -> string {
     rtn head
 }
 
-public fn dumpTokens(tokens : Token[]) -> void {
+pub fn dumpTokens(tokens : Token[]) -> void {
     for (var i = 0; i < tokens.length; i = i + 1) {
         println(dumpToken(tokens[i]))
     }

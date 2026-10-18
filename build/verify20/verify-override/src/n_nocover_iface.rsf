@@ -1,8 +1,8 @@
-public interface Named {
+pub interface Named {
     fn name() -> string
 }
 
-public interface Person : Named {
+pub interface Person : Named {
     override fn age() -> int {
         rtn 1
     }

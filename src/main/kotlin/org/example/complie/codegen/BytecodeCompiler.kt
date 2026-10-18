@@ -1803,8 +1803,8 @@ class BytecodeCompiler(
         if (!fn.isStatic) return
         throw RsfError(
             "codegen",
-            "$what 需要 this，但 '${fn.name}' 是 ${owner.name} 的 static 方法，没有 this。" +
-                "去掉 static 改成实例方法，或者别在这里用当前对象的字段/方法。",
+            "$what 需要 this，但 '${fn.name}' 是 ${owner.name} 的 stc 方法，没有 this。" +
+                "去掉 stc 改成实例方法，或者别在这里用当前对象的字段/方法。",
             fn.at.line, fn.at.column, null,
         )
     }

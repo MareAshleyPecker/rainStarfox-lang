@@ -1,7 +1,7 @@
 import java.lang.Runnable
 
 class Robot : Runnable {
-    override public fn run() -> void {
+    override pub fn run() -> void {
         println("running")
     }
 }

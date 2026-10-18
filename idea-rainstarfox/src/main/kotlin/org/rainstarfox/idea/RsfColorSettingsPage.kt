@@ -16,7 +16,7 @@ class RsfColorSettingsPage : ColorSettingsPage {
 
     override fun getDisplayName(): String = "rainStarfox"
 
-    override fun getIcon(): Icon? = RsfFileType.ICON
+    override fun getIcon(): Icon = RsfFileType.ICON
 
     override fun getHighlighter(): SyntaxHighlighter = RsfSyntaxHighlighter()
 
@@ -27,7 +27,7 @@ class RsfColorSettingsPage : ColorSettingsPage {
     companion object {
         private val DESCRIPTORS = arrayOf(
             AttributesDescriptor("关键字", RsfTextAttributes.KEYWORD),
-            AttributesDescriptor("权限修饰词（public/private）", RsfTextAttributes.MODIFIER),
+            AttributesDescriptor("权限修饰词（pub/prv）", RsfTextAttributes.MODIFIER),
             AttributesDescriptor("类型名（类型关键字与用户类名）", RsfTextAttributes.TYPE),
             AttributesDescriptor("函数定义名", RsfTextAttributes.FUNCTION_DECLARATION),
             AttributesDescriptor("函数调用", RsfTextAttributes.FUNCTION_CALL),
@@ -53,16 +53,16 @@ class RsfColorSettingsPage : ColorSettingsPage {
 
             import java.lang.Math
 
-            public class Point(x0 : int, y0 : int) {
+            pub class Point(x0 : int, y0 : int) {
                 var x : int = x0
                 var y : int = y0
 
                 constructor() { this(0, 0) }
 
-                public fun sum() :: int { rtn x + y }
+                pub fn sum() :: int { rtn x + y }
             }
 
-            fun main() -> void {
+            fn main() -> void {
                 var who : string = "rainStarfox"   // 可变；类型写在名字后面
                 imutvar pi : double = Math.PI        // 不可变
                 var p : Point = Point(3, 4)        // 构造对象时 new 可以省

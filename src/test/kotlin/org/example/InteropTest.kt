@@ -264,12 +264,12 @@ class InteropTest {
         val program = """
             import java.util.HashMap
 
-            public class Val(k : string) {
+            pub class Val(k : string) {
                 var kind : string = k
                 var iv : int = 0
             }
 
-            public class Env(p : ?Env, nm : string) {
+            pub class Env(p : ?Env, nm : string) {
                 var parent : ?Env = p
                 var table : HashMap&<string, ?Val> = new HashMap&<string, ?Val>()
                 var owner : string = nm
@@ -278,11 +278,11 @@ class InteropTest {
                     this(null, "root")
                 }
 
-                public fn define(name : string, value : Val) -> void {
+                pub fn define(name : string, value : Val) -> void {
                     table.put(name, value)
                 }
 
-                public fn lookup(name : string) -> ?Val {
+                pub fn lookup(name : string) -> ?Val {
                     var e : ?Env = this
                     while (e != null) {
                         var hit : ?Val = e!!.table.get(name)
@@ -294,11 +294,11 @@ class InteropTest {
                     rtn null
                 }
 
-                public fn has(name : string) -> bool {
+                pub fn has(name : string) -> bool {
                     rtn table.containsKey(name)
                 }
 
-                public fn count() -> int {
+                pub fn count() -> int {
                     rtn table.size()
                 }
             }
@@ -344,7 +344,7 @@ class InteropTest {
         val program = """
             import java.util.HashMap
 
-            public class Val(k : string) {
+            pub class Val(k : string) {
                 var kind : string = k
             }
 
@@ -514,11 +514,11 @@ class InteropTest {
         val program = """
             import java.util.ArrayList
 
-            public class Point(x0 : int, y0 : int) {
+            pub class Point(x0 : int, y0 : int) {
                 var x : int = x0
                 var y : int = y0
 
-                public fn sum() -> int {
+                pub fn sum() -> int {
                     rtn x + y
                 }
             }

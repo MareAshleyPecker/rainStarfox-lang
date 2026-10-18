@@ -136,7 +136,7 @@ fn main() -> void {
 - **Kotlin 互调用和 Java 是同一件事**——Kotlin 也编译成 JVM 类；顶层函数在
   `文件名Kt` 类里，用 `import` 那个类名就能调。
 
-**Java → rsf**：rsf 的 `public` 函数就是普通的 `public static` 方法，Java 侧直接调，不用胶水代码。
+**Java → rsf**：rsf 的 `pub` 函数就是普通的 `public static` 方法，Java 侧直接调，不用胶水代码。
 
 ```java
 System.out.println(rsflib.greet("Java"));   // rsflib.rsf → rsflib.class
@@ -168,13 +168,13 @@ java -cp out UseRsf
 > `&<`（泛型引子）、`&&`（逻辑与）、单独的 `&` 在词法上是三个不同的记号，互相不打架。
 
 ```rsf
-public class Box&<T> {              // 声明类型参数
+pub class Box&<T> {              // 声明类型参数
     var value : T = ...              // 类体里 T 可以当类型用（字段 / 参数 / 返回 / 局部变量）
-    public fn get() -> T { rtn value }
-    public fn set(v : T) -> void { value = v }
+    pub fn get() -> T { rtn value }
+    pub fn set(v : T) -> void { value = v }
 }
 
-public class Pair&<K, V> {          // 多个类型参数用逗号分隔
+pub class Pair&<K, V> {          // 多个类型参数用逗号分隔
     var key : K = ...
     var val : V = ...
 }
@@ -236,31 +236,31 @@ java -cp out generics
 
 | 槽位 | 取值 | 说明 |
 | --- | --- | --- |
-| `<ControlType>` | `public` / `protected` / `private` / 省略 | 访问控制，写在**最左**；**省略就是 `public`**（见下） |
+| `<ControlType>` | `pub` / `prot` / `prv` / 省略 | 访问控制，写在**最左**；**省略就是 `pub`**（见下） |
 | `fn` | `fn` | 函数定义关键字 |
 | `<MainType>` | 类型，缺省 `void` | 在 `fn` 之后、函数名之前；**目前只接受 `void`** |
 | 返回子句 | 见下 | 可省略，缺省 `void` |
 
-**访问控制：什么都不写就是 `public`。** 不是 `protected`、也不是「模块内可见」——
-缺省编译成 `ACC_PUBLIC`，和显式写 `public` 出来的字节码一模一样。
-`public` / 缺省 = 谁都能调（包括外部 Java/Kotlin）；`protected` = 本文件 + 同一次编译展开进来的
-其他文件；`private` = 只有声明它的那个 `.rsf` 文件能调。
+**访问控制：什么都不写就是 `pub`。** 不是 `prot`、也不是「模块内可见」——
+缺省编译成 `ACC_PUBLIC`，和显式写 `pub` 出来的字节码一模一样。
+`pub` / 缺省 = 谁都能调（包括外部 Java/Kotlin）；`prot` = 本文件 + 同一次编译展开进来的
+其他文件；`prv` = 只有声明它的那个 `.rsf` 文件能调。
 
-`rsf check` 打印函数/方法清单时，**缺省那一档也显示成 `public`**，不会留空让人误以为是「没有权限」：
+`rsf check` 打印函数/方法清单时，**缺省那一档也显示成 `pub`**，不会留空让人误以为是「没有权限」：
 
 ```bat
 rsf check rsfSrc/lang/main.rsf
-      public     fn greeting() -> string
-      public     fn add(a : int, b : int) -> int
-      private    fn secret() :: int
+      pub     fn greeting() -> string
+      pub     fn add(a : int, b : int) -> int
+      prv    fn secret() :: int
       ...
 ```
 
 **返回子句有两种等价写法**（`->` 和 `::`）：
 
 ```
-public fn add(a : int, b : int) -> int { rtn a + b }
-public fn add(a : int, b : int) :: int { rtn a + b }
+pub fn add(a : int, b : int) -> int { rtn a + b }
+pub fn add(a : int, b : int) :: int { rtn a + b }
 ```
 
 > ⚠️ 曾经还有第三种 `: T`，**已经删除**（2026-10-08）。`: T` 不再被接受，报错会提示改用
@@ -288,7 +288,7 @@ fn g() -> !void { ... }    // !void 也一样，函数体里用不带值的 rtn
 | Kotlin 风格（名字在前） | `名字 : 类型` | `a : int`、`p : Point`、`b : Box&<int>`、`xs : int[]`、`s : ?string` |
 
 ```rsf
-public fn add(a : int, b : int) -> int {          // 全 Kotlin 风格
+pub fn add(a : int, b : int) -> int {          // 全 Kotlin 风格
     rtn a + b
 }
 
@@ -336,7 +336,7 @@ fn fact(n : int) -> int {
 
 ### 重载（阶段 19d）
 
-**顶层函数与类方法（实例 + `static`）都能重载**，两处走的是同一套解析机器：
+**顶层函数与类方法（实例 + `stc`）都能重载**，两处走的是同一套解析机器：
 
 ```rsf
 fn tag() -> string { rtn "无参" }
@@ -347,8 +347,8 @@ class Greeter {
     fn greet() -> string { rtn "hello" }
     fn greet(name : string) -> string { rtn "hello, " + name }
 
-    static fn kind(a : int) -> string { rtn "int" }
-    static fn kind(a : string) -> string { rtn "string" }
+    stc fn kind(a : int) -> string { rtn "int" }
+    stc fn kind(a : string) -> string { rtn "string" }
 }
 ```
 
@@ -385,10 +385,10 @@ error[checker]: 调用 'pick' 无法确定用哪个重载：实参类型（null�
 **与构造器的规则差异（有意为之）**：构造器同分时取**声明在前**的那个（阶段 18 的老规矩，
 有既有测试钉着）；函数/方法同分时**报错**。改动前请先看 `BOOTSTRAP.md` 的「阶段 19d」一节。
 
-**可见性与 `static` 的过滤顺序**：候选**先按可见性过滤、再按 static/实例一致性过滤、最后才打分**
-——`private` 顶层函数只有它自己那个文件参与候选，`对象.m(...)` 只挑实例方法、
-`类名.m(...)` 只挑 `static` 方法；类体里裸写 `m(...)`（隐式 `this` / 隐式类名）两种都收。
-这样「看不见的重载」不会把看得见的挤掉。全都调不动时才报原来的 `private` / 调用方式错误。
+**可见性与 `stc` 的过滤顺序**：候选**先按可见性过滤、再按 stc/实例一致性过滤、最后才打分**
+——`prv` 顶层函数只有它自己那个文件参与候选，`对象.m(...)` 只挑实例方法、
+`类名.m(...)` 只挑 `stc` 方法；类体里裸写 `m(...)`（隐式 `this` / 隐式类名）两种都收。
+这样「看不见的重载」不会把看得见的挤掉。全都调不动时才报原来的 `prv` / 调用方式错误。
 
 **`main` 只有无参的那个是入口**：`main(a : int)` 现在是合法重载，但它只是普通函数
 （`rsf run` 会提示「入口函数 main 不能有参数」）；**两个无参 `main()`** 报「入口歧义」。
@@ -678,7 +678,7 @@ var k : int = 7            // 非空也可以写，只是没必要
 返回子句前面加 `!`，表示**这个函数可能失败**（阶段 14，类似 Zig 的错误返回）：
 
 ```rsf
-public fn parseInt(s : string) -> !int {
+pub fn parseInt(s : string) -> !int {
     if (s.length() == 0) {
         fail "空字符串没法转数字"          // fail 抛出一个错误
     }
@@ -812,7 +812,7 @@ if (i < n && xs[i] == want) { ... }              // 短路顺带挡住越界
 ### `enum`（阶段 19c）
 
 ```rsf
-public enum TokenKind {
+pub enum TokenKind {
     IDENT,
     INT_LIT,
     STRING,
@@ -820,7 +820,7 @@ public enum TokenKind {
 }
 ```
 
-- 顶层声明，权限修饰词可选（缺省 `public`，和 `fn` / `class` 一样）；至少要有一个值；
+- 顶层声明，权限修饰词可选（缺省 `pub`，和 `fn` / `class` 一样）；至少要有一个值；
   值名重复、枚举名与类名/函数名重名都会在编译期报错（枚举和类**共用类型命名空间**）。
 - **类型位置随便用**：字段、参数、返回值、局部变量、数组 `TokenKind[]`、可空 `?TokenKind`。
 - **取值**：`TokenKind.IDENT`。枚举值只能从**类型**上取，不能拿变量当接收者
@@ -832,13 +832,13 @@ public enum TokenKind {
 #### 编译口径：枚举是**普通类**，不是 JVM 的 `enum`
 
 这一点必须写清楚，因为它决定了能和不能和 Java 互操作到什么程度。一个
-`public enum TokenKind { IDENT, INT_LIT }` 生成出来的类是这样的：
+`pub enum TokenKind { IDENT, INT_LIT }` 生成出来的类是这样的：
 
 ```java
-public final class TokenKind extends java.lang.Object {
-    public static final TokenKind IDENT;      // 每个值一个单例
-    public static final TokenKind INT_LIT;
-    private final String $name;                // 私有的名字字段（$ 前缀见下）
+pub final class TokenKind extends java.lang.Object {
+    public stc final TokenKind IDENT;      // 每个值一个单例
+    public stc final TokenKind INT_LIT;
+    prv final String $name;                // 私有的名字字段（$ 前缀见下）
     private TokenKind(String name) { super(); this.$name = name; }
     public String toString() { return this.$name; }
     static {                                   // <clinit> 里构造全部单例
@@ -852,7 +852,7 @@ public final class TokenKind extends java.lang.Object {
   `getEnumConstants` 一整套。我们真正要的只有「一组具名单例」+「打印出名字」，
   用普通类表达，两条后端都是最直接的那条路（字节码 `GETSTATIC` 取单例、
   解释器取一张常量表里的同一个对象）。
-- **`==` 等价于「同一个常量」**：值字段是 `static final`、构造器是 `private`，
+- **`==` 等价于「同一个常量」**：值字段是 `stc final`、构造器是 `prv`，
   外面造不出第二个实例，所以引用相等就够了（两端都不会退化成比字符串）。
 - **打印名字两端同源**：编译产物靠生成的 `toString()`（`String.valueOf` /
   `PrintStream.println` / `StringBuilder.append` 都会调到它），解释器靠
@@ -918,15 +918,15 @@ switch (kind) {
 ### `interface` 与 `override`（阶段 20）
 
 ```rsf
-public interface Greeter {
+pub interface Greeter {
     fn greet(name : string) -> string                                   // 抽象方法：不写体
     fn shout(name : string) -> string { rtn greet(name) + "!" }         // 默认方法：写体
 }
 
-public interface Loud : Greeter { }        // 接口可以继承接口，多个用逗号
+pub interface Loud : Greeter { }        // 接口可以继承接口，多个用逗号
 
 class Dog(name : string) : Greeter {       // 类实现接口；继承与实现共用 `:`
-    public override fn greet(name : string) -> string {                 // override 可选
+    pub override fn greet(name : string) -> string {                 // override 可选
         rtn "woof " + name
     }
 }
@@ -943,13 +943,13 @@ fn main() -> void {
 
 - **接口里只能写方法**（D3）：写字段/变量直接报「接口里只能写方法…」。接口也**不发字段、不发 `<init>`**，
   类文件里是 `ACC_INTERFACE | ACC_ABSTRACT` 的接口，抽象方法没有 `Code`。
-- **接口可以继承接口**（D4）：`public interface Loud : Greeter { }`；继承成环会报错。
+- **接口可以继承接口**（D4）：`pub interface Loud : Greeter { }`；继承成环会报错。
 - **类继承**（阶段 25 起支持）：`class A : SomeClass` 里的父类唯一、排最前，后面跟接口
   （`class D : Base, Greeter`）；父类在阶段 20 那会儿是**明确不做**的（D2），现在按 Kotlin 的写法做完了，
   见下面的「继承与封口：`final` / `override` / `abstract`（阶段 25，阶段 27 反转默认值）」。
 - **实现配对**：rsf 接口按签名严格配（参数类型 + 返回类型都对得上），**JVM 接口按名字 + 参数个数配**
   （擦除后的签名 rsf 侧写不出来）；漏实现会列出缺哪些方法，签名/返回类型对不上会说明差在哪。
-  **`private` / `protected` / `static` 方法不算实现**（`check` 会拦；不拦的话 JVM 一调就 `AbstractMethodError`）。
+  **`prv` / `prot` / `stc` 方法不算实现**（`check` 会拦；不拦的话 JVM 一调就 `AbstractMethodError`）。
 - **多接口同签名默认方法冲突**（D5）：类里必须显式写一个同签名方法拍板，否则报「说不清该用哪一份」。
 - **`override` 是可选的**（Java `@Override` 的风格）：不写也合法；**写了就必须真覆盖**，否则报
   「父类型里没有可覆盖的方法」。类里查父接口（含 JDK 接口与默认方法），接口里查父接口。
@@ -975,25 +975,25 @@ fn main() -> void {
 ### 继承与封口：`final` / `override` / `abstract`（阶段 25，阶段 27 反转默认值）
 
 ```rsf
-public class Base(x : int) {                             // 类默认可被继承
-    public fn tag() -> string { rtn "base" }            // 方法默认可被覆盖
-    public final fn id() -> int { rtn x }               // final：到此为止，子类不能再覆盖
+pub class Base(x : int) {                             // 类默认可被继承
+    pub fn tag() -> string { rtn "base" }            // 方法默认可被覆盖
+    pub final fn id() -> int { rtn x }               // final：到此为止，子类不能再覆盖
 }
 
-public abstract class Shape(size : int) {
-    public abstract fn area() -> double                 // 没有函数体，子类必须实现
+pub abstract class Shape(size : int) {
+    pub abstract fn area() -> double                 // 没有函数体，子类必须实现
 }
 
-public class Box&<T>(v : T) : Base(1) { }                // 泛型类也能当父类
+pub class Box&<T>(v : T) : Base(1) { }                // 泛型类也能当父类
 
-public final class Sealed(x : int) : Base(x) { }         // final class：别人不能再继承它
+pub final class Sealed(x : int) : Base(x) { }         // final class：别人不能再继承它
 
-public class D(y : int) : Base(y * 2), Greeter {         // 父类唯一且排最前，后面只跟接口
-    public override fn tag() -> string { rtn "derived" }
-    public fn use() -> string { rtn super.tag() + "/" + tag() }   // "base/derived"
+pub class D(y : int) : Base(y * 2), Greeter {         // 父类唯一且排最前，后面只跟接口
+    pub override fn tag() -> string { rtn "derived" }
+    pub fn use() -> string { rtn super.tag() + "/" + tag() }   // "base/derived"
 }
 
-public class D2(v : int) : Base(v) {
+pub class D2(v : int) : Base(v) {
     constructor() { super(1) }                           // 次构造的父类委托 = 第一句
 }
 
@@ -1015,11 +1015,11 @@ fn main() -> void {
 - **`super` 两种形态**：`super.f()` 走直接父类那一份实现，`super(Greeter).f()` 走指定接口的默认实现
   （Q1 选了圆括号写法，因为 `<`/`&<` 已经占满了尖括号）。
 - **`abstract`**：`abstract class` 不能 `new`；它的抽象成员由具体子类实现，漏一个就报错并列出缺哪些；
-  抽象成员不能带函数体、不能是 `private`/`static`，也不能和 `final` 写在一起。
-- **`static` 不继承**：只能写 `类名.成员`；子类里写 `Base.make(...)` 是唯一写法，报错会点明这一点。
+  抽象成员不能带函数体、不能是 `prv`/`stc`，也不能和 `final` 写在一起。
+- **`stc` 不继承**：只能写 `类名.成员`；子类里写 `Base.make(...)` 是唯一写法，报错会点明这一点。
 - **可以继承 JDK 类**（Q3）：`class MyError(msg : string) : Exception(msg)` 能直接用，
   `getMessage()` 这类继承来的方法照常调用、`super.getMessage()` 打到声明类（`java.lang.Throwable`）那一份。
-  父类必须是**非 final** 的类（`StringBuilder` 这类会被编译期拒掉）；`protected` 构造器（`ClassLoader()`）
+  父类必须是**非 final** 的类（`StringBuilder` 这类会被编译期拒掉）；`prot` 构造器（`ClassLoader()`）
   两端都建得出来。`java/lang/Object` 的方法只放行 rsf 自己定义语义的 `toString` / `equals` / `hashCode`
   （`toString()` 与裸 `println(对象)` 同一串，`equals` 是对象同一性），别的（`wait` / `notify` / `clone`）按
   「没有这个方法」处理、`getClass()` 编译期直接报错。**已知边界**见下面「语言限制」里的类继承四条。
@@ -1122,16 +1122,16 @@ java -cp out stdlib
 
 ```rsf
 // ① 主构造：参数写在类头，字段初值里能直接用
-public class Point(x0 : int, y0 : int) {
+pub class Point(x0 : int, y0 : int) {
     var x : int = x0                 // 主构造的「体」就是字段初值
     var y : int = y0
     var doubled : int = x0 * 2 + y0
-    public fn sum() -> int { rtn x + y }
+    pub fn sum() -> int { rtn x + y }
 }
 var p = new Point(3, 4)
 
 // ② 次构造：constructor(参数) { ... }，可以写多个，按实参挑
-public class Q {
+pub class Q {
     var v : int = 0
     constructor() { }                       // 次构造
     constructor(n : int) { v = n }            // 次次构造
@@ -1140,7 +1140,7 @@ public class Q {
 var a = new Q()  var b = new Q(7)  var c = new Q("abcd")
 
 // ③ 委托：Java 风格的 this(...)，写在构造器体的**第一句**
-public class R(x0 : int) {
+pub class R(x0 : int) {
     var x : int = x0
     constructor() {
         this(5)                     // 先跑主构造（字段初值也在那时跑）
@@ -1157,7 +1157,7 @@ public class R(x0 : int) {
 | 规则 | 说明 |
 | --- | --- |
 | 主构造 | `class P(参数) { ... }`。参数作用域 = **字段初值**（主构造的体）；普通方法里看不到它 |
-| 次构造 | `constructor(参数) { ... }`。**不写返回类型**、不能写权限修饰词、不能 `static` |
+| 次构造 | `constructor(参数) { ... }`。**不写返回类型**、不能写权限修饰词、不能 `stc` |
 | 能写几个 | 次构造随便写几个；参数表（按擦除后的类型）不能重复 |
 | 挑哪一个 | `new P(实参)` 在**编译期**按「个数 → 类型打分」挑好（精确匹配优先、加宽其次；**同分取声明在前**——这一条与函数/方法重载**故意不同**，后者同分报错），两端读同一份决定 |
 | 委托 | `this(实参)` 必须是构造器体的第一句，目标是同类另一个构造器；不能成环、不能委托给自己 |
@@ -1414,7 +1414,7 @@ gradlew.bat verifyPlugin          :: 官方校验器静态检查
   这正是「自动 `new`」判定无歧义的前提，所以这条检查会一直留着
 - 名称既不是函数也不是可构造的类型时，报「未定义的函数 'x'」（不是「没有这个类」）
 - ~~方法重载仍然不支持（`fn f(int)` 与 `fn f(string)` 同名报错）~~ —— **已经支持（阶段 19d）**：
-  顶层函数与类方法（实例 + `static`）都能重载，两处共用一套解析机器（先按个数筛 → 类型打分，
+  顶层函数与类方法（实例 + `stc`）都能重载，两处共用一套解析机器（先按个数筛 → 类型打分，
   **最低分并列就报错并列出候选**）。**注意与构造器的规则差异**：构造器同分取「声明在前」，
   函数/方法同分报错。擦除冲突（`f(Box&<int>)` 与 `f(Box&<string>)`）编译期拒绝。
   详见上面「重载（阶段 19d）」一节
@@ -1436,7 +1436,7 @@ gradlew.bat verifyPlugin          :: 官方校验器静态检查
 - `imutvar` 只禁止**重新赋值**，不禁止通过它去改指向的对象
 - `for (i in a..b)` 的起点与步长类型要能相容（例如 int 计数器配 `step 2L` 会报类型错）
 - 字符串字面量现在可以跨行了，漏掉收尾引号时会一路吃到文件末尾（报错仍指向开引号）
-- 泛型类里的 static 方法拿不到类型实参（`Box.origin()` 里的 `T` 仍是占位类型）
+- 泛型类里的 `stc` 方法拿不到类型实参（`Box.origin()` 里的 `T` 仍是占位类型）
 - **枚举（阶段 19c）**：生成的是**普通类**而不是 JVM 的 `enum`，所以外部 Java 代码
   不能用 `switch` / `EnumSet` / `values()` 去消费它；枚举里不能带字段与方法（只有值）；
   没有 `values()` / `ordinal()` 这类反射接口，也没有「枚举 → 名字字符串」的内置函数
@@ -1484,7 +1484,7 @@ gradlew.bat verifyPlugin          :: 官方校验器静态检查
 | 16 | `byte`/`char` + 标准库切片（字符分类、`charToInt`/`toChar`、`parseInt`） | ✅ |
 | 16b | `byte[]` + 文件落盘（`readText` / `writeText` / `readBytes` / `writeBytes`，互操作认数组签名） | ✅ |
 | 18 | 构造器：主构造（类头）+ 次构造 `constructor(...)` + `this(...)` 委托 | ✅ |
-| 19 | 语法现代化：后缀类型 `名字 : 类型`、参数双风格、返回子句只留 `->`/`:`、缺省即 `public`、构造可省 `new` | ✅ |
+| 19 | 语法现代化：后缀类型 `名字 : 类型`、参数双风格、返回子句只留 `->`/`:`、缺省即 `pub`、构造可省 `new` | ✅ |
 | 19b | `catch (e : string)`：错误变量的类型标注也改成 Kotlin 风格（老写法 `catch (e string)` 继续接受）；编辑器关键字表补全 | ✅ |
 | 17 | **自举**：用 rsf 写 rsf 编译器 → 编译自己 → 与 Kotlin 版输出逐字节一致 | 🚧 17a 词法器 ✅ / 17b 语法器 ✅ / 17c 解释器 ✅ / 17d 字节码后端 ✅ / 17e 闭环 ✅ |
 | 17a | rsf 版词法器（`rsfSrc/bootstrap/Lexer.rsf`）：token 流与 Kotlin 版逐条相同 | ✅ |
@@ -1497,7 +1497,7 @@ gradlew.bat verifyPlugin          :: 官方校验器静态检查
 | 19d | **函数/方法重载**：顶层函数与类方法共用一套解析（个数 → 类型打分 → 同分报错）、擦除冲突编译期拒绝、`main` 唯一入口 | ✅ 2026-10-11 |
 | 20 | `interface`（抽象/默认方法、接口继承接口、`class X : A, B` 多接口实现、`override`、JVM 接口互操作与桥方法） | ✅ 2026-10-15 |
 | 21 | 注解 `annotation`：元素 + 默认值 + `companion entity` 行为、`@` 使用点、`Marker::Impl` 嵌套类型、字节码与解释器两端逐字节一致 | ✅ 2026-10-15 |
-| 25 | **类继承**（Kotlin 式单继承：`override` / `abstract` / `final`、`super.f()` 与 `super(接口).f()`、`static` 不继承、允许继承 JDK 类） | ✅ 2026-10-16（K1 前端+语义 / K3 解释器 / K2 字节码 / K4 收口；自举同步已含于阶段 27） |
+| 25 | **类继承**（Kotlin 式单继承：`override` / `abstract` / `final`、`super.f()` 与 `super(接口).f()`、`stc` 不继承、允许继承 JDK 类） | ✅ 2026-10-16（K1 前端+语义 / K3 解释器 / K2 字节码 / K4 收口；自举同步已含于阶段 27） |
 | 27 | **默认开放**：删掉 `open` 关键字，类默认可继承、方法默认可覆盖，`final` 成为唯一收窄手段（推翻阶段 25 的「默认 final」） | ✅ 2026-10-18（27a `5df701f` Kotlin 前端 / 27b `20a5e13` 自举同步，关键字 57→56；判据 `build/verify27/` 五条 + `build/verify24` 回归全绿） |
 | 28 | **标签名特殊字符 + 元数据**：标签名可用反引号包任意字符（`` `a-b` ``），每个有标签的方法发一条 runtime-visible `@RsfLabels(value = string[])`，按声明顺序把名字保留进 class 文件 | ✅ 2026-10-18（28a `5edbd27` Kotlin 侧 / 28b `cc1bf17` 自举链；判据 `build/verify28/`：4 正例 + 5 负例 + 两端 class 逐字节对拍；564 tests） |
 | 29 | **关键字改名**：`fun` → `fn`（硬删 + 统一改名声，词法表仍 56 项、`TokenKind` 仍 `KW_FUN`） | ✅ 2026-10-18（`017a2cb`；判据 `build/verify29/` 旧词负例 + 全部探针台回归；564 tests） |
@@ -1513,7 +1513,7 @@ gradlew.bat verifyPlugin          :: 官方校验器静态检查
 | 缺口 | 不补的话 | 补完之后 |
 | --- | --- | --- |
 | 没有 `&&` / `||` | `if (c == '/' && peek(1) == '/')` 只能写成三层嵌套 `if` | 一行写完，两侧必须是 `bool`，**真短路**（右边可能一次都不求值） |
-| 没有 `enum` | `TokenKind` 只能用一串 `static fn xxx() -> string` 拼字符串常量，**拼错名字编译器不吭声** | `TokenKind.IDENT` 写错值名当场报错并列出全部值；`==` 只管同类型 |
+| 没有 `enum` | `TokenKind` 只能用一串 `stc fn xxx() -> string` 拼字符串常量，**拼错名字编译器不吭声** | `TokenKind.IDENT` 写错值名当场报错并列出全部值；`==` 只管同类型 |
 | 没有 `switch` | 按 kind 分派只能写成十几条 `if (kind == ...)` 长链 | `switch (k) { TokenKind.IDENT : ... }`；**漏分支会在编译期报错**（不用 else 时必须穷尽） |
 
 **对 17b 的直接结论**：`rsfSrc/bootstrap/Lexer.rsf` 里 `TokenKind` 的**全部**用法形态
@@ -1673,7 +1673,7 @@ gradlew run --args="run rsfSrc/bootstrap/ParserCli.rsf"      :: 配合 -Drsf.ast
 所以用一个「胖节点」：
 
 ```
-public class Node(kind : NodeKind, text : string)      // kind 是 enum，text 是属性串
+pub class Node(kind : NodeKind, text : string)      // kind 是 enum，text 是属性串
     text      形如 "name=f mutable=true"（这一层需要的字面量；顺序固定）
     children  子节点数组（add 追加，满了翻倍）
 ```

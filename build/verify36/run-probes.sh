@@ -17,6 +17,11 @@ build_self() {
   mkdir -p "$SELF"
   java -jar "$JAR" build rsfSrc/bootstrap/Rsfc.rsf -o "$SELF" > /dev/null 2>&1 \
     || { echo "自举侧 Rsfc.rsf 编译失败"; exit 1; }
+  # 三个驱动一起重建：只重建 Rsfc 会留下旧的 RsfcBuild/RsfcRun（阶段 41 踩过）
+  java -jar "$JAR" build rsfSrc/bootstrap/RsfcBuild.rsf -o "$SELF" > /dev/null 2>&1 \
+    || { echo "自举侧 RsfcBuild.rsf 编译失败"; exit 1; }
+  java -jar "$JAR" build rsfSrc/bootstrap/RsfcRun.rsf -o "$SELF" > /dev/null 2>&1 \
+    || { echo "自举侧 RsfcRun.rsf 编译失败"; exit 1; }
 }
 
 # 自举侧：在 build/verify36 里用相对 classpath 跑（MSYS bash 会吃掉绝对路径里的 `;`）

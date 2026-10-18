@@ -1,12 +1,12 @@
-public interface Greeter {
+pub interface Greeter {
     fn greet(name : string) -> string
 }
 
 class Dog : Greeter {
-    public fn greet(name : string) -> string {
+    pub fn greet(name : string) -> string {
         rtn "woof"
     }
-    override static fn helper() -> void {
+    override stc fn helper() -> void {
         rtn
     }
 }

@@ -1123,15 +1123,15 @@ class Parser(
                 if (m.kind.isStaticKeyword) {
                     throw error(
                         m,
-                        "接口里暂时不支持 static 方法：去掉 'static' 写成普通方法（默认方法或抽象方法）；" +
+                        "接口里暂时不支持 stc 方法：去掉 'stc' 写成普通方法（默认方法或抽象方法）；" +
                             "要能用『类名.方法』直接调的函数，就写在顶层",
                     )
                 }
                 if (m.kind.isControlKeyword && m.kind != TokenKind.KW_PUBLIC) {
                     throw error(
                         m,
-                        "接口里的方法只能是 public：接口就是『给外面看的约定』，" +
-                            "'${m.lexeme}' 会让实现类没法实现它（不写修饰词就是 public）",
+                        "接口里的方法只能是 pub：接口就是『给外面看的约定』，" +
+                            "'${m.lexeme}' 会让实现类没法实现它（不写修饰词就是 pub）",
                     )
                 }
                 // 阶段 25：接口方法不写 open/final/abstract——接口的方法本来就是
@@ -1338,7 +1338,7 @@ class Parser(
             )
         }
         if (peek().kind.isStaticKeyword) {
-            throw error(peek(), "constructor 不能是 static：构造器一定要有当前对象（this）")
+            throw error(peek(), "constructor 不能是 stc：构造器一定要有当前对象（this）")
         }
         // 阶段 25：构造器也不写 open/final/abstract——构造器不参与继承，
         // 「能不能被覆盖」对构造器没有意义（调用方永远写 new 类名(...)）。
@@ -1597,7 +1597,7 @@ class Parser(
             throw error(
                 peek(),
                 "静态方法不能是 'final' / 'abstract'：静态方法只能写成 '类名.方法名' 调用" +
-                    "（static 不参与继承，DESIGN-25 §3），把它上面的继承修饰词删掉",
+                    "（stc 不参与继承，DESIGN-25 §3），把它上面的继承修饰词删掉",
             )
         }
 
@@ -1609,7 +1609,7 @@ class Parser(
                 // 有人会照着抄。这里直接说清楚：那是占位符，不是语法。
                 t.lexeme == "<" ->
                     "；'<...>' 是 lang/example.rsf 草稿里的占位符，不是真的语法：" +
-                        "权限修饰词直接写 public / protected / private（都不写就是默认权限），" +
+                        "权限修饰词直接写 pub / prot / prv（都不写就是默认权限），" +
                         "类型槽紧跟在 fn 后面（缺省 void）"
                 t.lexeme == "[" ->
                     "；『[...]』是 lang/example.rsf 草稿里的占位符写法，不是声明语法" +
@@ -1646,7 +1646,7 @@ class Parser(
             }
             throw error(
                 t,
-                "顶层只能写函数声明，格式是 '[public|protected|private] [static] fn [类型] 名字() 返回子句 函数体'，" +
+                "顶层只能写函数声明，格式是 '[pub|prot|prv] [stc] fn [类型] 名字() 返回子句 函数体'，" +
                     "实际读到 ${t.describe()}$hint$overrideHint$inheritHint",
             )
         }

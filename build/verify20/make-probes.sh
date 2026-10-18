@@ -5,12 +5,12 @@ cd /d/java/rainStarfox || exit 1
 D=build/verify20
 
 cat > "$D/ok_impl.rsf" <<'EOF'
-public interface Greeter {
+pub interface Greeter {
     fn greet(name : string) -> string
 }
 
 class Dog : Greeter {
-    public fn greet(name : string) -> string {
+    pub fn greet(name : string) -> string {
         rtn "woof " + name
     }
 }
@@ -23,7 +23,7 @@ fn main() -> void {
 EOF
 
 cat > "$D/ok_default.rsf" <<'EOF'
-public interface Greeter {
+pub interface Greeter {
     fn name() -> string
     fn shout() -> string {
         rtn name() + "!"
@@ -31,7 +31,7 @@ public interface Greeter {
 }
 
 class Dog : Greeter {
-    public fn name() -> string {
+    pub fn name() -> string {
         rtn "rex"
     }
 }
@@ -44,19 +44,19 @@ fn main() -> void {
 EOF
 
 cat > "$D/ok_extends.rsf" <<'EOF'
-public interface Base {
+pub interface Base {
     fn id() -> int
 }
 
-public interface Named : Base {
+pub interface Named : Base {
     fn name() -> string
 }
 
 class Dog : Named {
-    public fn id() -> int {
+    pub fn id() -> int {
         rtn 7
     }
-    public fn name() -> string {
+    pub fn name() -> string {
         rtn "rex"
     }
 }
@@ -69,12 +69,12 @@ fn main() -> void {
 EOF
 
 cat > "$D/ok_types.rsf" <<'EOF'
-public interface Greeter {
+pub interface Greeter {
     fn greet() -> string
 }
 
 class Dog : Greeter {
-    public fn greet() -> string {
+    pub fn greet() -> string {
         rtn "woof"
     }
 }
@@ -96,12 +96,12 @@ fn main() -> void {
 EOF
 
 cat > "$D/ok_nullable.rsf" <<'EOF'
-public interface Greeter {
+pub interface Greeter {
     fn greet() -> string
 }
 
 class Dog : Greeter {
-    public fn greet() -> string {
+    pub fn greet() -> string {
         rtn "woof"
     }
 }
@@ -126,7 +126,7 @@ cat > "$D/ok_runnable.rsf" <<'EOF'
 import java.lang.Runnable
 
 class Job : Runnable {
-    public fn run() -> void {
+    pub fn run() -> void {
         println("running")
     }
 }
@@ -139,13 +139,13 @@ fn main() -> void {
 EOF
 
 cat > "$D/neg_missing.rsf" <<'EOF'
-public interface Greeter {
+pub interface Greeter {
     fn greet() -> string
     fn shout() -> string
 }
 
 class Dog : Greeter {
-    public fn greet() -> string {
+    pub fn greet() -> string {
         rtn "woof"
     }
 }
@@ -156,12 +156,12 @@ fn main() -> void {
 EOF
 
 cat > "$D/neg_signature.rsf" <<'EOF'
-public interface Greeter {
+pub interface Greeter {
     fn greet(name : string) -> string
 }
 
 class Dog : Greeter {
-    public fn greet(count : int) -> string {
+    pub fn greet(count : int) -> string {
         rtn "woof"
     }
 }
@@ -172,12 +172,12 @@ fn main() -> void {
 EOF
 
 cat > "$D/neg_ret.rsf" <<'EOF'
-public interface Greeter {
+pub interface Greeter {
     fn greet() -> string
 }
 
 class Dog : Greeter {
-    public fn greet() -> int {
+    pub fn greet() -> int {
         rtn 1
     }
 }
@@ -188,7 +188,7 @@ fn main() -> void {
 EOF
 
 cat > "$D/neg_new.rsf" <<'EOF'
-public interface Greeter {
+pub interface Greeter {
     fn greet() -> string
 }
 
@@ -200,13 +200,13 @@ EOF
 
 cat > "$D/neg_superclass.rsf" <<'EOF'
 class Base {
-    public fn id() -> int {
+    pub fn id() -> int {
         rtn 1
     }
 }
 
 class Child : Base {
-    public fn name() -> string {
+    pub fn name() -> string {
         rtn "c"
     }
 }
@@ -217,7 +217,7 @@ fn main() -> void {
 EOF
 
 cat > "$D/neg_field.rsf" <<'EOF'
-public interface Greeter {
+pub interface Greeter {
     imutvar name : string = "rex"
     fn greet() -> string
 }
@@ -228,13 +228,13 @@ fn main() -> void {
 EOF
 
 cat > "$D/neg_conflict.rsf" <<'EOF'
-public interface A {
+pub interface A {
     fn say() -> string {
         rtn "a"
     }
 }
 
-public interface B {
+pub interface B {
     fn say() -> string {
         rtn "b"
     }

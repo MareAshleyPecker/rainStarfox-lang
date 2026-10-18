@@ -11,7 +11,7 @@ class Point {
     var y : int = 0
     imutvar label : string = "point"   // 不可变字段：声明时定值，之后不能改
 
-    // 次构造：constructor(参数) { ... }，不写返回类型、不能写 static、可以按参数写多个
+    // 次构造：constructor(参数) { ... }，不写返回类型、不能写 stc、可以按参数写多个
     constructor(x0 : int, y0 : int) {
         x = x0
         y = y0
@@ -36,8 +36,8 @@ class Point {
         shift(x, y)
     }
 
-    // private 方法只能在类内部用；外面要通过公开方法访问
-    private fn secret() -> int {
+    // prv 方法只能在类内部用；外面要通过公开方法访问
+    prv fn secret() -> int {
         rtn 42
     }
 
@@ -46,7 +46,7 @@ class Point {
     }
 
     // 静态方法：用「类名.方法()」调，不能用对象调
-    static fn origin() -> Point {
+    stc fn origin() -> Point {
         rtn new Point(0, 0)
     }
 }
@@ -91,7 +91,7 @@ fn main() -> void {
 
     p.shift(1, 1)
     println(p.describe())                       // point(4, 5)
-    println("private 方法经公开方法访问 = " + p.reveal())   // 42
+    println("prv 方法经公开方法访问 = " + p.reveal())   // 42
 
     var q = Point.origin()
     println("静态工厂造出来的是 " + q.describe())            // point(0, 0)

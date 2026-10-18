@@ -1,4 +1,4 @@
-public interface Greeter {
+pub interface Greeter {
     fn name() -> string
     fn shout() -> string {
         rtn name() + "!"
@@ -6,7 +6,7 @@ public interface Greeter {
 }
 
 class Dog : Greeter {
-    public fn name() -> string {
+    pub fn name() -> string {
         rtn "rex"
     }
 }

@@ -176,11 +176,11 @@ class OverloadTest {
     fun `静态方法与实例方法各自重载 含类内隐式调用`() {
         val program = """
             class Calc {
-                static fn name(a : int) -> string {
-                    rtn "static-int"
+                stc fn name(a : int) -> string {
+                    rtn "stc-int"
                 }
-                static fn name(a : string) -> string {
-                    rtn "static-string"
+                stc fn name(a : string) -> string {
+                    rtn "stc-string"
                 }
 
                 fn name(a : int, b : int) -> string {
@@ -191,7 +191,7 @@ class OverloadTest {
                 fn viaThis() -> string {
                     rtn name(1, 2)
                 }
-                static fn viaClass() -> string {
+                stc fn viaClass() -> string {
                     rtn name("s")
                 }
             }
@@ -209,7 +209,7 @@ class OverloadTest {
 
         val (interpreted, compiled) = bothEnds(program)
         assertEquals(
-            listOf("static-int", "static-string", "static-string", "inst-两参：3", "inst-两参：3"),
+            listOf("stc-int", "stc-string", "stc-string", "inst-两参：3", "inst-两参：3"),
             lines(interpreted),
         )
         assertEquals(interpreted, compiled)

@@ -1,10 +1,10 @@
-public interface A {
+pub interface A {
     fn say() -> string {
         rtn "a"
     }
 }
 
-public interface B {
+pub interface B {
     fn say() -> string {
         rtn "b"
     }

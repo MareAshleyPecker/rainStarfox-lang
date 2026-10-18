@@ -1,5 +1,5 @@
 interface I {
-    static fn tag() -> string {
+    stc fn tag() -> string {
         rtn "S"
     }
 }

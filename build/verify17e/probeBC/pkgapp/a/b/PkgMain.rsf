@@ -4,7 +4,7 @@ class Point(x0 : int, y0 : int) {
     imutvar x0 : int = x0
     imutvar y0 : int = y0
 
-    public fn sum() -> int {
+    pub fn sum() -> int {
         rtn x0 + y0
     }
 }

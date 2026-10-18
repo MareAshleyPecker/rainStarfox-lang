@@ -329,7 +329,7 @@ class Completer(
             "in", "step", "break", "continue", "goto", "true", "false", "null",
             // pkg（阶段 6a）一直漏在补全表外：关键字表要同步——
             // 这里和 idea 插件的 RsfKeywords 一起改（由 EditorKeywordParityTest 守着）。
-            "import", "module", "pkg", "public", "protected", "private", "static",
+            "import", "module", "pkg", "pub", "prot", "prv", "stc",
             // 阶段 25：类继承的声明级修饰词（类与方法都能写）；阶段 27 起 `open` 已删，
             // 默认可继承/覆盖，只剩这两个收窄手段。
             "final", "abstract",

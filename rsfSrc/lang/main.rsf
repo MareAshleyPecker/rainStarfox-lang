@@ -1,7 +1,7 @@
 // rainStarfox 示例：语法速查（入口示例，跑：rsf run rsfSrc/lang/main.rsf）
 //
 // 函数签名： <访问控制> fun <返回类型槽> 名字(<参数表>) <返回子句> { ... }
-//   <访问控制>   = public / protected / private（可省，写在最左；省了就是 public）
+//   <访问控制>   = pub / prot / prv（可省，写在最左；省了就是 pub）
 //   <返回类型槽> = `fun` 后面那一格，缺省是 void
 //   返回子句     = -> T  或者  : T（两种等价；'::' 不再当返回子句，留给 Marker::Impl 这类嵌套写法）
 //   参数写法     = 两种风格都行、可以混：Java 风格 `int a` / Kotlin 风格 `a : int`，逗号分隔
@@ -23,7 +23,7 @@ fn add(a : int, b : int) -> int {
     rtn a + b
 }
 
-private fn secret() : int {
+prv fn secret() : int {
     rtn 42
 }
 
@@ -92,7 +92,7 @@ fn maybeInt(n : int) -> ?int {
 fn main() -> void {
     println(greeting())
     println("add(1, 2) = " + add(1, 2))
-    println("private secret() = " + secret())
+    println("prv secret() = " + secret())
 
     println("fact(5) = " + fact(5))
     println("fib(10) = " + fib(10))

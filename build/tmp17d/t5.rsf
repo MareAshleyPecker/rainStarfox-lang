@@ -1,6 +1,6 @@
 class A {
     var x : int = 1
-    public fn get() -> int {
+    pub fn get() -> int {
         rtn x
     }
 }

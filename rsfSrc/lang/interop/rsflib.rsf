@@ -1,6 +1,6 @@
 // 反向：让 Java 调用 rsf。
 //
-// rsf 的顶层函数（不写访问控制就是 public）会被编译成普通的 public static 方法，所以 Java 侧
+// rsf 的顶层函数（不写访问控制就是 pub）会被编译成普通的 pub stc 方法，所以 Java 侧
 // 只要类名对得上就能直接调——不需要任何胶水代码。
 //
 //   rsf build lang/interop/rsflib.rsf -o out

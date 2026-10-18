@@ -1,4 +1,4 @@
-public interface Greeter {
+pub interface Greeter {
     imutvar name : string = "rex"
     fn greet() -> string
 }

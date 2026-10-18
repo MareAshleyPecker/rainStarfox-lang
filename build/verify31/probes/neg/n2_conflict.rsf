@@ -1,7 +1,0 @@
-fn same&<T>(a : T, b : T) -> T {
-    rtn a
-}
-
-fn main() {
-    println("" + same(1, "x"))
-}

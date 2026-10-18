@@ -169,7 +169,7 @@ fn keyStartsAt(t : string, i : int) -> bool {
 }
 
 // 与 Interp.rsf 的 attr 同一套（属性串是 "k=v k=v"，值里的空格除了属性边界都算值）
-public fn prop(n : Node, key : string) -> string {
+pub fn prop(n : Node, key : string) -> string {
     var t = n.text
     var i = 0
     var len = t.length()
@@ -187,11 +187,11 @@ public fn prop(n : Node, key : string) -> string {
     rtn ""
 }
 
-public fn propBool(n : Node, key : string) -> bool {
+pub fn propBool(n : Node, key : string) -> bool {
     rtn prop(n, key) == "true"
 }
 
-public fn propInt(n : Node, key : string) -> int {
+pub fn propInt(n : Node, key : string) -> int {
     var raw = prop(n, key)
     if (raw.length() == 0) { rtn 0 }
     rtn parseInt(raw) ?: 0
@@ -285,20 +285,20 @@ fn unesc(s : string) -> string {
 // 类型实参替换表（`Box&<int>` 里 `T → int`）。
 // `used[i]` 用来区分「这个位置真的被实参换掉了」和「原样保留的擦除 Object」——
 // 后者是类体内部 `T` 的落点，不能触发 CHECKCAST / 拆箱。
-public class Subst(names : string[], vals : BType[], n : int) {
+pub class Subst(names : string[], vals : BType[], n : int) {
     var names : string[] = names
     var vals : BType[] = vals
     var n : int = n
     var used : bool[] = new bool[names.length]
 }
 
-public fn substEmpty(names : string[]) -> Subst {
+pub fn substEmpty(names : string[]) -> Subst {
     // n **必须是** names.length：推导是逐条 substPut 写进去的，n = 0 会让 substIndexOf
     // 一律返回 -1（曾经就是这么错的：`c.same(11)` 推不出 T）
     rtn new Subst(names, new BType[names.length], names.length)
 }
 
-public fn substIndexOf(s : Subst, nm : string) -> int {
+pub fn substIndexOf(s : Subst, nm : string) -> int {
     if (s.n == 0) { rtn -1 }
     var i = 0
     while (i < s.n) {
@@ -308,20 +308,20 @@ public fn substIndexOf(s : Subst, nm : string) -> int {
     rtn -1
 }
 
-public fn substHas(s : Subst, nm : string) -> bool {
+pub fn substHas(s : Subst, nm : string) -> bool {
     var i = substIndexOf(s, nm)
     if (i < 0) { rtn false }
     rtn s.used[i]
 }
 
-public fn substMark(s : Subst, nm : string) -> void {
+pub fn substMark(s : Subst, nm : string) -> void {
     var i = substIndexOf(s, nm)
     if (i < 0) { rtn }
     s.used[i] = true
 }
 
 // 实参表（`&<int, Box&<int>>` 那句里的部分）挂到形式参数名上
-public fn substOf(ta : BType[], names : string[]) -> Subst {
+pub fn substOf(ta : BType[], names : string[]) -> Subst {
     var s = new Subst(names, new BType[names.length], 0)
     var i = 0
     while (i < names.length && i < ta.length) {
@@ -335,7 +335,7 @@ public fn substOf(ta : BType[], names : string[]) -> Subst {
 
 // 把 [t] 里的类型参数（`T` / `T[]`）按 [s] 换成实参；`T` 的落点是
 // `external java/lang/Object`（和 Kotlin 的 `TYPE_PARAM → Ljava/lang/Object;` 对齐）
-public fn substApply(t : BType, s : Subst) -> BType {
+pub fn substApply(t : BType, s : Subst) -> BType {
     if (t.tpName != "") {
         var i = substIndexOf(s, t.tpName)
         // 注意方向：substTypeParam 把 this 当**占位符**（要它的 depth/nullable），
@@ -349,7 +349,7 @@ public fn substApply(t : BType, s : Subst) -> BType {
 // 阶段 31：按名字把一个推断结果写进替换表（`id(5)` → T := int）。
 // `substOf` 只能按位置整批挂，函数调用是**逐个形参**对齐出来的，所以要这个单点写入。
 // 替换表里有没有真的绑上东西（普通函数也会登记一张空表，导出时别当成泛型调用）
-public fn substAnyUsed(s : Subst) -> bool {
+pub fn substAnyUsed(s : Subst) -> bool {
     var i = 0
     while (i < s.used.length) {
         if (s.used[i]) { rtn true }
@@ -358,7 +358,7 @@ public fn substAnyUsed(s : Subst) -> bool {
     rtn false
 }
 
-public fn substPut(s : Subst, nm : string, v : BType) -> void {
+pub fn substPut(s : Subst, nm : string, v : BType) -> void {
     var i = substIndexOf(s, nm)
     if (i < 0) { rtn }
     s.vals[i] = v
@@ -367,7 +367,7 @@ public fn substPut(s : Subst, nm : string, v : BType) -> void {
 
 // 阶段 31：实参类型 ↔ 声明形参类型 的对齐。只做单向绑定（DESIGN-31：v1 没有上界推导，
 // 同一个类型参数第二次出现时以第一次为准 —— 与 Kotlin `bindTypeParamPattern` 同序）。
-public fn bindTypeParam(s : Subst, decl : BType, act : BType) -> void {
+pub fn bindTypeParam(s : Subst, decl : BType, act : BType) -> void {
     // **数组必须先剥一层**：`T[]` 的 tpName 也是 "T"（desc() 要它），但绑定的是元素
     // （`first(bs)` 里 `T := Box`，不是 `T := Box[]`）
     if (decl.depth > 0 && act.depth > 0) {
@@ -388,7 +388,7 @@ public fn bindTypeParam(s : Subst, decl : BType, act : BType) -> void {
 }
 
 // 一个函数节点上的类型参数名表（`fn id&<T, U>` → ["T", "U"]；普通函数是空表）
-public fn fnParamNamesOf(n : Node) -> string[] {
+pub fn fnParamNamesOf(n : Node) -> string[] {
     var i = 0
     while (i < n.childCount) {
         var c = n.children[i]
@@ -407,7 +407,7 @@ public fn fnParamNamesOf(n : Node) -> string[] {
 }
 
 // 调用点推导：`id(5)` → T := int；没绑定成功的类型参数保持擦除 Object（与 Kotlin 一致）
-public fn inferFnSubst(g : Gen, params : BType[], fnNode : Node, args : Node) -> Subst {
+pub fn inferFnSubst(g : Gen, params : BType[], fnNode : Node, args : Node) -> Subst {
     var names = fnParamNamesOf(fnNode)
     var s = substEmpty(names)
     if (names.length == 0) { rtn s }
@@ -421,7 +421,7 @@ public fn inferFnSubst(g : Gen, params : BType[], fnNode : Node, args : Node) ->
 
 // 与 Kotlin 的 RsfType 同一套判断，只是把 base 写成字符串：
 // void / bool / byte / char / int / long / float / double / string / null / external
-public class BType(base : string, name : string, nullable : bool, depth : int) {
+pub class BType(base : string, name : string, nullable : bool, depth : int) {
     var base : string = base
     var name : string = name      // external 的 JVM 内部名
     var nullable : bool = nullable
@@ -447,7 +447,7 @@ public class BType(base : string, name : string, nullable : bool, depth : int) {
     }
 
     // 带上_已擦除_类型实参的副本（`Box&<int>`）——泛型实参只在编译期起作用
-    public fn withArgs(args : BType[]) -> BType {
+    pub fn withArgs(args : BType[]) -> BType {
         var t = new BType(base, name, nullable, depth)
         t.extraArgs = args
         t.tpName = tpName
@@ -457,24 +457,24 @@ public class BType(base : string, name : string, nullable : bool, depth : int) {
         rtn t
     }
 
-    public fn argAt(i : int) -> ?BType {
+    pub fn argAt(i : int) -> ?BType {
         if (i < 0 || i >= extraArgs.length) { rtn null }
         rtn extraArgs[i]
     }
 
-    public fn argCount() -> int { rtn extraArgs.length }
+    pub fn argCount() -> int { rtn extraArgs.length }
 
     // 类型参数（还没被接收者实参替换掉的 `T`）在解析时统一落成 Object，
     // 所以「擦除后就是 Object 且没有实参」= 这个位置是类型变量的落点。
-    public fn isErasedObject() -> bool {
+    pub fn isErasedObject() -> bool {
         rtn base == "external" && name == "java/lang/Object" && depth == 0 && extraArgs.length == 0
     }
 
     // 这就是 `T`（还没换成实参的类型变量）—— 对应 Kotlin 的 RsfType.isTypeParam
-    public fn isTypeParam() -> bool { rtn tpName != "" }
+    pub fn isTypeParam() -> bool { rtn tpName != "" }
 
     // 把 `T`（或 `T[]`）换成 [actual]；不是类型参数就原样返回
-    public fn substTypeParam(actual : BType) -> BType {
+    pub fn substTypeParam(actual : BType) -> BType {
         var t = new BType(actual.base, actual.name, actual.nullable, actual.depth + depth)
         t.extraArgs = actual.extraArgs
         if (nullable) { rtn t.withNullable(true) }
@@ -482,7 +482,7 @@ public class BType(base : string, name : string, nullable : bool, depth : int) {
     }
 
     // 递归：类型实参表里的类型参数也要换（`Box&<Box&<T>>`）
-    public fn substAll(subst : Subst) -> BType {
+    pub fn substAll(subst : Subst) -> BType {
         var t = new BType(base, name, nullable, depth)
         t.tpName = tpName
         t.fnOk = fnOk
@@ -500,11 +500,11 @@ public class BType(base : string, name : string, nullable : bool, depth : int) {
         rtn t
     }
 
-    public fn isArray() -> bool { rtn depth > 0 }
+    pub fn isArray() -> bool { rtn depth > 0 }
 
     // JVM 的基本类型（栈上按值传）：数组与可空基本类型都不算
     // —— RsfType.isPrimitive = arrayDepth == 0 && !nullable && base.isPrimitive
-    public fn isPrimitive() -> bool {
+    pub fn isPrimitive() -> bool {
         if (depth > 0) { rtn false }
         if (nullable) { rtn false }
         if (base == "bool") { rtn true }
@@ -517,7 +517,7 @@ public class BType(base : string, name : string, nullable : bool, depth : int) {
         rtn false
     }
 
-    public fn isNum() -> bool {
+    pub fn isNum() -> bool {
         if (depth > 0 || nullable) { rtn false }
         if (base == "int") { rtn true }
         if (base == "long") { rtn true }
@@ -526,7 +526,7 @@ public class BType(base : string, name : string, nullable : bool, depth : int) {
     }
 
     // isArithmetic = isNumeric || byte || char（RsfBase.isArithmetic），且非空非数组
-    public fn isArith() -> bool {
+    pub fn isArith() -> bool {
         if (depth > 0 || nullable) { rtn false }
         if (isNum()) { rtn true }
         if (base == "byte") { rtn true }
@@ -534,9 +534,9 @@ public class BType(base : string, name : string, nullable : bool, depth : int) {
     }
 
     // 可空基本类型（装箱形态）
-    public fn isBoxed() -> bool { rtn depth == 0 && nullable && baseIsPrimitive() }
+    pub fn isBoxed() -> bool { rtn depth == 0 && nullable && baseIsPrimitive() }
 
-    public fn baseIsPrimitive() -> bool {
+    pub fn baseIsPrimitive() -> bool {
         if (base == "bool") { rtn true }
         if (base == "byte") { rtn true }
         if (base == "char") { rtn true }
@@ -546,11 +546,11 @@ public class BType(base : string, name : string, nullable : bool, depth : int) {
         rtn base == "double"
     }
 
-    public fn isVoid() -> bool { rtn base == "void" }
+    pub fn isVoid() -> bool { rtn base == "void" }
 
-    public fn isNullLit() -> bool { rtn base == "null" }
+    pub fn isNullLit() -> bool { rtn base == "null" }
 
-    public fn element() -> BType {
+    pub fn element() -> BType {
         var t = new BType(base, name, nullable, depth - 1)
         t.extraArgs = extraArgs
         t.tpName = tpName
@@ -562,7 +562,7 @@ public class BType(base : string, name : string, nullable : bool, depth : int) {
 
     // 改可空性时**必须**把类型实参和类型参数名带上：`b.get()` 的接收者 `b : Box&<int>`
     // 常常要过一次 withNullable，丢了实参就退化成 Object（`b.get() + b.get()` 会报算术运算不支持）
-    public fn withNullable(v : bool) -> BType {
+    pub fn withNullable(v : bool) -> BType {
         var t = new BType(base, name, v, depth)
         t.extraArgs = extraArgs
         t.tpName = tpName
@@ -573,7 +573,7 @@ public class BType(base : string, name : string, nullable : bool, depth : int) {
     }
 
     // 装几个槽（long/double 两格；数组与可空基本类型是一格引用）
-    public fn slots() -> int {
+    pub fn slots() -> int {
         if (base == "void") { rtn 0 }
         if (isArray()) { rtn 1 }
         if (nullable && baseIsPrimitive()) { rtn 1 }
@@ -582,7 +582,7 @@ public class BType(base : string, name : string, nullable : bool, depth : int) {
         rtn 1
     }
 
-    public fn desc() -> string {
+    pub fn desc() -> string {
         if (depth > 0) { rtn "[" + element().desc() }
         if (base == "void") { rtn "V" }
         if (base == "bool") {
@@ -798,7 +798,7 @@ fn arithTypes(a : BType, b : BType) -> ?BType {
 // ============================================================ 编译状态
 
 // 一条「降级后」的指令。kind 见 Backend.rsf 里的 lowerStmt。
-public class Ins(kind : string) {
+pub class Ins(kind : string) {
     var kind : string = kind
     var lbl : Label = new Label()
     var node : Node = new Node(NodeKind.ERROR)
@@ -812,14 +812,14 @@ public class Ins(kind : string) {
 }
 
 // 作用域链（变量名 → 类型 + 槽位）
-public class Scope(parent : ?Scope) {
+pub class Scope(parent : ?Scope) {
     var parent : ?Scope = parent
     var names : string[] = new string[4]
     var types : BType[] = new BType[4]
     var slots : int[] = new int[4]
     var count : int = 0
 
-    public fn add(name : string, t : BType, slot : int) -> void {
+    pub fn add(name : string, t : BType, slot : int) -> void {
         if (count >= names.length) {
             var nn : string[] = new string[names.length * 2]
             var tt : BType[] = new BType[types.length * 2]
@@ -839,7 +839,7 @@ public class Scope(parent : ?Scope) {
         count = count + 1
     }
 
-    public fn findType(name : string) -> ?BType {
+    pub fn findType(name : string) -> ?BType {
         var cur : ?Scope = this
         while (cur != null) {
             var s = cur!!
@@ -853,7 +853,7 @@ public class Scope(parent : ?Scope) {
         rtn null
     }
 
-    public fn findSlot(name : string) -> int {
+    pub fn findSlot(name : string) -> int {
         var cur : ?Scope = this
         while (cur != null) {
             var s = cur!!
@@ -869,7 +869,7 @@ public class Scope(parent : ?Scope) {
 }
 
 // 一个顶层函数的签名
-public class Sig(name : string, node : Node, ret : BType, start : int, count : int) {
+pub class Sig(name : string, node : Node, ret : BType, start : int, count : int) {
     var name : string = name
     var node : Node = node
     var ret : BType = ret
@@ -883,7 +883,7 @@ public class Sig(name : string, node : Node, ret : BType, start : int, count : i
 // 把结果放进这些计划对象里，发码时只查表。口径逐条对齐 Kotlin 的
 // `Lowering.ClosureAnalyser`：捕获 = 首次引用顺序、this 永远在首位占 0 号槽。
 
-public class FnCap(kind : string) {
+pub class FnCap(kind : string) {
     var kind : string = kind        // "this" / "local"
     var name : string = ""
     var type : BType = tVoid()
@@ -891,7 +891,7 @@ public class FnCap(kind : string) {
     var slot : int = -1
 }
 
-public class FnLevel(n : Node) {
+pub class FnLevel(n : Node) {
     var node : Node = n             // LAMBDA 节点（发码时按它反查）
     var body : Node = n             // lambda 的块（BLOCK 节点）
     var index : int = 0             // lambda$<包围方法>$<index>
@@ -910,7 +910,7 @@ public class FnLevel(n : Node) {
     var declTypes : BType[] = new BType[0]
     var declCount : int = 0
 
-    public fn addCap(kind : string, name : string, t : BType) -> void {
+    pub fn addCap(kind : string, name : string, t : BType) -> void {
         var i = 0
         while (i < capCount) {
             if (caps[i].kind == kind && caps[i].name == name) { rtn }
@@ -932,7 +932,7 @@ public class FnLevel(n : Node) {
         capCount = capCount + 1
     }
 
-    public fn addDecl(name : string, t : BType) -> void {
+    pub fn addDecl(name : string, t : BType) -> void {
         if (declCount >= declNames.length) {
             var bn : string[] = new string[declNames.length * 2 + 4]
             var bt : BType[] = new BType[declTypes.length * 2 + 4]
@@ -950,7 +950,7 @@ public class FnLevel(n : Node) {
         declCount = declCount + 1
     }
 
-    public fn hasDecl(name : string) -> bool {
+    pub fn hasDecl(name : string) -> bool {
         var i = declCount - 1
         while (i >= 0) {
             if (declNames[i] == name) { rtn true }
@@ -959,7 +959,7 @@ public class FnLevel(n : Node) {
         rtn false
     }
 
-    public fn declType(name : string) -> ?BType {
+    pub fn declType(name : string) -> ?BType {
         var i = declCount - 1
         while (i >= 0) {
             if (declNames[i] == name) { rtn declTypes[i] }
@@ -968,13 +968,13 @@ public class FnLevel(n : Node) {
         rtn null
     }
 
-    public fn arity() -> int { rtn params.length }
+    pub fn arity() -> int { rtn params.length }
 
-    public fn fnType() -> BType { rtn fnTypeOf(params, ret, false) }
+    pub fn fnType() -> BType { rtn fnTypeOf(params, ret, false) }
 }
 
 // 函数值调用点（`f(1)` / `f!!(1)`）的发射信息
-public class FnCall(nm : string) {
+pub class FnCall(nm : string) {
     var sam : string = nm           // __RsfFn<arity>
     var arity : int = 0
     var params : BType[] = new BType[0]
@@ -988,11 +988,11 @@ public class FnCall(nm : string) {
 // 规划捕获时的「打开着的 lambda 帧」栈：0 号是包围方法本身。
 // 与 Kotlin `ClosureAnalyser.levels`（只装 lambda）不同，这里把包围方法也当成一帧，
 // 因为捕获要不要继续往外传，取决于「命中帧」和「当前帧」的位置关系。
-public class LvFrames() {
+pub class LvFrames() {
     var items : FnLevel[] = new FnLevel[8]
     var count : int = 0
 
-    public fn push(l : FnLevel) -> void {
+    pub fn push(l : FnLevel) -> void {
         if (count >= items.length) {
             var bigger : FnLevel[] = new FnLevel[items.length * 2]
             var k = 0
@@ -1006,16 +1006,16 @@ public class LvFrames() {
         count = count + 1
     }
 
-    public fn pop() -> void {
+    pub fn pop() -> void {
         if (count > 0) { count = count - 1 }
     }
 
-    public fn top() -> FnLevel { rtn items[count - 1] }
+    pub fn top() -> FnLevel { rtn items[count - 1] }
 
-    public fn at(i : int) -> FnLevel { rtn items[i] }
+    pub fn at(i : int) -> FnLevel { rtn items[i] }
 }
 
-public class Gen(owner : string) {
+pub class Gen(owner : string) {
     var owner : string = owner          // 程序类内部名（写了 pkg 时已带包路径）
     // `pkg a.b` 的包前缀（`"a/b/"`）或空串。程序类与所有用户类/枚举的内部名都要
     // 带上它 —— 与 Kotlin 侧的 `BytecodeCompiler.classInternalName`（:503-516）
@@ -1119,7 +1119,7 @@ public class Gen(owner : string) {
     var swVals : SwInfo[] = new SwInfo[4]
     var swCount : int = 0
 
-    // 当前正在遍历的是不是 static 方法（裸字段 / this 的合法性）
+    // 当前正在遍历的是不是 stc 方法（裸字段 / this 的合法性）
     var curStatic : bool = false
 
     // ---- 阶段 30c：闭包 / 函数值 ----
@@ -1157,7 +1157,7 @@ public class Gen(owner : string) {
     var lvtStart : Label = new Label()
 
     // 换一个新的 ClassWriter（每个类一个；同时登记输出名，供 BackendCli 落盘）
-    public fn newWriter(name : string) -> ClassWriter {
+    pub fn newWriter(name : string) -> ClassWriter {
         var c = new ClassWriter(computeAll())
         if (cwCount >= cws.length) {
             var a : ClassWriter[] = new ClassWriter[cws.length * 2]
@@ -1176,7 +1176,7 @@ public class Gen(owner : string) {
         rtn c
     }
 
-    public fn addClass(c : CInfo) -> void {
+    pub fn addClass(c : CInfo) -> void {
         if (ciCount >= cis.length) {
             var b : CInfo[] = new CInfo[cis.length * 2]
             for (var i = 0; i < ciCount; i = i + 1) { b[i] = cis[i] }
@@ -1186,7 +1186,7 @@ public class Gen(owner : string) {
         ciCount = ciCount + 1
     }
 
-    public fn addIface(c : CInfo) -> void {
+    pub fn addIface(c : CInfo) -> void {
         if (iiCount >= iis.length) {
             var b : CInfo[] = new CInfo[iis.length * 2]
             for (var i = 0; i < iiCount; i = i + 1) { b[i] = iis[i] }
@@ -1196,7 +1196,7 @@ public class Gen(owner : string) {
         iiCount = iiCount + 1
     }
 
-    public fn findIface(nm : string) -> ?CInfo {
+    pub fn findIface(nm : string) -> ?CInfo {
         var i = 0
         while (i < iiCount) {
             if (iis[i].name == nm || iis[i].internal == nm) { rtn iis[i] }
@@ -1207,7 +1207,7 @@ public class Gen(owner : string) {
 
     // ---- 阶段 21：注解表 ----
     // 第 5 刀：伴生类内部名的预表（见 `annComps` 的注释）。
-    public fn addAnnComp(nm : string) -> void {
+    pub fn addAnnComp(nm : string) -> void {
         if (annCompCount >= annComps.length) {
             var b : string[] = new string[annComps.length * 2]
             for (var i = 0; i < annCompCount; i = i + 1) { b[i] = annComps[i] }
@@ -1217,7 +1217,7 @@ public class Gen(owner : string) {
         annCompCount = annCompCount + 1
     }
 
-    public fn hasAnnComp(nm : string) -> bool {
+    pub fn hasAnnComp(nm : string) -> bool {
         var i = 0
         while (i < annCompCount) {
             if (annComps[i] == nm) { rtn true }
@@ -1226,7 +1226,7 @@ public class Gen(owner : string) {
         rtn false
     }
 
-    public fn addAnn(a : AnnInfo) -> void {
+    pub fn addAnn(a : AnnInfo) -> void {
         if (aiCount >= ains.length) {
             var b : AnnInfo[] = new AnnInfo[ains.length * 2]
             for (var i = 0; i < aiCount; i = i + 1) { b[i] = ains[i] }
@@ -1236,7 +1236,7 @@ public class Gen(owner : string) {
         aiCount = aiCount + 1
     }
 
-    public fn findAnn(nm : string) -> ?AnnInfo {
+    pub fn findAnn(nm : string) -> ?AnnInfo {
         var i = 0
         while (i < aiCount) {
             if (ains[i].name == nm) { rtn ains[i] }
@@ -1245,7 +1245,7 @@ public class Gen(owner : string) {
         rtn null
     }
 
-    public fn addAcc(a : AccInfo) -> void {
+    pub fn addAcc(a : AccInfo) -> void {
         if (accCount >= accs.length) {
             var b : AccInfo[] = new AccInfo[accs.length * 2]
             for (var i = 0; i < accCount; i = i + 1) { b[i] = accs[i] }
@@ -1256,12 +1256,12 @@ public class Gen(owner : string) {
     }
 
     // 内部名是不是 rsf 接口（`?:` 合成方法里的 INVOKESTATIC 末位布尔要用它）
-    public fn isIfaceInternal(nm : string) -> bool {
+    pub fn isIfaceInternal(nm : string) -> bool {
         rtn findIface(nm) != null
     }
 
     // 一个**简单名**是不是 rsf 接口（父类型子句里写的就是简单名）
-    public fn isIfaceName(nm : string) -> bool {
+    pub fn isIfaceName(nm : string) -> bool {
         rtn findIface(nm) != null
     }
 
@@ -1272,7 +1272,7 @@ public class Gen(owner : string) {
     //                       （类接收者那条路，对齐 Kotlin `checkInheritedInterfaceDefault`）。
     // 结果走 ifaceHit / ifaceHitOwner / ifaceHitCount 三个字段：命中 >1 个不同接口就是歧义，
     // 调用方必须报错（对齐 Kotlin 的重载歧义判定），绝不能按声明顺序挑一个。
-    public fn ifaceLookup(root : string, nm : string, argc : int, includeSelf : bool, bodyOnly : bool) -> void {
+    pub fn ifaceLookup(root : string, nm : string, argc : int, includeSelf : bool, bodyOnly : bool) -> void {
         ifaceHit = null
         ifaceHitOwner = null
         ifaceHitCount = 0
@@ -1331,7 +1331,7 @@ public class Gen(owner : string) {
         }
     }
 
-    public fn scanIfaceHit(ic : CInfo, nm : string, argc : int, bodyOnly : bool) -> void {
+    pub fn scanIfaceHit(ic : CInfo, nm : string, argc : int, bodyOnly : bool) -> void {
         var m = ic.ifaceMethOf(nm, argc, bodyOnly)
         if (m != null) {
             ifaceHitCount = ifaceHitCount + 1
@@ -1342,7 +1342,7 @@ public class Gen(owner : string) {
 
     // sub 是不是 sup 的子类型（接口实现 / 父接口，以及阶段 25 起的**类父链**）。
     // 两边都是**内部名**。用来给 acceptsValue 补上「Dog 可以赋给 Greeter」「B 可以赋给 A」。
-    public fn isSubtypeName(sub : string, sup : string) -> bool {
+    pub fn isSubtypeName(sub : string, sup : string) -> bool {
         if (sub == sup) { rtn true }
         if (sup == "java/lang/Object") { rtn true }
         var visited : string[] = new string[4]
@@ -1397,7 +1397,7 @@ public class Gen(owner : string) {
         rtn false
     }
 
-    public fn addEnum(e : EInfo) -> void {
+    pub fn addEnum(e : EInfo) -> void {
         if (eiCount >= eis.length) {
             var b : EInfo[] = new EInfo[eis.length * 2]
             for (var i = 0; i < eiCount; i = i + 1) { b[i] = eis[i] }
@@ -1407,7 +1407,7 @@ public class Gen(owner : string) {
         eiCount = eiCount + 1
     }
 
-    public fn addImport(simple : string, internal : string) -> void {
+    pub fn addImport(simple : string, internal : string) -> void {
         if (importCount >= imports.length) {
             var a : string[] = new string[imports.length * 2]
             var b : string[] = new string[importVals.length * 2]
@@ -1425,7 +1425,7 @@ public class Gen(owner : string) {
 
     // 类导入：简单名 → 内部名（没有就 null）。`import java.io.File` 这条路径
     // 是 rsf 里的 `File` 唯一能变成 `java/io/File` 的来源。
-    public fn findImport(simple : string) -> ?string {
+    pub fn findImport(simple : string) -> ?string {
         var i = 0
         while (i < importCount) {
             if (imports[i] == simple) { rtn importVals[i] }
@@ -1434,9 +1434,9 @@ public class Gen(owner : string) {
         rtn null
     }
 
-    // 查类：先按**简单名**（源码里写的 / 按类名调 static 方法时写的），
+    // 查类：先按**简单名**（源码里写的 / 按类名调 stc 方法时写的），
     // 再按**内部名**（BType.name 里记的 `a/b/Point`；`rt.name` 反查就是走这一路）。
-    public fn findClass(nm : string) -> ?CInfo {
+    pub fn findClass(nm : string) -> ?CInfo {
         var i = 0
         while (i < ciCount) {
             if (cis[i].name == nm) { rtn cis[i] }
@@ -1450,7 +1450,7 @@ public class Gen(owner : string) {
         rtn null
     }
 
-    public fn findEnum(nm : string) -> ?EInfo {
+    pub fn findEnum(nm : string) -> ?EInfo {
         var i = 0
         while (i < eiCount) {
             if (eis[i].name == nm) { rtn eis[i] }
@@ -1465,13 +1465,13 @@ public class Gen(owner : string) {
     }
 
     // 是不是「用户类型」（类或枚举）——决定接收者是类名还是表达式
-    public fn isUserType(nm : string) -> bool {
+    pub fn isUserType(nm : string) -> bool {
         if (findClass(nm) != null) { rtn true }
         if (findEnum(nm) != null) { rtn true }
         rtn false
     }
 
-    public fn putFld(n : Node, f : FieldRef) -> void {
+    pub fn putFld(n : Node, f : FieldRef) -> void {
         if (fldCount >= fldNodes.length) {
             var a : Node[] = new Node[fldNodes.length * 2]
             var b : FieldRef[] = new FieldRef[fldVals.length * 2]
@@ -1487,7 +1487,7 @@ public class Gen(owner : string) {
         fldCount = fldCount + 1
     }
 
-    public fn fldOf(n : Node) -> ?FieldRef {
+    pub fn fldOf(n : Node) -> ?FieldRef {
         var i = 0
         while (i < fldCount) {
             if (fldNodes[i] == n) { rtn fldVals[i] }
@@ -1496,7 +1496,7 @@ public class Gen(owner : string) {
         rtn null
     }
 
-    public fn putNew(n : Node, r : NewRef) -> void {
+    pub fn putNew(n : Node, r : NewRef) -> void {
         if (newCount >= newNodes.length) {
             var a : Node[] = new Node[newNodes.length * 2]
             var b : NewRef[] = new NewRef[newVals.length * 2]
@@ -1512,7 +1512,7 @@ public class Gen(owner : string) {
         newCount = newCount + 1
     }
 
-    public fn newOf(n : Node) -> ?NewRef {
+    pub fn newOf(n : Node) -> ?NewRef {
         var i = 0
         while (i < newCount) {
             if (newNodes[i] == n) { rtn newVals[i] }
@@ -1521,7 +1521,7 @@ public class Gen(owner : string) {
         rtn null
     }
 
-    public fn putSw(n : Node, s : SwInfo) -> void {
+    pub fn putSw(n : Node, s : SwInfo) -> void {
         if (swCount >= swNodes.length) {
             var a : Node[] = new Node[swNodes.length * 2]
             var b : SwInfo[] = new SwInfo[swVals.length * 2]
@@ -1537,7 +1537,7 @@ public class Gen(owner : string) {
         swCount = swCount + 1
     }
 
-    public fn swOf(n : Node) -> ?SwInfo {
+    pub fn swOf(n : Node) -> ?SwInfo {
         var i = 0
         while (i < swCount) {
             if (swNodes[i] == n) { rtn swVals[i] }
@@ -1546,18 +1546,18 @@ public class Gen(owner : string) {
         rtn null
     }
 
-    public fn setFailed(msg : string) -> void {
+    pub fn setFailed(msg : string) -> void {
         if (!failed) {
             failed = true
             message = msg
         }
     }
 
-    public fn bad(what : string) -> void {
+    pub fn bad(what : string) -> void {
         setFailed("17d 后端暂不支持：" + what)
     }
 
-    public fn addParam(t : BType) -> int {
+    pub fn addParam(t : BType) -> int {
         if (paramTop >= paramPool.length) {
             var bigger : BType[] = new BType[paramPool.length * 2]
             for (var i = 0; i < paramTop; i = i + 1) { bigger[i] = paramPool[i] }
@@ -1568,7 +1568,7 @@ public class Gen(owner : string) {
         rtn paramTop - 1
     }
 
-    public fn addSig(s : Sig) -> void {
+    pub fn addSig(s : Sig) -> void {
         if (sigCount >= sigs.length) {
             var bigger : Sig[] = new Sig[sigs.length * 2]
             for (var i = 0; i < sigCount; i = i + 1) { bigger[i] = sigs[i] }
@@ -1578,12 +1578,12 @@ public class Gen(owner : string) {
         sigCount = sigCount + 1
     }
 
-    public fn paramOf(s : Sig, i : int) -> BType {
+    pub fn paramOf(s : Sig, i : int) -> BType {
         rtn paramPool[s.start + i]
     }
 
     // ---- 阶段 31：函数级类型参数 ----
-    public fn setFnParams(n : Node) -> void {
+    pub fn setFnParams(n : Node) -> void {
         fnParamCount = 0
         var i = 0
         while (i < n.childCount) {
@@ -1609,9 +1609,9 @@ public class Gen(owner : string) {
         }
     }
 
-    public fn clearFnParams() -> void { fnParamCount = 0 }
+    pub fn clearFnParams() -> void { fnParamCount = 0 }
 
-    public fn fnParamIndex(nm : string) -> int {
+    pub fn fnParamIndex(nm : string) -> int {
         var i = 0
         while (i < fnParamCount) {
             if (fnParams[i] == nm) { rtn i }
@@ -1620,7 +1620,7 @@ public class Gen(owner : string) {
         rtn -1
     }
 
-    public fn putFnSubst(n : Node, s : Subst) -> void {
+    pub fn putFnSubst(n : Node, s : Subst) -> void {
         var i = 0
         while (i < fnSubstCount) {
             if (fnSubstNodes[i] == n) {
@@ -1646,7 +1646,7 @@ public class Gen(owner : string) {
         fnSubstCount = fnSubstCount + 1
     }
 
-    public fn fnSubstOf(n : Node) -> ?Subst {
+    pub fn fnSubstOf(n : Node) -> ?Subst {
         var i = 0
         while (i < fnSubstCount) {
             if (fnSubstNodes[i] == n) { rtn fnSubstVals[i] }
@@ -1656,7 +1656,7 @@ public class Gen(owner : string) {
     }
 
     // 阶段 31：Sig 的形参类型（从 paramPool 里按 start/count 取出来，给调用点对齐用）
-    public fn paramsOfSig(s : Sig) -> BType[] {
+    pub fn paramsOfSig(s : Sig) -> BType[] {
         var out = new BType[s.count]
         var i = 0
         while (i < s.count) {
@@ -1666,7 +1666,7 @@ public class Gen(owner : string) {
         rtn out
     }
 
-    public fn findSig(name : string, argc : int) -> ?Sig {
+    pub fn findSig(name : string, argc : int) -> ?Sig {
         var i = 0
         while (i < sigCount) {
             if (sigs[i].name == name && sigs[i].count == argc) { rtn sigs[i] }
@@ -1675,7 +1675,7 @@ public class Gen(owner : string) {
         rtn null
     }
 
-    public fn hasSig(name : string) -> bool {
+    pub fn hasSig(name : string) -> bool {
         var i = 0
         while (i < sigCount) {
             if (sigs[i].name == name) { rtn true }
@@ -1684,7 +1684,7 @@ public class Gen(owner : string) {
         rtn false
     }
 
-    public fn putBind(n : Node, t : BType, slot : int) -> void {
+    pub fn putBind(n : Node, t : BType, slot : int) -> void {
         if (bindCount >= bindNodes.length) {
             var bn : Node[] = new Node[bindNodes.length * 2]
             var bt : BType[] = new BType[bindTypes.length * 2]
@@ -1704,7 +1704,7 @@ public class Gen(owner : string) {
         bindCount = bindCount + 1
     }
 
-    public fn findBind(n : Node) -> int {
+    pub fn findBind(n : Node) -> int {
         var i = bindCount - 1
         while (i >= 0) {
             if (bindNodes[i] == n) { rtn i }
@@ -1713,7 +1713,7 @@ public class Gen(owner : string) {
         rtn -1
     }
 
-    public fn putType(n : Node, t : BType) -> void {
+    pub fn putType(n : Node, t : BType) -> void {
         if (typeCount >= typeNodes.length) {
             var tn : Node[] = new Node[typeNodes.length * 2]
             var tv : BType[] = new BType[typeVals.length * 2]
@@ -1729,7 +1729,7 @@ public class Gen(owner : string) {
         typeCount = typeCount + 1
     }
 
-    public fn findType(n : Node) -> int {
+    pub fn findType(n : Node) -> int {
         var i = typeCount - 1
         while (i >= 0) {
             if (typeNodes[i] == n) { rtn i }
@@ -1738,7 +1738,7 @@ public class Gen(owner : string) {
         rtn -1
     }
 
-    public fn putMem(n : Node, m : Mem2) -> void {
+    pub fn putMem(n : Node, m : Mem2) -> void {
         if (memCount >= memNodes.length) {
             var mn : Node[] = new Node[memNodes.length * 2]
             var mv : Mem2[] = new Mem2[memVals.length * 2]
@@ -1754,7 +1754,7 @@ public class Gen(owner : string) {
         memCount = memCount + 1
     }
 
-    public fn memOf(n : Node) -> ?Mem2 {
+    pub fn memOf(n : Node) -> ?Mem2 {
         var i = memCount - 1
         while (i >= 0) {
             if (memNodes[i] == n) { rtn memVals[i] }
@@ -1764,9 +1764,9 @@ public class Gen(owner : string) {
     }
 
     // ---- 阶段 30c：闭包计划表 ----
-    public fn resetLevels() -> void { lvCount = 0 }
+    pub fn resetLevels() -> void { lvCount = 0 }
 
-    public fn addLevel(l : FnLevel) -> void {
+    pub fn addLevel(l : FnLevel) -> void {
         if (lvCount >= lvLevels.length) {
             var bigger : FnLevel[] = new FnLevel[lvLevels.length * 2 + 4]
             var k = 0
@@ -1780,7 +1780,7 @@ public class Gen(owner : string) {
         lvCount = lvCount + 1
     }
 
-    public fn levelOf(n : Node) -> ?FnLevel {
+    pub fn levelOf(n : Node) -> ?FnLevel {
         var i = 0
         while (i < lvCount) {
             if (lvLevels[i].node == n) { rtn lvLevels[i] }
@@ -1789,11 +1789,11 @@ public class Gen(owner : string) {
         rtn null
     }
 
-    public fn markArity(a : int) -> void {
+    pub fn markArity(a : int) -> void {
         if (a >= 0 && a < samArity.length) { samArity[a] = true }
     }
 
-    public fn putFnCall(n : Node, f : FnCall) -> void {
+    pub fn putFnCall(n : Node, f : FnCall) -> void {
         if (fnCount >= fnNodes.length) {
             var nn : Node[] = new Node[fnNodes.length * 2]
             var vv : FnCall[] = new FnCall[fnVals.length * 2]
@@ -1811,7 +1811,7 @@ public class Gen(owner : string) {
         fnCount = fnCount + 1
     }
 
-    public fn fnCallOf(n : Node) -> ?FnCall {
+    pub fn fnCallOf(n : Node) -> ?FnCall {
         var i = fnCount - 1
         while (i >= 0) {
             if (fnNodes[i] == n) { rtn fnVals[i] }
@@ -1820,7 +1820,7 @@ public class Gen(owner : string) {
         rtn null
     }
 
-    public fn addOrElse(opcode : int, owner : string, target : string, targetDesc : string, params : BType[], result : BType, entryArg : bool) -> OrElse {
+    pub fn addOrElse(opcode : int, owner : string, target : string, targetDesc : string, params : BType[], result : BType, entryArg : bool) -> OrElse {
         var name = "__rsf_orelse$" + intToString(orSeq)
         orSeq = orSeq + 1
         var spec = new OrElse(name, orElseDesc(params), opcode, owner, target, targetDesc, params, result, entryArg)
@@ -1834,7 +1834,7 @@ public class Gen(owner : string) {
         rtn spec
     }
 
-    public fn fresh(kind : string) -> string {
+    pub fn fresh(kind : string) -> string {
         labelSeq = labelSeq + 1
         rtn kind + "#" + intToString(labelSeq)
     }
@@ -2154,12 +2154,12 @@ fn typeOfText(g : Gen, text : string) -> ?BType {
 // `Box&<int>` → ["int"]；`Pair&<string, int>` → ["string", "int"]。
 // 顶层逗号切分（嵌套的 `&<...>` 里的逗号不算），逐项递归 `typeOfText`。
 // 返回值外面套一层 TypeArgs：rsf 里 `?T[]`（可空数组）不是合法写法。
-public class TypeArgs(items : BType[], n : int) {
+pub class TypeArgs(items : BType[], n : int) {
     var items : BType[] = items
     var n : int = n
 
-    public fn at(i : int) -> BType { rtn items[i] }
-    public fn count() -> int { rtn n }
+    pub fn at(i : int) -> BType { rtn items[i] }
+    pub fn count() -> int { rtn n }
 }
 
 fn parseTypeArgList(g : Gen, text : string) -> ?TypeArgs {
@@ -2746,7 +2746,7 @@ fn primitiveArrayType(base : string) -> int {
 // 一个 JDK 成员：owner/name/desc 直接发给 ASM，ret/params 用来做类型推断与加宽。
 // rsf 侧没有 Kotlin 那套反射解析器（interop/MemberResolver），所以这里是一张
 // **手写表**——只覆盖八个示例真正用到的那几个成员，命中不了就显式报「暂不支持」。
-public class Mem2(owner : string, name : string, desc : string, ret : BType, params : BType[], isStatic : bool) {
+pub class Mem2(owner : string, name : string, desc : string, ret : BType, params : BType[], isStatic : bool) {
     var owner : string = owner
     var name : string = name
     var desc : string = desc
@@ -2771,7 +2771,7 @@ public class Mem2(owner : string, name : string, desc : string, ret : BType, par
 }
 
 // 字段引用：owner/name/desc 直接发给 ASM；type 是声明类型（读回来的静态类型）
-public class FieldRef(owner : string, name : string, desc : string, type : BType, isStatic : bool) {
+pub class FieldRef(owner : string, name : string, desc : string, type : BType, isStatic : bool) {
     var owner : string = owner
     var name : string = name
     var desc : string = desc
@@ -2786,7 +2786,7 @@ public class FieldRef(owner : string, name : string, desc : string, type : BType
 // 用户类方法里 `裸字段名` 读出来时也走 FieldRef（thisRecv = true）
 
 // switch 的一支
-public class SwCase(enumName : string, valueName : string, pad : Label, body : Label) {
+pub class SwCase(enumName : string, valueName : string, pad : Label, body : Label) {
     var enumName : string = enumName
     var valueName : string = valueName
     var pad : Label = pad
@@ -2794,7 +2794,7 @@ public class SwCase(enumName : string, valueName : string, pad : Label, body : L
 }
 
 // 一个 switch 的发射信息
-public class SwInfo(subjectType : string, cases : SwCase[], caseCount : int, hasDef : bool, def : Label) {
+pub class SwInfo(subjectType : string, cases : SwCase[], caseCount : int, hasDef : bool, def : Label) {
     var subjectType : string = subjectType
     var cases : SwCase[] = cases
     var caseCount : int = caseCount
@@ -2805,7 +2805,7 @@ public class SwInfo(subjectType : string, cases : SwCase[], caseCount : int, has
 // ============================================================ 用户类 / 枚举模型
 
 // 一个用户字段
-public class CField(name : string, type : BType, init : Node, mutable : bool) {
+pub class CField(name : string, type : BType, init : Node, mutable : bool) {
     var name : string = name
     var type : BType = type
     var init : Node = init          // 初值表达式
@@ -2816,7 +2816,7 @@ public class CField(name : string, type : BType, init : Node, mutable : bool) {
 }
 
 // 一个用户方法 / 构造器
-public class CMeth(node : Node, name : string, params : BType[], paramNames : string[], ret : BType, isStatic : bool, control : string, ctor : bool, primary : bool) {
+pub class CMeth(node : Node, name : string, params : BType[], paramNames : string[], ret : BType, isStatic : bool, control : string, ctor : bool, primary : bool) {
     var node : Node = node
     var name : string = name
     var params : BType[] = params
@@ -2840,7 +2840,7 @@ public class CMeth(node : Node, name : string, params : BType[], paramNames : st
     var synth : bool = false
 
     // 构造器描述符（用户类构造器一律返回 void）
-    public fn desc() -> string {
+    pub fn desc() -> string {
         var d = "("
         var i = 0
         while (i < params.length) {
@@ -2851,7 +2851,7 @@ public class CMeth(node : Node, name : string, params : BType[], paramNames : st
     }
 
     // 普通方法的描述符
-    public fn mdesc() -> string {
+    pub fn mdesc() -> string {
         var d = "("
         var i = 0
         while (i < params.length) {
@@ -2861,7 +2861,7 @@ public class CMeth(node : Node, name : string, params : BType[], paramNames : st
         rtn d + ")" + ret.desc()
     }
 
-    public fn opcode() -> int {
+    pub fn opcode() -> int {
         if (isStatic) { rtn 184 }
         if (control == "PRIVATE") { rtn 183 }
         rtn 182
@@ -2869,7 +2869,7 @@ public class CMeth(node : Node, name : string, params : BType[], paramNames : st
 }
 
 // 一个用户类：字段 + 方法（含构造器）
-public class CInfo(name : string, internal : string) {
+pub class CInfo(name : string, internal : string) {
     var name : string = name
     var internal : string = internal
     var fields : CField[] = new CField[8]
@@ -2902,7 +2902,7 @@ public class CInfo(name : string, internal : string) {
     // 阶段 21：注解接口的伴生类内部名（`LDoc$Impl;` 的中段）。也是缓存字段的描述符。
     var annCompInternal : string = ""
 
-    public fn addSuper(nm2 : string) -> void {
+    pub fn addSuper(nm2 : string) -> void {
         if (nm2.length() == 0) { rtn }
         var i = 0
         while (i < scount) {
@@ -2925,7 +2925,7 @@ public class CInfo(name : string, internal : string) {
     // 阶段 25：字段 / 方法查找沿**类父链**走，返回**声明那一层**的 CInfo ——
     // GETFIELD / PUTFIELD / INVOKEVIRTUAL 的 owner 要用它（对齐 Kotlin member.className）。
     // 没有继承时第一轮就命中自己，与旧行为逐字节一致。
-    public fn fieldOwnerInChain(nm2 : string) -> ?CInfo {
+    pub fn fieldOwnerInChain(nm2 : string) -> ?CInfo {
         var cur : ?CInfo = null
         cur = this
         while (cur != null) {
@@ -2935,7 +2935,7 @@ public class CInfo(name : string, internal : string) {
         rtn null
     }
 
-    public fn methOwnerInChain(nm2 : string, argc : int) -> ?CInfo {
+    pub fn methOwnerInChain(nm2 : string, argc : int) -> ?CInfo {
         var cur : ?CInfo = null
         cur = this
         while (cur != null) {
@@ -2947,7 +2947,7 @@ public class CInfo(name : string, internal : string) {
 
     // 接口方法：名字 + 实参个数相同。bodyOnly=true 时只认带体的默认方法
     // （类接收者的那条路：抽象方法不算被继承）；false 时抽象方法也算（接口接收者）。
-    public fn ifaceMethOf(nm2 : string, argc : int, bodyOnly : bool) -> ?CMeth {
+    pub fn ifaceMethOf(nm2 : string, argc : int, bodyOnly : bool) -> ?CMeth {
         var i = 0
         while (i < methCount) {
             var m = meths[i]
@@ -2960,7 +2960,7 @@ public class CInfo(name : string, internal : string) {
         rtn null
     }
 
-    public fn addTypeParam(nm : string) -> void {
+    pub fn addTypeParam(nm : string) -> void {
         if (typeParamCount >= typeParams.length) {
             var b : string[] = new string[typeParams.length * 2]
             var i = 0
@@ -2974,7 +2974,7 @@ public class CInfo(name : string, internal : string) {
         typeParamCount = typeParamCount + 1
     }
 
-    public fn typeParamIndex(nm : string) -> int {
+    pub fn typeParamIndex(nm : string) -> int {
         var i = 0
         while (i < typeParamCount) {
             if (typeParams[i] == nm) { rtn i }
@@ -2983,9 +2983,9 @@ public class CInfo(name : string, internal : string) {
         rtn -1
     }
 
-    public fn typeParamCount() -> int { rtn typeParamCount }
+    pub fn typeParamCount() -> int { rtn typeParamCount }
 
-    public fn addField(f : CField) -> void {
+    pub fn addField(f : CField) -> void {
         if (fieldCount >= fields.length) {
             var b : CField[] = new CField[fields.length * 2]
             var i = 0
@@ -2999,7 +2999,7 @@ public class CInfo(name : string, internal : string) {
         fieldCount = fieldCount + 1
     }
 
-    public fn addMeth(m : CMeth) -> void {
+    pub fn addMeth(m : CMeth) -> void {
         if (methCount >= meths.length) {
             var b : CMeth[] = new CMeth[meths.length * 2]
             var i = 0
@@ -3013,7 +3013,7 @@ public class CInfo(name : string, internal : string) {
         methCount = methCount + 1
     }
 
-    public fn fieldOf(nm : string) -> ?CField {
+    pub fn fieldOf(nm : string) -> ?CField {
         var i = 0
         while (i < fieldCount) {
             if (fields[i].name == nm) { rtn fields[i] }
@@ -3022,7 +3022,7 @@ public class CInfo(name : string, internal : string) {
         rtn null
     }
 
-    public fn fieldIndex(nm : string) -> int {
+    pub fn fieldIndex(nm : string) -> int {
         var i = 0
         while (i < fieldCount) {
             if (fields[i].name == nm) { rtn i }
@@ -3032,7 +3032,7 @@ public class CInfo(name : string, internal : string) {
     }
 
     // 普通方法（不含构造器）按名字 + 实参个数找
-    public fn methOf(nm : string, argc : int) -> ?CMeth {
+    pub fn methOf(nm : string, argc : int) -> ?CMeth {
         var i = 0
         while (i < methCount) {
             var m = meths[i]
@@ -3042,7 +3042,7 @@ public class CInfo(name : string, internal : string) {
         rtn null
     }
 
-    public fn hasMeth(nm : string) -> bool {
+    pub fn hasMeth(nm : string) -> bool {
         var i = 0
         while (i < methCount) {
             if (!meths[i].ctor && meths[i].name == nm) { rtn true }
@@ -3051,7 +3051,7 @@ public class CInfo(name : string, internal : string) {
         rtn false
     }
 
-    public fn ctorCount() -> int {
+    pub fn ctorCount() -> int {
         var n = 0
         var i = 0
         while (i < methCount) {
@@ -3062,7 +3062,7 @@ public class CInfo(name : string, internal : string) {
     }
 
     // 构造器按实参个数找（本阶段只按个数重载）
-    public fn ctorOf(argc : int) -> ?CMeth {
+    pub fn ctorOf(argc : int) -> ?CMeth {
         var i = 0
         while (i < methCount) {
             var m = meths[i]
@@ -3072,7 +3072,7 @@ public class CInfo(name : string, internal : string) {
         rtn null
     }
 
-    public fn hasToString() -> bool {
+    pub fn hasToString() -> bool {
         var i = 0
         while (i < methCount) {
             var m = meths[i]
@@ -3084,13 +3084,13 @@ public class CInfo(name : string, internal : string) {
 }
 
 // 一个枚举
-public class EInfo(name : string, internal : string, values : string[], valueCount : int) {
+pub class EInfo(name : string, internal : string, values : string[], valueCount : int) {
     var name : string = name
     var internal : string = internal
     var values : string[] = values
     var valueCount : int = valueCount
 
-    public fn has(nm : string) -> bool {
+    pub fn has(nm : string) -> bool {
         var i = 0
         while (i < valueCount) {
             if (values[i] == nm) { rtn true }
@@ -3101,7 +3101,7 @@ public class EInfo(name : string, internal : string, values : string[], valueCou
 }
 
 // 一条 `new` 的目标
-public class NewRef(internal : string, desc : string, params : BType[]) {
+pub class NewRef(internal : string, desc : string, params : BType[]) {
     var internal : string = internal
     var desc : string = desc
     var params : BType[] = params
@@ -3201,7 +3201,7 @@ fn stringMember(nm : string, argc : int) -> ?Mem2 {
 // 匹配口径：三元组必须唯一。`asmLookup` 会**扫完整张表**，命中两行就把编译显式标失败
 // （`ASM 互操作表撞车：…`），**绝不取第一个**——静默取第一个会产出错误的 .class，
 // 而「绝不产出错误字节码」是硬约束。
-public class AsmMem(owner : string, name : string, argc : int, desc : string, ret : BType, params : BType[]) {
+pub class AsmMem(owner : string, name : string, argc : int, desc : string, ret : BType, params : BType[]) {
     var owner : string = owner
     var name : string = name
     var argc : int = argc
@@ -3419,7 +3419,7 @@ fn tOf(g : Gen, n : Node) -> BType {
 // ============================================================ 遍历：类型 + 槽位 + 降级
 
 // 一个内置函数
-public class Builtin2(name : string, params : BType[], ret : BType, helper : string, helperDesc : string) {
+pub class Builtin2(name : string, params : BType[], ret : BType, helper : string, helperDesc : string) {
     var name : string = name
     var params : BType[] = params
     var ret : BType = ret
@@ -3497,7 +3497,7 @@ fn isPrintLike(name : string) -> bool {
 }
 
 // 遍历器：同时建侧表、分配槽位、产出降级指令
-public class Walker(g : Gen) {
+pub class Walker(g : Gen) {
     var g : Gen = g
     var out : Ins[] = new Ins[32]
     var outCount : int = 0
@@ -3511,7 +3511,7 @@ public class Walker(g : Gen) {
     var hHandlerIdx : int[] = new int[4]
     var hCount : int = 0
 
-    public fn addHandler(start : Label, end : Label, handler : Label, startIdx : int, endIdx : int, handlerIdx : int) -> void {
+    pub fn addHandler(start : Label, end : Label, handler : Label, startIdx : int, endIdx : int, handlerIdx : int) -> void {
         if (hCount >= hStarts.length) {
             var s2 : Label[] = new Label[hCount * 2]
             var e2 : Label[] = new Label[hCount * 2]
@@ -3543,7 +3543,7 @@ public class Walker(g : Gen) {
         hCount = hCount + 1
     }
 
-    public fn emit(ins : Ins) -> void {
+    pub fn emit(ins : Ins) -> void {
         // 行号在这里兜底：控制流的 branch/goto/label 也不单独带节点，取「当前语句」的行号
         if (ins.line < 1) { ins.line = curLine }
         if (outCount >= out.length) {
@@ -3572,12 +3572,12 @@ public class Walker(g : Gen) {
     var declLabels : string[] = new string[4]
     var declCount : int = 0
 
-    public fn resetLabels() -> void {
+    pub fn resetLabels() -> void {
         labCount = 0
         declCount = 0
     }
 
-    public fn labelFor(name : string) -> Label {
+    pub fn labelFor(name : string) -> Label {
         var i = 0
         while (i < labCount) {
             if (labNames[i] == name) { rtn labVals[i] }
@@ -3602,7 +3602,7 @@ public class Walker(g : Gen) {
 
     // ---------------------------------------------------------- 语句
 
-    public fn walkBlock(blk : Node, sc : Scope) -> void {
+    pub fn walkBlock(blk : Node, sc : Scope) -> void {
         var inner = new Scope(sc)
         var i = 0
         while (i < blk.childCount) {
@@ -3616,14 +3616,14 @@ public class Walker(g : Gen) {
     var curLine : int = 1
 
     // 行号用**包装**而不是在每个 `rtn` 前恢复：walkStmtInner 里到处是提前返回
-    public fn walkStmt(st : Node, sc : Scope) -> void {
+    pub fn walkStmt(st : Node, sc : Scope) -> void {
         var save = curLine
         if (st.line > 0) { curLine = st.line }
         walkStmtInner(st, sc)
         curLine = save
     }
 
-    public fn walkStmtInner(st : Node, sc : Scope) -> void {
+    pub fn walkStmtInner(st : Node, sc : Scope) -> void {
         if (g.failed) { rtn }
         var k = st.kind
         if (k == NodeKind.BLOCK) {
@@ -4171,7 +4171,7 @@ public class Walker(g : Gen) {
     var loopContinue : Label[] = new Label[4]
     var loopTop : int = 0
 
-    public fn pushLoop(cont : Label, brk : Label) -> void {
+    pub fn pushLoop(cont : Label, brk : Label) -> void {
         if (loopTop >= loopBreak.length) {
             var b1 : Label[] = new Label[loopBreak.length * 2]
             var b2 : Label[] = new Label[loopContinue.length * 2]
@@ -4187,23 +4187,23 @@ public class Walker(g : Gen) {
         loopTop = loopTop + 1
     }
 
-    public fn popLoop() -> void {
+    pub fn popLoop() -> void {
         loopTop = loopTop - 1
     }
 
-    public fn topBreak() -> ?Label {
+    pub fn topBreak() -> ?Label {
         if (loopTop == 0) { rtn null }
         rtn loopBreak[loopTop - 1]
     }
 
-    public fn topContinue() -> ?Label {
+    pub fn topContinue() -> ?Label {
         if (loopTop == 0) { rtn null }
         rtn loopContinue[loopTop - 1]
     }
 
     // ---------------------------------------------------------- 表达式
 
-    public fn walkExpr(e : Node, sc : Scope) -> BType {
+    pub fn walkExpr(e : Node, sc : Scope) -> BType {
         if (g.failed) { rtn tVoid() }
         var k = e.kind
         var t : BType = tVoid()
@@ -4776,7 +4776,7 @@ public class Walker(g : Gen) {
         rtn t
     }
 
-    public fn walkNewArray(e : Node, sc : Scope) -> BType {
+    pub fn walkNewArray(e : Node, sc : Scope) -> BType {
         var elemText = prop(e, "elem")
         var et = typeOfText(g, elemText)
         if (et == null) { rtn tVoid() }
@@ -4792,7 +4792,7 @@ public class Walker(g : Gen) {
     // 阶段 25：类头父类子句的实参表（`class IntHolder(...) : Holder&<int>(v0)` 里的
     // `int`）。Parser 只给了 `display` 那段文本（`Holder&<int>`），类名在 `name` 里
     // 是不带泛型的 —— 所以实参只能在**用的时候**从 display 里切出来再解析。
-    public fn superArgsOf(ci : CInfo) -> BType[] {
+    pub fn superArgsOf(ci : CInfo) -> BType[] {
         var disp = ci.parentDisplay
         var amp = disp.indexOf("&<")
         if (amp < 0 || disp.length() <= amp + 3) { rtn new BType[0] }
@@ -4803,7 +4803,7 @@ public class Walker(g : Gen) {
     // 同层（from 就是 decl）时退化成 `substOf(fromArgs, decl.typeParams)` —— 与旧行为一致；
     // 跨层时逐级把父类子句的实参代入，`class IntHolder : Holder&<int>` 就能把
     // `Holder.get()->T` 里的 T 换成 int（`intToString(h.get())` 靠这个才对得上）。
-    public fn chainSubst(from : CInfo, fromArgs : BType[], decl : CInfo) -> Subst {
+    pub fn chainSubst(from : CInfo, fromArgs : BType[], decl : CInfo) -> Subst {
         var s = substOf(fromArgs, from.typeParams)
         var cur : ?CInfo = null
         cur = from
@@ -4826,21 +4826,21 @@ public class Walker(g : Gen) {
 
     // `new X(...)`（含省略 new 的构造）——用户类 / 枚举走 findClass，
     // JDK 类走类导入表 + jdkNewRef 手写表。
-    public fn walkNew(e : Node, sc : Scope) -> BType {
+    pub fn walkNew(e : Node, sc : Scope) -> BType {
         rtn walkConstruction(e, prop(e, "class"), typeArgsFrom(g, prop(e, "typeArgs")), e.children[0], sc)
     }
 
     // `&<int, Box&<int>>` 那段文本 → 已擦除的实参表（没有就返回空表）。
     // 注意 Parser 存进 `typeArgs` 的是**尖括号里面**那段（`int`、`string,Box&<int>`），
     // 前面没有 `&`；`argsOrDash()` 那条路径没实参时给的是 "-"
-    public fn typeArgsFrom(g : Gen, text : string) -> BType[] {
+    pub fn typeArgsFrom(g : Gen, text : string) -> BType[] {
         if (text.length() == 0 || text == "-") { rtn new BType[0] }
         var parsed = parseTypeArgList(g, text)
         rtn taOf(parsed)
     }
 
     // 显式 `new X(...)` 与省掉 new 的 `X(...)` 共用这一段（与 Kotlin 的 checkConstruction 同构）
-    public fn walkConstruction(e : Node, clsName : string, ta : BType[], argNode : Node, sc : Scope) -> BType {
+    pub fn walkConstruction(e : Node, clsName : string, ta : BType[], argNode : Node, sc : Scope) -> BType {
         var i = 0
         while (i < argNode.childCount) {
             walkExpr(argNode.children[i], sc)
@@ -4951,7 +4951,7 @@ public class Walker(g : Gen) {
     // 阶段 30c：`f(1)` / `f!!(1)` 的解析。命中返回结果类型，不命中返回 null
     // （不命中就落回原来的「全局函数调用」那条路）。
     // 注意这种 CALL 的两个孩子是「callee 在前、ARGS 在后」，与普通调用不同。
-    public fn walkFnValueCall(e : Node, sc : Scope) -> ?BType {
+    pub fn walkFnValueCall(e : Node, sc : Scope) -> ?BType {
         var name = prop(e, "name")
         // 孩子们是「callee 在前（0 号）、ARGS 在后（1 号）」。
         var hasCallee = e.childCount > 1
@@ -5003,7 +5003,7 @@ public class Walker(g : Gen) {
         rtn fc.ret
     }
 
-    public fn walkCall(e : Node, sc : Scope) -> BType {
+    pub fn walkCall(e : Node, sc : Scope) -> BType {
         var name = prop(e, "name")
         // 阶段 30c：函数值调用（`f(1)` / `f!!(1)`）要先判 —— 命中就直接给出结果类型。
         var fnRt = walkFnValueCall(e, sc)
@@ -5117,7 +5117,7 @@ public class Walker(g : Gen) {
         rtn s!!.ret
     }
 
-    public fn walkBinary(e : Node, sc : Scope) -> BType {
+    pub fn walkBinary(e : Node, sc : Scope) -> BType {
         var op = prop(e, "op")
         var a = walkExpr(e.children[0], sc)
         var b = walkExpr(e.children[1], sc)
@@ -5137,21 +5137,21 @@ public class Walker(g : Gen) {
     }
 
     // 裸字段 / this 必须在实例方法里（照抄 Kotlin 的 requireInstanceScope）
-    public fn requireInstanceScope(what : string) -> bool {
+    pub fn requireInstanceScope(what : string) -> bool {
         var ci = g.cur
         if (ci == null) {
             g.bad(what + "（不在类里）")
             rtn false
         }
         if (g.curStatic) {
-            g.bad(what + " 需要 this，但当前是 static 方法")
+            g.bad(what + " 需要 this，但当前是 stc 方法")
             rtn false
         }
         rtn true
     }
 
     // 循环体的 break 是否属于本层（照抄 Lowering.containsBreak）
-    public fn containsBreak(blk : Node) -> bool {
+    pub fn containsBreak(blk : Node) -> bool {
         var i = 0
         while (i < blk.childCount) {
             var st = blk.children[i]
@@ -5182,7 +5182,7 @@ public class Walker(g : Gen) {
         rtn false
     }
 
-    public fn canExitLoop(st : Node) -> bool {
+    pub fn canExitLoop(st : Node) -> bool {
         var cond = st.children[0]
         if (cond.kind != NodeKind.BOOL_LIT) { rtn true }
         if (prop(cond, "value") != "true") { rtn true }
@@ -5222,7 +5222,7 @@ fn labelIndexOf(w : Walker, lbl : Label) -> int {
 }
 
 // switch 落空时的消息（与 sema/Builtins.kt 的 EnumRuntime.noMatchFailure 逐字一致）
-public fn switchNoMatchMessage(enumName : string) -> string {
+pub fn switchNoMatchMessage(enumName : string) -> string {
     var simple = enumName
     var slash = simple.lastIndexOf("/")
     if (slash >= 0) { simple = simple.substring(slash + 1, simple.length()) }
@@ -5868,7 +5868,7 @@ fn emitCall(g : Gen, mv : MethodVisitor, e : Node, off : int) -> void {
 // 「调用 + 捕获」搬进一个**合成私有静态方法**：保护范围从空栈开始，天然合法，
 // 失败时返回 null 当标记（`!T` 的正常结果不可能是 null）。
 
-public class OrElse(name : string, desc : string, opcode : int, owner : string, target : string, targetDesc : string, params : BType[], result : BType, entryArg : bool) {
+pub class OrElse(name : string, desc : string, opcode : int, owner : string, target : string, targetDesc : string, params : BType[], result : BType, entryArg : bool) {
     var name : string = name
     var desc : string = desc
     var opcode : int = opcode
@@ -6094,7 +6094,7 @@ fn orElseOfImplicitCall(g : Gen, mv : MethodVisitor, left : Node, mi : Mem2, off
 }
 
 // 合成方法体里要不要装箱，看**声明**（擦除后）的返回类型，所以优先 `origRet`；
-// 按类名调 static 方法与手写互操作表直接造的 `Mem2` 没登记 `origRet`（默认 tVoid），
+// 按类名调 stc 方法与手写互操作表直接造的 `Mem2` 没登记 `origRet`（默认 tVoid），
 // 那时退回 `ret`。
 fn orElseResultType(mi : Mem2) -> BType {
     if (!mi.origRet.isVoid()) { rtn mi.origRet }
@@ -6873,7 +6873,7 @@ fn emitFunction(g : Gen, fnNode : Node) -> void {
 
     g.slotCount = 0
     g.returnType = sg.ret
-    // 顶层函数一律 static：LVT 里没有 this。入口 main 的 `String[]` 不是形参表里的
+    // 顶层函数一律 stc：LVT 里没有 this。入口 main 的 `String[]` 不是形参表里的
     // 一项（Kotlin 那边也一样），所以它不进 LVT —— 那个位置由 flushBody 的 `off` 让开。
     lvtBegin(g, mv, "")
     var root = new Scope(null)
@@ -7057,7 +7057,7 @@ fn collectClasses(g : Gen, classes : Node, enums : Node) -> void {
 }
 
 // 方法体的公共管道：walk → 回填 → 可达性
-public class Prep(w : Walker, reach : bool[]) {
+pub class Prep(w : Walker, reach : bool[]) {
     var w : Walker = w
     var reach : bool[] = reach
 }
@@ -7314,7 +7314,7 @@ fn emitUserMethod(g : Gen, ci : CInfo, m : CMeth) -> void {
     emitAnnSitesM(g, annUsesOf(m.node), mv)
     if (g.failed) { rtn }
     mv.visitCode()
-    // 实例方法的 0 号槽是 this；static 方法没有（Kotlin 侧同一句话判断）
+    // 实例方法的 0 号槽是 this；stc 方法没有（Kotlin 侧同一句话判断）
     if (m.isStatic) {
         lvtBegin(g, mv, "")
     } else {
@@ -7635,7 +7635,7 @@ fn emitEnumClass(g : Gen, ei : EInfo) -> void {
         i = i + 1
     }
     g.cw.visitField(accPrivate() + 16, "$name", "Ljava/lang/String;", null, null).visitEnd()
-    // private <init>(Ljava/lang/String;)V
+    // prv <init>(Ljava/lang/String;)V
     var mv = g.cw.visitMethod(accPrivate(), "<init>", "(Ljava/lang/String;)V", null, null)
     mv.visitCode()
     // 生成的构造器：LVT 只有 this（那个 String 形参是合成的，不发）
@@ -7649,7 +7649,7 @@ fn emitEnumClass(g : Gen, ei : EInfo) -> void {
     lvtEnd(g, mv, 0)
     mv.visitMaxs(0, 0)
     mv.visitEnd()
-    // public toString()
+    // pub toString()
     var mv2 = g.cw.visitMethod(accPublic(), "toString", "()Ljava/lang/String;", null, null)
     mv2.visitCode()
     lvtBegin(g, mv2, ei.internal)
@@ -7659,7 +7659,7 @@ fn emitEnumClass(g : Gen, ei : EInfo) -> void {
     lvtEnd(g, mv2, 0)
     mv2.visitMaxs(0, 0)
     mv2.visitEnd()
-    // <clinit>（static，且合成变量不进 LVT：这条不 lvtBegin）
+    // <clinit>（stc，且合成变量不进 LVT：这条不 lvtBegin）
     var mv3 = g.cw.visitMethod(accStatic(), "<clinit>", "()V", null, null)
     mv3.visitCode()
     var k = 0
@@ -7773,7 +7773,7 @@ fn collectMethods(g : Gen, part : Node, ci : CInfo) -> void {
             pns[pi] = prop(ps.children[pi], "name")
             pi = pi + 1
         }
-        ci.addMeth(new CMeth(m, prop(m, "name"), pts, pns, ret, propBool(m, "static"), prop(m, "control"), isCtor, propBool(m, "primary")))
+        ci.addMeth(new CMeth(m, prop(m, "name"), pts, pns, ret, propBool(m, "stc"), prop(m, "control"), isCtor, propBool(m, "primary")))
         g.clearFnParams()
         mi = mi + 1
     }
@@ -7898,7 +7898,7 @@ fn emitUserInterface(g : Gen, ci : CInfo) -> void {
 //   使用点由 `emitAnnSites*` 在**对应的 visitEnd() 之前**发（顺序错了 ASM 会静默丢弃）。
 
 // 一条注解元素（`annotation Tag(value : string = "t")` 里的一行）。
-public class AnnEl(name : string, type : BType, def : Node, hasDef : bool, line : int) {
+pub class AnnEl(name : string, type : BType, def : Node, hasDef : bool, line : int) {
     var name : string = name
     var type : BType = type
     var def : Node = def        // hasDef = false 时是 ERROR 占位，不许读
@@ -7909,7 +7909,7 @@ public class AnnEl(name : string, type : BType, def : Node, hasDef : bool, line 
 }
 
 // 一个注解声明。
-public class AnnInfo(name : string, internal : string) {
+pub class AnnInfo(name : string, internal : string) {
     var name : string = name          // 注解简名 = 注解**接口**的内部名（拍板 1）
     var internal : string = internal  // 与 name 相同，留字段只为读起来对称
     var node : Node = new Node(NodeKind.ERROR)
@@ -7920,7 +7920,7 @@ public class AnnInfo(name : string, internal : string) {
     var compInternal : string = ""    // 伴生类内部名（带包前缀）
     var compNode : Node = new Node(NodeKind.ERROR)
 
-    public fn addEl(e : AnnEl) -> void {
+    pub fn addEl(e : AnnEl) -> void {
         if (elCount >= els.length) {
             var b : AnnEl[] = new AnnEl[els.length * 2]
             for (var i = 0; i < elCount; i = i + 1) { b[i] = els[i] }
@@ -7930,7 +7930,7 @@ public class AnnInfo(name : string, internal : string) {
         elCount = elCount + 1
     }
 
-    public fn elIndex(nm : string) -> int {
+    pub fn elIndex(nm : string) -> int {
         var i = 0
         while (i < elCount) {
             if (els[i].name == nm) { rtn i }
@@ -7941,7 +7941,7 @@ public class AnnInfo(name : string, internal : string) {
 
     // 伴生类构造器的描述符：形参就是元素表（Kotlin `companionPrimaryConstructor`
     // 与 `checkCompanionConstructor` 都要求实参表与元素表逐项对上）。
-    public fn ctorDesc() -> string {
+    pub fn ctorDesc() -> string {
         var d = "("
         var i = 0
         while (i < elCount) {
@@ -7955,7 +7955,7 @@ public class AnnInfo(name : string, internal : string) {
 // 一个**使用点** → 宿主上的一个访问器。
 // `member` 为空串 = 类型级访问器（宿主上无参、方法名就是注解简名）；
 // 否则是成员级（1 个 string 形参，按成员名逐条比，比不中返回 null）。
-public class AccInfo(ann : string, host : string, member : string, comp : string, ai : AnnInfo, use : Node) {
+pub class AccInfo(ann : string, host : string, member : string, comp : string, ai : AnnInfo, use : Node) {
     var ann : string = ann          // 注解简名 —— 访问器的**方法名**
     var host : string = host        // 宿主简名（类 / 接口 / 注解 / 伴生类）
     var member : string = member    // "" = 类型级；否则成员名
@@ -7995,7 +7995,7 @@ fn annBad(g : Gen, nm : string, t : BType, why : string) -> void {
 // 剥掉**只允许**的一个一元负号（Kotlin `annotationConstant` 的 UnaryExpr 分支：
 // 操作符必须是 MINUS、operand 必须是字面量）。返回 null = 已报错。
 // rsf 没有出参，所以用「返回字面量 + 一个 Bool2 出参对象」带出取负标志。
-public class NegLit(node : Node, neg : bool) {
+pub class NegLit(node : Node, neg : bool) {
     var node : Node = node
     var neg : bool = neg
 }
@@ -8630,7 +8630,7 @@ fn emitAnnPair(g : Gen, av : AnnotationVisitor, ai : AnnInfo, i : int, v : Node)
     annBad(g, nm, t, "这里拿不到常量")
 }
 
-// 元素访问器：伴生类上的 `public <元素类型> <元素名>()`，体是
+// 元素访问器：伴生类上的 `pub <元素类型> <元素名>()`，体是
 // `ALOAD 0; GETFIELD <伴生内部名>.<字段> <描述符>; <xRETURN>`。
 fn emitAnnElemAccessors(g : Gen, ci : CInfo) -> void {
     var ai = g.findAnn(ci.annComp)
@@ -8659,7 +8659,7 @@ fn emitAnnElemAccessors(g : Gen, ci : CInfo) -> void {
     }
 }
 
-// 伴生类上的访问器缓存字段（`static <伴生内部名> __rsf_ann$<宿主>$<成员>`，
+// 伴生类上的访问器缓存字段（`stc <伴生内部名> __rsf_ann$<宿主>$<成员>`，
 // 只有 ACC_STATIC —— 和 Kotlin 一样是包私有静态）。
 fn emitAnnCaches(g : Gen, ci : CInfo) -> void {
     var i = 0
@@ -9263,7 +9263,7 @@ fn prepBodyWithLambdas(g : Gen, body : Node, firstSlot : int, pTypes : BType[], 
     rtn prepBody(g, body, firstSlot, pTypes, pNames, ret)
 }
 
-public fn compileProgram(g : Gen, ast : Node, sourceName : string) -> void {
+pub fn compileProgram(g : Gen, ast : Node, sourceName : string) -> void {
     g.sourceName = sourceName
     // `pkg a.b`：程序类与**所有**用户类 / 枚举的内部名都要带包路径
     // （`pkg a.b` + `Main.rsf` → `a/b/Main`；`class Point` → `a/b/Point`）。
@@ -9470,19 +9470,19 @@ fn writeSkeletons(g : Gen) -> void {
 }
 
 // 多类输出：0 号是程序类（backendBytes 仍指它）
-public fn backendCount(g : Gen) -> int {
+pub fn backendCount(g : Gen) -> int {
     rtn g.cwCount
 }
 
-public fn backendNameAt(g : Gen, i : int) -> string {
+pub fn backendNameAt(g : Gen, i : int) -> string {
     rtn g.cwNames[i]
 }
 
-public fn backendBytesAt(g : Gen, i : int) -> byte[] {
+pub fn backendBytesAt(g : Gen, i : int) -> byte[] {
     rtn g.cws[i].toByteArray()
 }
 
-public fn backendBytes(g : Gen) -> byte[] {
+pub fn backendBytes(g : Gen) -> byte[] {
     rtn g.cws[0].toByteArray()
 }
 

@@ -10,16 +10,16 @@ JF=(-Dfile.encoding=UTF-8 -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8)
 norm() { printf '%s' "$1" | tr -d '\r'; }
 
 cat > "$SRC/e_multi.rsf" <<'EOF'
-public interface A {
+pub interface A {
     fn say() -> string
 }
 
-public interface B {
+pub interface B {
     fn say() -> string
 }
 
 class C : A, B {
-    override public fn say() -> string {
+    override pub fn say() -> string {
         rtn "c"
     }
 }
@@ -34,20 +34,20 @@ fn main() -> void {
 EOF
 
 cat > "$SRC/e_default_conflict.rsf" <<'EOF'
-public interface A {
+pub interface A {
     fn say() -> string {
         rtn "a"
     }
 }
 
-public interface B {
+pub interface B {
     fn say() -> string {
         rtn "b"
     }
 }
 
 class C : A, B {
-    override public fn say() -> string {
+    override pub fn say() -> string {
         rtn "c"
     }
 }
@@ -59,13 +59,13 @@ fn main() -> void {
 EOF
 
 cat > "$SRC/e_default_override.rsf" <<'EOF'
-public interface Named {
+pub interface Named {
     fn name() -> string {
         rtn "n"
     }
 }
 
-public interface Person : Named {
+pub interface Person : Named {
     override fn name() -> string {
         rtn "p"
     }
@@ -82,12 +82,12 @@ fn main() -> void {
 EOF
 
 cat > "$SRC/e_private.rsf" <<'EOF'
-public interface Greeter {
+pub interface Greeter {
     fn greet(name : string) -> string
 }
 
 class Dog : Greeter {
-    private override fn greet(name : string) -> string {
+    prv override fn greet(name : string) -> string {
         rtn "woof"
     }
 }
@@ -98,12 +98,12 @@ fn main() -> void {
 EOF
 
 cat > "$SRC/e_private_nokw.rsf" <<'EOF'
-public interface Greeter {
+pub interface Greeter {
     fn greet(name : string) -> string
 }
 
 class Dog : Greeter {
-    private fn greet(name : string) -> string {
+    prv fn greet(name : string) -> string {
         rtn "woof"
     }
 }
@@ -114,15 +114,15 @@ fn main() -> void {
 EOF
 
 cat > "$SRC/e_static.rsf" <<'EOF'
-public interface Greeter {
+pub interface Greeter {
     fn greet(name : string) -> string
 }
 
 class Dog : Greeter {
-    public fn greet(name : string) -> string {
+    pub fn greet(name : string) -> string {
         rtn "woof"
     }
-    override static fn helper() -> void {
+    override stc fn helper() -> void {
         rtn
     }
 }

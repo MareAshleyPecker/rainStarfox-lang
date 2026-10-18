@@ -369,7 +369,7 @@ class Checker(
                 diagnostics.add(
                     Diagnostic(
                         Severity.WARNING, "checker",
-                        "顶层函数本来就是静态的（按类名调用），这里的 'static' 是多余的",
+                        "顶层函数本来就是静态的（按类名调用），这里的 'stc' 是多余的",
                         currentSource.name, fn.at.line, fn.at.column,
                     ),
                 )
@@ -897,8 +897,8 @@ class Checker(
             if (!m.isAbstract) continue
             if (m.control == ControlType.PRIVATE) {
                 throw err(
-                    "类 '${info.decl.name}' 的 '${m.name}' 不能既是 abstract 又是 private：" +
-                        "private 方法子类根本看不到，没有人能实现它",
+                    "类 '${info.decl.name}' 的 '${m.name}' 不能既是 abstract 又是 prv：" +
+                        "prv 方法子类根本看不到，没有人能实现它",
                     m.at,
                 )
             }
@@ -1315,7 +1315,7 @@ class Checker(
         if (inStatic) {
             throw err(
                 "'super' 不能用在静态方法里：静态方法没有当前对象，也就没有父类的那一份状态。" +
-                    "父类的静态成员要写 类名.成员（static 不继承，DESIGN-25 §3）",
+                    "父类的静态成员要写 类名.成员（stc 不继承，DESIGN-25 §3）",
                 expr.at,
             )
         }
@@ -1356,7 +1356,7 @@ class Checker(
                         "（'${expr.name}' 只在 '${info.decl.name}' 自己这里，直接写 ${expr.name}(...) 就行）"
                     } else if (jvmParentOf(info) != null) {
                         "（JDK 父类 '${jvmParentOf(info)!!.dottedName}' 里也没有这个名字；" +
-                            "static 方法不继承，只能写 类名.方法(...)，DESIGN-25 §3）"
+                            "stc 方法不继承，只能写 类名.方法(...)，DESIGN-25 §3）"
                     } else {
                         ""
                     }),
@@ -1386,8 +1386,8 @@ class Checker(
         val picked = chosen.decl
         if (picked.control == ControlType.PRIVATE) {
             throw err(
-                "父类 '${owner.decl.name}' 的 '${expr.name}' 是 private 的，子类调不到它：" +
-                    "private 成员不参与继承（DESIGN-25 §3）",
+                "父类 '${owner.decl.name}' 的 '${expr.name}' 是 prv 的，子类调不到它：" +
+                    "prv 成员不参与继承（DESIGN-25 §3）",
                 expr.at,
             )
         }
@@ -2286,14 +2286,14 @@ class Checker(
                 }
                 if (m.control == ControlType.PRIVATE || m.control == ControlType.PROTECTED) {
                     throw err(
-                        "接口 '${decl.name}' 里的方法只能是 public（这里写的是 '${m.control.keyword}'）：" +
-                            "实现类/子接口必须能覆盖它，private 与 protected 的接口方法没法被覆盖",
+                        "接口 '${decl.name}' 里的方法只能是 pub（这里写的是 '${m.control.keyword}'）：" +
+                            "实现类/子接口必须能覆盖它，prv 与 prot 的接口方法没法被覆盖",
                         m.at,
                     )
                 }
                 if (m.isStatic) {
                     throw err(
-                        "接口 '${decl.name}' 里的方法不能是 static 的——接口方法都是实例方法，" +
+                        "接口 '${decl.name}' 里的方法不能是 stc 的——接口方法都是实例方法，" +
                             "要靠实现类的对象调。写成 fn ${m.name}(...) 就行",
                         m.at,
                     )
@@ -3052,14 +3052,14 @@ class Checker(
             val barred = info.methods[wanted.name].orEmpty().firstOrNull { shapeOk(it) && !shapeMatches(it) }
             if (barred != null) {
                 val why = when {
-                    barred.isStatic -> "static 方法"
-                    barred.control == ControlType.PRIVATE -> "private 方法"
-                    else -> "protected 方法"
+                    barred.isStatic -> "stc 方法"
+                    barred.control == ControlType.PRIVATE -> "prv 方法"
+                    else -> "prot 方法"
                 }
                 throw err(
                     "类 '${cls.name}' 里的 '${barred.name}' 是 $why，实现不了接口要求的 " +
                         "${wanted.display()}（来自 ${wanted.ownerLabel}）：" +
-                        "接口方法必须是 public 的实例方法（不写修饰词就是 public）",
+                        "接口方法必须是 pub 的实例方法（不写修饰词就是 pub）",
                     barred.at,
                 )
             }
@@ -3370,7 +3370,7 @@ class Checker(
                 // 主构造是解析时合成的（体是空块），次构造来自 constructor(...)；
                 // 两者的返回类型都固定 void、都不能 static——parser 已经拦过，
                 // 这里再确认一次，因为签名合成的入口不止一处
-                if (m.isStatic) throw err("构造器不能是 static 的（它一定要有当前对象 this）", m.at)
+                if (m.isStatic) throw err("构造器不能是 stc 的（它一定要有当前对象 this）", m.at)
                 if (m.ret.mayError || m.ret.type.name != "void") {
                     throw err("构造器没有返回值，也不可能是可能失败的（!T）", m.at)
                 }
@@ -4665,7 +4665,7 @@ class Checker(
                 val where = if (owner === info) "本类" else "类 '${owner.decl.name}'"
                 throw err(
                     "$who 里没有方法 '${expr.name}'：'${expr.name}' 是${where}的**静态**方法，" +
-                        "static 不继承——子类里没有它，要写 '${owner.decl.name}.${expr.name}(...)'" +
+                        "stc 不继承——子类里没有它，要写 '${owner.decl.name}.${expr.name}(...)'" +
                         "（DESIGN-25 §3）",
                     expr.at,
                 )
@@ -4686,8 +4686,8 @@ class Checker(
             checkMemberVisible(info, expr.name, expr.at)
             val owner = chainNamed.values.first { (_, m) -> m.control == ControlType.PRIVATE }.first
             throw err(
-                "'${expr.name}' 是 '${owner.decl.name}' 的 private 方法，子类继承不到它" +
-                    "（private 不参与继承，DESIGN-25 §3）",
+                "'${expr.name}' 是 '${owner.decl.name}' 的 prv 方法，子类继承不到它" +
+                    "（prv 不参与继承，DESIGN-25 §3）",
                 expr.at,
             )
         }
@@ -4695,9 +4695,9 @@ class Checker(
         if (usable.isEmpty()) {
             val (owner, first) = visible[0]
             val fix = if (first.isStatic) {
-                "它是 static 的，要用类名调：${owner.decl.name}.${expr.name}(...)"
+                "它是 stc 的，要用类名调：${owner.decl.name}.${expr.name}(...)"
             } else {
-                "它不是 static 的，要先有对象：对象.${expr.name}(...)"
+                "它不是 stc 的，要先有对象：对象.${expr.name}(...)"
             }
             throw err("'${expr.name}' 的调用方式不对——$fix", expr.at)
         }
@@ -4898,8 +4898,8 @@ class Checker(
         if (methods.none { it.control == ControlType.PRIVATE }) return
         if (currentClass === info) return
         throw err(
-            "'$name' 是 ${info.decl.name} 的 private 方法，只能在这个类内部使用。" +
-                "要让外面也能用，把它改成 protected 或 public",
+            "'$name' 是 ${info.decl.name} 的 prv 方法，只能在这个类内部使用。" +
+                "要让外面也能用，把它改成 prot 或 pub",
             at,
         )
     }
@@ -6813,7 +6813,7 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
      */
     private fun inheritedStaticHint(info: ClassInfo, name: String): String? {
         val owner = declaredMethodOnChain(info, name) { it.isStatic }?.first ?: return null
-        return "'$name' 是 '${owner.decl.name}' 的 static 方法，不继承：" +
+        return "'$name' 是 '${owner.decl.name}' 的 stc 方法，不继承：" +
             "静态方法只能写「类名.方法(...)」——写成 ${owner.decl.name}.$name(...)（DESIGN-25 §3）"
     }
 
@@ -6848,8 +6848,8 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
         val declSource = sourceOfFunction[target] ?: source
         if (declSource === currentSource) return
         throw err(
-            "'${target.name}' 是 private 的，只能在它自己的文件（${declSource.name}）里调用。" +
-                "要让别的文件也能用，把它改成 protected 或 public",
+            "'${target.name}' 是 prv 的，只能在它自己的文件（${declSource.name}）里调用。" +
+                "要让别的文件也能用，把它改成 prot 或 pub",
             at,
         )
     }

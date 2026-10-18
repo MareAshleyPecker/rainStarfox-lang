@@ -10,6 +10,7 @@ import com.intellij.lang.Language
  * 扩展点时会构造它），所以不需要在 plugin.xml 里单独注册语言。
  */
 object RsfLanguage : Language("rainStarfox") {
+    private fun readResolve(): Any = RsfLanguage
     override fun getDisplayName(): String = "rainStarfox"
 
     override fun isCaseSensitive(): Boolean = true

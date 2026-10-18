@@ -421,12 +421,12 @@ class AnnotationInterpTest {
             }
 
             @Marker(value = "hi", count = 3)
-            public class Tagged {
+            pub class Tagged {
                 @Marker("f")
                 var name : string = "n"
 
                 @Marker(count = 1)
-                public fn hello() -> string {
+                pub fn hello() -> string {
                     var m : Marker = new Marker("hi", 3)
                     return m.value() + "/" + m.count()
                 }
@@ -446,12 +446,12 @@ class AnnotationInterpTest {
             }
 
             @Marker("hi", 3)
-            public class Tagged {
+            pub class Tagged {
                 @Marker("f")
                 var name : string = "n"
 
                 @Marker("1")
-                public fn hello() -> string {
+                pub fn hello() -> string {
                     var m : Marker = new Marker("hi", 3)
                     return m.value() + "/" + m.count()
                 }
