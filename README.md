@@ -1500,7 +1500,9 @@ gradlew.bat verifyPlugin          :: 官方校验器静态检查
 | 25 | **类继承**（Kotlin 式单继承：`override` / `abstract` / `final`、`super.f()` 与 `super(接口).f()`、`static` 不继承、允许继承 JDK 类） | ✅ 2026-10-16（K1 前端+语义 / K3 解释器 / K2 字节码 / K4 收口；自举同步已含于阶段 27） |
 | 27 | **默认开放**：删掉 `open` 关键字，类默认可继承、方法默认可覆盖，`final` 成为唯一收窄手段（推翻阶段 25 的「默认 final」） | ✅ 2026-10-18（27a `5df701f` Kotlin 前端 / 27b `20a5e13` 自举同步，关键字 57→56；判据 `build/verify27/` 五条 + `build/verify24` 回归全绿） |
 | 28 | **标签名特殊字符 + 元数据**：标签名可用反引号包任意字符（`` `a-b` ``），每个有标签的方法发一条 runtime-visible `@RsfLabels(value = string[])`，按声明顺序把名字保留进 class 文件 | ✅ 2026-10-18（28a `5edbd27` Kotlin 侧 / 28b `cc1bf17` 自举链；判据 `build/verify28/`：4 正例 + 5 负例 + 两端 class 逐字节对拍；564 tests） |
-| 23 | 显式指针（`&` 取地址 / `*` 解引用，C 风格） | ⏳ 计划（2026-10-15，`DESIGN-23.md`，等预案） |
+| 29 | **关键字改名**：`fun` → `fn`（硬删 + 统一改名声，词法表仍 56 项、`TokenKind` 仍 `KW_FUN`） | ✅ 2026-10-18（`017a2cb`；判据 `build/verify29/` 旧词负例 + 全部探针台回归；564 tests） |
+| 30 | **函数类型与 `lam`**：`(int, string) -> bool` / `?(int) -> int`，字面量 `lam(x : int) -> int { … }`，值捕获只许 `imutvar`/形参/`this`；JVM 走按 arity 生成的 `__RsfFn<n>` SAM 接口 + `LambdaMetafactory` | ✅ 2026-10-18（30a `d2d124e` 前端 / 30b `822e600` Kotlin 两端 / 30c `f54dcf8` 自举链；判据 `build/verify30/` 6 正例 + 5 负例 + 两端 class 逐字节零差异；581 tests；关键字 56→57） |
+| 23 | 显式指针（`&` 取地址 / `*` 解引用，C 风格） | ⏸ 2026-10-18 用户定：JVM 上不实现，整体移交 native（`DESIGN-23.md`） |
 | 24 | 类型转换与类型判断（`as` / `?as` / `is` / `!is`） | ✅ 2026-10-18（24a `076aeee` / 24b `5b5d7aa` / 24c `707cbe3` / 24d `51bd707`；判据 `build/verify24/`：9 正例 + 8 负例 + 自举解释器对拍 14 份） |
 
 ### 19c：为 17b 补的三样（enum / switch / `&&` `||`）
