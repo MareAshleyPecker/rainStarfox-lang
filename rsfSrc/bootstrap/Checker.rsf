@@ -62,6 +62,7 @@ public class Checker(failure : ?CheckFailure) {
     var warnCols : int[] = new int[8]
     var warnTexts : string[] = new string[8]
     var warnCount : int = 0
+    var warnOnly : bool = false
     var curExpect : string = ""
     var curBodyHasTypeParam : bool = false
     var scopes : Scopes = new Scopes()
@@ -602,24 +603,126 @@ public class Checker(failure : ?CheckFailure) {
         rtn c!!.ownMeth(nm, argc)
     }
 
+    // 只做「不可达代码」流分析，不做类型检查（build/run 驱动用：与 Kotlin 的警告一致就够）
+    fn flowOnlyStmt(stmt : Node) -> void {
+        if (stmt.kind == NodeKind.BLOCK) { checkBlock(stmt); rtn }
+        if (stmt.kind == NodeKind.TRY) {
+            var i = 0
+            while (i < stmt.childCount) {
+                var ch = stmt.children[i]
+                if (ch.kind == NodeKind.BLOCK) {
+                    if (i > 0) { warnDead(ch) }
+                    checkBlock(ch)
+                }
+                i = i + 1
+            }
+            rtn
+        }
+        if (stmt.kind == NodeKind.IF || stmt.kind == NodeKind.WHILE || stmt.kind == NodeKind.FOR) {
+            var k = 0
+            while (k < stmt.childCount) {
+                var ch2 = stmt.children[k]
+                if (ch2.kind == NodeKind.BLOCK) { checkBlock(ch2) }
+                k = k + 1
+            }
+        }
+    }
+
+    public fn flowAll(prg : Node) -> void {
+        var funcs = childNodeOf(prg, NodeKind.FUNCS)
+        if (funcs == null) { rtn }
+        var i = 0
+        while (i < funcs!!.childCount) {
+            var fnode = funcs!!.children[i]
+            var body = childNodeOf(fnode, NodeKind.BLOCK)
+            if (body != null) { checkBlock(body!!) }
+            i = i + 1
+        }
+    }
+
     fn checkBlock(block : Node) -> void {
         scopes.enter()
         var i = 0
-        var dead = false
+        var live = true
         while (i < block.childCount && failure == null) {
             var st = block.children[i]
-            if (dead && st.kind != NodeKind.LABEL && st.kind != NodeKind.GOTO && st.line > 0) {
-                addWarn(st.line, st.col, "不可达代码（永远执行不到）")
-            }
+            if (!live) { warnDead(st) }
             checkStmt(st)
-            if (st.kind == NodeKind.RETURN || st.kind == NodeKind.FAIL) { dead = true }
-            if (st.kind == NodeKind.BREAK || st.kind == NodeKind.CONTINUE || st.kind == NodeKind.GOTO) { dead = true }
+            if (st.kind == NodeKind.LABEL) { live = true }
+            else if (stmtEndsFlow(st)) { live = false }
             i = i + 1
         }
         scopes.leave()
     }
 
+    // 语句之后还有没有「顺序往下走」这条路（对应 Kotlin 侧 IR 的无条件终结指令）
+    fn stmtEndsFlow(st : Node) -> bool {
+        if (st.kind == NodeKind.RETURN || st.kind == NodeKind.FAIL) { rtn true }
+        if (st.kind == NodeKind.BREAK || st.kind == NodeKind.CONTINUE || st.kind == NodeKind.GOTO) { rtn true }
+        if (st.kind == NodeKind.BLOCK) { rtn blockEndsFlow(st) }
+        if (st.kind == NodeKind.IF) {
+            if (st.childCount < 3) { rtn false }
+            var tb = st.children[1]
+            var eb = st.children[2]
+            if (tb.kind != NodeKind.BLOCK || eb.kind != NodeKind.BLOCK) { rtn false }
+            rtn blockEndsFlow(tb) && blockEndsFlow(eb)
+        }
+        if (st.kind == NodeKind.WHILE) {
+            var cond = st.children[0]
+            if (cond.kind == NodeKind.BOOL_LIT && nodeProp(cond, "value") == "true") {
+                // 体内有 break 就有出口边（break 跳到循环之后）
+                if (st.childCount > 1 && !bodyHasBreak(st.children[1], false)) { rtn true }
+            }
+        }
+        if (st.kind == NodeKind.TRY) {
+            var body = st.children[0]
+            if (body.kind == NodeKind.BLOCK) { rtn blockEndsFlow(body) }
+        }
+        rtn false
+    }
+
+    // 循环体里有没有直接针对本层的 break（嵌套循环里的都不算）
+    fn bodyHasBreak(n : Node, nested : bool) -> bool {
+        if (n.kind == NodeKind.BREAK && !nested) { rtn true }
+        var i = 0
+        while (i < n.childCount) {
+            var ch = n.children[i]
+            var deep = nested
+            if (ch.kind == NodeKind.WHILE || ch.kind == NodeKind.FOR) { deep = true }
+            if (bodyHasBreak(ch, deep)) { rtn true }
+            i = i + 1
+        }
+        rtn false
+    }
+
+    fn blockEndsFlow(b : Node) -> bool {
+        if (b.childCount == 0) { rtn false }
+        rtn stmtEndsFlow(b.children[b.childCount - 1])
+    }
+
+    // 不可达区域：每条用户语句各报一条；label / goto / 块本身不算
+    fn warnDead(n : Node) -> void {
+        if (n.kind != NodeKind.LABEL && n.kind != NodeKind.GOTO && n.kind != NodeKind.BLOCK && n.line > 0) {
+            addWarn(n.line, n.col, "不可达代码（永远执行不到）")
+        }
+        var i = 0
+        while (i < n.childCount) {
+            var ch = n.children[i]
+            if (isStmtNode(ch)) { warnDead(ch) }
+            i = i + 1
+        }
+    }
+
+    fn isStmtNode(n : Node) -> bool {
+        if (n.kind == NodeKind.BLOCK || n.kind == NodeKind.IF || n.kind == NodeKind.WHILE || n.kind == NodeKind.FOR || n.kind == NodeKind.TRY) { rtn true }
+        if (n.kind == NodeKind.RETURN || n.kind == NodeKind.VAR_DECL || n.kind == NodeKind.EXPR_STMT || n.kind == NodeKind.ASSIGN) { rtn true }
+        if (n.kind == NodeKind.BREAK || n.kind == NodeKind.CONTINUE || n.kind == NodeKind.GOTO || n.kind == NodeKind.LABEL) { rtn true }
+        if (n.kind == NodeKind.FAIL) { rtn true }
+        rtn false
+    }
+
     fn checkStmt(stmt : Node) -> void {
+        if (warnOnly) { flowOnlyStmt(stmt); rtn }
         if (stmt.kind == NodeKind.VAR_DECL) { checkVarDecl(stmt) }
         else if (stmt.kind == NodeKind.EXPR_STMT) { checkExpr(stmt.children[0]) }
         else if (stmt.kind == NodeKind.ASSIGN) { checkAssign(stmt) }
@@ -627,6 +730,7 @@ public class Checker(failure : ?CheckFailure) {
         else if (stmt.kind == NodeKind.IF || stmt.kind == NodeKind.WHILE || stmt.kind == NodeKind.FOR) {
             checkNested(stmt)
         } else if (stmt.kind == NodeKind.BLOCK) { checkBlock(stmt) }
+        else if (stmt.kind == NodeKind.TRY) { checkTry(stmt) }
         else if (stmt.kind == NodeKind.BREAK) {
             if (loopDepth == 0) { failAt("'break' 只能用在 while 循环里", stmt) }
         } else if (stmt.kind == NodeKind.CONTINUE) {
@@ -692,6 +796,31 @@ public class Checker(failure : ?CheckFailure) {
             i = i + 1
         }
         if (isLoop) { loopDepth = loopDepth - 1 }
+    }
+
+    // try/catch：体照常检查；handler 在 Kotlin 侧 CFG 里收不到异常边（Checker 没传 handlers），
+    // 所以整段 handler 都被判「不可达」——这里照抄这个口径。
+    fn checkTry(stmt : Node) -> void {
+        scopes.enter()
+        var cname = nodeProp(stmt, "catch")
+        if (cname.length() > 0) {
+            scopes.declare(symOf(cname, "imutvar", "string", stmt.line, stmt.col))
+        }
+        if (stmt.childCount > 0) {
+            var body = stmt.children[0]
+            if (body.kind == NodeKind.BLOCK) { checkBlock(body) }
+        }
+        if (failure != null) { scopes.leave(); rtn }
+        var i = 1
+        while (i < stmt.childCount) {
+            var ch = stmt.children[i]
+            if (ch.kind == NodeKind.BLOCK) {
+                warnDead(ch)
+                checkBlock(ch)
+            }
+            i = i + 1
+        }
+        scopes.leave()
     }
 
     fn wordOf(k : NodeKind) -> string {
@@ -779,12 +908,13 @@ public class Checker(failure : ?CheckFailure) {
         if (e.kind == NodeKind.CHAR_LIT) { rtn "char" }
         if (e.kind == NodeKind.BOOL_LIT) { rtn "bool" }
         if (e.kind == NodeKind.VAR) {
-            var sym = scopes.lookup(nodeProp(e, "name"))
-            if (sym == null) {
-                failAt("未声明的变量 '" + nodeProp(e, "name") + "'", e)
-                rtn "void"
-            }
-            rtn sym!!.typeText
+            var nm = nodeProp(e, "name")
+            var sym = scopes.lookup(nm)
+            if (sym != null) { rtn sym!!.typeText }
+            // 类名当接收者（`System.exit` / `Math.abs` / 声明的类名）
+            if (isClassNameRef(nm)) { rtn nm }
+            failAt("未声明的变量 '" + nm + "'", e)
+            rtn "void"
         }
         if (e.kind == NodeKind.CALL) { rtn checkCall(e) }
         if (e.kind == NodeKind.INDEX) {
@@ -795,6 +925,7 @@ public class Checker(failure : ?CheckFailure) {
             rtn "void"
         }
         if (e.kind == NodeKind.IS) { rtn checkIs(e) }
+        if (e.kind == NodeKind.AS) { rtn checkAs(e) }
         if (e.kind == NodeKind.LAMBDA) { rtn checkLambda(e) }
         if (e.kind == NodeKind.NEW) {
             var cname = nodeProp(e, "class")
@@ -820,6 +951,17 @@ public class Checker(failure : ?CheckFailure) {
         }
         if (e.kind == NodeKind.MEMBER) { rtn checkMember(e) }
         if (e.kind == NodeKind.BINARY) { rtn checkBinary(e) }
+        if (e.kind == NodeKind.ELVIS) {
+            var lt = checkExpr(e.children[0])
+            checkExpr(e.children[1])
+            if (lt.length() > 0 && lt.charAt(0) == '?') { rtn rangeFrom(lt, 1) }
+            rtn lt
+        }
+        if (e.kind == NodeKind.FORCE) {
+            var ft = checkExpr(e.children[0])
+            if (ft.length() > 0 && ft.charAt(0) == '?') { rtn rangeFrom(ft, 1) }
+            rtn ft
+        }
         var i = 0
         while (i < e.childCount) {
             checkExpr(e.children[i])
@@ -906,6 +1048,14 @@ public class Checker(failure : ?CheckFailure) {
                     failAt("类 '" + rn + "' 里没有方法 '" + nm + "'", e)
                     rtn "void"
                 }
+                if (jdkMemberType(rn, nm).length() > 0 || isJdkClass(rn)) {
+                    var k2 = 0
+                    while (k2 < argc) {
+                        checkExpr(args!!.children[k2])
+                        k2 = k2 + 1
+                    }
+                    rtn jdkMemberType(rn, nm)
+                }
             }
         }
 
@@ -918,7 +1068,11 @@ public class Checker(failure : ?CheckFailure) {
         }
         if (failure != null) { rtn "void" }
         var mm = methOfType(recvType, nm, argc)
-        if (mm == null) { rtn recvType }
+        if (mm == null) {
+            var builtin = builtinMemberType(recvType, nm, isCall)
+            if (builtin.length() > 0) { rtn builtin }
+            rtn recvType
+        }
         if (mm!!.isPrivate && !inOwnClass(recvType)) {
             var ownerName = baseClsName(recvType)
             failAt("'" + nm + "' 是 " + ownerName + " 的 private 方法，只能在这个类内部使用。要让外面也能用，把它改成 protected 或 public", e)
@@ -1033,6 +1187,103 @@ public class Checker(failure : ?CheckFailure) {
     }
 
     // ------------------------------------------------------------ 阶段 33d：IS / lambda / 泛型推导
+
+    // `x as T` / `x ?as T`：静态类型就是目标类型（Kotlin 侧同样只看目标）
+    // 类名当值用：声明的类/接口/枚举 + 常用 JDK 类（自举链自己就在用 System/File/String）
+    // 内建成员的返回类型（string / 数组 / ArrayList），自举链编译自身要靠这些
+    fn builtinMemberType(recvType : string, nm : string, isCall : bool) -> string {
+        var t = recvType
+        if (t.length() > 0 && t.charAt(0) == '?') { t = rangeFrom(t, 1) }
+        if (t.length() > 2 && t.charAt(t.length() - 1) == ']' && t.charAt(t.length() - 2) == '[') {
+            if (!isCall && nm == "length") { rtn "int" }
+            rtn ""
+        }
+        if (t == "string") {
+            if (nm == "length" || nm == "indexOf" || nm == "lastIndexOf" || nm == "compareTo") { rtn "int" }
+            if (nm == "charAt") { rtn "char" }
+            if (nm == "substring" || nm == "trim" || nm == "toUpperCase" || nm == "toLowerCase" || nm == "replace" || nm == "toString") { rtn "string" }
+            if (nm == "contains" || nm == "startsWith" || nm == "endsWith" || nm == "isEmpty" || nm == "equals") { rtn "bool" }
+            if (nm == "split") { rtn "string[]" }
+            rtn ""
+        }
+        if (t == "ArrayList") {
+            if (nm == "size" || nm == "indexOf") { rtn "int" }
+            if (nm == "get") { rtn "Object" }
+            if (nm == "add" || nm == "set" || nm == "remove" || nm == "clear") { rtn "void" }
+            if (nm == "contains" || nm == "isEmpty") { rtn "bool" }
+            rtn ""
+        }
+        if (t == "StringBuilder") {
+            if (nm == "toString") { rtn "string" }
+            if (nm == "length") { rtn "int" }
+            rtn "StringBuilder"
+        }
+        if (t == "PrintStream") { rtn "void" }
+        rtn ""
+    }
+
+    fn isJdkClass(nm : string) -> bool {
+        if (nm == "System" || nm == "String" || nm == "Math" || nm == "File") { rtn true }
+        if (nm == "Integer" || nm == "Long" || nm == "Double" || nm == "Float" || nm == "Boolean") { rtn true }
+        if (nm == "Character" || nm == "Byte" || nm == "Short" || nm == "Object") { rtn true }
+        if (nm == "ArrayList" || nm == "HashMap" || nm == "StringBuilder" || nm == "PrintStream") { rtn true }
+        rtn false
+    }
+
+    // 自举链用到的 JDK 静态成员（只覆盖实际用到的那些，别的给 void）
+    fn jdkMemberType(recv : string, nm : string) -> string {
+        if (recv == "System") {
+            if (nm == "getProperty" || nm == "getenv") { rtn "?string" }
+            if (nm == "err" || nm == "out") { rtn "PrintStream" }
+            if (nm == "currentTimeMillis" || nm == "nanoTime") { rtn "long" }
+            rtn "void"
+        }
+        if (recv == "String") {
+            if (nm == "valueOf" || nm == "format") { rtn "string" }
+            rtn "void"
+        }
+        if (recv == "Integer") {
+            if (nm == "parseInt") { rtn "int" }
+            if (nm == "toString" || nm == "toHexString") { rtn "string" }
+            if (nm == "valueOf") { rtn "Integer" }
+            rtn "void"
+        }
+        if (recv == "Long") {
+            if (nm == "parseLong") { rtn "long" }
+            if (nm == "toString") { rtn "string" }
+            rtn "void"
+        }
+        if (recv == "Math") {
+            if (nm == "abs") { rtn "int" }
+            rtn "double"
+        }
+        if (recv == "File") {
+            if (nm == "mkdirs" || nm == "exists" || nm == "isFile" || nm == "isDirectory" || nm == "delete") { rtn "bool" }
+            if (nm == "getPath" || nm == "getAbsolutePath" || nm == "getName") { rtn "string" }
+            rtn "void"
+        }
+        if (recv == "PrintStream") { rtn "void" }
+        if (recv == "StringBuilder") {
+            if (nm == "toString") { rtn "string" }
+            rtn "StringBuilder"
+        }
+        rtn ""
+    }
+
+    fn isClassNameRef(nm : string) -> bool {
+        if (findCls(nm) != null || enumNamesOf(nm)) { rtn true }
+        if (nm == "System" || nm == "String" || nm == "Math" || nm == "Integer" || nm == "Long") { rtn true }
+        if (nm == "Double" || nm == "Float" || nm == "Boolean" || nm == "Character" || nm == "Byte" || nm == "Short") { rtn true }
+        if (nm == "File" || nm == "ArrayList" || nm == "HashMap" || nm == "StringBuilder" || nm == "Object") { rtn true }
+        rtn false
+    }
+
+    fn checkAs(e : Node) -> string {
+        checkExpr(e.children[0])
+        var tgt = childNodeOf(e, NodeKind.TARGET)
+        if (tgt == null) { rtn "void" }
+        rtn nodeProp(tgt!!, "type")
+    }
 
     fn checkIs(e : Node) -> string {
         var tgt = childNodeOf(e, NodeKind.TARGET)
@@ -1288,6 +1539,16 @@ public fn checkSourceFull(text : string) -> Checker {
     var c = new Checker(null)
     if (ast.kind == NodeKind.ERROR) { rtn c }
     c.check(ast)
+    rtn c
+}
+
+// 只算「不可达代码」警告，不跑类型检查（`build`/`run` 驱动用）
+public fn warningsOnly(text : string) -> Checker {
+    var ast = parseSource(text)
+    var c = new Checker(null)
+    if (ast.kind == NodeKind.ERROR) { rtn c }
+    c.warnOnly = true
+    c.flowAll(ast)
     rtn c
 }
 

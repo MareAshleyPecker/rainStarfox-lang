@@ -5,6 +5,7 @@
 
 import "Interp.rsf"
 import "Sources.rsf"
+import "Warn.rsf"
 
 import java.lang.System
 
@@ -16,6 +17,16 @@ fn pickRunFile() -> string {
         rtn ""
     }
     rtn given!!
+}
+
+fn baseNameOfPath(path : string) -> string {
+    var i = path.length() - 1
+    while (i >= 0) {
+        var c = path.charAt(i)
+        if (c == '/' || c == '\\') { rtn path.substring(i + 1, path.length()) }
+        i = i - 1
+    }
+    rtn path
 }
 
 fn main() -> void {
@@ -39,6 +50,8 @@ fn main() -> void {
         System.exit(1)
         rtn
     }
+    var ws = new WarnSink()
+    ws.printWarnings(ast, path)
     try {
         runProgram(ast)!!
     } catch (e : string) {

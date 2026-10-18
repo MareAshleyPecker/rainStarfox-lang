@@ -1,0 +1,150 @@
+// 阶段 39：不可达代码告警（只做控制流，不做类型检查）
+//
+// 单独成一个模块，是为了让 `RsfcBuild` / `RsfcRun` 不必 import `Checker.rsf`
+// （导入 Checker 会把它依赖的一整串模块拉进来，自举闭环 A≡B≡C 会变脆）。
+//
+// 口径与 Kotlin `Checker` 的 `warnDead` 完全一致：
+//   [rsf] 警告: <basename>:<line>: 不可达代码（永远执行不到）
+import "Parser.rsf"
+
+// 模块级状态必须放在类里（rsf 不允许顶层 var）
+public class WarnSink {
+
+        var fileName : string = ""
+        var count : int = 0
+
+    fn warnAt(line : int) -> void {
+        System.err.println("[rsf] 警告: " + fileName + ":" + ("" + line) + ": 不可达代码（永远执行不到）")
+        count = count + 1
+    }
+
+    fn stmtEndsFlow(st : Node) -> bool {
+        if (st.kind == NodeKind.RETURN || st.kind == NodeKind.FAIL) { rtn true }
+        if (st.kind == NodeKind.BREAK || st.kind == NodeKind.CONTINUE || st.kind == NodeKind.GOTO) { rtn true }
+        if (st.kind == NodeKind.BLOCK) { rtn blockEndsFlow(st) }
+        if (st.kind == NodeKind.IF) {
+            if (st.childCount < 3) { rtn false }
+            var tb = st.children[1]
+            var eb = st.children[2]
+            if (tb.kind != NodeKind.BLOCK || eb.kind != NodeKind.BLOCK) { rtn false }
+            rtn blockEndsFlow(tb) && blockEndsFlow(eb)
+        }
+        if (st.kind == NodeKind.WHILE) {
+            var cond = st.children[0]
+            if (cond.kind == NodeKind.BOOL_LIT && cond.text.indexOf("value=true") >= 0) {
+                if (st.childCount > 1 && !bodyHasBreak(st.children[1], false)) { rtn true }
+            }
+        }
+        if (st.kind == NodeKind.TRY) {
+            var body = st.children[0]
+            if (body.kind == NodeKind.BLOCK) { rtn blockEndsFlow(body) }
+        }
+        rtn false
+    }
+
+    fn bodyHasBreak(n : Node, nested : bool) -> bool {
+        if (n.kind == NodeKind.BREAK && !nested) { rtn true }
+        var i = 0
+        while (i < n.childCount) {
+            var ch = n.children[i]
+            var deep = nested
+            if (ch.kind == NodeKind.WHILE || ch.kind == NodeKind.FOR) { deep = true }
+            if (bodyHasBreak(ch, deep)) { rtn true }
+            i = i + 1
+        }
+        rtn false
+    }
+
+    fn blockEndsFlow(b : Node) -> bool {
+        if (b.childCount == 0) { rtn false }
+        rtn stmtEndsFlow(b.children[b.childCount - 1])
+    }
+
+    fn isStmtNode(n : Node) -> bool {
+        if (n.kind == NodeKind.BLOCK || n.kind == NodeKind.IF || n.kind == NodeKind.WHILE || n.kind == NodeKind.FOR || n.kind == NodeKind.TRY) { rtn true }
+        if (n.kind == NodeKind.RETURN || n.kind == NodeKind.VAR_DECL || n.kind == NodeKind.EXPR_STMT || n.kind == NodeKind.ASSIGN) { rtn true }
+        if (n.kind == NodeKind.BREAK || n.kind == NodeKind.CONTINUE || n.kind == NodeKind.GOTO || n.kind == NodeKind.LABEL) { rtn true }
+        if (n.kind == NodeKind.FAIL) { rtn true }
+        rtn false
+    }
+
+    fn warnDead(n : Node) -> void {
+        if (n.kind != NodeKind.LABEL && n.kind != NodeKind.GOTO && n.kind != NodeKind.BLOCK && n.line > 0) {
+            warnAt(n.line)
+        }
+        var i = 0
+        while (i < n.childCount) {
+            var ch = n.children[i]
+            if (isStmtNode(ch)) { warnDead(ch) }
+            i = i + 1
+        }
+    }
+
+    fn flowBlock(block : Node) -> void {
+        var dead = false
+        var i = 0
+        while (i < block.childCount) {
+            var stmt = block.children[i]
+            if (dead) { warnDead(stmt) }
+            else {
+                flowNested(stmt)
+                if (stmtEndsFlow(stmt)) { dead = true }
+            }
+            i = i + 1
+        }
+    }
+
+    fn flowNested(stmt : Node) -> void {
+        if (stmt.kind == NodeKind.BLOCK) { flowBlock(stmt) }
+        if (stmt.kind == NodeKind.TRY) {
+            var j = 0
+            while (j < stmt.childCount) {
+                var ch = stmt.children[j]
+                if (ch.kind == NodeKind.BLOCK) { flowBlock(ch) }
+                j = j + 1
+            }
+        }
+        if (stmt.kind == NodeKind.IF || stmt.kind == NodeKind.WHILE || stmt.kind == NodeKind.FOR) {
+            var k = 0
+            while (k < stmt.childCount) {
+                var ch2 = stmt.children[k]
+                if (ch2.kind == NodeKind.BLOCK) { flowBlock(ch2) }
+                k = k + 1
+            }
+        }
+    }
+
+    fn tailName(p : string) -> string {
+        var i = p.length() - 1
+        while (i >= 0) {
+            var c = p.charAt(i)
+            if (c == '/') { rtn p.substring(i + 1, p.length()) }
+            i = i - 1
+        }
+        rtn p
+    }
+
+    // 入口：遍历全程序的函数体，把不可达代码告警打到 stderr
+    public fn printWarnings(prg : Node, given : string) -> void {
+        fileName = tailName(given)
+        var funcs = warnChildOfKind(prg, NodeKind.FUNCS)
+        if (funcs == null) { rtn }
+        var i = 0
+        while (i < funcs!!.childCount) {
+            var fnode = funcs!!.children[i]
+            var body = warnChildOfKind(fnode, NodeKind.BLOCK)
+            if (body != null) { flowBlock(body!!) }
+            i = i + 1
+        }
+    }
+
+    fn warnChildOfKind(n : Node, kind : NodeKind) -> ?Node {
+        var i = 0
+        while (i < n.childCount) {
+            if (n.children[i].kind == kind) { rtn n.children[i] }
+            i = i + 1
+        }
+        rtn null
+    }
+
+}
