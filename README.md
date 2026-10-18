@@ -76,32 +76,9 @@ bad.rsf:2:5: error[checker]: 返回类型不匹配：'helper' 声明返回 int�
     |     ^
 ```
 
-`rsfSrc/lang/multifile/` 演示**三种 import 语法同时用在一个程序里**（源文件 / JVM 类 / 目录）。
-
-⚠️ 它**不能直接跑**：`main.rsf` 里那句 `import multifile.rsf` 指向的是旁边的
-`rsf.java`，而**Java 源文件不参与 rsf 编译**——rsf 只从 classpath 上读 `.class` 的签名。
-所以要先手工编一次，把输出目录挂到 classpath 上：
-
-```bat
-:: ① 手工编那个 Java 类（rsf 不管 .java）
-javac -encoding UTF-8 -d build\java-multifile rsfSrc\lang\multifile\rsf.java
-
-:: ② 再跑 rsf 程序（build.gradle 已经把 build\java-multifile 加进 run 的 classpath）
-gradlew run --args="run rsfSrc/lang/multifile/main.rsf"
-
-:: 或者不用 Gradle：把那个目录直接加进 -cp（-jar 会忽略 -cp，所以要写主类名）
-gradlew jar
-java -cp "build\libs\rainStarfox-0.9.0.jar;build\java-multifile" org.example.MainKt run rsfSrc/lang/multifile/main.rsf
-```
-
-`gradlew clean` 会把 `build/java-multifile/` 一起删掉，之后重跑第 ① 步就行。
-忘了 ① 的话报错会说清楚这件事：
-
-```
-main.rsf:17:1: error[checker]: classpath 上找不到 JVM 类 'multifile.rsf'：点分路径按 JVM 的类名解析
-（`a.b.C` 要能对应上 classpath 里的 a/b/C.class）。如果它是个 Java/Kotlin 写的伴生类，
-那它**不参与 rsf 编译**——先用 `javac -d <目录> X.java` 编出来，再把 <目录> 挂到 classpath 上…
-```
+三种 import 语法（源文件 / JVM 类 / 目录）可以同时用在一个程序里：`import "x.rsf"`、
+`import a.b.C`、`module "目录"`。Java 源文件**不参与 rsf 编译**——rsf 只从 classpath 上读
+`.class` 的签名，所以跨语言那一步要先用 `javac` 编好，再把输出目录挂到 classpath 上。
 
 ### 与 Java / Kotlin 互调用
 
@@ -146,19 +123,8 @@ System.out.println(rsflib.fact(5));
 IDEA 里不用手动配类路径：插件编译后会把 `<项目>/out` 挂成 `rsf-classes` 库，
 Java 侧写 `rsflib.greet(...)` 就不会飘红（javac 本来就编得过，红只是 IDE 索引看不见）。
 
-`rsfSrc/lang/interop/` 里有完整的双向例子（`UseRsf.java` 是**普通 Java 类**，
-放在默认包里——因为 `rsflib.rsf` 没有 `pkg`，编出来的 `rsflib` 也在默认包，
-Java 侧直接按类名调即可，**不需要 `import`**）：
-
-```bat
-:: rsf → Java
-gradlew run --args="run rsfSrc/lang/interop/usejava.rsf"
-
-:: Java → rsf（先编 rsf，再用 javac 编 Java 侧）
-gradlew run --args="build rsfSrc/lang/interop/rsflib.rsf -o out"
-javac -encoding UTF-8 -d out -cp out rsfSrc/lang/interop/UseRsf.java
-java -cp out UseRsf
-```
+双向互调的写法：rsf 调 Java 直接 `import java.lang.Math` / `Math.max(3, 7)`；Java 调 rsf
+先 `rsf build rsflib.rsf -o out`，再用 `javac -cp out` 编 Java 侧（默认包下不用 `import`）。
 
 ### 泛型（`&<...>`）
 
@@ -1788,7 +1754,7 @@ A 编自己得（B），B 再编自己得（C），**B 与 C 的输出 126 个 `
 `sqrt|floor|ceil|pow|round` + 静态字段 `PI|E`、`String.valueOf`（按实参选重载）、
 `Integer.toHexString|toBinaryString|toOctalString`、`java/util/HashMap` 的
 `put|get|remove|containsKey|containsValue|size|isEmpty|clear` —— 判据是
-`interop/usejava.rsf` 与 `HashMap` 探针的 Kotlin 产物 vs 自举产物 `diff -r` 均为 0
+Java 互调示例与 `HashMap` 探针的 Kotlin 产物 vs 自举产物 `diff -r` 均为 0
 （`bash build/verify21/bootparity/backend-sweep.sh`）；表外成员仍显式报错，自举源自身也没有接口风格 /
 注解风格）；③ **阶段 25 的类继承已整条同步到自举链**（五刀：K5a `14a6b0a` 词法+解析 → K5a-fix `1ca8abd`
 类头修饰词顺序 → K5b `69916ab` 字节码后端 → K5c `45201d7` 解释器 → K5d 收口：新增

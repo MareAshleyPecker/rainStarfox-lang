@@ -1,8 +1,0 @@
-// 同一个目录下可以有多个 .rsf，各自提供函数
-fn add(a : int, b : int) -> int {
-    rtn a + b
-}
-
-fn square(n : int) -> int {
-    rtn n * n
-}

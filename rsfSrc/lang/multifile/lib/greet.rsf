@@ -1,4 +1,0 @@
-// 被 import "lib/greet.rsf" 引入
-fn greet(who : string) -> string {
-    rtn "hello, " + who
-}

@@ -34,22 +34,6 @@ application {
     mainClass = 'org.example.MainKt'
 }
 
-// ---------------------------------------------------------------------------
-// rsfSrc/lang/multifile/rsf.java —— Java 源文件**不参与 rsf 编译**
-//
-// 那个多文件示例 import 了一个 Java 写的类（`import multifile.rsf`），而 rsf 编译器
-// 只从 classpath 上读 .class 的签名。所以要先手工编一次：
-//
-//   javac -encoding UTF-8 -d build\java-multifile rsfSrc\lang\multifile\rsf.java
-//
-// 再把输出目录挂到 run 的 classpath 上（就是下面这行），这样 README 里那条
-// `gradlew run --args="run rsfSrc/lang/multifile/main.rsf"` 才找得到那个类。
-// 目录不存在时 Gradle 直接忽略，不影响别的例子。
-// ---------------------------------------------------------------------------
-tasks.named('run', JavaExec) {
-    classpath += files(layout.buildDirectory.dir('java-multifile'))
-}
-
 test {
     useJUnitPlatform()
     // rsfSrc 下的 .rsf **是被测试的输入**，不是无关的素材：
