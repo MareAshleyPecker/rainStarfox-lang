@@ -1,5 +1,7 @@
 # rainStarfox (rsf)
 
+> **本语言仅做玩具**：真要用请换别的语言。
+
 一个自制玩具语言。用 **Kotlin** 写的编译器，跑在 **JVM** 上；同一份前端后面挂了三个出口：
 
 - **解释执行** —— `rsf run xxx.rsf`，不落地任何 `.class`
@@ -918,7 +920,7 @@ fn main() -> void {
 }
 ```
 
-几条定死的规矩（设计见 `DESIGN-20.md`，D1–D10 是用户批准过的口径）：
+几条定死的规矩（D1–D10 是用户批准过的口径）：
 
 - **接口里只能写方法**（D3）：写字段/变量直接报「接口里只能写方法…」。接口也**不发字段、不发 `<init>`**，
   类文件里是 `ACC_INTERFACE | ACC_ABSTRACT` 的接口，抽象方法没有 `Code`。
@@ -984,7 +986,7 @@ fn main() -> void {
 }
 ```
 
-几条定死的规矩（设计见 `DESIGN-25.md`，默认值在阶段 27 按 `DESIGN-27.md` 反转）：
+几条定死的规矩（默认值在阶段 27 反转）：
 
 - **默认开放，`final` 封口**：类不写 `final` 就能当父类，方法不写 `final` 就能被子类覆盖；
   `final class` 不能再被继承、`final fn` 不能再被覆盖（`override final fn` 把一条覆盖链就地封住）。
@@ -1028,7 +1030,7 @@ fn main() -> void {
 - 手写预案里「元素 + 伴生实体」两半：元素是名字后的圆括号参数表、可带默认值；行为写进 `companion entity`。
 - 伴生实体可具名（`Marker::Impl`）也可匿名（`Marker$companion`）；**继承本阶段只收接口**，不能继承类。
 - 一个地方同一个注解只能标一次；没有默认值的元素必须给值。
-- 注解接口带 `@Retention(RUNTIME)`、伴生类带 `annotationType()`；解释器与字节码两条路输出逐字节一致（设计见 `DESIGN-21.md`）。
+- 注解接口带 `@Retention(RUNTIME)`、伴生类带 `annotationType()`；解释器与字节码两条路输出逐字节一致。
 - 已知边界：枚举元素的默认值还不支持；rsf 枚举不是 `java.lang.Enum`，用 Java 反射读枚举元素会 `AnnotationTypeMismatchException`。
 
 ### 内置函数
@@ -1309,7 +1311,7 @@ out\hello.exe
   **类**（字段 / 实例方法与 `stc` 静态方法 / 主构造与次构造 / `new`）、**指针**（`T*` / `&x` / `*p` / `*p = v`）、顶层函数（不重载）、
   `if`/`while`/`for`、递归、`print`/`println`、字符串 `+` 与 `==`；
   枚举（含 `switch`）与指针已接；接口 / 类继承 / 泛型 / 多维数组 / 浮点 / 错误返回还没接，遇到会报 `error[native]`。
-- 指针（`&` / `*`）留在这条线上做，见 `DESIGN-23.md` 与 `DESIGN-52.md`。
+- 指针（`&` / `*`）留在这条线上做。
 
 ### REPL 的会话模型
 
@@ -1462,7 +1464,7 @@ gradlew.bat verifyPlugin          :: 官方校验器静态检查
   类 / 接口 / 注解声明 / 方法 / 字段（参数、局部变量、枚举声明都不行）；不做元注解 / `@Repeatable` /
   内建 `@Deprecated`；伴生实体只继承接口，注解也不能当父类型；`rsfSrc/**` 的注解**只到语法层**（自举链能解析、与 Kotlin 版 AST 逐字节一致，但忽略其语义）
 - **类型转换与类型判断**：`(byte) x` 那类窄化仍只能走内置函数；计划里的 `as` / `?as` / `is` / `!is`
-  （`DESIGN-24.md`）还没实现
+  还没实现
 - **类继承（阶段 25）**：不做多继承 / `sealed` / `data` / `super.字段`；继承 JDK 类时有四条已知限制——
   ① **不能覆盖 JDK 父类的方法**（解释器把 JDK 父类对象建成真实 JVM 实例，rsf 的 `override` 落不到它身上，
   所以这种源码在**编译期**就被拒，而不是留到运行期两端分叉）；② **JDK 父类的字段不能写**（只有读的那条路接了实例）；
@@ -1515,8 +1517,8 @@ gradlew.bat verifyPlugin          :: 官方校验器静态检查
 | 29 | **关键字改名**：`fun` → `fn`（硬删 + 统一改名声，词法表仍 56 项、`TokenKind` 仍 `KW_FUN`） | ✅ 2026-10-18（`017a2cb`；判据 `build/verify29/` 旧词负例 + 全部探针台回归；564 tests） |
 | 30 | **函数类型与 `lam`**：`(int, string) -> bool` / `?(int) -> int`，字面量 `lam(x : int) -> int { … }`，值捕获只许 `imutvar`/形参/`this`；JVM 走按 arity 生成的 `__RsfFn<n>` SAM 接口 + `LambdaMetafactory` | ✅ 2026-10-18（30a `d2d124e` 前端 / 30b `822e600` Kotlin 两端 / 30c `f54dcf8` 自举链；判据 `build/verify30/` 6 正例 + 5 负例 + 两端 class 逐字节零差异；581 tests；关键字 56→57） |
 | 31 | **泛型函数**（v1）：`fn id&<T>(x : T) -> T`，调用点按实参推导、JVM 擦成 `Object`；泛型方法不能 `override`/`abstract`、构造器不能泛型、`T[]` 只接引用元素数组 | ✅ 2026-10-18（31a `3317a0b` 前端+语义 / 31b `5700962` Kotlin 两端 / 31c `cf252e2` 自举链；判据 `build/verify31/`：6 正例 + 6 负例 + 两端 6 份 class 逐字节零差异；604 tests） |
-| 23 | 显式指针（`&` 取地址 / `*` 解引用，C 风格） | ✅ 2026-10-19 解释器与 C 后端已接（`DESIGN-53.md`）；JVM 字节码后端显式拒绝 |
-| 52 | **C 后端（native 线第一刀）**：`rsf build --c` 出单文件 C99，gcc 编成原生 exe | ✅ 2026-10-18（`DESIGN-52.md`；判据 `build/verify52/` 9 份语料 stdout 逐字节相同；已含类、枚举与指针，多维数组/浮点待接） |
+| 23 | 显式指针（`&` 取地址 / `*` 解引用，C 风格） | ✅ 2026-10-19 解释器与 C 后端已接；JVM 字节码后端显式拒绝 |
+| 52 | **C 后端（native 线第一刀）**：`rsf build --c` 出单文件 C99，gcc 编成原生 exe | ✅ 2026-10-18（判据 `build/verify52/` 9 份语料 stdout 逐字节相同；已含类、枚举与指针，多维数组/浮点待接） |
 | 24 | 类型转换与类型判断（`as` / `?as` / `is` / `!is`） | ✅ 2026-10-18（24a `076aeee` / 24b `5b5d7aa` / 24c `707cbe3` / 24d `51bd707`；判据 `build/verify24/`：9 正例 + 8 负例 + 自举解释器对拍 14 份） |
 
 ### 19c：为 17b 补的三样（enum / switch / `&&` `||`）

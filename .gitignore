@@ -186,3 +186,7 @@ bin/
 !/dist/termux/rsf
 !/dist/termux/install.sh
 !/dist/termux/README.md
+
+### 阶段设计文档与语法预案不上传（2026-10-19 用户要求）###
+DESIGN-*.md
+/rsfSrc/语法预案/
