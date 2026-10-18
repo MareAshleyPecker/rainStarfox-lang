@@ -462,6 +462,8 @@ class Cli {
             |  rsf build <file.rsf> [-o <dir>] [-n 类名]    编译成 .class（默认输出到 out/）
             |  rsf check <file.rsf>                        只做词法/语法/类型检查
             |  rsf lex   <file.rsf>                        打印 token 流
+            |  rsf complete <file.rsf> --line L --col C   补全候选（编辑器用，也可自己看）
+            |  rsf lsp                                     语言服务器（stdio 上的 LSP）
             |  rsf repl                                    交互式解释器（不带参数也是）
             |  rsf help | version
             |
