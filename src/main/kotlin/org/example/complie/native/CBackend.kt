@@ -9,6 +9,7 @@ import org.example.complie.ast.CallExpr
 import org.example.complie.ast.CharLit
 import org.example.complie.ast.ClassDecl
 import org.example.complie.ast.ContinueStmt
+import org.example.complie.ast.EnumDecl
 import org.example.complie.ast.Expr
 import org.example.complie.ast.ExprStmt
 import org.example.complie.ast.ForStmt
@@ -26,6 +27,7 @@ import org.example.complie.ast.NewExpr
 import org.example.complie.ast.ReturnStmt
 import org.example.complie.ast.Stmt
 import org.example.complie.ast.StringLit
+import org.example.complie.ast.SwitchStmt
 import org.example.complie.ast.ThisExpr
 import org.example.complie.ast.TypeRef
 import org.example.complie.ast.UnaryExpr
@@ -70,6 +72,7 @@ class CBackend(private val model: SemanticModel) {
         nameEverything()
         val sb = StringBuilder()
         sb.append(RUNTIME)
+        for (e in model.enums.values) sb.append(enumBlock(e))
         for (cls in classes.values) sb.append(struct(cls))
         for (fn in model.functions.sortedBy { it.name }) sb.append(protoTop(fn)).append(";\n")
         for (cls in classes.values) {
@@ -115,7 +118,6 @@ class CBackend(private val model: SemanticModel) {
     // ------------------------------------------------------------------ 前置检查
 
     private fun checkProgram() {
-        if (model.enums.isNotEmpty()) fail("枚举")
         if (model.interfaces.isNotEmpty()) fail("接口")
         if (model.annotations.isNotEmpty()) fail("注解")
         if (model.superClasses.isNotEmpty()) fail("类继承")
@@ -161,7 +163,21 @@ class CBackend(private val model: SemanticModel) {
     private fun classPointer(type: RsfType): String {
         val name = type.externalName ?: fail("外部类型")
         if (classes.containsKey(name)) return "rsf_cls_$name*"
+        if (model.enums.containsKey(name)) return "rsf_enum_$name"
         fail("JVM 类型（$name）")
+    }
+
+    /** 枚举就是 int 常量：typedef int32_t rsf_enum_Color; 加一列 rsf_val_Color_Red = 0。 */
+    private fun enumBlock(decl: EnumDecl): String {
+        val sb = StringBuilder()
+        sb.append("typedef int32_t rsf_enum_${decl.name};").append(NL)
+        sb.append("enum {")
+        decl.values.forEachIndexed { i, v ->
+            if (i > 0) sb.append(", ")
+            sb.append("rsf_val_${decl.name}_${v.name} = ").append(i)
+        }
+        sb.append("};").append(NL).append(NL)
+        return sb.toString()
     }
 
     private fun elemCType(type: RsfType): String = when (type.base) {
@@ -315,6 +331,7 @@ class CBackend(private val model: SemanticModel) {
             sb.append(pad(indent)).append("}\n")
             sb.toString()
         }
+        is SwitchStmt -> switchStmt(s, indent)
         is ForStmt -> forStmt(s, indent)
         is BreakStmt -> pad(indent) + "break;\n"
         is ContinueStmt -> pad(indent) + "continue;\n"
@@ -347,6 +364,25 @@ class CBackend(private val model: SemanticModel) {
     }
 
     // ------------------------------------------------------------------ 表达式
+
+    /** `switch` 只认枚举分派、没有 fallthrough ⇒ 摊成 if / else if 链。 */
+    private fun switchStmt(s: SwitchStmt, indent: Int): String {
+        val sb = StringBuilder()
+        s.cases.forEachIndexed { i, c ->
+            sb.append(pad(indent)).append(if (i == 0) "if" else "else if").append(" (")
+                .append(expr(s.subject)).append(" == rsf_val_").append(c.enumName).append('_').append(c.valueName)
+                .append(") {\n")
+            for (inner in c.body.statements) sb.append(stmt(inner, indent + 1))
+            sb.append(pad(indent)).append("}\n")
+        }
+        val elseBody = s.elseBody
+        if (elseBody != null) {
+            sb.append(pad(indent)).append("else {\n")
+            for (inner in elseBody.statements) sb.append(stmt(inner, indent + 1))
+            sb.append(pad(indent)).append("}\n")
+        }
+        return sb.toString()
+    }
 
     private fun expr(e: Expr): String = when (e) {
         is IntLit -> e.value.toString()
@@ -386,6 +422,8 @@ class CBackend(private val model: SemanticModel) {
 
     private fun member(e: MemberExpr): String {
         if (e.name == "length" && e.arguments == null) return "(${expr(e.receiver)}.len)"
+        val enumValue = model.enumValues[e]
+        if (enumValue != null) return "rsf_val_${enumValue.enumName}_${enumValue.valueName}"
         val receiver = expr(e.receiver)
         return when (val resolved = model.classModel.members[e]) {
             is UserMember.Field -> "$receiver->${e.name}"
@@ -404,7 +442,8 @@ class CBackend(private val model: SemanticModel) {
 
     private fun newArray(e: NewArrayExpr): String {
         if (e.dimensions.size != 1) fail("多维数组")
-        val type = RsfType(baseOf(e.elementType), arrayDepth = 0)
+        val base = baseOf(e.elementType)
+        val type = if (base == RsfBase.EXTERNAL) RsfType(base, externalName = e.elementType.name) else RsfType(base)
         val elemSize = elemCType(type)
         return "rsf_arr_new(${expr(e.dimensions[0])}, (int64_t)sizeof($elemSize))"
     }
@@ -416,7 +455,10 @@ class CBackend(private val model: SemanticModel) {
         "string" -> RsfBase.STRING
         "char" -> RsfBase.CHAR
         "byte" -> RsfBase.BYTE
-        else -> if (classes.containsKey(ref.name)) RsfBase.EXTERNAL else fail("数组元素类型 '${ref.name}'")
+        else -> {
+            if (classes.containsKey(ref.name) || model.enums.containsKey(ref.name)) RsfBase.EXTERNAL
+            else fail("数组元素类型 '${ref.name}'")
+        }
     }
 
     private fun unary(e: UnaryExpr): String {

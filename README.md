@@ -1302,7 +1302,8 @@ out\hello.exe
 - v1 只收 int / long / bool / string、**一维数组**（`new T[n]` / `a[i]` / `a.length` / for-each）、
   **类**（字段 / 实例方法与 `stc` 静态方法 / 主构造与次构造 / `new`）、顶层函数（不重载）、
   `if`/`while`/`for`、递归、`print`/`println`、字符串 `+` 与 `==`；
-  枚举 / 接口 / 类继承 / 泛型 / 多维数组 / 浮点 / 错误返回都还没接，遇到会报 `error[native]`。
+  枚举（含 `switch`）/ 接口 / 类继承 / 泛型 / 多维数组 / 浮点 / 错误返回里，
+  **枚举已接**，其余还没接，遇到会报 `error[native]`。
 - 指针（`&` / `*`）留在这条线上做，见 `DESIGN-23.md` 与 `DESIGN-52.md`。
 
 ### REPL 的会话模型
@@ -1510,7 +1511,7 @@ gradlew.bat verifyPlugin          :: 官方校验器静态检查
 | 30 | **函数类型与 `lam`**：`(int, string) -> bool` / `?(int) -> int`，字面量 `lam(x : int) -> int { … }`，值捕获只许 `imutvar`/形参/`this`；JVM 走按 arity 生成的 `__RsfFn<n>` SAM 接口 + `LambdaMetafactory` | ✅ 2026-10-18（30a `d2d124e` 前端 / 30b `822e600` Kotlin 两端 / 30c `f54dcf8` 自举链；判据 `build/verify30/` 6 正例 + 5 负例 + 两端 class 逐字节零差异；581 tests；关键字 56→57） |
 | 31 | **泛型函数**（v1）：`fn id&<T>(x : T) -> T`，调用点按实参推导、JVM 擦成 `Object`；泛型方法不能 `override`/`abstract`、构造器不能泛型、`T[]` 只接引用元素数组 | ✅ 2026-10-18（31a `3317a0b` 前端+语义 / 31b `5700962` Kotlin 两端 / 31c `cf252e2` 自举链；判据 `build/verify31/`：6 正例 + 6 负例 + 两端 6 份 class 逐字节零差异；604 tests） |
 | 23 | 显式指针（`&` 取地址 / `*` 解引用，C 风格） | ⏸ 2026-10-18 用户定：JVM 上不实现，整体移交 native（`DESIGN-23.md`） |
-| 52 | **C 后端（native 线第一刀）**：`rsf build --c` 出单文件 C99，gcc 编成原生 exe | ✅ 2026-10-18（`DESIGN-52.md`；判据 `build/verify52/` 7 份语料 stdout 逐字节相同；已含类，多维数组/浮点/指针待接） |
+| 52 | **C 后端（native 线第一刀）**：`rsf build --c` 出单文件 C99，gcc 编成原生 exe | ✅ 2026-10-18（`DESIGN-52.md`；判据 `build/verify52/` 8 份语料 stdout 逐字节相同；已含类与枚举，多维数组/浮点/指针待接） |
 | 24 | 类型转换与类型判断（`as` / `?as` / `is` / `!is`） | ✅ 2026-10-18（24a `076aeee` / 24b `5b5d7aa` / 24c `707cbe3` / 24d `51bd707`；判据 `build/verify24/`：9 正例 + 8 负例 + 自举解释器对拍 14 份） |
 
 ### 19c：为 17b 补的三样（enum / switch / `&&` `||`）

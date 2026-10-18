@@ -77,7 +77,9 @@ class CBackendTest {
         val error = assertThrows<RsfError> {
             emit(
                 """
-                enum Color { Red, Green }
+                interface Greeter {
+                    fn greet() -> string
+                }
 
                 fn main() -> void {
                     rtn
