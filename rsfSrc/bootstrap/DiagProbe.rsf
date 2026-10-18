@@ -1,0 +1,35 @@
+// rainStarfox 阶段 32b：诊断渲染对拍探针（自举侧）
+//
+// 与 Kotlin 侧 `src/test/kotlin/org/example/DiagProbe.kt` 逐字节对应。
+// 跑：rsf build rsfSrc/bootstrap/DiagProbe.rsf -o build/verify32/diagout
+//     java -Dstdout.encoding=UTF-8 -cp build/verify32/diagout DiagProbe
+
+import "Diag.rsf"
+
+fn main() -> void {
+    var lf = "fn main() {\n    var x : int = \n}\n"
+    var crlf = "a\r\nb\r\nc"
+    var noTail = "one line no trailing newline"
+    var tab = "tab\there\nx"
+
+    println("### case 1")
+    println(diagAt("demo.rsf", "checker", "不能把 string 赋给 int 变量 'x'", 2, 9).render(lf))
+    println("### case 2")
+    println(diagAt("demo.rsf", "parser", "这里需要一个表达式", 3, 1).render(lf))
+    println("### case 3")
+    println(diagAt("demo.rsf", "checker", "没有位置", 0, 0).render(lf))
+    println("### case 4")
+    println(diagAt("demo.rsf", "checker", "只有行号", 2, 0).render(lf))
+    println("### case 5")
+    println(diagAt("demo.rsf", "checker", "行号越界", 9, 1).render(lf))
+    println("### case 6")
+    println(diagAt("crlf.rsf", "checker", "CRLF 源", 2, 1).render(crlf))
+    println("### case 7")
+    println(diagAt("crlf.rsf", "checker", "列在行尾后一格", 1, 2).render(crlf))
+    println("### case 8")
+    println(diagAt("crlf.rsf", "checker", "列超出行尾", 1, 9).render(crlf))
+    println("### case 9")
+    println(diagAt("tab.rsf", "checker", "制表符按一个宽度", 1, 5).render(tab))
+    println("### case 10")
+    println(diagAt("last.rsf", "checker", "无尾换行的最后一行", 1, 20).render(noTail))
+}

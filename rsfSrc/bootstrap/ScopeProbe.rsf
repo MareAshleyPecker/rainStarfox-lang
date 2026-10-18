@@ -1,0 +1,56 @@
+// rainStarfox 阶段 32b：符号表对拍探针（自举侧）
+//
+// 与 Kotlin 侧 `src/test/kotlin/org/example/ScopeProbe.kt` 逐字节对应。
+// 跑：rsf build rsfSrc/bootstrap/ScopeProbe.rsf -o build/verify32/scopeout
+//     java -Dstdout.encoding=UTF-8 -cp build/verify32/scopeout ScopeProbe
+
+import "Scopes.rsf"
+
+fn dec(sc : Scopes, name : string, kind : string, t : string) -> string {
+    if (sc.lookupCurrent(name) != null) { rtn "dup" }
+    sc.declare(symOf(name, kind, t, 1, 1))
+    rtn "ok"
+}
+
+fn look(sc : Scopes, name : string) -> string {
+    var s : ?Sym = sc.lookup(name)
+    if (s == null) { rtn "none" }
+    rtn s!!.text()
+}
+
+fn state(sc : Scopes) -> void {
+    println("depth=" + ("" + sc.depthNow()))
+}
+
+fn main() -> void {
+    var sc = new Scopes()
+
+    state(sc)
+    println("declare a:local:int -> " + dec(sc, "a", "local", "int"))
+    println("declare a:local:int -> " + dec(sc, "a", "local", "int"))
+    println("lookup a -> " + look(sc, "a"))
+    println("lookup b -> " + look(sc, "b"))
+
+    sc.enter()
+    state(sc)
+    println("declare b:param:string -> " + dec(sc, "b", "param", "string"))
+    println("lookup b -> " + look(sc, "b"))
+    println("lookup a -> " + look(sc, "a"))
+    println("declare a:local:long -> " + dec(sc, "a", "local", "long"))
+    println("lookup a -> " + look(sc, "a"))
+
+    sc.enter()
+    state(sc)
+    println("lookup a -> " + look(sc, "a"))
+    println("lookup b -> " + look(sc, "b"))
+
+    sc.leave()
+    state(sc)
+    println("lookup a -> " + look(sc, "a"))
+    println("lookup b -> " + look(sc, "b"))
+
+    sc.leave()
+    state(sc)
+    println("lookup a -> " + look(sc, "a"))
+    println("lookup b -> " + look(sc, "b"))
+}

@@ -1,0 +1,109 @@
+// rainStarfox 阶段 32b：符号表（`Checker.Scope` 的自举版）
+//
+// Kotlin 侧是一个 `HashMap<String, Binding>` 串父链（`src/main/kotlin/org/example/complie/sema/Checker.kt:327-340`）；
+// 自举这边没有 HashMap，用三条并排数组 + 自增游标实现同样的契约：
+//   enter/leave      进入 / 离开一层
+//   declare(sym)     往当前层声明（同层重名返回 false）
+//   lookup(name)     从内往外找最近的绑定
+//   lookupCurrent    只找当前层（判重复用）
+//
+// 判据：`build/verify32/scope-parity.sh`（Kotlin 侧 `ScopeProbe.kt` 用 map+父链当 oracle）。
+
+public class Sym(name : string, kind : string, typeText : string, line : int, column : int) {
+    var name : string = name
+    var kind : string = kind
+    var typeText : string = typeText
+    var line : int = line
+    var column : int = column
+
+    public fn text() -> string {
+        rtn name + "/" + kind + "/" + typeText
+    }
+}
+
+public class Scopes() {
+    var names : string[] = new string[4]
+    var syms : Sym[] = new Sym[4]
+    var levels : int[] = new int[4]
+    var count : int = 0
+    // 与 Kotlin `Scope(null).depth` 对齐：顶层就是 1
+    var depth : int = 1
+
+    public fn enter() -> void {
+        depth = depth + 1
+    }
+
+    // 离开一层：把这一层声明的条目从尾部丢掉（声明顺序即入栈顺序）
+    public fn leave() -> void {
+        if (depth <= 1) { rtn }
+        while (count > 0 && levels[count - 1] >= depth) {
+            count = count - 1
+        }
+        depth = depth - 1
+    }
+
+    public fn depthNow() -> int {
+        rtn depth
+    }
+
+    public fn size() -> int {
+        rtn count
+    }
+
+    public fn declare(s : Sym) -> bool {
+        if (lookupCurrent(s.name) != null) { rtn false }
+        grow()
+        names[count] = s.name
+        syms[count] = s
+        levels[count] = depth
+        count = count + 1
+        rtn true
+    }
+
+    public fn lookupCurrent(name : string) -> ?Sym {
+        var i = count - 1
+        while (i >= 0) {
+            if (levels[i] < depth) { rtn null }
+            if (names[i] == name) { rtn syms[i] }
+            i = i - 1
+        }
+        rtn null
+    }
+
+    public fn lookup(name : string) -> ?Sym {
+        var i = count - 1
+        while (i >= 0) {
+            if (names[i] == name) { rtn syms[i] }
+            i = i - 1
+        }
+        rtn null
+    }
+
+    // 第 i 条的层号（0 基），供 Checker/诊断用
+    public fn levelOf(i : int) -> int {
+        rtn levels[i]
+    }
+
+    fn grow() -> void {
+        if (count < names.length) { rtn }
+        var cap = names.length * 2
+        if (cap < 4) { cap = 4 }
+        var nn : string[] = new string[cap]
+        var ss : Sym[] = new Sym[cap]
+        var ll : int[] = new int[cap]
+        var i = 0
+        while (i < count) {
+            nn[i] = names[i]
+            ss[i] = syms[i]
+            ll[i] = levels[i]
+            i = i + 1
+        }
+        names = nn
+        syms = ss
+        levels = ll
+    }
+}
+
+public fn symOf(name : string, kind : string, typeText : string, line : int, column : int) -> Sym {
+    rtn new Sym(name, kind, typeText, line, column)
+}

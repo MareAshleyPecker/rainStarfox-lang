@@ -1,0 +1,96 @@
+// rainStarfox 阶段 32b：诊断渲染（`RsfError.render()` 的自举版）
+//
+// 与 Kotlin 侧 `src/main/kotlin/org/example/complie/diag/RsfError.kt` 的 `render()` 逐字节对应：
+//   file:line:col: error[phase]: detail
+//     <行号> | <源码这一行>
+//            | ^
+//
+// 判据：`build/verify32/diag-parity.sh`（Kotlin 侧 `DiagProbe.kt` 是 oracle）。
+
+// 取第 line 行（1 基）：按 '\n' 切，行尾的 '\r' 去掉；越界或 line <= 0 返回 null
+fn lineTextAt(text : string, line : int) -> ?string {
+    if (line <= 0) { rtn null }
+    var current = 1
+    var start = 0
+    var idx = 0
+    while (idx <= text.length()) {
+        if (idx == text.length()) {
+            if (current == line) { rtn trimCr(tailText(text, start)) }
+            rtn null
+        }
+        if (text.charAt(idx) == '\n') {
+            if (current == line) { rtn trimCr(rangeText(text, start, idx)) }
+            current = current + 1
+            start = idx + 1
+        }
+        idx = idx + 1
+    }
+    rtn null
+}
+
+fn tailText(text : string, from : int) -> string {
+    rtn rangeText(text, from, text.length())
+}
+
+fn rangeText(text : string, from : int, to : int) -> string {
+    var out = ""
+    var i = from
+    while (i < to) {
+        out = out + text.charAt(i)
+        i = i + 1
+    }
+    rtn out
+}
+
+fn trimCr(s : string) -> string {
+    if (s.length() > 0 && s.charAt(s.length() - 1) == '\r') {
+        rtn rangeText(s, 0, s.length() - 1)
+    }
+    rtn s
+}
+
+fn spaces(n : int) -> string {
+    var out = ""
+    var i = 0
+    while (i < n) {
+        out = out + " "
+        i = i + 1
+    }
+    rtn out
+}
+
+public class Diag(fileName : string, phase : string, detail : string, line : int, column : int) {
+    var fileName : string = fileName
+    var phase : string = phase
+    var detail : string = detail
+    var line : int = line
+    var column : int = column
+
+    public fn header() -> string {
+        var pos = ""
+        if (line > 0 && column > 0) {
+            pos = ":" + ("" + line) + ":" + ("" + column)
+        } else if (line > 0) {
+            pos = ":" + ("" + line)
+        }
+        rtn fileName + pos + ": error[" + phase + "]: " + detail
+    }
+
+    public fn render(text : string) -> string {
+        var head = header()
+        var row : ?string = lineTextAt(text, line)
+        if (row == null) { rtn head }
+        var src = row!!
+        var gutter = "" + line
+        var out = head + "\n" + "  " + gutter + " | " + src
+        if (column >= 1 && column <= src.length() + 1) {
+            out = out + "\n" + "  " + spaces(gutter.length()) + " | " + spaces(column - 1) + "^"
+        }
+        rtn out
+    }
+}
+
+// 便捷构造：`fail` 与 Checker（阶段 33–35）共用
+public fn diagAt(fileName : string, phase : string, detail : string, line : int, column : int) -> Diag {
+    rtn new Diag(fileName, phase, detail, line, column)
+}
