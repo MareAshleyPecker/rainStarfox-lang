@@ -1,0 +1,8 @@
+enum Color { RED, GREEN }
+fn main() {
+    var c : Color = Color.RED
+    switch (c) {
+        Color.RED : println("r")
+        else : println("other")
+    }
+}

@@ -51,6 +51,8 @@ public class Checker(failure : ?CheckFailure) {
     var curFnName : string = ""
     var loopDepth : int = 0
     var cls : ClsInfo[] = new ClsInfo[8]
+    var enums : string[] = new string[0]
+    var enumCount : int = 0
     var clsCount : int = 0
     var labels : string[] = new string[0]
     var labelCount : int = 0
@@ -291,6 +293,33 @@ public class Checker(failure : ?CheckFailure) {
             var j = 0
             while (j < isf!!.childCount) { addClass(isf!!.children[j], true); j = j + 1 }
         }
+        // 阶段 34：枚举名单独记一张表，`Color.RED` 才能当常量读
+        enums = new string[8]
+        enumCount = 0
+        var es = childNodeOf(prg, NodeKind.ENUMS)
+        if (es != null) {
+            var k = 0
+            while (k < es!!.childCount) {
+                if (enumCount >= enums.length) {
+                    var bigger = new string[enums.length * 2]
+                    var q = 0
+                    while (q < enumCount) { bigger[q] = enums[q]; q = q + 1 }
+                    enums = bigger
+                }
+                enums[enumCount] = nodeProp(es!!.children[k], "name")
+                enumCount = enumCount + 1
+                k = k + 1
+            }
+        }
+    }
+
+    fn enumNamesOf(nm : string) -> bool {
+        var i = 0
+        while (i < enumCount) {
+            if (enums[i] == nm) { rtn true }
+            i = i + 1
+        }
+        rtn false
     }
 
     fn findCls(nm : string) -> ?ClsInfo {
@@ -486,18 +515,29 @@ public class Checker(failure : ?CheckFailure) {
             var ch = stmt.children[i]
             if (ch.kind == NodeKind.BLOCK) { checkBlock(ch) }
             else if (ch.kind != NodeKind.VAR_DECL && ch.kind != NodeKind.PARAMS && ch.kind != NodeKind.CASES && ch.kind != NodeKind.ARGS && ch.kind != NodeKind.TARGET) {
-                checkExpr(ch)
+                var condType = checkExpr(ch)
+                if (failure == null && i == 0 && (stmt.kind == NodeKind.IF || stmt.kind == NodeKind.WHILE)) {
+                    if (!acceptsText(condType, "bool")) {
+                        failAt(wordOf(stmt.kind) + " 的条件必须是 bool，实际是 " + condType, ch)
+                    }
+                }
             }
             i = i + 1
         }
         if (isLoop) { loopDepth = loopDepth - 1 }
     }
 
+    fn wordOf(k : NodeKind) -> string {
+        if (k == NodeKind.IF) { rtn "if" }
+        if (k == NodeKind.WHILE) { rtn "while" }
+        rtn "for"
+    }
+
 
     fn checkReturn(stmt : Node) -> void {
         if (stmt.childCount == 0) {
             if (!curVoid) {
-                failAt("函数 '" + curFnName + "' 声明返回 " + curRetText + "）但这里 'rtn' 没给值", stmt)
+                failAt("函数 '" + curFnName + "' 声明返回 " + curRetText + "）'rtn' 后面必须跟一个 " + curRetText + " 的值", stmt)
             }
             rtn
         }
@@ -528,13 +568,20 @@ public class Checker(failure : ?CheckFailure) {
             failAt("变量不能是 void 类型", stmt)
             rtn
         }
+        if (initType == "void") {
+            failAt("void 不能作为变量的值", stmt)
+            rtn
+        }
         if (typed && !acceptsText(initType, declared)) {
             failAt("不能把 " + initType + " 赋给 " + declared + " 变量 '" + nodeProp(stmt, "name") + "'", stmt)
             rtn
         }
         var kindWord = "imutvar"
         if (nodeProp(stmt, "mutable") == "true") { kindWord = "var" }
-        scopes.declare(symOf(nodeProp(stmt, "name"), kindWord, declared, stmt.line, stmt.col))
+        // 阶段 34：没写类型的 `var x = 1` 绑到推出来的类型上（`declared` 这时是 "-"）
+        var bindingType = declared
+        if (!typed) { bindingType = initType }
+        scopes.declare(symOf(nodeProp(stmt, "name"), kindWord, bindingType, stmt.line, stmt.col))
     }
 
     fn checkAssign(stmt : Node) -> void {
@@ -542,6 +589,10 @@ public class Checker(failure : ?CheckFailure) {
         var valueType = checkExpr(stmt.children[0])
         if (sym == null) {
             failAt("未声明的变量 '" + nodeProp(stmt, "name") + "'", stmt)
+            rtn
+        }
+        if (sym!!.kind == "imutvar") {
+            failAt("变量 '" + nodeProp(stmt, "name") + "' 是 'imutvar' 声明的，不能重新赋值。想改值就把它声明成 'var'。", stmt)
             rtn
         }
         if (!acceptsText(valueType, sym!!.typeText)) {
@@ -660,10 +711,11 @@ public class Checker(failure : ?CheckFailure) {
         var args = childNodeOf(e, NodeKind.ARGS)
         if (args != null) { argc = args!!.childCount }
 
-        // `A.get()`：接收者是类名本身 ⇒ 只许调 static 方法
+        // `A.get()`：接收者是类名本身 ⇒ 只许调 static 方法；`Color.RED` 是枚举常量
         if (recv.kind == NodeKind.VAR) {
             var rn = nodeProp(recv, "name")
             if (scopes.lookup(rn) == null) {
+                if (enumNamesOf(rn)) { rtn rn }
                 var ownCls = findCls(rn)
                 if (ownCls != null) {
                     var sm = ownCls!!.ownMeth(nm, argc)
@@ -719,8 +771,21 @@ public class Checker(failure : ?CheckFailure) {
         var right = checkExpr(e.children[1])
         if (failure != null) { rtn "void" }
         var op = opText(nodeProp(e, "op"))
-        if (op == "==" || op == "!=" || op == "<" || op == ">" || op == "<=" || op == ">=") { rtn "bool" }
-        if (op == "&&" || op == "||") { rtn "bool" }
+        if (op == "==" || op == "!=") { rtn "bool" }
+        if (op == "<" || op == ">" || op == "<=" || op == ">=") {
+            if (!isNumeric(left) || !isNumeric(right)) {
+                failAt("'" + op + "' 只能比较非空数值（byte / char / int / long / float / double），实际是 " + left + " 和 " + right + "（字符串只能用 == / !=；可空值要先解包）", e)
+                rtn "void"
+            }
+            rtn "bool"
+        }
+        if (op == "&&" || op == "||") {
+            if (left != "bool" || right != "bool") {
+                failAt("运算符 '" + op + "' 需要 bool，实际是 " + left + " 和 " + right, e)
+                rtn "void"
+            }
+            rtn "bool"
+        }
         if (op == "+" && (left == "string" || right == "string")) { rtn "string" }
         if (!isNumeric(left) || !isNumeric(right)) {
             failAt("运算符 '" + op + "' 需要数值（byte / char / int / long / float / double），实际是 " + left + " 和 " + right + "（字符串拼接只支持 '+'）", e)
@@ -742,8 +807,8 @@ public class Checker(failure : ?CheckFailure) {
         if (kind == "GT") { rtn ">" }
         if (kind == "LE") { rtn "<=" }
         if (kind == "GE") { rtn ">=" }
-        if (kind == "AND") { rtn "&&" }
-        if (kind == "OR") { rtn "||" }
+        if (kind == "AND" || kind == "ANDAND") { rtn "&&" }
+        if (kind == "OR" || kind == "OROR") { rtn "||" }
         rtn kind
     }
 

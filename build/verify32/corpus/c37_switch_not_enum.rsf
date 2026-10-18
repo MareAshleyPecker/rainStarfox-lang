@@ -1,0 +1,6 @@
+fn main() {
+    var x : int = 1
+    switch (x) {
+        1 : println("one")
+    }
+}

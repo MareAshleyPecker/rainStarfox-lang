@@ -2537,7 +2537,7 @@ public class Parser(tokens : Token[]) {
                         if (oldCase) {
                             failAt(peek(), "'case' 后面需要一个枚举名（现在可以不写 'case'，直接写「枚举名.值名 : 语句」）")
                         } else {
-                            failAt(peek(), "switch 的块里只能写 '枚举名.值名 : 语句' 或者 'else : 语句'")
+                            failAt(peek(), "switch 的块里只能写 '枚举名.值名 : 语句' 或者 'else : 语句'，实际读到 " + peek().text)
                         }
                     }
                     var enumTok = expect("IDENT", "分支需要一个枚举名（写法是 枚举名.值名 : 语句）")
@@ -2757,7 +2757,7 @@ public class Parser(tokens : Token[]) {
         advance()                   // in
 
         var start = parseExpr()
-        expect("RANGE", "for-in 需要一个区间，写法是 'for (" + nameTok.text + " in 起点..终点)'。数组还不能用 for-in 遍历，按下标写：for (var i = 0; i < 数组.length; i = i + 1)")
+        expect("RANGE", "for-in 需要一个区间，写法是 'for (" + nameTok.text + " in 起点..终点)'。数组还不能用 for-in 遍历，按下标写：for (var i = 0; i < 数组.length; i = i + 1)（实际读到 '" + peek().text + "'）")
         var end = parseExpr()
 
         // step 是上下文关键字：只有出现在这里才当关键字，别处照样能叫 step
@@ -2784,9 +2784,11 @@ public class Parser(tokens : Token[]) {
         loopVar.add(start)
 
         // 条件：步长非负就 i <= 终点，否则 i >= 终点
-        var nonNegative = binaryNode("GE", varNode(stepName), intNode("0"))
-        var ascending = binaryNode("LE", varNode(nameTok.text), varNode(endName))
-        var descending = binaryNode("GE", varNode(nameTok.text), varNode(endName))
+        // 阶段 34：三个合成比较都挂 for 记号的位置——Checker 报「'<=' 只能比较…」时，
+        // Kotlin 侧报的就是 `for` 那一列，两端要一致。
+        var nonNegative = binaryNode("GE", varNode(stepName), intNode("0")).at(forTok)
+        var ascending = binaryNode("LE", varNode(nameTok.text), varNode(endName)).at(forTok)
+        var descending = binaryNode("GE", varNode(nameTok.text), varNode(endName)).at(forTok)
         var cond = new Node(NodeKind.IF_EXPR)
         cond.add(nonNegative)
         cond.add(ascending)

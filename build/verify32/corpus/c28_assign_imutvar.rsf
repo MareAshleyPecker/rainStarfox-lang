@@ -1,0 +1,4 @@
+fn main() {
+    imutvar x : int = 1
+    x = 2
+}

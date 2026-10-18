@@ -1,0 +1,8 @@
+fn f(x : int) -> int {
+    if (x > 0) {
+        rtn 1
+    }
+}
+fn main() {
+    println("" + f(1))
+}

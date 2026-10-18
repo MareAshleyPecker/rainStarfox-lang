@@ -1,0 +1,8 @@
+fn f() -> int {
+    while (true) {
+        rtn
+    }
+}
+fn main() {
+    println("" + f())
+}
