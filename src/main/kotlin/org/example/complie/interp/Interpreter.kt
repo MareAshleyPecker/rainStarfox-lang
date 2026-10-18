@@ -177,38 +177,8 @@ class Interpreter(
      */
     private class Closure(val plan: LambdaClosure, val captures: List<Any?>)
 
-    /**
-     * 阶段 31（31a）：解释器这一刀不接泛型函数。
-     *
-     * 和字节码后端同一条口径（17d）：泛型函数在运行期需要按调用点的绑定做
-     * 包装/拆箱，那是 31b 的活；现在宁可整份程序拒绝执行，也不要「跑得动一半、
-     * 另一半悄悄错」。
-     */
-    private fun rejectGenericFunctions() {
-        for (fn in model.functions) {
-            if (fn.typeParams.isNotEmpty()) throw genericUnsupported(fn)
-        }
-        for (decl in model.classModel.classes.values) {
-            for (m in decl.methods) {
-                if (m.typeParams.isNotEmpty()) throw genericUnsupported(m)
-            }
-        }
-        for (decl in model.interfaces.values) {
-            for (m in decl.methods) {
-                if (m.typeParams.isNotEmpty()) throw genericUnsupported(m)
-            }
-        }
-    }
-
-    private fun genericUnsupported(fn: FuncDecl): RsfError = RsfError(
-        "ir",
-        "[rsf-17d] 后端暂不支持：泛型函数（阶段 31b）",
-        fn.at.line, fn.at.column, null,
-    )
-
     /** 从 main 开始执行。 */
     fun runEntry(): Any? {
-        rejectGenericFunctions()
         // 阶段 25 K3 起类继承在解释器里**跑得动了**，K1 那道解释器守卫就撤了。
         // 注意另一道守卫还在（`codegen/BytecodeCompiler.kt`，K2 的活）：`rsf build`
         // 遇到带父类的程序仍然显式报「字节码后端还没实现」，那条由 K2 拆。
@@ -227,9 +197,6 @@ class Interpreter(
      * 这里只负责按参数类型做一次收敛（比如 int 实参传给 long 形参）。
      */
     fun call(fn: FuncDecl, args: List<Any?>): Any? {
-        // 阶段 31（31a）：泛型函数的调用一律 17d（runEntry 那道守卫已经挡了整份程序，
-        // 这道是按目标函数挡：REPL / 反射式进入也不会漏）
-        if (fn.typeParams.isNotEmpty()) throw genericUnsupported(fn)
         enter(fn.at, fn.name)
         try {
             val body = model.loweredOf(fn)

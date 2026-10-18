@@ -1,6 +1,7 @@
 package org.example
 
 import org.example.complie.Rsf
+import org.example.complie.interp.Interpreter
 import org.example.complie.diag.RsfError
 import org.example.complie.diag.SourceFile
 import kotlin.test.Test
@@ -134,8 +135,8 @@ class GenericFnTest {
                     rtn xs[0]
                 }
                 fn main() -> void {
-                    var xs : int[] = new int[2]
-                    var a : int = head(xs)
+                    var xs : string[] = new string[2]
+                    var a : string = head(xs)
                     rtn
                 }
                 """,
@@ -367,4 +368,159 @@ class GenericFnTest {
         }
         assertTrue(e.detail.contains("泛型方法不能写 'abstract'"), e.detail)
     }
+    // ------------------------------------------------------ 运行时（两端一致）
+
+    @Test
+    fun `运行时 顶层泛型函数 两端一致`() {
+        val (interp, jvm) = runBoth(
+            """
+            fn id&<T>(x : T) -> T {
+                rtn x
+            }
+            fn main() {
+                println("" + id(5))
+                println(id("hi"))
+                println("" + id(true))
+            }
+            """,
+        )
+        assertEquals(listOf("5", "hi", "true"), interp)
+        assertEquals(interp, jvm)
+    }
+
+    @Test
+    fun `运行时 两个类型参数 两端一致`() {
+        val (interp, jvm) = runBoth(
+            """
+            fn firstOf&<T, U>(a : T, b : U) -> T {
+                rtn a
+            }
+            fn main() {
+                println("" + firstOf(7, "ignored"))
+                println(firstOf("kept", 2))
+            }
+            """,
+        )
+        assertEquals(listOf("7", "kept"), interp)
+        assertEquals(interp, jvm)
+    }
+
+    @Test
+    fun `运行时 可空与引用数组 两端一致`() {
+        val (interp, jvm) = runBoth(
+            """
+            fn orElse&<T>(v : ?T, d : T) -> T {
+                if (v == null) {
+                    rtn d
+                }
+                rtn v!!
+            }
+            fn first&<T>(xs : T[]) -> T {
+                rtn xs[0]
+            }
+            fn main() {
+                var s : ?string = null
+                println(orElse(s, "fallback"))
+                var t : ?string = "given"
+                println(orElse(t, "fallback"))
+                var ss : string[] = new string[2]
+                ss[0] = "hey"
+                println(first(ss))
+            }
+            """,
+        )
+        assertEquals(listOf("fallback", "given", "hey"), interp)
+        assertEquals(interp, jvm)
+    }
+
+    @Test
+    fun `运行时 泛型方法 两端一致`() {
+        val (interp, jvm) = runBoth(
+            """
+            class Calc {
+                var base : int = 0
+                constructor(b : int) {
+                    base = b
+                }
+                public fn same&<T>(x : T) -> T {
+                    rtn x
+                }
+                public static fn pick&<T>(x : T, y : T) -> T {
+                    rtn x
+                }
+            }
+            fn main() {
+                var c : Calc = new Calc(3)
+                println("" + c.same(11))
+                println(c.same("m"))
+                println("" + Calc.pick(1, 2))
+            }
+            """,
+        )
+        assertEquals(listOf("11", "m", "1"), interp)
+        assertEquals(interp, jvm)
+    }
+
+    @Test
+    fun `基本类型数组 绑不进 T 数组`() {
+        val e = assertFailsWith<RsfError> {
+            Rsf.analyze(
+                source(
+                    """
+                    fn first&<T>(xs : T[]) -> T {
+                        rtn xs[0]
+                    }
+                    fn main() {
+                        var xs : int[] = new int[3]
+                        println("" + first(xs))
+                    }
+                    """,
+                ),
+            )
+        }
+        assertTrue(e.detail.contains("绑到了基本类型"), e.detail)
+    }
+
+    // ------------------------------------------------------------ 运行时工具
+
+    /** 同一份源码跑两遍：解释器一遍、字节码加载后一遍，都只收集 stdout 的行。 */
+    private fun runBoth(text: String): Pair<List<String>, List<String>> {
+        val src = SourceFile.of("<generic-fn-rt>", text.trimIndent())
+        val model = Rsf.analyze(src)
+
+        val ibuf = java.io.ByteArrayOutputStream()
+        Interpreter(model, java.io.PrintStream(ibuf, true, "UTF-8")).runEntry()
+        val interp = lines(ibuf)
+
+        val dir = java.io.File.createTempFile("rsf-generic", "").let {
+            it.delete()
+            it.mkdirs()
+            it
+        }
+        try {
+            val className = "GmMain"
+            Rsf.build(model, src, className, dir)
+            val loader = java.net.URLClassLoader(arrayOf(dir.toURI().toURL()), javaClass.classLoader)
+            val saved = System.out
+            val jbuf = java.io.ByteArrayOutputStream()
+            val ps = java.io.PrintStream(jbuf, true, "UTF-8")
+            System.setOut(ps)
+            try {
+                loader.loadClass(className)
+                    .getMethod("main", Array<String>::class.java)
+                    .invoke(null, arrayOf<String>())
+            } finally {
+                System.setOut(saved)
+                ps.flush()
+                loader.close()
+            }
+            return interp to lines(jbuf)
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    private fun lines(buf: java.io.ByteArrayOutputStream): List<String> =
+        buf.toString("UTF-8").lines().filter { it.isNotEmpty() }
+
 }

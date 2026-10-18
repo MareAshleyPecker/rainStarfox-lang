@@ -128,46 +128,12 @@ class BytecodeCompiler(
     private var programInternalName: String = ""
 
     /**
-     * 阶段 31（31a）：字节码后端这一刀不接泛型函数。
-     *
-     * 泛型函数的参数/返回值在 JVM 上擦除成 `Object`，调用点需要 `CHECKCAST` 才能把
-     * `id("x")` 静态地当成 `string` 用——那是 31b 的活（`SemanticModel.genericCalls`
-     * 已经把每一处的绑定记好了）。在那之前，宁可整份程序拒绝编译，也不要生成
-     * 「能加载、一跑就 ClassCastException」的字节码。
-     */
-    private fun rejectGenericFunctions() {
-        for (fn in model.functions) {
-            if (fn.typeParams.isNotEmpty()) throw genericUnsupported(fn)
-        }
-        for (decl in model.classModel.classes.values) {
-            for (m in decl.methods) {
-                if (m.typeParams.isNotEmpty()) throw genericUnsupported(m)
-            }
-        }
-        for (decl in model.interfaces.values) {
-            for (m in decl.methods) {
-                if (m.typeParams.isNotEmpty()) throw genericUnsupported(m)
-            }
-        }
-    }
-
-    private fun genericUnsupported(fn: FuncDecl): RsfError = RsfError(
-        "ir",
-        "[rsf-17d] 后端暂不支持：泛型函数（阶段 31b）",
-        fn.at.line, fn.at.column, null,
-    )
-
-    /**
      * 编译整个程序，返回**这一批**写出去的 .class（程序类排第一）。
      *
      * [className] 是程序类的内部名（写了 `pkg a.b` 时是 `a/b/主文件名`）。
      * 用户类跟着程序类的包走：`pkg a.b` 里的 `class Point` → `a/b/Point.class`。
      */
     fun compile(className: String, outDir: File): List<File> {
-        // 阶段 31（31a）：泛型函数这一刀**不发码**，后端一见到带类型参数的函数就退场。
-        // 不做半个类文件出去：擦除之后 `T` 是没有 cast 的 Object，硬编出来的代码
-        // 会在调用点炸 ClassCastException（错误的锅不该甩给用户）。
-        rejectGenericFunctions()
         // 阶段 25 K2：K1 在这里的那道守卫（「带父类的类还不能 build」）已经撤掉——
         // 带父类的类现在真的生成 extends、父类构造链、父链字段与虚分派。
         programInternalName = className
@@ -3799,6 +3765,7 @@ class BytecodeCompiler(
                 callOpcode(implicit), classInternalName(implicit.className), decl.name,
                 descriptorOf(decl), implicit.interfaceOwner,
             )
+            emitGenericReturnAdapt(ctx, expr, decl)
             return
         }
 
@@ -3848,6 +3815,27 @@ class BytecodeCompiler(
         // 顶层函数都住在**程序类**里，不是当前类：在用户类的方法/字段初值里调顶层函数时，
         // 用 ctx.owner（当前类）会生成 INVOKESTATIC P.note(...)，运行时 NoSuchMethodError
         mv.visitMethodInsn(INVOKESTATIC, programInternalName, target.name, descriptorOf(target), false)
+        emitGenericReturnAdapt(ctx, expr, target)
+    }
+
+    /**
+     * 阶段 31b：泛型函数的返回值在描述符里被擦成 `Object`（数组则是 `[LObject;`），
+     * 调用点按**推导出来的绑定**还原成静态类型：引用类型 `CHECKCAST`，基本类型先
+     * `CHECKCAST` 到包装类再拆箱。非泛型调用点在这里原样返回，一条指令都不多发。
+     */
+    private fun emitGenericReturnAdapt(ctx: ExprCtx, expr: CallExpr, target: FuncDecl) {
+        val site = model.genericCalls[expr] ?: return
+        val declared = model.returnTypeOf(target)
+        val want = site.returnType
+        if (declared == want || want.isVoid || want.isNullLiteral) return
+        val mv = ctx.mv
+        if (want.isPrimitive) {
+            val wrapper = want.base.wrapper ?: return
+            mv.visitTypeInsn(CHECKCAST, wrapper)
+            unboxValue(mv, want.base)
+        } else {
+            mv.visitTypeInsn(CHECKCAST, internalNameOf(want))
+        }
     }
 
     /**
@@ -4142,6 +4130,14 @@ class BytecodeCompiler(
     private fun emitWiden(mv: MethodVisitor, from: RsfType, to: RsfType) {
         if (from == to) return
         if (from.isNullLiteral) return // null 字面量本身就是引用
+
+        // 阶段 31b：泛型形参 `T` / `?T` 擦除后都是 Object —— 引用实参在栈上本来
+        // 就是它（不需要 CHECKCAST：泛型代码里 T 是不透明占位，能传进来的都合法），
+        // 基本类型实参则装箱。
+        if (to.base == RsfBase.TYPE_PARAM) {
+            if (from.isPrimitive) boxValue(mv, from.base)
+            return
+        }
 
         // 基本类型 -> 引用类型（对象参数、可空同类型）：装箱
         if (!to.isPrimitive && to.base != RsfBase.NULL && from.isPrimitive) {

@@ -4045,7 +4045,7 @@ class Checker(
 
         // 非泛型一个都没接住 → 泛型候选上场：先按实参推导类型参数，再用
         // **实例化之后**的形参正常打分（`T` 已经变成 `int`，加宽/空值规则照旧）。
-        val attempts = genericCandidates.map { bindGeneric(it, argTypes) }
+        val attempts = genericCandidates.map { bindGeneric(it, argTypes, at) }
         val instantiated = ArrayList<OverloadCandidate>()
         for (b in attempts) {
             if (b !is GenericAttempt.Bound) continue
@@ -4171,14 +4171,18 @@ class Checker(
      * 冲突与「推不出来」都只**记下来**、不立刻抛：多个泛型候选里可能有一个是好的，
      * 只有全都没接住时才把最贴近原因的报出去（见 [resolveOverload]）。
      */
-    private fun bindGeneric(c: OverloadCandidate, argTypes: List<RsfType>): GenericAttempt {
+    private fun bindGeneric(
+        c: OverloadCandidate,
+        argTypes: List<RsfType>,
+        at: SourceLine,
+    ): GenericAttempt {
         val params = c.params
         if (params.size != argTypes.size) return GenericAttempt.Mismatch(c, 0)
         val bindings = LinkedHashMap<String, RsfType>()
         val origin = HashMap<String, Int>()
         var nullAt = -1
         for (i in params.indices) {
-            when (val step = bindTypeParamPattern(params[i], argTypes[i], bindings, origin, i + 1)) {
+            when (val step = bindTypeParamPattern(params[i], argTypes[i], bindings, origin, i + 1, at)) {
                 BindStep.Ok -> Unit
                 BindStep.Skip -> if (nullAt < 0) nullAt = i
                 BindStep.Mismatch -> return GenericAttempt.Mismatch(c, i)
@@ -4211,6 +4215,7 @@ class Checker(
         bindings: MutableMap<String, RsfType>,
         origin: MutableMap<String, Int>,
         argIndex: Int,
+        at: SourceLine,
     ): BindStep {
         // `null` 提供不了任何类型信息（它给任何可空类型都成立）：不绑、也不算冲突。
         if (arg.isNullLiteral) return BindStep.Skip
@@ -4219,8 +4224,22 @@ class Checker(
         // （`?int[]` 的元素是 `int`，不是 `?int`）。
         if (param.arrayDepth > 0) {
             if (arg.arrayDepth <= 0) return BindStep.Mismatch
+            // 阶段 31b：`T[]` 在 JVM 上擦成 `[Ljava/lang/Object;`，而 `int[]` 是 `[I`，
+            // 两者不是子类型关系（`int[]` 装不进 `Object[]`）——真按这个绑定发码，类加载
+            // 就会 VerifyError。解释器那边能跑，两端就分叉了，所以在这里直接拒。
+            val elemParam = param.elementType.asNonNull()
+            val elemArg = arg.elementType.asNonNull()
+            val name = elemParam.typeParamName
+            if (name != null && elemArg.isPrimitive) {
+                throw err(
+                    "泛型参数 '$name' 绑到了基本类型 '${elemArg.rsfName}'：" +
+                        "'$name[]' 在 JVM 上擦成 Object[]，装不下基本类型数组（DESIGN-31 §8）" +
+                        "——把实参换成引用元素数组（例如 string[] 或类数组）",
+                    at,
+                )
+            }
             return bindTypeParamPattern(
-                param.elementType.asNonNull(), arg.elementType.asNonNull(), bindings, origin, argIndex,
+                elemParam, elemArg, bindings, origin, argIndex, at,
             )
         }
 
@@ -4246,7 +4265,7 @@ class Checker(
             if (param.base != arg.base || param.externalName != arg.externalName) return BindStep.Mismatch
             if (param.typeArgs.size != arg.typeArgs.size) return BindStep.Mismatch
             for (k in param.typeArgs.indices) {
-                val step = bindTypeParamPattern(param.typeArgs[k], arg.typeArgs[k], bindings, origin, argIndex)
+                val step = bindTypeParamPattern(param.typeArgs[k], arg.typeArgs[k], bindings, origin, argIndex, at)
                 if (step != BindStep.Ok) return step
             }
         }
