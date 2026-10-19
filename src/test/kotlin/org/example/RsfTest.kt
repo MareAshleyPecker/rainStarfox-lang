@@ -8709,4 +8709,71 @@ class RsfTest {
         assertTrue(error.message!!.contains("不支持指针"), error.message)
     }
 
+    @Test
+    fun `指针 L3：字段与数组元素取地址、指针偏移（解释器）`() {
+        val text = """
+            class Point(x0 : Int) {
+                var x : Int = x0
+                var y : Int = 0
+            }
+
+            fn bump(p : Int*, by : Int) -> void {
+                *p = *p + by
+            }
+
+            fn main() -> void {
+                var pt = Point(7)
+                var fp : Int* = &pt.x
+                println(*fp)
+                *fp = 9
+                println(pt.x)
+                bump(&pt.x, 1)
+                println(pt.x)
+                var xs = new Int[3]
+                xs[0] = 10
+                xs[1] = 20
+                xs[2] = 30
+                var ep : Int* = &xs[1]
+                println(*ep)
+                *ep = 25
+                println(xs[1])
+                var walk : Int* = &xs[0]
+                println(*(walk + 1))
+                println(*(walk + 2))
+                *(walk + 2) = 99
+                println(xs[2])
+                println(walk + 1 == ep)
+                rtn
+            }
+        """.trimIndent()
+        val nl = Character.toString(10)
+        val expected = listOf("7", "9", "10", "20", "25", "25", "30", "99", "true")
+            .joinToString(nl) + nl
+        val actual = runInterpreted(text).replace(Character.toString(13), "")
+        assertEquals(expected, actual)
+    }
+
+    @Test
+    fun `指针运算：JVM 字节码后端显式报错`() {
+        val text = """
+            fn main() -> void {
+                var xs = new Int[2]
+                var p : Int* = &xs[0]
+                *p = 1
+                *(p + 1) = 2
+                rtn
+            }
+        """.trimIndent()
+        val model = Rsf.analyze(source(text))
+        val dir = File.createTempFile("rsf-test", "").let {
+            it.delete()
+            it.mkdirs()
+            it
+        }
+        val error = assertFailsWith<RsfError> {
+            Rsf.build(model, source(text), "RsfPtrArithJvm", dir)
+        }
+        assertTrue(error.message!!.contains("不支持指针"), error.message)
+    }
+
 }

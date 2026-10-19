@@ -3988,6 +3988,17 @@ class BytecodeCompiler(
         val rightType = model.typeOf(expr.right)
         val resultType = model.typeOf(expr)
 
+        // 阶段 53b：指针算术 / 指针判等——字节码后端从阶段 53 起就显式拒绝指针，
+        // 这里必须先拦，否则会掉进数值分支去编 ADD/ISUB。
+        if (resultType.isPointer || leftType.isPointer || rightType.isPointer) {
+            throw RsfError(
+                "codegen",
+                "JVM 字节码后端不支持指针运算（${leftType.rsfName} ${op.text} ${rightType.rsfName}）：" +
+                    "用 'rsf run' 跑，或者 'rsf build x.rsf --c' 出 C",
+                expr.at.line, expr.at.column, null,
+            )
+        }
+
         // `&&` / `||`（阶段 19c）：**短路**，用标签实现。
         // 关键是右边**根本不在直路上**——它被夹在一条条件跳转和一条 GOTO 之间，
         // 而不是「两边都算完再合并」。这样 `false && g()` 里的 g 一次都不会被调用，

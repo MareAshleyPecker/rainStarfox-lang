@@ -88,7 +88,7 @@ rsf build hello.rsf --c -o out
 gcc out\hello.c -o out\hello.exe
 ```
 
-- 已支持：Int / Long / Bool / String、一维数组、类（字段 / 实例方法 / `stc` 静态方法 / 主次构造 / 单继承与覆盖，虚表分派）、枚举与 `switch`（Int/Long/String 字面量、一个分支可写多个值；字节码后端全部编（枚举用 `tableswitch`，Int/Long/String 用比较链））、指针（`T*` / `&x` / `*p` / `*p = v`）、顶层函数、`if` / `while` / `for` / 递归。
+- 已支持：Int / Long / Bool / String、一维数组、类（字段 / 实例方法 / `stc` 静态方法 / 主次构造 / 单继承与覆盖，虚表分派）、枚举与 `switch`（Int/Long/String 字面量、一个分支可写多个值；字节码后端全部编（枚举用 `tableswitch`，Int/Long/String 用比较链））、指针（`T*` / `&x` / `&o.f` / `&a[i]` / `*p` / `*p = v` / `p + n`）、顶层函数、`if` / `while` / `for` / 递归。
 - 还没接：接口、JDK 父类、泛型、多维数组、浮点、错误返回——遇到会报 `error[native]`。
 - 判据：解释器 stdout vs 原生 exe stdout 逐字节相同（`bash build/verify52/run-probes.sh all`，10 份语料）。
 
@@ -129,7 +129,7 @@ BOOTSTRAP.md                          自举链的设计与现状
 - 没有垃圾回收之外的自动内存管理——JVM 那边靠 GC，C 那边字符串拼接 `malloc` 不释放。
 - 泛型按擦除实现，泛型函数有已知缺口。
 - 重载只按参数个数与类型，不玩隐式转换。
-- 指针只有解释器与 C 后端支持；JVM 字节码后端遇到 `&` / `*` 直接报错。
+- 指针只有解释器与 C 后端支持（取地址、解引用读写、`p + n` / `p - n` 偏移、指针判等）；JVM 字节码后端遇到 `&` / `*` / 指针运算直接报错。
 - 标准库是自举用的最小集合，没有正则、没有格式化、没有迭代协议。
 - 没有包管理器，多文件只有 `import "x.rsf"` 与 `module "dir"`。
 

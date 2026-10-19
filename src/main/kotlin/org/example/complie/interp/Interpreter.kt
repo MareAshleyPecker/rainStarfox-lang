@@ -97,8 +97,42 @@ import java.util.IdentityHashMap
  * 生命周期：槽数组随栈帧存活；把指针带到帧外（返回出去）会读到已失效的槽——
  * v1 不检查这一点，与 C 的悬垂指针是同一类「自己负责」的边界。
  */
-class RsfPointer(val slots: Array<Any?>, val slot: Int) {
-    override fun toString(): String = "&slot$slot"
+/**
+ * 阶段 53 / 53b：指针值。两种存储位置：
+ * - [Slot]：局部变量 / 形参槽、对象字段（`RsfObject.fields` 的某一格）；
+ * - [Elem]：数组元素（Java 数组走反射读写，不能像槽那样直接拿下标）。
+ *
+ * 指针算术只做「走 n 个元素」，所以两种指针都需要 [offset]。
+ */
+sealed class RsfPointer {
+    abstract fun load(): Any?
+    abstract fun store(v: Any?)
+    abstract fun offset(steps: Int): RsfPointer
+
+    /** 两个指针是不是指向同一个存储位置（`walk + 1 == &xs[1]` 必须是 true）。 */
+    fun sameAs(other: RsfPointer): Boolean = when {
+        this is Slot && other is Slot -> this.slots === other.slots && this.slot == other.slot
+        this is Elem && other is Elem -> this.array === other.array && this.index == other.index
+        else -> false
+    }
+
+    class Slot(val slots: Array<Any?>, val slot: Int) : RsfPointer() {
+        override fun load(): Any? = slots[slot]
+        override fun store(v: Any?) {
+            slots[slot] = v
+        }
+        override fun offset(steps: Int): RsfPointer = Slot(slots, slot + steps)
+        override fun toString(): String = "&slot$slot"
+    }
+
+    class Elem(val array: Any, val index: Int) : RsfPointer() {
+        override fun load(): Any? = java.lang.reflect.Array.get(array, index)
+        override fun store(v: Any?) {
+            java.lang.reflect.Array.set(array, index, v)
+        }
+        override fun offset(steps: Int): RsfPointer = Elem(array, index + steps)
+        override fun toString(): String = "&elem$index"
+    }
 }
 
 
@@ -385,7 +419,7 @@ class Interpreter(
                     is IDerefAssign -> {
                         val pointer = eval(instr.stmt.target.let { (it as UnaryExpr).operand }, slots, body) as? RsfPointer
                             ?: throw RsfError("interp", "解引用的目标不是指针", instr.at.line, instr.at.column, null)
-                                        pointer.slots[pointer.slot] = eval(instr.stmt.value, slots, body)
+                                        pointer.store(eval(instr.stmt.value, slots, body))
                         pc++
                     }
 
@@ -2208,7 +2242,7 @@ class Interpreter(
         if (expr.op == TokenKind.STAR) {
             val pointer = eval(expr.operand, slots, body) as? RsfPointer
                 ?: throw RsfError("interp", "解引用的目标不是指针", expr.at.line, expr.at.column, null)
-            return pointer.slots[pointer.slot]
+            return pointer.load()
         }
         val v = eval(expr.operand, slots, body)
         return when (expr.op) {
@@ -2234,20 +2268,44 @@ class Interpreter(
      * 字段（`&this.x`）与数组元素（`&a[i]`）暂时显式报错，等 L3 再补。
      */
     private fun addressOf(target: Expr, slots: Array<Any?>, body: LoweredFunction): RsfPointer = when (target) {
+        // 裸字段名（方法体里直接写 `&x`）——Checker 已经把它解析成 Field 了
         is VarExpr -> {
-            if (model.classModel.fieldReads[target] != null) {
-                unsupported("解释器暂不支持对字段取地址（&this.字段）", target)
+            val field = model.classModel.fieldReads[target]
+            if (field != null) {
+                RsfPointer.Slot(thisObject(slots).fields, field.index)
+            } else {
+                val binding = model.bindingOf(target)
+                RsfPointer.Slot(slots, slotOf(binding, slots))
             }
-            val binding = model.bindingOf(target)
-            RsfPointer(slots, slotOf(binding, slots))
+        }
+        // `&obj.f`（不带实参的成员访问才是字段）
+        is MemberExpr -> {
+            if (target.arguments != null) {
+                unsupported("只能对字段取地址（&obj.f）：方法调用没有存储位置", target)
+            }
+            when (val member = model.classModel.members[target]) {
+                is UserMember.Field -> {
+                    val obj = eval(target.receiver, slots, body) as RsfObject
+                    RsfPointer.Slot(obj.fields, member.index)
+                }
+                else -> unsupported("只能对字段取地址（&obj.f）：${target.name} 不是字段", target)
+            }
+        }
+        // `&a[i]`
+        is IndexExpr -> {
+            val array = eval(target.receiver, slots, body)
+                ?: throw RsfError("interp", "对空值取数组元素地址（&a[i]）：数组是 null", target.at.line, target.at.column, null)
+            val index = eval(target.index, slots, body) as Int
+            checkArrayIndex(array, index)
+            RsfPointer.Elem(array, index)
         }
         is UnaryExpr -> if (target.op == TokenKind.STAR) {
             eval(target.operand, slots, body) as? RsfPointer
                 ?: throw RsfError("interp", "'&*p' 里的 p 不是指针", target.at.line, target.at.column, null)
         } else {
-            unsupported("只能对变量取地址（&x）：${target.op.text} 的结果没有存储位置", target)
+            unsupported("只能对变量、字段、数组元素或指针目标取地址：${target.op.text} 的结果没有存储位置", target)
         }
-        else -> unsupported("解释器暂只支持对局部变量/形参取地址（&x）", target)
+        else -> unsupported("只能对变量、字段、数组元素或指针目标取地址", target)
     }
 
     private fun unsupported(problem: String, at: Expr): Nothing =
@@ -2284,6 +2342,27 @@ class Interpreter(
 
         val a = eval(expr.left, slots, body)
         val b = eval(expr.right, slots, body)
+
+        // 阶段 53b：指针算术。`p + n` / `n + p` 走 n 个元素，`p - n` 往回走。
+        if (resultType.isPointer) {
+            val pointer = (a as? RsfPointer) ?: (b as? RsfPointer)
+                ?: throw RsfError("interp", "指针运算里没有指针值", expr.at.line, expr.at.column, null)
+            val steps = asNumber(if (a is RsfPointer) b else a).toInt()
+            return when (op) {
+                TokenKind.PLUS -> pointer.offset(steps)
+                TokenKind.MINUS -> pointer.offset(-steps)
+                else -> throw RsfError(
+                    "interp", "指针不能参与 '${op.text}' 运算", expr.at.line, expr.at.column, null,
+                )
+            }
+        }
+        // 指针判等：按「是不是同一个存储位置」比（类型已在 Checker 里对齐）。
+        // 不能直接 `a === b`——`walk + 1` 每次都会新建一个 Elem，两个指向同一格的
+        // 指针必须是「同一个位置」，否则 `p + 1 == &a[1]` 会是 false。
+        if (a is RsfPointer || b is RsfPointer) {
+            val same = a is RsfPointer && b is RsfPointer && a.sameAs(b)
+            return if (op == TokenKind.EQ) same else !same
+        }
 
         if (op in COMPARISONS) {
             // 非数值一律走「引用语义」：字符串按内容、可空装箱值按 equals、null 按引用。

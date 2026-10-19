@@ -733,6 +733,18 @@ class CBackend(private val model: SemanticModel) {
             "toChar" -> return "((uint16_t)${expr(e.arguments[0])})"
             "toByte" -> return "((int8_t)${expr(e.arguments[0])})"
         }
+        // 省掉 `new` 的构造（`Point(1, 2)`）在语义模型里和 NewExpr 是同一件事，
+        // 这里按 newTargets 走构造器命名，否则会掉到「调用 'Point'」去报错。
+        val ctorClass = model.classModel.newTargets[e]
+        if (ctorClass != null) {
+            val ctor = model.classModel.newCtors[e]
+            val ctorName = if (ctor != null) {
+                ctorNames[ctor] ?: fail("构造器命名")
+            } else {
+                defaultCtorNames[ctorClass] ?: fail("默认构造器命名")
+            }
+            return "$ctorName(${e.arguments.joinToString(", ") { expr(it) }})"
+        }
         val target = model.callTargets[e] ?: fail("调用 '${e.name}'")
         val args = e.arguments.joinToString(", ") { expr(it) }
         return "${fnName(target)}($args)"

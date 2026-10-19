@@ -7117,6 +7117,12 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
             throw err("null 只能用来做 '==' / '!=' 比较", expr.at)
         }
 
+        // 阶段 53b：指针算术（`p + n` / `p - n`）与指针判等。指针只能「走 n 个槽」，
+        // 不支持两个指针相减（没有「元素个数」这层语义），也不支持 `ptr * / %`。
+        if (left.isPointer || right.isPointer) {
+            return checkPointerBinary(expr, left, right, op)
+        }
+
         return when (op) {
             TokenKind.PLUS, TokenKind.MINUS, TokenKind.STAR, TokenKind.SLASH, TokenKind.PERCENT -> {
                 // 字符串拼接：任意一边是 String 就按拼接走（可空也行，null 会拼成 "null"）
@@ -7491,6 +7497,63 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
             return isSourceSubtype(want, valueType)
         }
         return byteRangeLiteral(value) != null
+    }
+
+
+    /** 阶段 53b：指针参与二元运算。只放行 `p + n` / `n + p` / `p - n` 与 `==` / `!=`。 */
+    private fun checkPointerBinary(
+        expr: BinaryExpr,
+        left: RsfType,
+        right: RsfType,
+        op: TokenKind,
+    ): RsfType {
+        fun numeric(t: RsfType) = !t.isPointer && t.arrayDepth == 0 &&
+            t.base in setOf(RsfBase.INT, RsfBase.LONG, RsfBase.BYTE, RsfBase.CHAR)
+        return when (op) {
+            TokenKind.PLUS -> when {
+                left.isPointer && numeric(right) -> left
+                right.isPointer && numeric(left) -> right
+                left.isPointer && right.isPointer -> throw err(
+                    "两个指针不能相加：指针只能加一个整数偏移（如 p + 1）",
+                    expr.at,
+                )
+                else -> throw err(
+                    "指针只能加一个整数偏移：'${left.rsfName} + ${right.rsfName}' 里" +
+                        "有一边既不是指针也不是整数",
+                    expr.at,
+                )
+            }
+            TokenKind.MINUS -> when {
+                left.isPointer && numeric(right) -> left
+                left.isPointer && right.isPointer -> throw err(
+                    "两个指针不能相减：没有「相隔几个元素」这层语义（要下标就各自 - 起点）",
+                    expr.at,
+                )
+                else -> throw err(
+                    "指针减法只支持 'p - 整数'：'${left.rsfName} - ${right.rsfName}'",
+                    expr.at,
+                )
+            }
+            TokenKind.EQ, TokenKind.NE -> when {
+                left.isPointer && right.isPointer -> {
+                    if (left != right) throw err(
+                        "'${op.text}' 两边是不同的指针类型：${left.rsfName} 和 ${right.rsfName}",
+                        expr.at,
+                    )
+                    RsfType.BOOL
+                }
+                left.isPointer && right.isNullLiteral || right.isPointer && left.isNullLiteral ->
+                    RsfType.BOOL
+                else -> throw err(
+                    "指针只能和同类型指针比较：'${left.rsfName} ${op.text} ${right.rsfName}'",
+                    expr.at,
+                )
+            }
+            else -> throw err(
+                "指针不能参与 '${op.text}' 运算：只支持 + 偏移、- 偏移、== / !=",
+                expr.at,
+            )
+        }
     }
 
     /** 阶段 53：能取地址的表达式——变量、字段、数组元素、指针目标（`**pp`）。 */

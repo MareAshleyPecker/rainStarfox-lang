@@ -1,0 +1,30 @@
+class Point(x : Int) {
+    var x : Int = x
+    var y : Int = 0
+}
+
+fn bump(p : Int*) -> void {
+    *p = *p + 100
+}
+
+fn main() {
+    var pt = Point(7)
+    var fp : Int* = &pt.x
+    *fp = 9
+    println(pt.x)
+    bump(&pt.x)
+    println(pt.x)
+    var xs = new Int[3]
+    xs[0] = 10
+    xs[1] = 20
+    xs[2] = 30
+    var ep : Int* = &xs[1]
+    println(*ep)
+    *ep = 25
+    println(xs[1])
+    var walk : Int* = &xs[0]
+    println(*(walk + 1))
+    println(*(walk + 2))
+    *(walk + 2) = 99
+    println(xs[2])
+}
