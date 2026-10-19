@@ -1,5 +1,5 @@
 class A {
-    constructor(x : int) { }
+    constructor(x : Int) { }
 }
 class B : A("s") {
 }

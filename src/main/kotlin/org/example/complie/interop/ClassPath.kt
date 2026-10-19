@@ -20,7 +20,7 @@ class JvmMethod(
     /**
      * 每个形参对应到**类的第几个形式类型参数**（0 基）；null = 这个形参不是类型变量。
      *
-     * 来自方法的**泛型签名**（`put(TK;TV;)TV;` → `[0, 1]`）：`HashMap&<string, int>`
+     * 来自方法的**泛型签名**（`put(TK;TV;)TV;` → `[0, 1]`）：`HashMap&<String, Int>`
      * 的 `put` 在描述符里两个形参都擦除成了 `Object`，光看描述符分不清哪个对哪个，
      * 签名里的 `TK;` / `TV;` 才是唯一可靠的对齐信息。
      *
@@ -38,7 +38,7 @@ class JvmMethod(
      */
     val isAbstract: Boolean = false,
 ) {
-    /** `max(int, int) -> int` 这样的可读签名，用于报错。 */
+    /** `max(Int, Int) -> Int` 这样的可读签名，用于报错。 */
     fun display(ownerSimple: String): String {
         val ps = paramTypes.joinToString(", ") { it.rsfName }
         return "$ownerSimple.$name($ps) -> ${returnType.rsfName}"
@@ -86,7 +86,7 @@ class JvmClass(
     /**
      * 这个类声明了几个类型参数（从泛型签名里数出来）。null = 说不准。
      *
-     * 只在**元数检查**时用：`ArrayList&<int, int>` 要报「需要 1 个，实际给了 2 个」。
+     * 只在**元数检查**时用：`ArrayList&<Int, Int>` 要报「需要 1 个，实际给了 2 个」。
      * 类型实参本身不参与描述符——JVM 上就是擦除的（这一点见 [RsfType.typeArgs]）。
      */
     val typeParamCount: Int? = null,
@@ -528,19 +528,19 @@ object ClassPath {
     /**
      * JVM 描述符 → rsf 类型。
      *
-     * `Ljava/lang/String;` 会映射成内建的 string（它有专门的拼接/输出处理），
+     * `Ljava/lang/String;` 会映射成内建的 String（它有专门的拼接/输出处理），
      * 其余对象类型变成外部类类型。
      *
      * **阶段 16b 起数组描述符也认了**：开头连续的 `[` 个数就是 [RsfType.arrayDepth]，
-     * 剩下的部分照常当元素类型解析，再把维度套上去。`[B` → `byte[]`、`[[B` → `byte[][]`、
-     * `[Ljava/lang/String;` → `string[]`。
+     * 剩下的部分照常当元素类型解析，再把维度套上去。`[B` → `Byte[]`、`[[B` → `Byte[][]`、
+     * `[Ljava/lang/String;` → `String[]`。
      *
-     * 这一步是「rsf 接得住 `ClassWriter.toByteArray()` 的 `byte[]`」的前提：
+     * 这一步是「rsf 接得住 `ClassWriter.toByteArray()` 的 `Byte[]`」的前提：
      * 在此之前凡是签名里带数组的方法都会被**整个跳过**——[jvmMethod] 只要有一个
      * 参数解析不出来就返回 null，于是 `String.getBytes() -> [B`、
      * `Files.readAllBytes(Path) -> [B` 这些根本查不到。
      *
-     * 阶段 16 起 `B` / `C` 有对应的基础类型了，所以 `String.charAt(int) -> char`
+     * 阶段 16 起 `B` / `C` 有对应的基础类型了，所以 `String.charAt(Int) -> Char`
      * （描述符 `(I)C`）能原样解析出来——这正是「标准库切片」能用的前提。
      * 注意 `Ljava/lang/Byte;` / `Ljava/lang/Character;` 仍然当**外部类**看，
      * 跟 `Integer` / `Long` 的既有处理一致（装箱形态的可空类型只在语言内部产生）。

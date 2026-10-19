@@ -1,18 +1,18 @@
 import "../../../rsfSrc/core/Sets.rsf"
 
 fn main() -> void {
-    var s : Set&<string> = new Set&<string>()
+    var s : Set&<String> = new Set&<String>()
     println("" + s.add("a") + " " + s.add("b") + " " + s.add("a") + " " + s.size())
     println("" + s.contains("b") + " " + s.contains("z") + " " + s.remove("a") + " " + s.remove("a"))
     println("" + s.size() + " " + s.get(0) + " " + s.isEmpty())
 
-    var t : Set&<string> = new Set&<string>()
+    var t : Set&<String> = new Set&<String>()
     t.add("b")
     t.add("c")
     t.add("d")
-    var u : Set&<string> = s.unionWith(t)
-    var i : Set&<string> = s.intersectWith(t)
-    var d : Set&<string> = s.difference(t)
+    var u : Set&<String> = s.unionWith(t)
+    var i : Set&<String> = s.intersectWith(t)
+    var d : Set&<String> = s.difference(t)
     println("" + u.size() + " " + i.size() + " " + d.size())
     var k = 0
     var line = ""
@@ -23,7 +23,7 @@ fn main() -> void {
     println(line)
     println("" + s.size() + " " + t.size())
 
-    var nums : Set&<int> = new Set&<int>()
+    var nums : Set&<Int> = new Set&<Int>()
     nums.add(3)
     nums.add(1)
     nums.add(3)

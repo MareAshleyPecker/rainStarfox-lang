@@ -40,7 +40,7 @@ import java.io.File
 // 这里**自带一份改名副本**：CLI 会把 Sources.rsf 与 Backend.rsf 并进同一个程序，
 // 顶层函数重名会被判重，所以不能直接借它的 prop / unesc。
 
-fn srcHexValue(c : char) -> int {
+fn srcHexValue(c : Char) -> Int {
     if (c >= '0' && c <= '9') { rtn charToInt(c) - 48 }
     if (c >= 'a' && c <= 'f') { rtn charToInt(c) - 87 }
     if (c >= 'A' && c <= 'F') { rtn charToInt(c) - 55 }
@@ -48,7 +48,7 @@ fn srcHexValue(c : char) -> int {
 }
 
 // Parser.escapeValue 的逆
-fn srcUnesc(s : string) -> string {
+fn srcUnesc(s : String) -> String {
     var out = ""
     var i = 0
     var len = s.length()
@@ -86,7 +86,7 @@ fn srcUnesc(s : string) -> string {
     rtn out
 }
 
-fn srcProp(n : Node, key : string) -> string {
+fn srcProp(n : Node, key : String) -> String {
     var t = n.text
     var i = 0
     var len = t.length()
@@ -109,7 +109,7 @@ fn srcProp(n : Node, key : string) -> string {
 // 与 SourceLoader.normalizeSeparators 同一口径：`\`→`/`，去掉开头的 `./`
 // （`../` 保留，它就是往上走的意思）。盘符不碰。
 
-fn srcClean(path : string) -> string {
+fn srcClean(path : String) -> String {
     var slashed = ""
     for (var i = 0; i < path.length(); i = i + 1) {
         var c = path.charAt(i)
@@ -122,7 +122,7 @@ fn srcClean(path : string) -> string {
 }
 
 // 文件所在目录（没有分隔符就是空串，搜索基准那一层再当成 `.`）
-fn srcDirOf(path : string) -> string {
+fn srcDirOf(path : String) -> String {
     var i = path.length() - 1
     while (i >= 0) {
         var c = path.charAt(i)
@@ -133,14 +133,14 @@ fn srcDirOf(path : string) -> string {
 }
 
 // 目录 + 相对路径。`.` 也当成当前目录（列出候选位置时写成 `./x`，与 Kotlin 版 `File(".").path` 一致）
-fn srcJoin(base : string, rel : string) -> string {
+fn srcJoin(base : String, rel : String) -> String {
     if (base.length() == 0) { rtn rel }
     if (base == ".") { rtn "./" + rel }
     rtn base + "/" + rel
 }
 
 // 点分路径的最后一段（`java.lang.System` → `System`）；没有点就整串
-fn srcSimpleName(path : string) -> string {
+fn srcSimpleName(path : String) -> String {
     var i = path.length() - 1
     while (i >= 0) {
         if (path.charAt(i) == '.') { rtn path.substring(i + 1, path.length()) }
@@ -149,18 +149,18 @@ fn srcSimpleName(path : string) -> string {
     rtn path
 }
 
-fn srcIsFile(path : string) -> bool {
+fn srcIsFile(path : String) -> Bool {
     var f = new File(path)
     rtn f.isFile()
 }
 
-fn srcIsDir(path : string) -> bool {
+fn srcIsDir(path : String) -> Bool {
     var f = new File(path)
     rtn f.isDirectory()
 }
 
-// `a.b` → `a/b`（checkPackage 与后端的包前缀是同一个换算；rsf 的 string 没有 replace）
-fn srcPkgPath(name : string) -> string {
+// `a.b` → `a/b`（checkPackage 与后端的包前缀是同一个换算；rsf 的 String 没有 replace）
+fn srcPkgPath(name : String) -> String {
     var out = ""
     for (var i = 0; i < name.length(); i = i + 1) {
         var c = name.charAt(i)
@@ -173,15 +173,15 @@ fn srcPkgPath(name : string) -> string {
 //
 // rsf 的数组长度固定，手工翻倍（与 Lexer.pushToken / Node.add 同一个套路）。
 
-fn srcGrowText(a : string[], used : int) -> string[] {
+fn srcGrowText(a : String[], used : Int) -> String[] {
     var cap = 8
     if (a.length > 0) { cap = a.length * 2 }
-    var b : string[] = new string[cap]
+    var b : String[] = new String[cap]
     for (var i = 0; i < used; i = i + 1) { b[i] = a[i] }
     rtn b
 }
 
-fn srcGrowNodes(a : Node[], used : int) -> Node[] {
+fn srcGrowNodes(a : Node[], used : Int) -> Node[] {
     var cap = 8
     if (a.length > 0) { cap = a.length * 2 }
     var b : Node[] = new Node[cap]
@@ -201,37 +201,37 @@ fn srcChildOf(ast : Node, kind : NodeKind) -> ?Node {
 
 // ================================================================ 装载器
 
-class SrcLoader(rootDir : string) {
-    var rootDir : string = rootDir
+class SrcLoader(rootDir : String) {
+    var rootDir : String = rootDir
 
     // 已装载文件的键（LinearSet：rsf 没有 HashSet/HashMap）
-    var keys : string[] = new string[8]
-    var keyCount : int = 0
+    var keys : String[] = new String[8]
+    var keyCount : Int = 0
 
     // 三个合并列表，顺序 = 装载顺序
     var fns : Node[] = new Node[8]
-    var fnCount : int = 0
+    var fnCount : Int = 0
     var clss : Node[] = new Node[8]
-    var clsCount : int = 0
+    var clsCount : Int = 0
     var ens : Node[] = new Node[8]
-    var enCount : int = 0
+    var enCount : Int = 0
     // 阶段 20：用户接口。Kotlin 侧 SourceLoader 的合并顺序是
     // functions → classes → enums → **interfaces**，这里保持一致。
     var ifcs : Node[] = new Node[8]
-    var ifcCount : int = 0
+    var ifcCount : Int = 0
     // 阶段 21：注解声明。Kotlin 侧 SourceLoader 的合并顺序是
     // functions → classes → enums → **interfaces → annotations**，这里保持一致。
     var anns : Node[] = new Node[8]
-    var annCount : int = 0
+    var annCount : Int = 0
 
     // IMPORTS 只收 CLASS_IMPORT，按首次出现顺序；同名简单名后来者覆盖前者的内部名
     var imps : Node[] = new Node[4]
-    var impCount : int = 0
+    var impCount : Int = 0
 
     // 根文件的包声明（没写 pkg 就是 null）。**只有根文件**的 pkg 算数。
     var rootPkg : ?Node = null
 
-    fn alreadyLoaded(key : string) -> bool {
+    fn alreadyLoaded(key : String) -> Bool {
         var i = 0
         while (i < keyCount) {
             if (keys[i] == key) { rtn true }
@@ -240,7 +240,7 @@ class SrcLoader(rootDir : string) {
         rtn false
     }
 
-    fn remember(key : string) -> void {
+    fn remember(key : String) -> void {
         if (keyCount >= keys.length) { keys = srcGrowText(keys, keyCount) }
         keys[keyCount] = key
         keyCount = keyCount + 1
@@ -327,12 +327,12 @@ class SrcLoader(rootDir : string) {
 
     // 搜索基准顺序：**发起 import 的那个文件所在目录** → 当前目录 → 根文件所在目录
     // （与 SourceLoader.searchBases 一致）；重复的基准只留一份。
-    fn resolve(rel : string, fromDir : string, impPath : string) -> !string {
+    fn resolve(rel : String, fromDir : String, impPath : String) -> !String {
         var cleaned = srcClean(rel)
         var first = fromDir
         if (first.length() == 0) { first = "." }
 
-        var cands : string[] = new string[3]
+        var cands : String[] = new String[3]
         var n = 0
         var i = 0
         while (i < 3) {
@@ -373,12 +373,12 @@ class SrcLoader(rootDir : string) {
     // `module "目录"` 的目录解析：候选与 `resolve` 完全同一套（发起文件所在目录 →
     // 当前目录 → 根文件所在目录），只是判断换成 `isDirectory()`。
     // 全落空时的文案对齐 SourceLoader.resolveDir（6 空格缩进逐行列出候选）。
-    fn resolveDir(rel : string, fromDir : string, impPath : string) -> !string {
+    fn resolveDir(rel : String, fromDir : String, impPath : String) -> !String {
         var cleaned = srcClean(rel)
         var first = fromDir
         if (first.length() == 0) { first = "." }
 
-        var cands : string[] = new string[3]
+        var cands : String[] = new String[3]
         var n = 0
         var i = 0
         while (i < 3) {
@@ -418,10 +418,10 @@ class SrcLoader(rootDir : string) {
 
     // `module "目录"`：把目录里**所有** `*.rsf` **按文件名排序**后逐个装载。
     // 空目录（一个 .rsf 都没有）显式失败 —— 与 SourceLoader 的 entries.isEmpty 分支同一文案。
-    pub fn loadModule(dir : string, impPath : string) -> !int {
+    pub fn loadModule(dir : String, impPath : String) -> !Int {
         var f = new File(dir)
         var fs = f.listFiles()
-        var names : string[] = new string[8]
+        var names : String[] = new String[8]
         var cnt = 0
         var i = 0
         while (i < fs.length) {
@@ -468,7 +468,7 @@ class SrcLoader(rootDir : string) {
     // `pkg a.b` 要求文件就放在 `a/b/` 下（以当前目录为准）。
     // 与 SourceLoader.checkPackage 同一口径：相对路径正好相等，或者绝对路径以 `/<expected>` 结尾。
     // **每一份**带 pkg 的文件都要过这一关（只有根文件的 pkg 会被记下来，但校验不分根不根）。
-    fn checkPackage(pkgText : string, path : string) -> !int {
+    fn checkPackage(pkgText : String, path : String) -> !Int {
         var expected = srcPkgPath(pkgText)
         var actual = srcDirOf(path)
         if (actual == expected) { rtn 0 }
@@ -478,8 +478,8 @@ class SrcLoader(rootDir : string) {
     }
 
     // 装一个文件（含它 import 的源码）。isRoot 只对入口文件为 true —— 只有入口的 pkg 算数。
-    // 返回装载过的文件数（rsf 没有 `!void`，所以用 `!int`）。
-    pub fn loadFile(path : string, isRoot : bool) -> !int {
+    // 返回装载过的文件数（rsf 没有 `!void`，所以用 `!Int`）。
+    pub fn loadFile(path : String, isRoot : Bool) -> !Int {
         var key = srcClean(path)
         if (alreadyLoaded(key)) { rtn 0 }   // 同一文件只装一次
         remember(key)
@@ -489,7 +489,7 @@ class SrcLoader(rootDir : string) {
         try {
             text = readText(path)!!
             readOk = true
-        } catch (readError : string) {
+        } catch (readError : String) {
             readOk = false
         }
         if (!readOk) { fail "读不到文件：" + path }
@@ -607,7 +607,7 @@ class SrcLoader(rootDir : string) {
 
 // 装载入口文件以及它（递归）import 的全部 rsf 源码，返回一棵可以直接交给
 // `compileProgram` 的 PROGRAM 节点。失败时 `fail`，消息见文件头那三条约定。
-pub fn loadProgram(entryPath : string) -> !Node {
+pub fn loadProgram(entryPath : String) -> !Node {
     var loader = new SrcLoader(srcDirOf(entryPath))
     loader.loadFile(entryPath, true)!!
     rtn loader.build()

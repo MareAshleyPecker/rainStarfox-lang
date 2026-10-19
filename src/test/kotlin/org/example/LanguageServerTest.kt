@@ -86,14 +86,14 @@ class LanguageServerTest {
     fun `补全返回带签名与 kind 编号的条目`() {
         val dir = File.createTempFile("rsf-lsp-c", "").let { it.delete(); it.mkdirs(); it }
         val file = File(dir, "c.rsf")
-        file.writeText("fn helper() -> int {\n    rtn 1\n}\n", Charsets.UTF_8)
+        file.writeText("fn helper() -> Int {\n    rtn 1\n}\n", Charsets.UTF_8)
         val uri = LanguageServer.pathToUri(file.path)
 
         val s = server()
         s.dispatch(
             "textDocument/didOpen",
             JsonParser.parse(
-                """{"textDocument":{"uri":"$uri","languageId":"rsf","version":1,"text":"fn helper() -> int {\n    rtn 1\n}\n\nfn main() -> void {\n    rtn\n}\n"}}""",
+                """{"textDocument":{"uri":"$uri","languageId":"rsf","version":1,"text":"fn helper() -> Int {\n    rtn 1\n}\n\nfn main() -> void {\n    rtn\n}\n"}}""",
             ),
         )
         val result = s.dispatch(
@@ -121,7 +121,7 @@ class LanguageServerTest {
     /** 带 RDoc 的被引用文件。 */
     private val greetSource = """/// 打个招呼。
 /// 第二个参数没用，留着占位。
-pub fn greet(name : string) -> string {
+pub fn greet(name : String) -> String {
     rtn "hi " + name
 }
 """
@@ -130,7 +130,7 @@ pub fn greet(name : string) -> string {
     private val mainSource = """import "lib/greet.rsf"
 
 fn main() -> void {
-    var msg : string = greet("x")
+    var msg : String = greet("x")
     rtn
 }
 """
@@ -182,7 +182,7 @@ fn main() -> void {
         )!!
         assertEquals("markdown", result.str("contents", "kind"))
         val value = result.str("contents", "value")!!
-        assertTrue(value.contains("greet(name : string)"), value)
+        assertTrue(value.contains("greet(name : String)"), value)
         assertTrue(value.contains("打个招呼"), value)
         assertTrue(value.contains("greet.rsf:"), value)
     }
@@ -192,8 +192,8 @@ fn main() -> void {
         val dir = File.createTempFile("rsf-lsp-var", "").let { it.delete(); it.mkdirs(); it }
         val file = File(dir, "v.rsf")
         val text = """fn main() -> void {
-    var msg : string = "x"
-    var other : string = msg
+    var msg : String = "x"
+    var other : String = msg
     rtn
 }
 """

@@ -453,14 +453,14 @@ class BytecodeCompiler(
      *
      * **为什么必须有它**：JVM 自己抛的 `ArrayIndexOutOfBoundsException` 消息是
      * `Index 5 out of bounds for length 3`，而解释器抛的是 rsf 自己那套。两端要在
-     * `try { ... } catch (e : string) { println(e) }` 下打出一模一样的字，就必须都走
+     * `try { ... } catch (e : String) { println(e) }` 下打出一模一样的字，就必须都走
      * 同一套显式检查（消息格式只定义在 [ArrayRuntime] 一处）。
      *
      * 两个方法都放在**程序类**上并且是 public：用户类里的下标访问也要跨类调用它们。
      * 名字带 `$`，rsf 的标识符语法写不出，绝不会跟用户代码撞车。
      */
     private fun emitArrayHelpers(cw: ClassWriter) {
-        // __rsf_arrayIndex(int length, int index) -> int
+        // __rsf_arrayIndex(Int length, Int index) -> Int
         // 不越界就把下标原样返回，于是调用点可以写成
         // 「求长度 → 求下标 → 检查 → 直接用这个下标取元素」，
         // 数组引用与下标都不需要额外的局部变量（也就不会跟栈帧合并打架）。
@@ -498,7 +498,7 @@ class BytecodeCompiler(
             mv.visitEnd()
         }
 
-        // __rsf_arrayLength(int length) -> int（负数长度：JVM 会抛
+        // __rsf_arrayLength(Int length) -> Int（负数长度：JVM 会抛
         // NegativeArraySizeException，而解释器接不住它——两端都自己检查）
         run {
             val mv = cw.visitMethod(
@@ -533,14 +533,14 @@ class BytecodeCompiler(
      *
      * **为什么必须有它**：rsf 的文件函数失败时要把 Java 的异常换成 rsf 自己的错误消息
      * （[FileRuntime.failure] 的格式，解释器抛的 `RsfFailure` 就是这个格式，
-     * 两端 `catch (e : string) { println(e) }` 打出来的必须一字不差），而
+     * 两端 `catch (e : String) { println(e) }` 打出来的必须一字不差），而
      * `Files.readString` 抛的是 `NoSuchFileException` / `AccessDeniedException`。
      * 换消息就得 catch 再抛，而**调用点不能内联 try/catch**——异常处理器一进去
      * 操作数栈就只剩异常对象，表达式中间求值时栈上往往还有没消费完的值，
      * 生成出来的类会以 VerifyError 报废（同 `parseInt`，见 [emitParseIntHelper]）。
      *
      * **可变参数不靠 `ClassPath` 解析**（它不认 varargs）：`Paths.get(String, String...)`
-     * 与 `Files.write(Path, byte[], OpenOption...)` 都是 varargs，但字节码里根本没有
+     * 与 `Files.write(Path, Byte[], OpenOption...)` 都是 varargs，但字节码里根本没有
      * 「可变参数」这回事——发调用时按**擦除后的数组描述符**发，再当场造一个空数组
      * （`ICONST_0` + `ANEWARRAY`）填进去就行，效果和源码里 `Paths.get(path)` 完全一样。
      *
@@ -684,7 +684,7 @@ class BytecodeCompiler(
         mv.visitInsn(ATHROW)
     }
 
-    /** 栈顶 int → String（拼错误消息用）。 */
+    /** 栈顶 Int → String（拼错误消息用）。 */
     private fun emitStringValueOfInt(mv: MethodVisitor) {
         mv.visitMethodInsn(
             INVOKESTATIC, "java/lang/String", "valueOf", "(I)Ljava/lang/String;", false,
@@ -722,10 +722,10 @@ class BytecodeCompiler(
      */
     private fun descriptorOfType(type: RsfType): String {
         // 阶段 30b：函数类型在 JVM 上的表示就是它的 SAM 接口（工单 §1）：
-        // `(int) -> int` → `L__RsfFn1;`，可空与否共用同一个接口（可空 = 引用可能是 null）。
+        // `(Int) -> Int` → `L__RsfFn1;`，可空与否共用同一个接口（可空 = 引用可能是 null）。
         // 阶段 13：数组 = 一层 '[' + 元素的描述符，**递归一层**。
         // （别写成 `"[".repeat(arrayDepth) + descriptorOfType(elementType)`：
-        // elementType 自己还带着剩下的维度，那样 `int[][]` 会算出 `[[[I`。）
+        // elementType 自己还带着剩下的维度，那样 `Int[][]` 会算出 `[[[I`。）
         if (type.isArray) return "[" + descriptorOfType(type.elementType)
         type.fnTypeText?.let { text ->
             val sig = fnSignatureOf(text)
@@ -754,7 +754,7 @@ class BytecodeCompiler(
      * 擦除后在类文件里就是 `Ljava/lang/Object;`。
      *
      * 这个和 [UserMember.Field.type] **不是一回事**：后者把 `K` 替换成了实参类型
-     * （`Pair&<string, int>` 的 `k` 是 `string`），那是「拿到值之后当成什么用」，
+     * （`Pair&<String, Int>` 的 `k` 是 `String`），那是「拿到值之后当成什么用」，
      * 用来插 CHECKCAST / 拆箱；而 `GETFIELD` / `PUTFIELD` 的**描述符必须用擦除后的那个**，
      * 拿 `Ljava/lang/String;` 去取一个声明为 `Ljava/lang/Object;` 的字段会直接
      * `NoSuchFieldError`（编译能过、跑起来就炸，而解释器那边完全是好的——
@@ -869,7 +869,7 @@ class BytecodeCompiler(
     /**
      * 给一个类补**桥方法**（`ACC_BRIDGE | ACC_SYNTHETIC`）——阶段 20 M4-c。
      *
-     * 为什么必须有：JVM 的接口方法签名是**擦除后**的。`class ByValue : Comparator&<string>`
+     * 为什么必须有：JVM 的接口方法签名是**擦除后**的。`class ByValue : Comparator&<String>`
      * 里实现方法是 `compare(Ljava/lang/String;Ljava/lang/String;)I`，而 `Comparator` 声明的
      * 是 `compare(Ljava/lang/Object;Ljava/lang/Object;)I`。javac 在这种「实现签名比接口签名窄」
      * 的时候会合成一个桥（`Object` 版转调 `String` 版），JVM 的回调、`invokeinterface`
@@ -954,7 +954,7 @@ class BytecodeCompiler(
      * 这条「要求」真的能由这个实现补出桥来吗？
      *
      * 桥的两头必须能用 `CHECKCAST` / 装箱拆箱连起来，而且方向只能是**收窄**：
-     * 形参 `Object → String`、`Object → int`（拆箱）都可以；反过来（要求的是 `int`、
+     * 形参 `Object → String`、`Object → Int`（拆箱）都可以；反过来（要求的是 `Int`、
      * 实现收的是引用）在 JVM 上根本不是同一件事，宁可不发桥，也不要发一条跑起来才炸的。
      */
     private fun bridgeFits(impl: FuncDecl, req: BridgeRequirement): Boolean {
@@ -989,7 +989,7 @@ class BytecodeCompiler(
      *
      * ```
      * public Object get() {                       // 要求（接口里擦除后的形态）
-     *     return Integer.valueOf(this.get());      // 转调实现（`get() -> int`）
+     *     return Integer.valueOf(this.get());      // 转调实现（`get() -> Int`）
      * }
      * ```
      */
@@ -1222,7 +1222,7 @@ class BytecodeCompiler(
      * 注解元素值 → **类文件里的常量**（`AnnotationVisitor.visit` / `visitAnnotationDefault`
      * 收的那种装箱值）。
      *
-     * 装箱按**元素声明的类型**来：`@M(b = 1)` 的元素是 `byte`，值必须是 `Byte`
+     * 装箱按**元素声明的类型**来：`@M(b = 1)` 的元素是 `Byte`，值必须是 `Byte`
      * ——塞 `Integer` 的话类文件里 tag 会变成 'I'，反射读它直接
      * `AnnotationTypeMismatchException`。返回 null 表示「这个值编码不进类文件」
      * （只有 `null` 字面量会走到这里）。
@@ -1337,7 +1337,7 @@ class BytecodeCompiler(
      * 方案 B 的注解访问器（DESIGN-21 §3）：**每个使用点一个静态方法**。
      *
      * - 类型级 → `public static Marker$Impl Marker()`，注解名就是方法名（rsf 的无缝重载）；
-     * - 成员级 → `public static Marker$Impl Marker(string member)`，`member` 对不上返回 **null**。
+     * - 成员级 → `public static Marker$Impl Marker(String member)`，`member` 对不上返回 **null**。
      *
      * 懒构造：先读缓存字段，非空直接返回，否则 `new` 一个存回去。宿主是**类**时方法带
      * `ACC_SYNCHRONIZED`（§3 定的），所以不需要 `<clinit>` 也不需要 DCL；宿主是**接口或注解
@@ -1496,7 +1496,7 @@ class BytecodeCompiler(
      * `toString()Ljava/lang/String;`，类文件直接报废）。
      *
      * 生成出来的形状（用 `StringBuilder` 而不是 invokedynamic，是因为要处理
-     * `char` / `bool` / `byte` 各自的 append 重载，见 [ObjectFormat.appendDescriptor]）：
+     * `Char` / `Bool` / `Byte` 各自的 append 重载，见 [ObjectFormat.appendDescriptor]）：
      * ```
      * public String toString() {
      *     return new StringBuilder("Point(x=").append(x).append(", y=").append(y).append(")").toString();
@@ -1615,7 +1615,7 @@ class BytecodeCompiler(
             emitParentCtor(mv, owner, decl, ctor)
 
             // 字段初值在「this 就是刚分配的这个对象」的上下文里求值：0 号槽正是 this。
-            // 主构造的参数就在 1..n 号槽上，所以 `class P(x0 : int) { var x : int = x0 }`
+            // 主构造的参数就在 1..n 号槽上，所以 `class P(x0 : Int) { var x : Int = x0 }`
             // 的初值表达式能直接用 x0（帧就是主构造的帧，和解释器一致）。
             val ctx = ExprCtx(mv, owner, ctor?.let { model.loweredOf(it) }, localOffset = 0)
             // 伴生类的**元素字段**例外（阶段 21 M3）：M2 给它们的 initializer 只是占位
@@ -1664,7 +1664,7 @@ class BytecodeCompiler(
      * `<init>` 序言里的**父类那一跳**（阶段 25 K2）。
      *
      * 三种写法到了语义模型里是同一条 SuperDelegation：
-     * - 类头 `class D(y : int) : Base(y)`（主构造，键是主构造那个 [FuncDecl]）；
+     * - 类头 `class D(y : Int) : Base(y)`（主构造，键是主构造那个 [FuncDecl]）；
      * - 次构造体第一句的 `super(实参)`（键是该次构造）；
      * - 编译器补的无参 `super()`：类写了构造器时挂在构造器上，一个构造器都没写时挂在类上
      *   （[org.example.complie.sema.ClassModel.implicitSuperDelegationOf]）。
@@ -1711,7 +1711,7 @@ class BytecodeCompiler(
             return
         }
 
-        // JDK 父类（`class MyError(msg : string) : Exception(msg)`）。
+        // JDK 父类（`class MyError(msg : String) : Exception(msg)`）。
         //
         // 用 **Checker 已经挑好的那一条** `<init>`（阶段 25 K4，缺口 D）：从前这里按
         // 「同一口径」再挑一次，而解释器又有自己的第三份打分——三份 `minByOrNull` 的平局
@@ -1740,7 +1740,7 @@ class BytecodeCompiler(
      */
     private fun emitUserMethod(cw: ClassWriter, owner: String, fn: FuncDecl) {
         val access = accessOf(fn) or if (fn.isStatic) ACC_STATIC else 0
-        // 阶段 25 K2：抽象方法（`abstract fun area() -> int`）只发签名，**不写 Code 属性**
+        // 阶段 25 K2：抽象方法（`abstract fun area() -> Int`）只发签名，**不写 Code 属性**
         // ——带上 Code 的话类加载器会以 ClassFormatError 拒绝（JVMS 4.6：abstract / native
         // 方法不许有 Code）。它仍然必须发出来：`Shape.describe()` 里那句隐式 this 的
         // `area()` 编译成 `invokevirtual Shape.area`，类文件里没有这条声明时，方法解析
@@ -1995,7 +1995,7 @@ class BytecodeCompiler(
         false,
     )
 
-    /** 函数类型的 SAM 接口内部名：`(int, int) -> int` → `__RsfFn2`（工单 §1）。 */
+    /** 函数类型的 SAM 接口内部名：`(Int, Int) -> Int` → `__RsfFn2`（工单 §1）。 */
     private fun samInternalName(arity: Int): String = "__RsfFn$arity"
 
     /** `invoke` 的描述符：形参全擦成 Object，返回也是 Object（工单 §1）。 */
@@ -2009,7 +2009,7 @@ class BytecodeCompiler(
     /**
      * lambda 实现方法的描述符：捕获值 + 自己的形参 → 声明返回类型（工单 §1）。
      *
-     * **void 的 lambda 是个例外**：返回 `void` 的 lambda（`(int) -> void`）在这里落成
+     * **void 的 lambda 是个例外**：返回 `void` 的 lambda（`(Int) -> void`）在这里落成
      * `Ljava/lang/Object;`，方法体末尾压 null 返回。原因是 JVM 的硬约束——
      * `LambdaMetafactory` 要求实现方法的返回类型**能放进** SAM 的返回类型（Object），
      * 而 `void` 放不进：
@@ -2107,7 +2107,7 @@ class BytecodeCompiler(
             Handle(H_INVOKESTATIC, ctx.owner, closure.implName, implDescriptorOf(closure), false),
             // instantiatedMethodType：形参/返回的**真实类型**。JVM 校验要求它每一项都能
             // 放进 samMethodType 的 Object 里，所以基本类型在这一栏落成**包装类**
-            // （`(int)int` → `(Ljava/lang/Integer;)Ljava/lang/Integer;`）——
+            // （`(Int)Int` → `(Ljava/lang/Integer;)Ljava/lang/Integer;`）——
             // 装箱/拆箱由 LambdaMetafactory 适配到实现方法自己的 `(I)I`。这正是 javac
             // 为 `Function<Integer,Integer>` 写出来的形状。
             Type.getMethodType(instantiatedDescriptor(closure)),
@@ -2119,7 +2119,7 @@ class BytecodeCompiler(
      *
      * 与 [implDescriptorOf] 的唯一区别：基本类型用**包装类**。JVM 的
      * `LambdaMetafactory` 会校验「samMethodType 的每一项都能装下 instantiated 的对应项」，
-     * 而 `Object` 装不下 `int`（原始类型不是 Object 的子类型），只装得下 `Integer`。
+     * 而 `Object` 装不下 `Int`（原始类型不是 Object 的子类型），只装得下 `Integer`。
      */
     private fun instantiatedDescriptor(closure: LambdaClosure): String {
         val sb = StringBuilder("(")
@@ -2396,7 +2396,7 @@ class BytecodeCompiler(
 
         for ((i, instr) in body.instructions.withIndex()) {
             // 处理器用到的三个标签即使落在不可达位置也必须 visit 一次：
-            // `try { rtn 1 } catch (e : string) { ... }` 的 try.end 就在 RETURN 后面，
+            // `try { rtn 1 } catch (e : String) { ... }` 的 try.end 就在 RETURN 后面，
             // 不 visit 的话异常表会指着一个没访问过的 Label。
             val forced = instr is ILabel && instr.label in handlerLabels
             if (!reach[i] && !forced) continue
@@ -2647,7 +2647,7 @@ class BytecodeCompiler(
 
     /**
      * 阶段 28a：把本方法的用户标签名按**声明顺序**写成 runtime-visible 注解
-     * `@RsfLabels(value = string[])`。
+     * `@RsfLabels(value = String[])`。
      *
      * 收集口径（工单 §4）：直接按 `body.instructions` 的顺序扫 [ILabel]，不去重
      * （重名已被 Checker 拦在语义阶段）。`Lowering` 给内部标签留了 `'\u0000'` 前缀
@@ -2712,7 +2712,7 @@ class BytecodeCompiler(
             is FloatLit -> mv.visitLdcInsn(expr.value)
             is DoubleLit -> mv.visitLdcInsn(expr.value)
             is StringLit -> mv.visitLdcInsn(expr.value)
-            // 字符字面量：char 在 JVM 栈上就是它的码点（int），压一个整数即可
+            // 字符字面量：Char 在 JVM 栈上就是它的码点（Int），压一个整数即可
             is CharLit -> pushInt(mv, expr.value.code)
             is BoolLit -> mv.visitInsn(if (expr.value) ICONST_1 else ICONST_0)
             is NullLit -> mv.visitInsn(ACONST_NULL)
@@ -2767,11 +2767,11 @@ class BytecodeCompiler(
                 when (expr.op) {
                     TokenKind.MINUS -> mv.visitInsn(
                         // 操作数在栈上的**实际宽度**由「提升后」的基础类型决定：
-                        // byte / char 在 JVM 栈上就是 int，Checker 也把 `-b` 的结果定成
+                        // Byte / Char 在 JVM 栈上就是 Int，Checker 也把 `-b` 的结果定成
                         // 提升后的类型（见 Checker 的 UnaryExpr → `operand.base.promoted()`），
                         // 所以这里必须先 promoted() 再挑指令。
                         // 以前直接比 RsfType.INT/LONG/FLOAT/DOUBLE 四种静态类型，
-                        // `-b`（b : byte）会抛「一元减号的操作数不是数值」——
+                        // `-b`（b : Byte）会抛「一元减号的操作数不是数值」——
                         // 而 rsf check 放行、rsf run 正常，三方不一致（2026-10-11 修）。
                         when (val base = model.typeOf(expr.operand).base.promoted()) {
                             RsfBase.INT -> INEG
@@ -2800,7 +2800,7 @@ class BytecodeCompiler(
 
             is IfExpr -> {
                 // 三目：两条分支各算一遍，宽度统一到表达式静态类型后再汇合，
-                // 保证合流点两侧栈上类型一致（int vs long 混着汇合是校验器不认的）
+                // 保证合流点两侧栈上类型一致（Int vs Long 混着汇合是校验器不认的）
                 val resultType = model.typeOf(expr)
                 val onTrue = Label()
                 val end = Label()
@@ -2957,10 +2957,10 @@ class BytecodeCompiler(
      * 负数检查（JVM 的 `NegativeArraySizeException` 解释器接不住）。
      *
      * 指令的选择：
-     * - 一维 + 基本类型 → `NEWARRAY <atype>`（`int[]` 是 `T_INT`）
+     * - 一维 + 基本类型 → `NEWARRAY <atype>`（`Int[]` 是 `T_INT`）
      * - 一维 + 引用类型 → `ANEWARRAY <组件类型>`
-     * - 多维 → `MULTIANEWARRAY <数组描述符>, 维数`（`new int[3][4]` → `[[I`，
-     *   一次分配出「3 个长度为 4 的 int 数组」，正好就是「数组的数组」）
+     * - 多维 → `MULTIANEWARRAY <数组描述符>, 维数`（`new Int[3][4]` → `[[I`，
+     *   一次分配出「3 个长度为 4 的 Int 数组」，正好就是「数组的数组」）
      */
     private fun emitNewArray(ctx: ExprCtx, expr: NewArrayExpr) {
         val mv = ctx.mv
@@ -2989,7 +2989,7 @@ class BytecodeCompiler(
     /**
      * 越界检查：栈上是 `[数组, 长度, 下标]`，调用辅助方法之后变成 `[数组, 下标]`。
      *
-     * 辅助方法 `(int length, int index) -> int` 不越界就把下标原样还回来，
+     * 辅助方法 `(Int length, Int index) -> Int` 不越界就把下标原样还回来，
      * 所以调用点不用额外的局部变量来存数组或下标。
      */
     private fun emitArrayIndexCheck(mv: MethodVisitor) {
@@ -3002,9 +3002,9 @@ class BytecodeCompiler(
     /**
      * 取数组元素的指令：**按元素类型选**，跟 javac 完全一致。
      *
-     * `byte[]` 用 `BALOAD`、`char[]` 用 `CALOAD`、`bool[]` 用 `BALOAD`
-     * （JVM 规范里 `baload` 同时管 boolean 与 byte）、`int[]` 用 `IALOAD`；
-     * 引用类型（含**数组的数组**——`int[][]` 的元素是 `int[]`）用 `AALOAD`。
+     * `Byte[]` 用 `BALOAD`、`Char[]` 用 `CALOAD`、`Bool[]` 用 `BALOAD`
+     * （JVM 规范里 `baload` 同时管 Boolean 与 Byte）、`Int[]` 用 `IALOAD`；
+     * 引用类型（含**数组的数组**——`Int[][]` 的元素是 `Int[]`）用 `AALOAD`。
      */
     private fun arrayLoadOpcode(element: RsfType): Int = when {
         element.isArray || !element.base.isPrimitive || element.nullable -> AALOAD
@@ -3049,7 +3049,7 @@ class BytecodeCompiler(
         val mv = ctx.mv
         val args = model.constructionArgs(expr)
 
-        // 构造导入的 JVM 类（`new ArrayList&<int>()` / `ArrayList&<int>()`）：
+        // 构造导入的 JVM 类（`new ArrayList&<Int>()` / `ArrayList&<Int>()`）：
         // 直接 NEW + INVOKESPECIAL <init>
         model.externalNewTargets[expr]?.let { target ->
             val m = target.method
@@ -3122,7 +3122,7 @@ class BytecodeCompiler(
                     descriptorOfType(declared),
                 )
                 // `var value : T` 擦除后是 Object：按接收者的实参类型收敛回来
-                // （结果被丢弃时就别转了：`Box&<int>` 的值可能是 null，拆箱会炸，
+                // （结果被丢弃时就别转了：`Box&<Int>` 的值可能是 null，拆箱会炸，
                 //   而 Java 里写 `box.value;` 这种语句是不拆箱的）
                 if (!discard) emitResultCast(mv, declared, model.typeOf(expr))
             }
@@ -3155,7 +3155,7 @@ class BytecodeCompiler(
      * 与普通成员调用只有两处不同，两处都是 `super` 语义的要害：
      * - **指令一律 `INVOKESPECIAL`**（接口默认方法那一路 `itf = true`）。非虚调用：绕过
      *   运行期类的覆盖，直接跑**声明**的那一份。发成 INVOKEVIRTUAL 的话
-     *   `override fun tag() -> string { rtn super.tag() }` 就是自己调自己，栈溢出。
+     *   `override fun tag() -> String { rtn super.tag() }` 就是自己调自己，栈溢出。
      * - **owner 是声明那个方法的类/接口**（Checker 记进 superCalls 的 `className`），
      *   不是本类（本类压根没有这条方法的声明）。
      *
@@ -3223,8 +3223,8 @@ class BytecodeCompiler(
     /**
      * 泛型互操作的结果收敛。
      *
-     * JVM 没有泛型：`Box&<int>.get()` 与 `ArrayList&<int>.get()` 声明返回的都是擦除后的
-     * `Object`，而 rsf 的静态类型（来自类型实参）是 `int`。所以这里补一条
+     * JVM 没有泛型：`Box&<Int>.get()` 与 `ArrayList&<Int>.get()` 声明返回的都是擦除后的
+     * `Object`，而 rsf 的静态类型（来自类型实参）是 `Int`。所以这里补一条
      * `CHECKCAST`（基本类型再 `intValue()` 拆箱），解释器那边靠
      * `coerceGenericResult` 做同一件事——两端因此表现一致。
      */
@@ -3263,7 +3263,7 @@ class BytecodeCompiler(
         }
         // 类型参数擦除到 Object（`new T[3]` 建出来的就是 Object[]）
         if (type.isTypeParam) return "java/lang/Object"
-        // 可空的基本类型在 JVM 上是包装类（`?int[]` 的元素是 Integer）
+        // 可空的基本类型在 JVM 上是包装类（`?Int[]` 的元素是 Integer）
         if (type.nullable && type.base.isPrimitive) return type.base.wrapper!!
         val name = type.externalName
         if (type.isExternal && name != null) {
@@ -3284,7 +3284,7 @@ class BytecodeCompiler(
      *
      * 难点是两条分支压在栈上的表示必须一致：左边是可空类型（引用形式：引用类型就是它自己，
      * 基本类型是包装类），右边是结果类型。所以让**两条路都汇成「结果的装箱引用」**，
-     * 汇合之后再按需要拆箱。左边的基础类型和结果基础类型不同时（`?int ?: 0L`），
+     * 汇合之后再按需要拆箱。左边的基础类型和结果基础类型不同时（`?Int ?: 0L`），
      * 在非空分支里拆箱→加宽→重新装箱。
      */
     // ------------------------------------------------------------------ 类型转换 / 类型判断（阶段 24）
@@ -3781,7 +3781,7 @@ class BytecodeCompiler(
             return
         }
 
-        // 阶段 25 K2：**继承来的 JDK 方法**（`class MyError(msg : string) : Exception(msg)` 里
+        // 阶段 25 K2：**继承来的 JDK 方法**（`class MyError(msg : String) : Exception(msg)` 里
         // 直接写 `getMessage()`）。这条调用既不在 implicitCalls（那是 rsf 类链上的方法），
         // 也不在 callTargets（它不是顶层函数），只有 Checker 解析出来的 JvmMethod 记录。
         // 接收者是 this（继承来的 JDK 方法打在同一个对象上——我们真的 extends 了 JDK 类，
@@ -3853,10 +3853,10 @@ class BytecodeCompiler(
     /**
      * 内置函数调用（阶段 16）。
      *
-     * 实参先按签名加宽（`toByte(b)` 里 byte 参数不用做任何事——它在栈上就是 int），
+     * 实参先按签名加宽（`toByte(b)` 里 Byte 参数不用做任何事——它在栈上就是 Int），
      * 再发实现指令。每一行都对应解释器里 `Interpreter.callBuiltin` 的同一行。
      *
-     * `charToInt` 是**空实现**：char 在 JVM 栈上就是它的码点，取码点不需要指令。
+     * `charToInt` 是**空实现**：Char 在 JVM 栈上就是它的码点，取码点不需要指令。
      * 这一点和解释器不同（那边 Char 是个对象，要 `.code`），但可观察的结果一样。
      */
     private fun emitBuiltinCall(ctx: ExprCtx, expr: CallExpr, builtin: Builtin) {
@@ -3866,7 +3866,7 @@ class BytecodeCompiler(
             emitWiden(mv, model.typeOf(arg), builtin.params[i])
         }
         when (builtin.name) {
-            // 截断 / 转换：对应 Java 的 (byte) 与 (char)
+            // 截断 / 转换：对应 Java 的 (Byte) 与 (Char)
             "toByte" -> mv.visitInsn(I2B)
             "toChar" -> mv.visitInsn(I2C)
             "charToInt" -> {} // 见上面的说明：什么都不用发
@@ -3922,11 +3922,11 @@ class BytecodeCompiler(
         // 而不是「两边都算完再合并」。这样 `false && g()` 里的 g 一次都不会被调用，
         // 和解释器完全一致（那边是 if (!left) return false）。
         //
-        // 非空 bool 在栈上就是 int（0/1），所以条件跳转用 IFEQ / IFNE 就够：
+        // 非空 Bool 在栈上就是 Int（0/1），所以条件跳转用 IFEQ / IFNE 就够：
         //   a && b:  算 a; IFEQ 假; 算 b; GOTO 结束; 假: ICONST_0; 结束:
         //   a || b:  算 a; IFNE 真; 算 b; GOTO 结束; 真: ICONST_1; 结束:
         // 注意 `a && b` 的真分支**直接就是 b 的值**（不必再归一化）——
-        // b 的类型已经被 Checker 钉死成 bool，栈上必然是 0 或 1。
+        // b 的类型已经被 Checker 钉死成 Bool，栈上必然是 0 或 1。
         if (op == TokenKind.ANDAND || op == TokenKind.OROR) {
             val branchLabel = Label()
             val endLabel = Label()
@@ -3997,7 +3997,7 @@ class BytecodeCompiler(
         mv.visitInsn(insn)
     }
 
-    /** 比较运算：产生 JVM 的 int（0/1），rsf 里当作 bool。 */
+    /** 比较运算：产生 JVM 的 Int（0/1），rsf 里当作 Bool。 */
     private fun emitComparison(ctx: ExprCtx, expr: BinaryExpr, leftType: RsfType, rightType: RsfType) {
         val mv = ctx.mv
         val op = expr.op
@@ -4010,7 +4010,7 @@ class BytecodeCompiler(
 
         if (!numericPair) {
             if (boolPair) {
-                // 非空 bool 在栈上就是 int
+                // 非空 Bool 在栈上就是 Int
                 emitExpr(ctx, expr.left)
                 emitExpr(ctx, expr.right)
                 mv.visitJumpInsn(if (op == TokenKind.EQ) IF_ICMPEQ else IF_ICMPNE, trueLabel)
@@ -4034,7 +4034,7 @@ class BytecodeCompiler(
             emitWiden(mv, rightType, common)
 
             when (common.base) {
-                // byte / char 也走 int 比较：它们在栈上就是 int（`b1 == b2` 时
+                // Byte / Char 也走 Int 比较：它们在栈上就是 Int（`b1 == b2` 时
                 // promote 会把共同类型原样给回来，所以这两支必须列上）
                 RsfBase.INT, RsfBase.BOOL, RsfBase.BYTE, RsfBase.CHAR -> mv.visitJumpInsn(
                     when (op) {
@@ -4093,14 +4093,14 @@ class BytecodeCompiler(
      *
      * **对象一律走 `String.valueOf(Ljava/lang/Object;)`**——这个重载存在，它会调对象的
      * `toString()`。以前非 String 的外部类/用户类走的是 `String.valueOf(LXxx;)`，
-     * 那个重载**根本不存在**（JDK 的 `String.valueOf` 只有 Object / char[] / 基本类型
+     * 那个重载**根本不存在**（JDK 的 `String.valueOf` 只有 Object / Char[] / 基本类型
      * 那几个），于是 `"p = " + p` 编译能过、运行期 `NoSuchMethodError`；
      * 而解释器那边能正常打出文本——两端不一致，破了「逐字节一致」的硬承诺。
      * 用户自定义类的 `toString()` 由 [emitUserToString] 生成，解释器按
      * [org.example.complie.sema.ObjectFormat] 渲染同一套格式，所以两边文本相同。
      */
     private fun emitToString(mv: MethodVisitor, type: RsfType) {
-        // 引用类型里的 string（含 ?string）本来就是 String，直接拼；null 直接拼成 "null"
+        // 引用类型里的 String（含 ?String）本来就是 String，直接拼；null 直接拼成 "null"
         if (type.base == RsfBase.STRING || type.isNullLiteral) return
         // 不是基本类型的一律按 Object 走：数组、外部类、用户类、类型参数占位（擦除成 Object），
         // 以及**可空的基本类型**（栈上已经是包装类，null 会拼成 "null"）。
@@ -4112,9 +4112,9 @@ class BytecodeCompiler(
             )
             return
         }
-        // byte 没有 valueOf(byte) 这个重载（只有 valueOf(int)），而它在栈上本来就是
-        // int，所以按 int 转成字符串——`"b=" + b` 得到 "b=5"，跟解释器的渲染一致。
-        // char 有 valueOf(char)，直接用它，拼出来是字符本身（"c=x"）。
+        // Byte 没有 valueOf(Byte) 这个重载（只有 valueOf(Int)），而它在栈上本来就是
+        // Int，所以按 Int 转成字符串——`"b=" + b` 得到 "b=5"，跟解释器的渲染一致。
+        // Char 有 valueOf(Char)，直接用它，拼出来是字符本身（"c=x"）。
         val desc = if (type.base == RsfBase.BYTE) "(I)Ljava/lang/String;" else "(${type.descriptor})Ljava/lang/String;"
         mv.visitMethodInsn(
             INVOKESTATIC, "java/lang/String", "valueOf",
@@ -4153,9 +4153,9 @@ class BytecodeCompiler(
 
         // 基本类型 -> 引用类型（对象参数、可空同类型）：装箱
         if (!to.isPrimitive && to.base != RsfBase.NULL && from.isPrimitive) {
-            // 目标是「可空的基本类型」（`?byte` / `?char` / `?long`…）而且基础类型不一样时，
-            // 必须**先按目标基础类型转换再装箱**：`var b : ?byte = 5` 要装成 Byte、
-            // `var n : ?long = 1` 要装成 Long。少了这一步会装成 Integer，
+            // 目标是「可空的基本类型」（`?Byte` / `?Char` / `?Long`…）而且基础类型不一样时，
+            // 必须**先按目标基础类型转换再装箱**：`var b : ?Byte = 5` 要装成 Byte、
+            // `var n : ?Long = 1` 要装成 Long。少了这一步会装成 Integer，
             // 槽位里躺着 Integer、后面拆箱时发 Byte.byteValue() / Long.longValue()，
             // 类加载直接 VerifyError。
             if (to.nullable && to.base.isPrimitive && from.base != to.base) {
@@ -4185,18 +4185,18 @@ class BytecodeCompiler(
     }
 
     /**
-     * 两个基础类型之间的转换指令（阶段 16 起含 byte / char）。
+     * 两个基础类型之间的转换指令（阶段 16 起含 Byte / Char）。
      *
-     * `byte` 和 `char` 在 JVM 栈上**就是 int**，所以「提升成 int」不需要任何指令，
+     * `Byte` 和 `Char` 在 JVM 栈上**就是 Int**，所以「提升成 Int」不需要任何指令，
      * 这里返回 [NOP] 而不是 null：有几个调用点（`?:` 的类型收敛、装箱前的加宽）
      * 直接写 `visitInsn(widenInsn(...))`，返回 null 会在那儿变成 NPE；
      * 发一条空指令永远合法，语义上等于什么都没做。
      */
     private fun widenInsn(from: RsfBase, to: RsfBase): Int = when {
-        // 窄化 / char 与 int 之间的转换：**必须**显式发指令（Java 的 (byte) / (char)）。
+        // 窄化 / Char 与 Int 之间的转换：**必须**显式发指令（Java 的 (Byte) / (Char)）。
         // 正常代码路径上 Checker 已经拦住了隐式的情况，这几条是内置函数
-        // toByte / toChar 的实现，以及「0..127 字面量赋给 byte」那条特例落下来的地方。
-        from == RsfBase.BYTE && to == RsfBase.INT -> NOP // 栈上本来就是 int
+        // toByte / toChar 的实现，以及「0..127 字面量赋给 Byte」那条特例落下来的地方。
+        from == RsfBase.BYTE && to == RsfBase.INT -> NOP // 栈上本来就是 Int
         from == RsfBase.CHAR && to == RsfBase.INT -> NOP
         from == RsfBase.INT && to == RsfBase.BYTE -> I2B
         from == RsfBase.INT && to == RsfBase.CHAR -> I2C
@@ -4242,11 +4242,11 @@ class BytecodeCompiler(
             throw IllegalStateException("${type.rsfName} 不能做局部变量")
         }
         // 阶段 13：数组是引用（占一格、走 ALOAD/ASTORE）——这一条必须在按 base 分派
-        // **之前**，否则 `long[]` 会因为 base 是 LONG 而被当成两格的 long
+        // **之前**，否则 `Long[]` 会因为 base 是 LONG 而被当成两格的 Long
         if (type.isArray) return ref
         if (type.nullable && type.base.isPrimitive) return ref
         return when (type.base) {
-            // byte / char 在栈上和局部变量槽里都是 int（JVM 的校验类型不区分它们）
+            // Byte / Char 在栈上和局部变量槽里都是 Int（JVM 的校验类型不区分它们）
             RsfBase.BOOL, RsfBase.BYTE, RsfBase.CHAR, RsfBase.INT -> primitive
             RsfBase.LONG -> wide
             RsfBase.FLOAT -> floatOp
@@ -4268,12 +4268,12 @@ class BytecodeCompiler(
 
     private fun returnInsn(type: RsfType): Int {
         if (type.isVoid) return RETURN
-        // 数组是引用，用 ARETURN 返回（`fun make() -> int[]`）
+        // 数组是引用，用 ARETURN 返回（`fun make() -> Int[]`）
         if (type.isArray) return ARETURN
         if (type.nullable && type.base.isPrimitive) return ARETURN
         return when (type.base) {
             RsfBase.VOID -> RETURN
-            // byte / char 用 IRETURN 返回（JVM 把 byte/char/boolean 都当 int 返回）
+            // Byte / Char 用 IRETURN 返回（JVM 把 Byte/Char/Boolean 都当 Int 返回）
             RsfBase.BOOL, RsfBase.BYTE, RsfBase.CHAR, RsfBase.INT -> IRETURN
             RsfBase.LONG -> LRETURN
             RsfBase.FLOAT -> FRETURN
@@ -4403,7 +4403,7 @@ class BytecodeCompiler(
         const val L2F = Opcodes.L2F
         const val L2D = Opcodes.L2D
         const val F2D = Opcodes.F2D
-        // 阶段 16：byte / char 的截断（Java 的 (byte) / (char)）
+        // 阶段 16：Byte / Char 的截断（Java 的 (Byte) / (Char)）
         const val I2B = Opcodes.I2B
         const val I2C = Opcodes.I2C
         const val NOP = Opcodes.NOP

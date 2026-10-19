@@ -26,7 +26,7 @@ class CBackendTest {
     fun `基础程序摊出运行时与函数`() {
         val c = emit(
             """
-            fn add(a : int, b : int) -> int {
+            fn add(a : Int, b : Int) -> Int {
                 rtn a + b
             }
 
@@ -62,7 +62,7 @@ class CBackendTest {
         val c = emit(
             """
             fn main() -> void {
-                var a : string = "x" + "y"
+                var a : String = "x" + "y"
                 if (a == "xy") { println("ok") }
                 rtn
             }
@@ -78,7 +78,7 @@ class CBackendTest {
             emit(
                 """
                 interface Greeter {
-                    fn greet() -> string
+                    fn greet() -> String
                 }
 
                 fn main() -> void {
@@ -95,12 +95,12 @@ class CBackendTest {
     fun `类摊成 struct 与 self 方法`() {
         val c = emit(
             """
-            class Point(x0 : int) {
-                var x : int = x0
+            class Point(x0 : Int) {
+                var x : Int = x0
 
-                fn get() -> int { rtn x }
+                fn get() -> Int { rtn x }
 
-                stc fn zero() -> int { rtn 0 }
+                stc fn zero() -> Int { rtn 0 }
             }
 
             fn main() -> void {
@@ -124,9 +124,9 @@ class CBackendTest {
         val c = emit(
             """
             class Q {
-                var v : int = 1
+                var v : Int = 1
 
-                constructor(n : int) { v = n }
+                constructor(n : Int) { v = n }
             }
 
             fn main() -> void {
@@ -147,8 +147,8 @@ class CBackendTest {
         val c = emit(
             """
             fn main() -> void {
-                var x : int = 7
-                var p : int* = &x
+                var x : Int = 7
+                var p : Int* = &x
                 *p = 9
                 println(*p)
                 rtn

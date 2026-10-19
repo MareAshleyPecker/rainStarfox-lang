@@ -39,10 +39,10 @@ class OverrideTest {
         val program =
             """
             pub interface Greeter {
-                fn greet(n : string) -> string
+                fn greet(n : String) -> String
             }
             class Dog : Greeter {
-                pub fn greet(n : string) -> string {
+                pub fn greet(n : String) -> String {
                     rtn "woof"
                 }
             }
@@ -64,15 +64,15 @@ class OverrideTest {
     fun `override 与权限修饰词两种顺序都收`() {
         val text =
             "pub interface Greeter {\n" +
-                "    fn greet(n : string) -> string\n" +
+                "    fn greet(n : String) -> String\n" +
                 "}\n" +
                 "class DogA : Greeter {\n" +
-                "    override pub fn greet(n : string) -> string {\n" +
+                "    override pub fn greet(n : String) -> String {\n" +
                 "        rtn \"a\"\n" +
                 "    }\n" +
                 "}\n" +
                 "class DogB : Greeter {\n" +
-                "    pub override fn greet(n : string) -> string {\n" +
+                "    pub override fn greet(n : String) -> String {\n" +
                 "        rtn \"b\"\n" +
                 "    }\n" +
                 "}\n"
@@ -97,13 +97,13 @@ class OverrideTest {
         val program =
             """
             pub interface Greeter {
-                fn greet(n : string) -> string
-                fn shout(n : string) -> string {
+                fn greet(n : String) -> String
+                fn shout(n : String) -> String {
                     rtn greet(n) + "!"
                 }
             }
             class Dog : Greeter {
-                pub override fn greet(n : string) -> string {
+                pub override fn greet(n : String) -> String {
                     rtn "woof-" + n
                 }
             }
@@ -139,13 +139,13 @@ class OverrideTest {
     fun `类里 override 覆盖不到父接口方法就报错`() {
         val text =
             "pub interface Greeter {\n" +
-                "    fn greet(n : string) -> string\n" +
+                "    fn greet(n : String) -> String\n" +
                 "}\n" +
                 "class Dog : Greeter {\n" +
-                "    pub fn greet(n : string) -> string {\n" +
+                "    pub fn greet(n : String) -> String {\n" +
                 "        rtn \"woof\"\n" +
                 "    }\n" +
-                "    pub override fn shout(n : string) -> string {\n" +
+                "    pub override fn shout(n : String) -> String {\n" +
                 "        rtn \"x\"\n" +
                 "    }\n" +
                 "}\n"
@@ -187,7 +187,7 @@ class OverrideTest {
     fun `类里一个接口都没实现时 override 也报错`() {
         val text =
             "class Plain {\n" +
-                "    pub override fn f() -> int {\n" +
+                "    pub override fn f() -> Int {\n" +
                 "        rtn 1\n" +
                 "    }\n" +
                 "}\n"
@@ -206,19 +206,19 @@ class OverrideTest {
     fun `接口里 override 覆盖父接口方法能过`() {
         val text =
             "pub interface Named {\n" +
-                "    fn name() -> string\n" +
-                "    fn tag() -> string {\n" +
+                "    fn name() -> String\n" +
+                "    fn tag() -> String {\n" +
                 "        rtn \"named\"\n" +
                 "    }\n" +
                 "}\n" +
                 "pub interface Person : Named {\n" +
-                "    override pub fn name() -> string\n" +
-                "    pub override fn tag() -> string {\n" +
+                "    override pub fn name() -> String\n" +
+                "    pub override fn tag() -> String {\n" +
                 "        rtn \"person\"\n" +
                 "    }\n" +
                 "}\n" +
                 "class Emp : Person {\n" +
-                "    pub fn name() -> string {\n" +
+                "    pub fn name() -> String {\n" +
                 "        rtn \"emp\"\n" +
                 "    }\n" +
                 "}\n"
@@ -230,7 +230,7 @@ class OverrideTest {
     fun `接口里 override 没有父接口可覆盖就报错`() {
         val text =
             "pub interface Person {\n" +
-                "    override pub fn name() -> string\n" +
+                "    override pub fn name() -> String\n" +
                 "}\n"
         val e = assertFailsWith<RsfError> { Rsf.analyze(source(text)) }
         assertEquals("checker", e.phase)
@@ -275,7 +275,7 @@ class OverrideTest {
     fun `字段写 override 当场报错`() {
         val text =
             "class P {\n" +
-                "    override var x : int = 1\n" +
+                "    override var x : Int = 1\n" +
                 "}\n"
         val e = assertFailsWith<RsfError> { Rsf.analyze(source(text)) }
         assertEquals("parser", e.phase)

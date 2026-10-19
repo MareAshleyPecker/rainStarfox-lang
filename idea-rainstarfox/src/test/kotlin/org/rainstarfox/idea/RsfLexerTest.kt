@@ -42,12 +42,12 @@ class RsfLexerTest {
     fun `fun 后面的名字认成函数定义`() {
         assertEquals(
             RsfTokens.FUNCTION_DECLARATION.toString(),
-            tokenOf("pub fn square(int n) -> int { rtn n }", "square"),
+            tokenOf("pub fn square(Int n) -> Int { rtn n }", "square"),
         )
         // 带返回类型的写法也不能漏
         assertEquals(
             RsfTokens.FUNCTION_DECLARATION.toString(),
-            tokenOf("fn string greet() -> string { rtn \"hi\" }", "greet"),
+            tokenOf("fn String greet() -> String { rtn \"hi\" }", "greet"),
         )
     }
 
@@ -69,10 +69,10 @@ class RsfLexerTest {
     }
 
     @Test
-    fun `byte 与 char 是类型关键字 字符字面量单独一类`() {
+    fun `Byte 与 Char 是类型关键字 字符字面量单独一类`() {
         // 阶段 16：两个新类型关键字必须进 TYPE_KEYWORD（否则高亮会跟普通名字一样）
-        assertEquals(RsfTokens.TYPE_KEYWORD.toString(), tokenOf("var b byte = 1", "byte"))
-        assertEquals(RsfTokens.TYPE_KEYWORD.toString(), tokenOf("var c char = 'a'", "char"))
+        assertEquals(RsfTokens.TYPE_KEYWORD.toString(), tokenOf("var b Byte = 1", "Byte"))
+        assertEquals(RsfTokens.TYPE_KEYWORD.toString(), tokenOf("var c Char = 'a'", "Char"))
 
         // 字符字面量整段一个记号，转义也一起吃掉
         assertEquals(RsfTokens.CHARACTER.toString(), tokenOf("var c = 'a'", "'a'"))
@@ -94,7 +94,7 @@ class RsfLexerTest {
 
     @Test
     fun `长运算符不会被切碎`() {
-        val tokens = lex("fn f() -> int { rtn 1 }")
+        val tokens = lex("fn f() -> Int { rtn 1 }")
         assertTrue(tokens.any { it.second == "->" }, tokens.toString())
         assertTrue(!tokens.any { it.second == "-" }, "-> 被切成了减号：$tokens")
         assertTrue(types("import \"a.rsf\"").contains(RsfTokens.STRING.toString()))
@@ -200,7 +200,7 @@ class RsfLexerTest {
         "lam",
         "if", "else", "while", "for", "in", "break", "continue", "goto",
         "fail", "try", "catch", "true", "false", "null",
-        "void", "int", "long", "float", "double", "string", "str", "bool", "boolean", "byte", "char",
+        "void", "Int", "Long", "Float", "Double", "String", "Str", "Bool", "Boolean", "Byte", "Char",
     )
 
     @Test
@@ -221,7 +221,7 @@ class RsfLexerTest {
     fun `pkg constructor new this static 都归到关键字里`() {
         // 这几个是历史上漏掉过的（pkg 尤其：写了以后跟普通名字一个颜色）
         assertEquals(RsfTokens.CONTROL_KEYWORD.toString(), tokenOf("pkg demo.util", "pkg"))
-        assertEquals(RsfTokens.CONTROL_KEYWORD.toString(), tokenOf("constructor(n : int) { }", "constructor"))
+        assertEquals(RsfTokens.CONTROL_KEYWORD.toString(), tokenOf("constructor(n : Int) { }", "constructor"))
         assertEquals(RsfTokens.CONTROL_KEYWORD.toString(), tokenOf("var p = new Point(1, 2)", "new"))
         assertEquals(RsfTokens.CONTROL_KEYWORD.toString(), tokenOf("rtn this.value", "this"))
         assertEquals(RsfTokens.MODIFIER.toString(), tokenOf("pub stc fn f() -> void { }", "stc"))
@@ -231,21 +231,21 @@ class RsfLexerTest {
 
     @Test
     fun `变量与字段的后缀类型标注 名字和类型各自上色`() {
-        // 阶段 19：`var 名字 : 类型 = 初值`（老写法 `varis int x = 0` 已经不接受）
-        val local = "var tally : int = 0"
+        // 阶段 19：`var 名字 : 类型 = 初值`（老写法 `varis Int x = 0` 已经不接受）
+        val local = "var tally : Int = 0"
         assertEquals(RsfTokens.IDENTIFIER.toString(), tokenOf(local, "tally"))
         assertEquals(RsfTokens.OPERATION.toString(), tokenOf(local, ":"))
-        assertEquals(RsfTokens.TYPE_KEYWORD.toString(), tokenOf(local, "int"))
+        assertEquals(RsfTokens.TYPE_KEYWORD.toString(), tokenOf(local, "Int"))
 
         // 字段同一条规矩
-        val field = "    var slot : string = \"x\""
+        val field = "    var slot : String = \"x\""
         assertEquals(RsfTokens.IDENTIFIER.toString(), tokenOf(field, "slot"))
-        assertEquals(RsfTokens.TYPE_KEYWORD.toString(), tokenOf(field, "string"))
+        assertEquals(RsfTokens.TYPE_KEYWORD.toString(), tokenOf(field, "String"))
 
         // 可空与数组
-        assertEquals(RsfTokens.IDENTIFIER.toString(), tokenOf("var maybe : ?string = null", "maybe"))
-        assertEquals(RsfTokens.TYPE_KEYWORD.toString(), tokenOf("var maybe : ?string = null", "string"))
-        assertEquals(RsfTokens.IDENTIFIER.toString(), tokenOf("imutvar xs : int[] = new int[3]", "xs"))
+        assertEquals(RsfTokens.IDENTIFIER.toString(), tokenOf("var maybe : ?String = null", "maybe"))
+        assertEquals(RsfTokens.TYPE_KEYWORD.toString(), tokenOf("var maybe : ?String = null", "String"))
+        assertEquals(RsfTokens.IDENTIFIER.toString(), tokenOf("imutvar xs : Int[] = new Int[3]", "xs"))
     }
 
     @Test
@@ -274,19 +274,19 @@ class RsfLexerTest {
 
     @Test
     fun `返回子句只认箭头与双冒号`() {
-        assertEquals(RsfTokens.OPERATION.toString(), tokenOf("fn f() -> int { rtn 1 }", "->"))
-        assertEquals(RsfTokens.OPERATION.toString(), tokenOf("fn f() :: int { rtn 1 }", "::"))
+        assertEquals(RsfTokens.OPERATION.toString(), tokenOf("fn f() -> Int { rtn 1 }", "->"))
+        assertEquals(RsfTokens.OPERATION.toString(), tokenOf("fn f() :: Int { rtn 1 }", "::"))
         // `::` 不能被切成两个 `:`
-        assertTrue(!lex("fn f() :: int { rtn 1 }").any { it.second == ":" })
+        assertTrue(!lex("fn f() :: Int { rtn 1 }").any { it.second == ":" })
     }
 
     @Test
     fun `参数两种风格都能正确切词`() {
-        val mixed = "fn mix(int a, b : string) -> int { rtn a }"
-        assertEquals(RsfTokens.TYPE_KEYWORD.toString(), tokenOf(mixed, "int"))
+        val mixed = "fn mix(Int a, b : String) -> Int { rtn a }"
+        assertEquals(RsfTokens.TYPE_KEYWORD.toString(), tokenOf(mixed, "Int"))
         assertEquals(RsfTokens.IDENTIFIER.toString(), tokenOf(mixed, "a"))
         assertEquals(RsfTokens.IDENTIFIER.toString(), tokenOf(mixed, "b"))
-        assertEquals(RsfTokens.TYPE_KEYWORD.toString(), tokenOf(mixed, "string"))
+        assertEquals(RsfTokens.TYPE_KEYWORD.toString(), tokenOf(mixed, "String"))
 
         // Java 风格 / Kotlin 风格里的用户类名都算类型，参数名照旧是标识符
         val cls = "fn take(who : Widget, Spot spot) -> void { rtn }"
@@ -296,9 +296,9 @@ class RsfLexerTest {
         assertEquals(RsfTokens.IDENTIFIER.toString(), tokenOf(cls, "spot"))
 
         // 主构造 / 次构造的参数表用的是同一套判定
-        assertEquals(RsfTokens.IDENTIFIER.toString(), tokenOf("class P(x0 : int, y0 : int) { }", "x0"))
-        assertEquals(RsfTokens.IDENTIFIER.toString(), tokenOf("class P(x0 : int, y0 : int) { }", "y0"))
-        assertEquals(RsfTokens.IDENTIFIER.toString(), tokenOf("constructor(n : int) { }", "n"))
+        assertEquals(RsfTokens.IDENTIFIER.toString(), tokenOf("class P(x0 : Int, y0 : Int) { }", "x0"))
+        assertEquals(RsfTokens.IDENTIFIER.toString(), tokenOf("class P(x0 : Int, y0 : Int) { }", "y0"))
+        assertEquals(RsfTokens.IDENTIFIER.toString(), tokenOf("constructor(n : Int) { }", "n"))
         // 函数名不能被参数表带歪
         assertEquals(RsfTokens.FUNCTION_DECLARATION.toString(), tokenOf(cls, "take"))
         assertEquals(RsfTokens.FUNCTION_DECLARATION.toString(), tokenOf(mixed, "mix"))
@@ -306,26 +306,26 @@ class RsfLexerTest {
 
     @Test
     fun `catch 的两种类型写法都认`() {
-        for (text in listOf("    } catch (e : string) {", "    } catch (e string) {")) {
+        for (text in listOf("    } catch (e : String) {", "    } catch (e String) {")) {
             assertEquals(RsfTokens.CONTROL_KEYWORD.toString(), tokenOf(text, "catch"))
             assertEquals(RsfTokens.IDENTIFIER.toString(), tokenOf(text, "e"))
-            assertEquals(RsfTokens.TYPE_KEYWORD.toString(), tokenOf(text, "string"))
+            assertEquals(RsfTokens.TYPE_KEYWORD.toString(), tokenOf(text, "String"))
         }
     }
 
     @Test
     fun `数组类型与单引号字符字面量`() {
-        val arrays = "var xs : int[] = new int[5]"
-        assertEquals(RsfTokens.TYPE_KEYWORD.toString(), tokenOf(arrays, "int"))
+        val arrays = "var xs : Int[] = new Int[5]"
+        assertEquals(RsfTokens.TYPE_KEYWORD.toString(), tokenOf(arrays, "Int"))
         assertEquals(RsfTokens.LBRACKET.toString(), tokenOf(arrays, "["))
         assertEquals(RsfTokens.RBRACKET.toString(), tokenOf(arrays, "]"))
         // 嵌套数组的方括号照样成对
-        assertEquals(4, lex("var g : int[][] = new int[2][3]").count { it.second == "[" })
+        assertEquals(4, lex("var g : Int[][] = new Int[2][3]").count { it.second == "[" })
 
         // 单引号字面量连转义一起整段一个记号；旁边的类型关键字不被吃掉
-        val ch = "var c : char = 'a'"
+        val ch = "var c : Char = 'a'"
         assertEquals(RsfTokens.CHARACTER.toString(), tokenOf(ch, "'a'"))
-        assertEquals(RsfTokens.TYPE_KEYWORD.toString(), tokenOf(ch, "char"))
+        assertEquals(RsfTokens.TYPE_KEYWORD.toString(), tokenOf(ch, "Char"))
         assertEquals(RsfTokens.CHARACTER.toString(), tokenOf("var n = '\\n'", "'\\n'"))
         assertEquals(RsfTokens.CHARACTER.toString(), tokenOf("var u = '\\u0041'", "'\\u0041'"))
     }

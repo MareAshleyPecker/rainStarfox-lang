@@ -3,14 +3,14 @@
 // 解糖成下标循环（见 Parser.desugarEachLoop）：数组表达式只求值一次，
 // 循环变量是 imutvar；`continue` / `break` 指的仍然是这个循环。
 pub class Row {
-    var cells : int[] = new int[2]
+    var cells : Int[] = new Int[2]
 
-    constructor(a : int, b : int) {
+    constructor(a : Int, b : Int) {
         cells[0] = a
         cells[1] = b
     }
 
-    pub fn sum() -> int {
+    pub fn sum() -> Int {
         var t = 0
         for (c in cells) {
             t = t + c
@@ -19,7 +19,7 @@ pub class Row {
     }
 }
 
-fn total(xs : int[]) -> int {
+fn total(xs : Int[]) -> Int {
     var t = 0
     for (x in xs) {
         if (x < 0) { continue }
@@ -37,7 +37,7 @@ fn rows() -> Row[] {
 }
 
 fn main() -> void {
-    var xs : int[] = new int[5]
+    var xs : Int[] = new Int[5]
     xs[0] = 1
     xs[1] = -2
     xs[2] = 3
@@ -54,7 +54,7 @@ fn main() -> void {
     }
 
     // 空数组：循环体一次都不进
-    var empty : int[] = new int[0]
+    var empty : Int[] = new Int[0]
     var seen = 0
     for (x in empty) {
         seen = seen + 1
@@ -62,7 +62,7 @@ fn main() -> void {
     println(seen)
 
     // 嵌套：内层变量遮蔽外层，编号不能撞
-    var grid : int[] = new int[3]
+    var grid : Int[] = new Int[3]
     grid[0] = 2
     grid[1] = 3
     grid[2] = 4

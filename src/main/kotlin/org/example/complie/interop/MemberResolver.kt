@@ -39,7 +39,7 @@ class MemberResolver(
      * 「源码类型能不能当 [want] 用」的兜底判据（阶段 20 M4）。
      *
      * 类层次那条路（[ClassPath.isSubtype]）只认 classpath 上的类型：`class ByValue :
-     * Comparator&<string>` 里的 `ByValue` 对 ClassPath 并不存在，于是
+     * Comparator&<String>` 里的 `ByValue` 对 ClassPath 并不存在，于是
      * `Collections.sort(xs, new ByValue())` 的候选会**全部出局**，报「没有匹配的静态方法」。
      * rsf 自己的实现关系只有 Checker 知道（类表 + 接口表 + 泛型实参代换），
      * 所以由它把判据注入进来。默认恒 false：不关心这条路的调用方（LSP 补全）行为不变。

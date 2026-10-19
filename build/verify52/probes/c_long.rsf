@@ -1,10 +1,10 @@
-// 阶段 52：C 后端探针 4 —— long 与窄类型
+// 阶段 52：C 后端探针 4 —— Long 与窄类型
 fn main() -> void {
-    var big : long = 9000000000L
-    var sum : long = big + 1234567890L
+    var big : Long = 9000000000L
+    var sum : Long = big + 1234567890L
     println(sum)
     if (sum > 2147483647L) { println("fits 64") }
-    var neg : long = 0L - big
+    var neg : Long = 0L - big
     println(neg / 3L)
     println(neg % 3L)
     rtn

@@ -136,7 +136,7 @@ class LabelMetadataTest {
             fn main() -> void {
                 try {
                     fail "boom"
-                } catch (e : string) {
+                } catch (e : String) {
                     println(e)
                 }
                 rtn

@@ -30,14 +30,14 @@ build\native\rainStarfox\rainStarfox.exe run rsfSrc\lang\main.rsf
 ## 尝一口
 
 ```rsf
-class Counter(start : int) {
-    var n : int = start
+class Counter(start : Int) {
+    var n : Int = start
 
-    fn bump(by : int) -> void { n = n + by }
+    fn bump(by : Int) -> void { n = n + by }
 }
 
-fn sum(xs : int[]) -> int {
-    var total : int = 0
+fn sum(xs : Int[]) -> Int {
+    var total : Int = 0
     for (x in xs) { total = total + x }
     rtn total
 }
@@ -47,14 +47,14 @@ fn main() -> void {
     c.bump(3)
     println(c.n)                      // 3
 
-    var xs : int[] = new int[3]
+    var xs : Int[] = new Int[3]
     xs[0] = 1
     xs[1] = 2
     xs[2] = 3
     println(sum(xs))                  // 6
 
-    var n : int = 7
-    var p : int* = &n                 // 指针只在解释器与 C 后端可用
+    var n : Int = 7
+    var p : Int* = &n                 // 指针只在解释器与 C 后端可用
     *p = 9
     println(n)                        // 9
 }
@@ -88,7 +88,7 @@ rsf build hello.rsf --c -o out
 gcc out\hello.c -o out\hello.exe
 ```
 
-- 已支持：int / long / bool / string、一维数组、类（字段 / 实例方法 / `stc` 静态方法 / 主次构造 / 单继承与覆盖，虚表分派）、枚举与 `switch`、指针（`T*` / `&x` / `*p` / `*p = v`）、顶层函数、`if` / `while` / `for` / 递归。
+- 已支持：Int / Long / Bool / String、一维数组、类（字段 / 实例方法 / `stc` 静态方法 / 主次构造 / 单继承与覆盖，虚表分派）、枚举与 `switch`、指针（`T*` / `&x` / `*p` / `*p = v`）、顶层函数、`if` / `while` / `for` / 递归。
 - 还没接：接口、JDK 父类、泛型、多维数组、浮点、错误返回——遇到会报 `error[native]`。
 - 判据：解释器 stdout vs 原生 exe stdout 逐字节相同（`bash build/verify52/run-probes.sh all`，10 份语料）。
 

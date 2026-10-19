@@ -2,10 +2,10 @@
 //
 // rsf 语言没有 `&`/`|`/`^`/`<<`/`>>` 运算符（`&` 只用于泛型实参），
 // 所以这里全部用算术实现：除以 2^n 取位、乘 2^n 左移。
-// 口径：int 是 32 位二补数，与 JVM 一致；负数按位模式处理。
+// 口径：Int 是 32 位二补数，与 JVM 一致；负数按位模式处理。
 pub class Bits {
     // 2 的 n 次方；n 超出 0..30 时返回 0/-2147483648 这类回绕值，调用方自己保证范围
-    pub stc fn pow2(n : int) -> int {
+    pub stc fn pow2(n : Int) -> Int {
         var p = 1
         var i = 0
         while (i < n) {
@@ -16,7 +16,7 @@ pub class Bits {
     }
 
     // 第 i 位（0 是最低位）；unsigned 口径，负数的高位也算 1
-    pub stc fn bitAt(x : int, i : int) -> int {
+    pub stc fn bitAt(x : Int, i : Int) -> Int {
         if (i == 31) {
             if (x < 0) { rtn 1 }
             rtn 0
@@ -29,7 +29,7 @@ pub class Bits {
         rtn b
     }
 
-    pub stc fn shl(x : int, n : int) -> int {
+    pub stc fn shl(x : Int, n : Int) -> Int {
         if (n <= 0) { rtn x }
         if (n >= 32) { rtn 0 }
         if (n == 31) {
@@ -40,7 +40,7 @@ pub class Bits {
     }
 
     // 算术右移（负数补 1）
-    pub stc fn shr(x : int, n : int) -> int {
+    pub stc fn shr(x : Int, n : Int) -> Int {
         if (n <= 0) { rtn x }
         if (n >= 31) {
             if (x < 0) { rtn -1 }
@@ -53,7 +53,7 @@ pub class Bits {
     }
 
     // 逻辑右移（负数当无符号数看）
-    pub stc fn ushr(x : int, n : int) -> int {
+    pub stc fn ushr(x : Int, n : Int) -> Int {
         if (n <= 0) { rtn x }
         if (n == 31) {
             if (x < 0) { rtn 1 }
@@ -67,7 +67,7 @@ pub class Bits {
         rtn q
     }
 
-    pub stc fn and(a : int, b : int) -> int {
+    pub stc fn and(a : Int, b : Int) -> Int {
         var out = 0
         var i = 0
         while (i < 32) {
@@ -79,7 +79,7 @@ pub class Bits {
         rtn out
     }
 
-    pub stc fn or(a : int, b : int) -> int {
+    pub stc fn or(a : Int, b : Int) -> Int {
         var out = 0
         var i = 0
         while (i < 32) {
@@ -91,7 +91,7 @@ pub class Bits {
         rtn out
     }
 
-    pub stc fn xor(a : int, b : int) -> int {
+    pub stc fn xor(a : Int, b : Int) -> Int {
         var out = 0
         var i = 0
         while (i < 32) {
@@ -104,9 +104,9 @@ pub class Bits {
     }
 
     // 按位取反：~x == -1 - x
-    pub stc fn not(x : int) -> int { rtn -1 - x }
+    pub stc fn not(x : Int) -> Int { rtn -1 - x }
 
-    pub stc fn popCount(x : int) -> int {
+    pub stc fn popCount(x : Int) -> Int {
         var c = 0
         var i = 0
         while (i < 32) {
@@ -116,19 +116,19 @@ pub class Bits {
         rtn c
     }
 
-    pub stc fn isPow2(x : int) -> bool {
+    pub stc fn isPow2(x : Int) -> Bool {
         if (x <= 0) { rtn false }
         rtn and(x, x - 1) == 0
     }
 
     // 最低位的 1（x 为 0 时返回 0）
-    pub stc fn lowestBit(x : int) -> int {
+    pub stc fn lowestBit(x : Int) -> Int {
         if (x == 0) { rtn 0 }
         rtn and(x, -x)
     }
 
     // 最高位的 1（x 为 0 时返回 0）
-    pub stc fn highestBit(x : int) -> int {
+    pub stc fn highestBit(x : Int) -> Int {
         var i = 31
         while (i >= 0) {
             if (bitAt(x, i) == 1) { rtn pow2(i) }
@@ -138,7 +138,7 @@ pub class Bits {
     }
 
     // 固定 32 位二进制串
-    pub stc fn toBinary(x : int) -> string {
+    pub stc fn toBinary(x : Int) -> String {
         var out = ""
         var i = 31
         while (i >= 0) {
@@ -149,7 +149,7 @@ pub class Bits {
     }
 
     // 去掉前导 0 的二进制串（0 仍给 "0"）
-    pub stc fn toBinaryShort(x : int) -> string {
+    pub stc fn toBinaryShort(x : Int) -> String {
         var out = ""
         var started = false
         var i = 31
@@ -167,7 +167,7 @@ pub class Bits {
     }
 
     // 固定 8 位十六进制串（小写）
-    pub stc fn toHex(x : int) -> string {
+    pub stc fn toHex(x : Int) -> String {
         var out = ""
         var i = 7
         while (i >= 0) {
@@ -180,9 +180,9 @@ pub class Bits {
 
     // ---------------------------------------------------------------- 64 位
 
-    // 2 的 n 次方（long）；n >= 63 时回绕成负数，调用方自己保证 0..62
-    pub stc fn pow2Long(n : int) -> long {
-        var p : long = 1L
+    // 2 的 n 次方（Long）；n >= 63 时回绕成负数，调用方自己保证 0..62
+    pub stc fn pow2Long(n : Int) -> Long {
+        var p : Long = 1L
         var i = 0
         while (i < n) {
             p = p * 2L
@@ -192,22 +192,22 @@ pub class Bits {
     }
 
     // 第 i 位（0 是最低位）；unsigned 口径，负数高位算 1
-    pub stc fn bitAtLong(x : long, i : int) -> int {
+    pub stc fn bitAtLong(x : Long, i : Int) -> Int {
         if (i >= 63) {
             if (x < 0L) { rtn 1 }
             rtn 0
         }
         if (i < 0) { rtn 0 }
-        var d : long = pow2Long(i)
-        var q : long = x / d
+        var d : Long = pow2Long(i)
+        var q : Long = x / d
         if (x < 0L && q * d != x) { q = q - 1L }
-        var r : long = q % 2L
+        var r : Long = q % 2L
         if (r < 0L) { r = r + 2L }
         if (r == 0L) { rtn 0 }
         rtn 1
     }
 
-    pub stc fn shlLong(x : long, n : int) -> long {
+    pub stc fn shlLong(x : Long, n : Int) -> Long {
         if (n <= 0) { rtn x }
         if (n >= 64) { rtn 0L }
         if (n == 63) {
@@ -218,36 +218,36 @@ pub class Bits {
     }
 
     // 算术右移（负数补 1）
-    pub stc fn shrLong(x : long, n : int) -> long {
+    pub stc fn shrLong(x : Long, n : Int) -> Long {
         if (n <= 0) { rtn x }
         if (n >= 63) {
             if (x < 0L) { rtn -1L }
             rtn 0L
         }
-        var d : long = pow2Long(n)
-        var q : long = x / d
+        var d : Long = pow2Long(n)
+        var q : Long = x / d
         if (x < 0L && q * d != x) { q = q - 1L }
         rtn q
     }
 
     // 逻辑右移（负数当无符号数看）
-    pub stc fn ushrLong(x : long, n : int) -> long {
+    pub stc fn ushrLong(x : Long, n : Int) -> Long {
         if (n <= 0) { rtn x }
         if (n >= 64) { rtn 0L }
         if (n == 63) {
             if (x < 0L) { rtn 1L }
             rtn 0L
         }
-        var d : long = pow2Long(n)
-        var q : long = x / d
+        var d : Long = pow2Long(n)
+        var q : Long = x / d
         if (x < 0L && q * d != x) { q = q - 1L }
         if (x < 0L) { q = q + pow2Long(64 - n) }
         rtn q
     }
 
-    pub stc fn andLong(a : long, b : long) -> long {
-        var out : long = 0L
-        var p : long = 1L
+    pub stc fn andLong(a : Long, b : Long) -> Long {
+        var out : Long = 0L
+        var p : Long = 1L
         var i = 0
         while (i < 64) {
             if (bitAtLong(a, i) == 1 && bitAtLong(b, i) == 1) { out = out + p }
@@ -257,9 +257,9 @@ pub class Bits {
         rtn out
     }
 
-    pub stc fn orLong(a : long, b : long) -> long {
-        var out : long = 0L
-        var p : long = 1L
+    pub stc fn orLong(a : Long, b : Long) -> Long {
+        var out : Long = 0L
+        var p : Long = 1L
         var i = 0
         while (i < 64) {
             if (bitAtLong(a, i) == 1 || bitAtLong(b, i) == 1) { out = out + p }
@@ -269,9 +269,9 @@ pub class Bits {
         rtn out
     }
 
-    pub stc fn xorLong(a : long, b : long) -> long {
-        var out : long = 0L
-        var p : long = 1L
+    pub stc fn xorLong(a : Long, b : Long) -> Long {
+        var out : Long = 0L
+        var p : Long = 1L
         var i = 0
         while (i < 64) {
             var ba = bitAtLong(a, i)
@@ -284,9 +284,9 @@ pub class Bits {
     }
 
     // ~x == -1L - x
-    pub stc fn notLong(x : long) -> long { rtn -1L - x }
+    pub stc fn notLong(x : Long) -> Long { rtn -1L - x }
 
-    pub stc fn popCountLong(x : long) -> int {
+    pub stc fn popCountLong(x : Long) -> Int {
         var c = 0
         var i = 0
         while (i < 64) {
@@ -296,17 +296,17 @@ pub class Bits {
         rtn c
     }
 
-    pub stc fn isPow2Long(x : long) -> bool {
+    pub stc fn isPow2Long(x : Long) -> Bool {
         if (x <= 0L) { rtn false }
         rtn andLong(x, x - 1L) == 0L
     }
 
-    pub stc fn lowestBitLong(x : long) -> long {
+    pub stc fn lowestBitLong(x : Long) -> Long {
         if (x == 0L) { rtn 0L }
         rtn andLong(x, -x)
     }
 
-    pub stc fn highestBitLong(x : long) -> long {
+    pub stc fn highestBitLong(x : Long) -> Long {
         var i = 63
         while (i >= 0) {
             if (bitAtLong(x, i) == 1) { rtn pow2Long(i) }
@@ -316,7 +316,7 @@ pub class Bits {
     }
 
     // 固定 64 位二进制串
-    pub stc fn toBinaryLong(x : long) -> string {
+    pub stc fn toBinaryLong(x : Long) -> String {
         var out = ""
         var i = 63
         while (i >= 0) {
@@ -327,7 +327,7 @@ pub class Bits {
     }
 
     // 固定 16 位十六进制串（小写）
-    pub stc fn toHexLong(x : long) -> string {
+    pub stc fn toHexLong(x : Long) -> String {
         var out = ""
         var i = 15
         while (i >= 0) {

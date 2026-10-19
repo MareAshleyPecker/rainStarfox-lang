@@ -1,23 +1,23 @@
 // 阶段 50：核心标准库 · 最小堆 IntHeap
 //
-// 泛型堆需要比较器，v1 的泛型函数缺口还没补，所以先做 int 版：
+// 泛型堆需要比较器，v1 的泛型函数缺口还没补，所以先做 Int 版：
 // 优先队列、Top-K、Dijkstra 的待办表都用它。
 pub class IntHeap {
-    var data : int[] = new int[8]
-    var n : int = 0
+    var data : Int[] = new Int[8]
+    var n : Int = 0
 
-    pub fn size() -> int { rtn n }
+    pub fn size() -> Int { rtn n }
 
-    pub fn isEmpty() -> bool { rtn n == 0 }
+    pub fn isEmpty() -> Bool { rtn n == 0 }
 
     pub fn clear() -> void { n = 0 }
 
-    pub fn peek() -> ?int {
+    pub fn peek() -> ?Int {
         if (n == 0) { rtn null }
         rtn data[0]
     }
 
-    pub fn push(x : int) -> void {
+    pub fn push(x : Int) -> void {
         if (n == data.length) { grow() }
         data[n] = x
         n = n + 1
@@ -30,7 +30,7 @@ pub class IntHeap {
         }
     }
 
-    pub fn pop() -> ?int {
+    pub fn pop() -> ?Int {
         if (n == 0) { rtn null }
         var top = data[0]
         n = n - 1
@@ -50,8 +50,8 @@ pub class IntHeap {
     }
 
     // 堆序拷贝（不是排好序的数组）；要升序用 sorted()
-    pub fn toArray() -> int[] {
-        var out = new int[n]
+    pub fn toArray() -> Int[] {
+        var out = new Int[n]
         var i = 0
         while (i < n) {
             out[i] = data[i]
@@ -61,8 +61,8 @@ pub class IntHeap {
     }
 
     // 逐个 pop 出来（会清空堆）
-    pub fn sorted() -> int[] {
-        var out = new int[n]
+    pub fn sorted() -> Int[] {
+        var out = new Int[n]
         var i = 0
         while (i < out.length) {
             var v = pop()
@@ -72,14 +72,14 @@ pub class IntHeap {
         rtn out
     }
 
-    fn swap(i : int, j : int) -> void {
+    fn swap(i : Int, j : Int) -> void {
         var t = data[i]
         data[i] = data[j]
         data[j] = t
     }
 
     fn grow() -> void {
-        var bigger = new int[data.length * 2]
+        var bigger = new Int[data.length * 2]
         var i = 0
         while (i < n) {
             bigger[i] = data[i]

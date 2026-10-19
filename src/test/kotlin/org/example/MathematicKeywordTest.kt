@@ -60,7 +60,7 @@ class MathematicKeywordTest {
             parse(
                 """
                 fn f() -> void {
-                    var mathematic : int = 0
+                    var mathematic : Int = 0
                     rtn
                 }
                 """.trimIndent(),

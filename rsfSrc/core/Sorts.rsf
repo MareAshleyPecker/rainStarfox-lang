@@ -1,12 +1,12 @@
 // 阶段 40：核心标准库 · 排序与查找 Sorts
 //
-// 只对 int[] 做（v1 没有通用的比较协议）：稳定归并排序 + 二分查找。
+// 只对 Int[] 做（v1 没有通用的比较协议）：稳定归并排序 + 二分查找。
 pub class Sorts {
-    pub stc fn ints(a : int[]) -> int[] {
+    pub stc fn ints(a : Int[]) -> Int[] {
         if (a.length <= 1) { rtn a }
-        var mid : int = a.length / 2
-        var left = new int[mid]
-        var right = new int[a.length - mid]
+        var mid : Int = a.length / 2
+        var left = new Int[mid]
+        var right = new Int[a.length - mid]
         var i = 0
         while (i < mid) {
             left[i] = a[i]
@@ -20,8 +20,8 @@ pub class Sorts {
         rtn mergeInts(ints(left), ints(right))
     }
 
-    stc fn mergeInts(a : int[], b : int[]) -> int[] {
-        var out = new int[a.length + b.length]
+    stc fn mergeInts(a : Int[], b : Int[]) -> Int[] {
+        var out = new Int[a.length + b.length]
         var i = 0
         var j = 0
         var k = 0
@@ -49,18 +49,18 @@ pub class Sorts {
     }
 
     // 已排序数组里找 x；没有返回 -1
-    pub stc fn binarySearch(a : int[], x : int) -> int {
+    pub stc fn binarySearch(a : Int[], x : Int) -> Int {
         var lo = 0
         var hi = a.length - 1
         while (lo <= hi) {
-            var mid : int = (lo + hi) / 2
+            var mid : Int = (lo + hi) / 2
             if (a[mid] == x) { rtn mid }
             if (a[mid] < x) { lo = mid + 1 } else { hi = mid - 1 }
         }
         rtn -1
     }
 
-    pub stc fn joinInts(a : int[], sep : string) -> string {
+    pub stc fn joinInts(a : Int[], sep : String) -> String {
         var out = ""
         var i = 0
         while (i < a.length) {
@@ -71,10 +71,10 @@ pub class Sorts {
         rtn out
     }
 
-    // ---- 字符串 / long 的排序（v1 没有通用比较协议，只能按类型各来一份）----
+    // ---- 字符串 / Long 的排序（v1 没有通用比较协议，只能按类型各来一份）----
 
     // 字典序比较：<0 表示 a 在前，>0 表示 b 在前，0 相等
-    pub stc fn compareStrings(a : string, b : string) -> int {
+    pub stc fn compareStrings(a : String, b : String) -> Int {
         var n = a.length()
         if (b.length() < n) { n = b.length() }
         var i = 0
@@ -90,11 +90,11 @@ pub class Sorts {
         rtn 0
     }
 
-    pub stc fn strings(a : string[]) -> string[] {
+    pub stc fn strings(a : String[]) -> String[] {
         if (a.length <= 1) { rtn a }
-        var mid : int = a.length / 2
-        var left = new string[mid]
-        var right = new string[a.length - mid]
+        var mid : Int = a.length / 2
+        var left = new String[mid]
+        var right = new String[a.length - mid]
         var i = 0
         while (i < mid) {
             left[i] = a[i]
@@ -108,8 +108,8 @@ pub class Sorts {
         rtn mergeStrings(strings(left), strings(right))
     }
 
-    stc fn mergeStrings(a : string[], b : string[]) -> string[] {
-        var out = new string[a.length + b.length]
+    stc fn mergeStrings(a : String[], b : String[]) -> String[] {
+        var out = new String[a.length + b.length]
         var i = 0
         var j = 0
         var k = 0
@@ -136,11 +136,11 @@ pub class Sorts {
         rtn out
     }
 
-    pub stc fn binarySearchStrings(a : string[], x : string) -> int {
+    pub stc fn binarySearchStrings(a : String[], x : String) -> Int {
         var lo = 0
         var hi = a.length - 1
         while (lo <= hi) {
-            var mid : int = (lo + hi) / 2
+            var mid : Int = (lo + hi) / 2
             var c = compareStrings(a[mid], x)
             if (c == 0) { rtn mid }
             if (c < 0) { lo = mid + 1 } else { hi = mid - 1 }
@@ -148,11 +148,11 @@ pub class Sorts {
         rtn -1
     }
 
-    pub stc fn longs(a : long[]) -> long[] {
+    pub stc fn longs(a : Long[]) -> Long[] {
         if (a.length <= 1) { rtn a }
-        var mid : int = a.length / 2
-        var left = new long[mid]
-        var right = new long[a.length - mid]
+        var mid : Int = a.length / 2
+        var left = new Long[mid]
+        var right = new Long[a.length - mid]
         var i = 0
         while (i < mid) {
             left[i] = a[i]
@@ -166,8 +166,8 @@ pub class Sorts {
         rtn mergeLongs(longs(left), longs(right))
     }
 
-    stc fn mergeLongs(a : long[], b : long[]) -> long[] {
-        var out = new long[a.length + b.length]
+    stc fn mergeLongs(a : Long[], b : Long[]) -> Long[] {
+        var out = new Long[a.length + b.length]
         var i = 0
         var j = 0
         var k = 0
@@ -194,11 +194,11 @@ pub class Sorts {
         rtn out
     }
 
-    pub stc fn binarySearchLongs(a : long[], x : long) -> int {
+    pub stc fn binarySearchLongs(a : Long[], x : Long) -> Int {
         var lo = 0
         var hi = a.length - 1
         while (lo <= hi) {
-            var mid : int = (lo + hi) / 2
+            var mid : Int = (lo + hi) / 2
             if (a[mid] == x) { rtn mid }
             if (a[mid] < x) { lo = mid + 1 } else { hi = mid - 1 }
         }

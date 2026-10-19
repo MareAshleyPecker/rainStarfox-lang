@@ -1,18 +1,18 @@
 // 阶段 40：核心标准库 · 字符串键哈希表 HashMap<T>
 //
-// 开放寻址（线性探测）+ 2 倍扩容；键只支持 string（自举链与编译器前端用不到别的键）。
+// 开放寻址（线性探测）+ 2 倍扩容；键只支持 String（自举链与编译器前端用不到别的键）。
 // 哈希：djb2（h = 5381; h = h * 33 + c），与 SymTable 同一套。
 pub class HashMap&<T> {
-    var keys : string[] = new string[8]
+    var keys : String[] = new String[8]
     var vals : T[] = new T[8]
-    var used : bool[] = new bool[8]
-    var n : int = 0
+    var used : Bool[] = new Bool[8]
+    var n : Int = 0
 
-    pub fn size() -> int { rtn n }
+    pub fn size() -> Int { rtn n }
 
-    pub fn isEmpty() -> bool { rtn n == 0 }
+    pub fn isEmpty() -> Bool { rtn n == 0 }
 
-    pub fn hashOf(s : string) -> int {
+    pub fn hashOf(s : String) -> Int {
         var h = 5381
         var i = 0
         while (i < s.length()) {
@@ -23,7 +23,7 @@ pub class HashMap&<T> {
         rtn h
     }
 
-    pub fn slotOf(s : string) -> int {
+    pub fn slotOf(s : String) -> Int {
         var cap = keys.length
         var i = hashOf(s) % cap
         while (used[i]) {
@@ -33,7 +33,7 @@ pub class HashMap&<T> {
         rtn i
     }
 
-    pub fn put(k : string, v : T) -> void {
+    pub fn put(k : String, v : T) -> void {
         if ((n + 1) * 4 > keys.length * 3) { rehash() }
         var i = slotOf(k)
         if (!used[i]) {
@@ -44,7 +44,7 @@ pub class HashMap&<T> {
         vals[i] = v
     }
 
-    pub fn get(k : string) -> ?T {
+    pub fn get(k : String) -> ?T {
         var cap = keys.length
         var i = hashOf(k) % cap
         while (used[i]) {
@@ -54,7 +54,7 @@ pub class HashMap&<T> {
         rtn null
     }
 
-    pub fn containsKey(k : string) -> bool {
+    pub fn containsKey(k : String) -> Bool {
         var cap = keys.length
         var i = hashOf(k) % cap
         while (used[i]) {
@@ -65,7 +65,7 @@ pub class HashMap&<T> {
     }
 
     // 删除：先清槽，再把后面同一簇的元素重新 put 回去（保持线性探测的查找不变量）
-    pub fn remove(k : string) -> bool {
+    pub fn remove(k : String) -> Bool {
         var cap = keys.length
         var i = hashOf(k) % cap
         while (used[i]) {
@@ -93,9 +93,9 @@ pub class HashMap&<T> {
         var oldVals = vals
         var oldUsed = used
         var cap = oldKeys.length * 2
-        keys = new string[cap]
+        keys = new String[cap]
         vals = new T[cap]
-        used = new bool[cap]
+        used = new Bool[cap]
         n = 0
         var i = 0
         while (i < oldKeys.length) {

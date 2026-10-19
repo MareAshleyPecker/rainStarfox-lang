@@ -7,59 +7,59 @@
 
 // ---------------------------------------------------------------- 默认可继承 + override + super.f()
 
-class Animal(nm : string, legs0 : int) {
-    var name : string = nm
-    var legs : int = legs0
+class Animal(nm : String, legs0 : Int) {
+    var name : String = nm
+    var legs : Int = legs0
 
-    fn sound() -> string {
+    fn sound() -> String {
         rtn "..."
     }
 
     // 没写 final 的方法子类可以覆盖；describe() 里调 sound() 按运行期类型虚分派
-    fn describe() -> string {
+    fn describe() -> String {
         rtn name + " 叫 " + sound() + "，有 " + intToString(legs) + " 条腿"
     }
 }
 
-class Dog(nm : string) : Animal(nm, 4) {
-    override fn sound() -> string {
+class Dog(nm : String) : Animal(nm, 4) {
+    override fn sound() -> String {
         rtn "woof"
     }
 }
 
 // super.f()：先拿父类那一份结果，再补一截
 // final：这个类就此封口，再有人写 `class X : Puppy` 会被 Checker 拒掉
-final class Puppy(nm : string) : Dog(nm) {
-    override fn sound() -> string {
+final class Puppy(nm : String) : Dog(nm) {
+    override fn sound() -> String {
         rtn super.sound() + "(小奶音)"
     }
 }
 
 // ---------------------------------------------------------------- abstract class + 子类实现
 
-abstract class Shape(nm : string) {
-    var name : string = nm
+abstract class Shape(nm : String) {
+    var name : String = nm
 
-    abstract fn area() -> int
+    abstract fn area() -> Int
 
-    fn show() -> string {
+    fn show() -> String {
         rtn name + " 面积 = " + intToString(area())
     }
 }
 
-class Rect(w0 : int, h0 : int) : Shape("rect") {
-    var w : int = w0
-    var h : int = h0
+class Rect(w0 : Int, h0 : Int) : Shape("rect") {
+    var w : Int = w0
+    var h : Int = h0
 
-    override fn area() -> int {
+    override fn area() -> Int {
         rtn w * h
     }
 }
 
-class Square(s0 : int) : Shape("square") {
-    var side : int = s0
+class Square(s0 : Int) : Shape("square") {
+    var side : Int = s0
 
-    override fn area() -> int {
+    override fn area() -> Int {
         rtn side * side
     }
 }
@@ -67,17 +67,17 @@ class Square(s0 : int) : Shape("square") {
 // ---------------------------------------------------------------- 构造顺序：父类构造器 → 自己字段初值 → 构造体
 
 class Base {
-    var id : int = 0
+    var id : Int = 0
 
-    constructor(n : int) {
+    constructor(n : Int) {
         id = n
         println("父类构造体先跑：id = " + intToString(id))
     }
 }
 
-class Leaf(n0 : int) : Base(n0) {
+class Leaf(n0 : Int) : Base(n0) {
     // 自己的字段初值跑在父类构造器之后，所以这里读到的 id 已经是传进来的 7
-    var twice : int = id * 2
+    var twice : Int = id * 2
 
     constructor() {
         this(7)

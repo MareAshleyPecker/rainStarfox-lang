@@ -3,7 +3,7 @@
 // 只用内置的字符串基本操作（length / charAt / substring / indexOf / startsWith /
 // endsWith / trim / toUpperCase / toLowerCase / replace），不引 JDK 正则、不做格式化。
 pub class Text {
-    pub stc fn repeat(s : string, times : int) -> string {
+    pub stc fn repeat(s : String, times : Int) -> String {
         if (times <= 0) { rtn "" }
         var out = ""
         var i = 0
@@ -14,7 +14,7 @@ pub class Text {
         rtn out
     }
 
-    pub stc fn padLeft(s : string, width : int, pad : char) -> string {
+    pub stc fn padLeft(s : String, width : Int, pad : Char) -> String {
         if (s.length() >= width) { rtn s }
         var need = width - s.length()
         var out = ""
@@ -26,7 +26,7 @@ pub class Text {
         rtn out + s
     }
 
-    pub stc fn padRight(s : string, width : int, pad : char) -> string {
+    pub stc fn padRight(s : String, width : Int, pad : Char) -> String {
         if (s.length() >= width) { rtn s }
         var need = width - s.length()
         var out = s
@@ -38,12 +38,12 @@ pub class Text {
         rtn out
     }
 
-    pub stc fn isBlank(s : string) -> bool
+    pub stc fn isBlank(s : String) -> Bool
         { rtn s.trim().length() == 0 }
 
     // 把 s 按 sep 切开（简单的顺序扫描；连续分隔符会产生空段，与 JDK split 不同）
-    pub stc fn split(s : string, sep : char) -> string[] {
-        var out : string[] = new string[8]
+    pub stc fn split(s : String, sep : Char) -> String[] {
+        var out : String[] = new String[8]
         var n = 0
         var start = 0
         var i = 0
@@ -51,7 +51,7 @@ pub class Text {
             if (s.charAt(i) == sep) {
                 var piece = s.substring(start, i)
                 if (n == out.length) {
-                    var bigger : string[] = new string[out.length * 2]
+                    var bigger : String[] = new String[out.length * 2]
                     var k = 0
                     while (k < n) { bigger[k] = out[k]; k = k + 1 }
                     out = bigger
@@ -64,20 +64,20 @@ pub class Text {
         }
         var tail = s.substring(start, s.length())
         if (n == out.length) {
-            var bigger2 : string[] = new string[out.length * 2]
+            var bigger2 : String[] = new String[out.length * 2]
             var k2 = 0
             while (k2 < n) { bigger2[k2] = out[k2]; k2 = k2 + 1 }
             out = bigger2
         }
         out[n] = tail
         n = n + 1
-        var exact : string[] = new string[n]
+        var exact : String[] = new String[n]
         var j = 0
         while (j < n) { exact[j] = out[j]; j = j + 1 }
         rtn exact
     }
 
-    pub stc fn join(parts : string[], sep : string) -> string {
+    pub stc fn join(parts : String[], sep : String) -> String {
         var out = ""
         var i = 0
         while (i < parts.length) {
@@ -89,7 +89,7 @@ pub class Text {
     }
 
     // 从左往右数第 n 次出现的下标；找不到给 -1
-    pub stc fn nthIndexOf(s : string, ch : char, n : int) -> int {
+    pub stc fn nthIndexOf(s : String, ch : Char, n : Int) -> Int {
         var seen = 0
         var i = 0
         while (i < s.length()) {
@@ -102,7 +102,7 @@ pub class Text {
         rtn -1
     }
 
-    pub stc fn countOf(s : string, ch : char) -> int {
+    pub stc fn countOf(s : String, ch : Char) -> Int {
         var c = 0
         var i = 0
         while (i < s.length()) {
@@ -113,12 +113,12 @@ pub class Text {
     }
 
     // 前缀/后缀剥离（不匹配就原样返回）
-    pub stc fn stripPrefix(s : string, prefix : string) -> string {
+    pub stc fn stripPrefix(s : String, prefix : String) -> String {
         if (s.startsWith(prefix)) { rtn s.substring(prefix.length(), s.length()) }
         rtn s
     }
 
-    pub stc fn stripSuffix(s : string, suffix : string) -> string {
+    pub stc fn stripSuffix(s : String, suffix : String) -> String {
         if (suffix.length() > 0 && s.endsWith(suffix)) {
             rtn s.substring(0, s.length() - suffix.length())
         }
@@ -126,13 +126,13 @@ pub class Text {
     }
 
     // 按字符串分隔符切（sep 为空时整串算一段；连续分隔符会产生空段）
-    pub stc fn splitBy(s : string, sep : string) -> string[] {
+    pub stc fn splitBy(s : String, sep : String) -> String[] {
         if (sep.length() == 0) {
-            var one : string[] = new string[1]
+            var one : String[] = new String[1]
             one[0] = s
             rtn one
         }
-        var out : string[] = new string[8]
+        var out : String[] = new String[8]
         var n = 0
         var start = 0
         var i = 0
@@ -140,7 +140,7 @@ pub class Text {
             if (s.substring(i, i + sep.length()) == sep) {
                 var piece = s.substring(start, i)
                 if (n == out.length) {
-                    var bigger : string[] = new string[out.length * 2]
+                    var bigger : String[] = new String[out.length * 2]
                     var k = 0
                     while (k < n) { bigger[k] = out[k]; k = k + 1 }
                     out = bigger
@@ -155,21 +155,21 @@ pub class Text {
         }
         var tail = s.substring(start, s.length())
         if (n == out.length) {
-            var bigger2 : string[] = new string[out.length * 2]
+            var bigger2 : String[] = new String[out.length * 2]
             var k2 = 0
             while (k2 < n) { bigger2[k2] = out[k2]; k2 = k2 + 1 }
             out = bigger2
         }
         out[n] = tail
         n = n + 1
-        var exact : string[] = new string[n]
+        var exact : String[] = new String[n]
         var j = 0
         while (j < n) { exact[j] = out[j]; j = j + 1 }
         rtn exact
     }
 
     // 子串第一次出现的下标；没有给 -1（不用 JDK 的 indexOf，自举侧没登记这个成员）
-    pub stc fn indexOf(s : string, sub : string) -> int {
+    pub stc fn indexOf(s : String, sub : String) -> Int {
         if (sub.length() == 0) { rtn 0 }
         var i = 0
         while (i + sub.length() <= s.length()) {
@@ -180,7 +180,7 @@ pub class Text {
     }
 
     // 子串最后一次出现的下标；没有给 -1
-    pub stc fn lastIndexOf(s : string, sub : string) -> int {
+    pub stc fn lastIndexOf(s : String, sub : String) -> Int {
         if (sub.length() == 0) { rtn s.length() }
         var i = s.length() - sub.length()
         while (i >= 0) {

@@ -99,8 +99,8 @@ import org.example.complie.ast.WhileStmt
  *
  * - `SourceLine`（行列）**不进 dump**：rsf 版也记行号，但「哪个节点记的是哪个位置」在
  *   两端是各写各的，逼它一致等于在比实现细节而不是比语法结构。语法结构一致才是本阶段的目标；
- * - `TypeRef` / `ReturnSpec` 是**内联**成字段的（`type=int[]`、`ret=ARROW` + `mayError=false`
- *   + `retType=!int` 这种拆法），不单独成节点——它们没有孩子，拆成节点只会让 dump 变长；
+ * - `TypeRef` / `ReturnSpec` 是**内联**成字段的（`type=Int[]`、`ret=ARROW` + `mayError=false`
+ *   + `retType=!Int` 这种拆法），不单独成节点——它们没有孩子，拆成节点只会让 dump 变长；
  * - `Program` 固定打 6 个子节点（`PKG` 缺省时**整行不打**、其余五个永远打，空表也打 `count=0`）。
  *
  * 用法（测试里）：
@@ -154,15 +154,15 @@ object AstDump {
         line(
             out, depth, "FUNC",
             "control" to f.control.name,
-            "stc" to bool(f.isStatic),
+            "stc" to Bool(f.isStatic),
             "main" to typeText(f.mainType),
             "name" to esc(f.name),
             "ret" to f.ret.style.name,
-            "mayError" to bool(f.ret.mayError),
+            "mayError" to Bool(f.ret.mayError),
             "retType" to typeText(f.ret.type),
-            "ctor" to bool(f.isConstructor),
-            "primary" to bool(f.isPrimary),
-            "override" to bool(f.isOverride),
+            "ctor" to Bool(f.isConstructor),
+            "primary" to Bool(f.isPrimary),
+            "override" to Bool(f.isOverride),
         )
         // 阶段 25：final **只在写了的时候**才打一行——没写的成员一个字都不多打。
         // 理由很实在：这份 dump 在 RsfTest 里要和 rsfSrc/bootstrap 的解析器逐字对拍，
@@ -229,7 +229,7 @@ object AstDump {
                 out, depth + 1, "SUPER",
                 "name" to esc(t.name),
                 "display" to typeText(t),
-                "typeArgs" to bool(t.typeArgs.isNotEmpty()),
+                "typeArgs" to Bool(t.typeArgs.isNotEmpty()),
             )
         }
     }
@@ -254,7 +254,7 @@ object AstDump {
         line(
             out, depth, "FIELD",
             "name" to esc(f.name),
-            "mutable" to bool(f.mutable),
+            "mutable" to Bool(f.mutable),
             "type" to typeText(f.type),
         )
         expr(out, depth + 1, f.initializer)
@@ -285,7 +285,7 @@ object AstDump {
                 out, depth + 2, "ANNOTATION_ELEMENT",
                 "name" to esc(e.name),
                 "type" to typeText(e.type),
-                "hasDefault" to bool(e.default != null),
+                "hasDefault" to Bool(e.default != null),
             )
             // 有默认值才紧跟一棵表达式子树（照 FIELD 的 initializer 那样打）
             e.default?.let { expr(out, depth + 3, it) }
@@ -353,15 +353,15 @@ object AstDump {
                 line(
                     out, depth, "VAR_DECL",
                     "name" to esc(s.name),
-                    "mutable" to bool(s.mutable),
-                    "typed" to bool(t != null),
+                    "mutable" to Bool(s.mutable),
+                    "typed" to Bool(t != null),
                     "type" to (t?.let { typeText(it) } ?: "-"),
                 )
                 expr(out, depth + 1, s.initializer)
             }
 
             is AssignStmt -> {
-                line(out, depth, "ASSIGN", "name" to esc(s.name), "synthetic" to bool(s.synthetic))
+                line(out, depth, "ASSIGN", "name" to esc(s.name), "synthetic" to Bool(s.synthetic))
                 expr(out, depth + 1, s.value)
             }
 
@@ -385,7 +385,7 @@ object AstDump {
             }
 
             is ReturnStmt -> {
-                line(out, depth, "RETURN", "hasValue" to bool(s.value != null))
+                line(out, depth, "RETURN", "hasValue" to Bool(s.value != null))
                 s.value?.let { expr(out, depth + 1, it) }
             }
 
@@ -411,7 +411,7 @@ object AstDump {
                 line(
                     out, depth, "SWITCH",
                     "caseCount" to s.cases.size.toString(),
-                    "hasElse" to bool(s.elseBody != null),
+                    "hasElse" to Bool(s.elseBody != null),
                 )
                 expr(out, depth + 1, s.subject)
                 line(out, depth + 1, "CASES", "count" to s.cases.size.toString())
@@ -422,7 +422,7 @@ object AstDump {
             is GotoStmt -> line(out, depth, "GOTO", "label" to esc(s.label))
 
             is IfStmt -> {
-                line(out, depth, "IF", "hasElse" to bool(s.elseBody != null))
+                line(out, depth, "IF", "hasElse" to Bool(s.elseBody != null))
                 expr(out, depth + 1, s.condition)
                 block(out, depth + 1, s.body)
                 s.elseBody?.let { block(out, depth + 1, it) }
@@ -437,8 +437,8 @@ object AstDump {
             is ForStmt -> {
                 line(
                     out, depth, "FOR",
-                    "hasCond" to bool(s.condition != null),
-                    "hasStep" to bool(s.step != null),
+                    "hasCond" to Bool(s.condition != null),
+                    "hasStep" to Bool(s.step != null),
                 )
                 s.condition?.let { expr(out, depth + 1, it) }
                 s.step?.let { stmt(out, depth + 1, it) }
@@ -485,7 +485,7 @@ object AstDump {
             is DoubleLit -> line(out, depth, "DOUBLE_LIT", "value" to e.value.toString())
             is StringLit -> line(out, depth, "STRING_LIT", "value" to esc(e.value))
             is CharLit -> line(out, depth, "CHAR_LIT", "value" to esc(e.value.toString()))
-            is BoolLit -> line(out, depth, "BOOL_LIT", "value" to bool(e.value))
+            is BoolLit -> line(out, depth, "BOOL_LIT", "value" to Bool(e.value))
             is NullLit -> line(out, depth, "NULL_LIT")
             is ThisExpr -> line(out, depth, "THIS")
 
@@ -505,7 +505,7 @@ object AstDump {
                 args(out, depth + 1, e.arguments)
             }
 
-            // 阶段 30：`lam(x : int) -> int { … }`
+            // 阶段 30：`lam(x : Int) -> Int { … }`
             is LambdaExpr -> {
                 val ret = e.declaredReturn?.let { typeText(it) } ?: "-"
                 line(out, depth, "LAMBDA", "params" to e.params.size.toString(), "ret" to ret)
@@ -528,7 +528,7 @@ object AstDump {
             }
 
             is MemberExpr -> {
-                line(out, depth, "MEMBER", "name" to esc(e.name), "call" to bool(e.arguments != null))
+                line(out, depth, "MEMBER", "name" to esc(e.name), "call" to Bool(e.arguments != null))
                 expr(out, depth + 1, e.receiver)
                 e.arguments?.let { args(out, depth + 1, it) }
             }
@@ -569,13 +569,13 @@ object AstDump {
             }
 
             is AsExpr -> {
-                line(out, depth, "AS", "safe" to bool(e.safe))
+                line(out, depth, "AS", "safe" to Bool(e.safe))
                 expr(out, depth + 1, e.operand)
                 line(out, depth + 1, "TARGET", "type" to typeText(e.type))
             }
 
             is IsExpr -> {
-                line(out, depth, "IS", "negated" to bool(e.negated))
+                line(out, depth, "IS", "negated" to Bool(e.negated))
                 expr(out, depth + 1, e.operand)
                 line(out, depth + 1, "TARGET", "type" to typeText(e.type))
             }
@@ -585,13 +585,13 @@ object AstDump {
     // ------------------------------------------------------------------ 类型与工具
 
     /**
-     * 类型的规范写法：`int`、`?string`、`Box&<int>`、`Box&<Box&<int>>`、`int[][]`、`Marker::Impl`。
+     * 类型的规范写法：`Int`、`?String`、`Box&<Int>`、`Box&<Box&<Int>>`、`Int[][]`、`Marker::Impl`。
      *
-     * 与 `TypeRef.display()` **故意不同**：那个是打给人看的（`Box&<int>`，逗号后面带空格），
+     * 与 `TypeRef.display()` **故意不同**：那个是打给人看的（`Box&<Int>`，逗号后面带空格），
      * 这里的值里**不能有空格**，所以逗号后面不空格。两端都按这条规则拼，所以是一致的。
      *
      * 嵌套类型（`注解名::伴生名`，例如 `Marker::Impl`）打**完整**写法：类型实参只可能写在第一段
-     * （`Outer&<int>::Inner` 里的 `&<int>` 属于 `Outer`），所以 `::` 部分不打类型实参。
+     * （`Outer&<Int>::Inner` 里的 `&<Int>` 属于 `Outer`），所以 `::` 部分不打类型实参。
      */
     private fun typeText(t: TypeRef): String {
         // 阶段 30：函数类型逐字照 `.display()` 的形状打，别把形参表吞进 name
@@ -610,7 +610,7 @@ object AstDump {
         return head + nested + "[]".repeat(t.arrayDepth)
     }
 
-    private fun bool(b: Boolean): String = if (b) "true" else "false"
+    private fun Bool(b: Boolean): String = if (b) "true" else "false"
 
     private fun line(out: StringBuilder, depth: Int, kind: String, vararg fields: Pair<String, String>) {
         repeat(depth) { out.append("  ") }

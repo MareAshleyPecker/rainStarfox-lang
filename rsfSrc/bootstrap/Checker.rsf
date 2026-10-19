@@ -15,24 +15,24 @@ import "Scopes.rsf"
 import "Diag.rsf"
 
 // 一份源码的检查失败：第一处错就停（与 Kotlin Checker 一致）
-pub class CheckFailure(detail : string, line : int, col : int) {
-    var detail : string = detail
-    var line : int = line
-    var col : int = col
+pub class CheckFailure(detail : String, line : Int, col : Int) {
+    var detail : String = detail
+    var line : Int = line
+    var col : Int = col
 }
 
 // 函数签名（参数类型用文本存，够用；类型运算交给 Types.rsf）
-pub class FnSig(name : string, retText : string, paramTexts : string[], paramNames : string[], typeParamNames : string[]) {
-    var name : string = name
-    var retText : string = retText
-    var paramTexts : string[] = paramTexts
-    var paramNames : string[] = paramNames
-    var paramCount : int = paramTexts.length
-    var typeParamNames : string[] = typeParamNames
-    var typeParamCount : int = typeParamNames.length
+pub class FnSig(name : String, retText : String, paramTexts : String[], paramNames : String[], typeParamNames : String[]) {
+    var name : String = name
+    var retText : String = retText
+    var paramTexts : String[] = paramTexts
+    var paramNames : String[] = paramNames
+    var paramCount : Int = paramTexts.length
+    var typeParamNames : String[] = typeParamNames
+    var typeParamCount : Int = typeParamNames.length
 
-    // `f(a : int, b : int)`：报「候选有 N 个」时逐条印出来
-    pub fn signatureText() -> string {
+    // `f(a : Int, b : Int)`：报「候选有 N 个」时逐条印出来
+    pub fn signatureText() -> String {
         var out = name + "("
         var i = 0
         while (i < paramCount) {
@@ -47,29 +47,29 @@ pub class FnSig(name : string, retText : string, paramTexts : string[], paramNam
 pub class Checker(failure : ?CheckFailure) {
     var failure : ?CheckFailure = failure
     var fns : FnSig[] = new FnSig[8]
-    var fnCount : int = 0
-    var curFnName : string = ""
-    var loopDepth : int = 0
+    var fnCount : Int = 0
+    var curFnName : String = ""
+    var loopDepth : Int = 0
     var cls : ClsInfo[] = new ClsInfo[8]
-    var enums : string[] = new string[0]
-    var enumCount : int = 0
-    var clsCount : int = 0
-    var labels : string[] = new string[0]
-    var labelCount : int = 0
-    var curRetText : string = "void"
-    var curVoid : bool = true
-    var warnLines : int[] = new int[8]
-    var warnCols : int[] = new int[8]
-    var warnTexts : string[] = new string[8]
-    var warnCount : int = 0
-    var warnOnly : bool = false
-    var curExpect : string = ""
-    var curBodyHasTypeParam : bool = false
+    var enums : String[] = new String[0]
+    var enumCount : Int = 0
+    var clsCount : Int = 0
+    var labels : String[] = new String[0]
+    var labelCount : Int = 0
+    var curRetText : String = "void"
+    var curVoid : Bool = true
+    var warnLines : Int[] = new Int[8]
+    var warnCols : Int[] = new Int[8]
+    var warnTexts : String[] = new String[8]
+    var warnCount : Int = 0
+    var warnOnly : Bool = false
+    var curExpect : String = ""
+    var curBodyHasTypeParam : Bool = false
     var scopes : Scopes = new Scopes()
 
     // ---------------------------------------------------------------- 类型文本
 
-    fn typeOfTextT(text : string) -> RType {
+    fn typeOfTextT(text : String) -> RType {
         var t = text
         var nullable = false
         if (t.length() > 0 && t.charAt(0) == '?') {
@@ -82,19 +82,19 @@ pub class Checker(failure : ?CheckFailure) {
             t = rangeTo(t, t.length() - 2)
         }
         var empty : RType[] = new RType[0]
-        if (t == "int") { rtn new RType("INT", nullable, "", empty, depth) }
-        if (t == "long") { rtn new RType("LONG", nullable, "", empty, depth) }
-        if (t == "byte") { rtn new RType("BYTE", nullable, "", empty, depth) }
-        if (t == "char") { rtn new RType("CHAR", nullable, "", empty, depth) }
-        if (t == "float") { rtn new RType("FLOAT", nullable, "", empty, depth) }
-        if (t == "double") { rtn new RType("DOUBLE", nullable, "", empty, depth) }
-        if (t == "bool") { rtn new RType("BOOL", nullable, "", empty, depth) }
-        if (t == "string") { rtn new RType("STRING", nullable, "", empty, depth) }
+        if (t == "Int") { rtn new RType("INT", nullable, "", empty, depth) }
+        if (t == "Long") { rtn new RType("LONG", nullable, "", empty, depth) }
+        if (t == "Byte") { rtn new RType("BYTE", nullable, "", empty, depth) }
+        if (t == "Char") { rtn new RType("CHAR", nullable, "", empty, depth) }
+        if (t == "Float") { rtn new RType("FLOAT", nullable, "", empty, depth) }
+        if (t == "Double") { rtn new RType("DOUBLE", nullable, "", empty, depth) }
+        if (t == "Bool") { rtn new RType("BOOL", nullable, "", empty, depth) }
+        if (t == "String") { rtn new RType("STRING", nullable, "", empty, depth) }
         if (t == "void") { rtn new RType("VOID", nullable, "", empty, depth) }
         rtn new RType("EXTERNAL", nullable, t, empty, depth)
     }
 
-    fn rangeFrom(s : string, from : int) -> string {
+    fn rangeFrom(s : String, from : Int) -> String {
         var out = ""
         var i = from
         while (i < s.length()) {
@@ -104,7 +104,7 @@ pub class Checker(failure : ?CheckFailure) {
         rtn out
     }
 
-    fn rangeTo(s : string, to : int) -> string {
+    fn rangeTo(s : String, to : Int) -> String {
         var out = ""
         var i = 0
         while (i < to) {
@@ -116,21 +116,21 @@ pub class Checker(failure : ?CheckFailure) {
 
     // ---------------------------------------------------------------- 报错
 
-    fn failAtLC(detail : string, line : int, col : int) -> void {
+    fn failAtLC(detail : String, line : Int, col : Int) -> void {
         if (failure == null) { failure = new CheckFailure(detail, line, col) }
     }
 
-    fn failAt(detail : string, node : Node) -> void {
+    fn failAt(detail : String, node : Node) -> void {
         if (failure != null) { rtn }
         failure = new CheckFailure(detail, node.line, node.col)
     }
 
     // 阶段 38：不可达代码警告（与 Kotlin `Diagnostic(Severity.WARNING, "checker", …)` 同款）
-    fn addWarn(line : int, col : int, detail : string) -> void {
+    fn addWarn(line : Int, col : Int, detail : String) -> void {
         if (warnCount >= warnLines.length) {
-            var b1 = new int[warnLines.length * 2]
-            var b2 = new int[warnCols.length * 2]
-            var b3 = new string[warnTexts.length * 2]
+            var b1 = new Int[warnLines.length * 2]
+            var b2 = new Int[warnCols.length * 2]
+            var b3 = new String[warnTexts.length * 2]
             var i = 0
             while (i < warnCount) {
                 b1[i] = warnLines[i]
@@ -148,11 +148,11 @@ pub class Checker(failure : ?CheckFailure) {
         warnCount = warnCount + 1
     }
 
-    pub fn failed() -> bool { rtn failure != null }
+    pub fn failed() -> Bool { rtn failure != null }
     pub fn failureOf() -> ?CheckFailure { rtn failure }
-    pub fn warningCount() -> int { rtn warnCount }
-    pub fn warnLine(i : int) -> int { rtn warnLines[i] }
-    pub fn warnText(i : int) -> string { rtn warnTexts[i] }
+    pub fn warningCount() -> Int { rtn warnCount }
+    pub fn warnLine(i : Int) -> Int { rtn warnLines[i] }
+    pub fn warnText(i : Int) -> String { rtn warnTexts[i] }
 
     // ---------------------------------------------------------------- 函数表
 
@@ -163,11 +163,11 @@ pub class Checker(failure : ?CheckFailure) {
         while (i < funcs!!.childCount) {
             var fnode = funcs!!.children[i]
             var paramsNode = childNodeOf(fnode, NodeKind.PARAMS)
-            var ptexts : string[] = new string[0]
-            var pnames : string[] = new string[0]
+            var ptexts : String[] = new String[0]
+            var pnames : String[] = new String[0]
             if (paramsNode != null) {
-                ptexts = new string[paramsNode!!.childCount]
-                pnames = new string[paramsNode!!.childCount]
+                ptexts = new String[paramsNode!!.childCount]
+                pnames = new String[paramsNode!!.childCount]
                 var j = 0
                 while (j < paramsNode!!.childCount) {
                     var prm = paramsNode!!.children[j]
@@ -176,10 +176,10 @@ pub class Checker(failure : ?CheckFailure) {
                     j = j + 1
                 }
             }
-            var tpNames : string[] = new string[0]
+            var tpNames : String[] = new String[0]
             var tpNode = childNodeOf(fnode, NodeKind.TYPE_PARAMS)
             if (tpNode != null) {
-                tpNames = new string[tpNode!!.childCount]
+                tpNames = new String[tpNode!!.childCount]
                 var t = 0
                 while (t < tpNode!!.childCount) {
                     tpNames[t] = nodeProp(tpNode!!.children[t], "name")
@@ -206,7 +206,7 @@ pub class Checker(failure : ?CheckFailure) {
         fnCount = fnCount + 1
     }
 
-    fn findFn(name : string) -> ?FnSig {
+    fn findFn(name : String) -> ?FnSig {
         var i = 0
         while (i < fnCount) {
             if (fns[i].name == name) { rtn fns[i] }
@@ -262,7 +262,7 @@ pub class Checker(failure : ?CheckFailure) {
 
     // ---------------------------------------------------------------- 类表与类级检查
 
-    fn addClass(node : Node, isIface : bool) -> void {
+    fn addClass(node : Node, isIface : Bool) -> void {
         var ci = new ClsInfo(nodeProp(node, "name"),
                              childNodeOf(node, NodeKind.FINAL) != null,
                              childNodeOf(node, NodeKind.ABSTRACT) != null,
@@ -286,9 +286,9 @@ pub class Checker(failure : ?CheckFailure) {
             while (j < ms!!.childCount) {
                 var fnode = ms!!.children[j]
                 var plist = childNodeOf(fnode, NodeKind.PARAMS)
-                var texts : string[] = new string[0]
+                var texts : String[] = new String[0]
                 if (plist != null) {
-                    texts = new string[plist!!.childCount]
+                    texts = new String[plist!!.childCount]
                     var q = 0
                     while (q < plist!!.childCount) {
                         texts[q] = nodeProp(plist!!.children[q], "type")
@@ -333,14 +333,14 @@ pub class Checker(failure : ?CheckFailure) {
             while (j < isf!!.childCount) { addClass(isf!!.children[j], true); j = j + 1 }
         }
         // 阶段 34：枚举名单独记一张表，`Color.RED` 才能当常量读
-        enums = new string[8]
+        enums = new String[8]
         enumCount = 0
         var es = childNodeOf(prg, NodeKind.ENUMS)
         if (es != null) {
             var k = 0
             while (k < es!!.childCount) {
                 if (enumCount >= enums.length) {
-                    var bigger = new string[enums.length * 2]
+                    var bigger = new String[enums.length * 2]
                     var q = 0
                     while (q < enumCount) { bigger[q] = enums[q]; q = q + 1 }
                     enums = bigger
@@ -352,7 +352,7 @@ pub class Checker(failure : ?CheckFailure) {
         }
     }
 
-    fn enumNamesOf(nm : string) -> bool {
+    fn enumNamesOf(nm : String) -> Bool {
         var i = 0
         while (i < enumCount) {
             if (enums[i] == nm) { rtn true }
@@ -361,7 +361,7 @@ pub class Checker(failure : ?CheckFailure) {
         rtn false
     }
 
-    fn findCls(nm : string) -> ?ClsInfo {
+    fn findCls(nm : String) -> ?ClsInfo {
         var i = 0
         while (i < clsCount) {
             if (cls[i].name == nm) { rtn cls[i] }
@@ -491,7 +491,7 @@ pub class Checker(failure : ?CheckFailure) {
         }
     }
 
-    fn ctorOf(c : ClsInfo, argc : int) -> ?MethInfo {
+    fn ctorOf(c : ClsInfo, argc : Int) -> ?MethInfo {
         var i = 0
         while (i < c.methCount) {
             var m = c.meths[i]
@@ -502,7 +502,7 @@ pub class Checker(failure : ?CheckFailure) {
     }
 
     // 抽象类还没实现的成员（本类声明的 + 继承来的 + 接口要求的），用 `、` 连起来
-    fn abstractMissing(c : ClsInfo) -> string {
+    fn abstractMissing(c : ClsInfo) -> String {
         var out = ""
         var k = 0
         while (k < c.methCount) {
@@ -572,7 +572,7 @@ pub class Checker(failure : ?CheckFailure) {
         }
     }
 
-    fn inheritedMeth(parentName : string, nm : string, argc : int) -> ?MethInfo {
+    fn inheritedMeth(parentName : String, nm : String, argc : Int) -> ?MethInfo {
         var pn = parentName
         while (pn.length() > 0) {
             var p = findCls(pn)
@@ -584,7 +584,7 @@ pub class Checker(failure : ?CheckFailure) {
         rtn null
     }
 
-    fn inheritedOwnerOf(parentName : string, nm : string, argc : int) -> string {
+    fn inheritedOwnerOf(parentName : String, nm : String, argc : Int) -> String {
         var pn = parentName
         while (pn.length() > 0) {
             var p = findCls(pn)
@@ -595,7 +595,7 @@ pub class Checker(failure : ?CheckFailure) {
         rtn ""
     }
 
-    fn methOfType(typeText : string, nm : string, argc : int) -> ?MethInfo {
+    fn methOfType(typeText : String, nm : String, argc : Int) -> ?MethInfo {
         var nm2 = typeText
         if (nm2.endsWith("?")) { nm2 = nm2.substring(0, nm2.length() - 1) }
         var c = findCls(nm2)
@@ -656,7 +656,7 @@ pub class Checker(failure : ?CheckFailure) {
     }
 
     // 语句之后还有没有「顺序往下走」这条路（对应 Kotlin 侧 IR 的无条件终结指令）
-    fn stmtEndsFlow(st : Node) -> bool {
+    fn stmtEndsFlow(st : Node) -> Bool {
         if (st.kind == NodeKind.RETURN || st.kind == NodeKind.FAIL) { rtn true }
         if (st.kind == NodeKind.BREAK || st.kind == NodeKind.CONTINUE || st.kind == NodeKind.GOTO) { rtn true }
         if (st.kind == NodeKind.BLOCK) { rtn blockEndsFlow(st) }
@@ -682,7 +682,7 @@ pub class Checker(failure : ?CheckFailure) {
     }
 
     // 循环体里有没有直接针对本层的 break（嵌套循环里的都不算）
-    fn bodyHasBreak(n : Node, nested : bool) -> bool {
+    fn bodyHasBreak(n : Node, nested : Bool) -> Bool {
         if (n.kind == NodeKind.BREAK && !nested) { rtn true }
         var i = 0
         while (i < n.childCount) {
@@ -695,7 +695,7 @@ pub class Checker(failure : ?CheckFailure) {
         rtn false
     }
 
-    fn blockEndsFlow(b : Node) -> bool {
+    fn blockEndsFlow(b : Node) -> Bool {
         if (b.childCount == 0) { rtn false }
         rtn stmtEndsFlow(b.children[b.childCount - 1])
     }
@@ -713,7 +713,7 @@ pub class Checker(failure : ?CheckFailure) {
         }
     }
 
-    fn isStmtNode(n : Node) -> bool {
+    fn isStmtNode(n : Node) -> Bool {
         if (n.kind == NodeKind.BLOCK || n.kind == NodeKind.IF || n.kind == NodeKind.WHILE || n.kind == NodeKind.FOR || n.kind == NodeKind.TRY) { rtn true }
         if (n.kind == NodeKind.RETURN || n.kind == NodeKind.VAR_DECL || n.kind == NodeKind.EXPR_STMT || n.kind == NodeKind.ASSIGN) { rtn true }
         if (n.kind == NodeKind.BREAK || n.kind == NodeKind.CONTINUE || n.kind == NodeKind.GOTO || n.kind == NodeKind.LABEL) { rtn true }
@@ -746,7 +746,7 @@ pub class Checker(failure : ?CheckFailure) {
     }
 
     fn collectLabels(n : Node) -> void {
-        labels = new string[0]
+        labels = new String[0]
         labelCount = 0
         labelWalk(n)
     }
@@ -754,7 +754,7 @@ pub class Checker(failure : ?CheckFailure) {
     fn labelWalk(n : Node) -> void {
         if (n.kind == NodeKind.LABEL) {
             if (labelCount >= labels.length) {
-                var bigger = new string[labels.length * 2 + 4]
+                var bigger = new String[labels.length * 2 + 4]
                 var i = 0
                 while (i < labelCount) { bigger[i] = labels[i]; i = i + 1 }
                 labels = bigger
@@ -769,7 +769,7 @@ pub class Checker(failure : ?CheckFailure) {
         }
     }
 
-    fn hasLabel(name : string) -> bool {
+    fn hasLabel(name : String) -> Bool {
         var i = 0
         while (i < labelCount) {
             if (labels[i] == name) { rtn true }
@@ -788,8 +788,8 @@ pub class Checker(failure : ?CheckFailure) {
             else if (ch.kind != NodeKind.VAR_DECL && ch.kind != NodeKind.PARAMS && ch.kind != NodeKind.CASES && ch.kind != NodeKind.ARGS && ch.kind != NodeKind.TARGET) {
                 var condType = checkExpr(ch)
                 if (failure == null && i == 0 && (stmt.kind == NodeKind.IF || stmt.kind == NodeKind.WHILE)) {
-                    if (!acceptsText(condType, "bool")) {
-                        failAt(wordOf(stmt.kind) + " 的条件必须是 bool，实际是 " + condType, ch)
+                    if (!acceptsText(condType, "Bool")) {
+                        failAt(wordOf(stmt.kind) + " 的条件必须是 Bool，实际是 " + condType, ch)
                     }
                 }
             }
@@ -804,7 +804,7 @@ pub class Checker(failure : ?CheckFailure) {
         scopes.enter()
         var cname = nodeProp(stmt, "catch")
         if (cname.length() > 0) {
-            scopes.declare(symOf(cname, "imutvar", "string", stmt.line, stmt.col))
+            scopes.declare(symOf(cname, "imutvar", "String", stmt.line, stmt.col))
         }
         if (stmt.childCount > 0) {
             var body = stmt.children[0]
@@ -823,7 +823,7 @@ pub class Checker(failure : ?CheckFailure) {
         scopes.leave()
     }
 
-    fn wordOf(k : NodeKind) -> string {
+    fn wordOf(k : NodeKind) -> String {
         if (k == NodeKind.IF) { rtn "if" }
         if (k == NodeKind.WHILE) { rtn "while" }
         rtn "for"
@@ -898,15 +898,15 @@ pub class Checker(failure : ?CheckFailure) {
 
     // ---------------------------------------------------------------- 表达式
 
-    fn checkExpr(e : Node) -> string {
+    fn checkExpr(e : Node) -> String {
         if (failure != null) { rtn "void" }
-        if (e.kind == NodeKind.INT_LIT) { rtn "int" }
-        if (e.kind == NodeKind.LONG_LIT) { rtn "long" }
-        if (e.kind == NodeKind.FLOAT_LIT) { rtn "float" }
-        if (e.kind == NodeKind.DOUBLE_LIT) { rtn "double" }
-        if (e.kind == NodeKind.STRING_LIT) { rtn "string" }
-        if (e.kind == NodeKind.CHAR_LIT) { rtn "char" }
-        if (e.kind == NodeKind.BOOL_LIT) { rtn "bool" }
+        if (e.kind == NodeKind.INT_LIT) { rtn "Int" }
+        if (e.kind == NodeKind.LONG_LIT) { rtn "Long" }
+        if (e.kind == NodeKind.FLOAT_LIT) { rtn "Float" }
+        if (e.kind == NodeKind.DOUBLE_LIT) { rtn "Double" }
+        if (e.kind == NodeKind.STRING_LIT) { rtn "String" }
+        if (e.kind == NodeKind.CHAR_LIT) { rtn "Char" }
+        if (e.kind == NodeKind.BOOL_LIT) { rtn "Bool" }
         if (e.kind == NodeKind.VAR) {
             var nm = nodeProp(e, "name")
             var sym = scopes.lookup(nm)
@@ -970,12 +970,12 @@ pub class Checker(failure : ?CheckFailure) {
         rtn "void"
     }
 
-    fn checkCall(e : Node) -> string {
+    fn checkCall(e : Node) -> String {
         var name = nodeProp(e, "name")
         var args = childNodeOf(e, NodeKind.ARGS)
         var argc = 0
         if (args != null) { argc = args!!.childCount }
-        var types : string[] = new string[argc]
+        var types : String[] = new String[argc]
         var i = 0
         while (i < argc) {
             types[i] = checkExpr(args!!.children[i])
@@ -986,7 +986,7 @@ pub class Checker(failure : ?CheckFailure) {
         if (sig == null) {
             if (name == "println" || name == "print") {
                 if (argc != 1) {
-                    failAt("调用 '" + name + "' 的参数个数不对：实际给了 " + ("" + argc) + " 个，候选有 1 个 —— " + name + "(value : string)", e)
+                    failAt("调用 '" + name + "' 的参数个数不对：实际给了 " + ("" + argc) + " 个，候选有 1 个 —— " + name + "(value : String)", e)
                 }
                 rtn "void"
             }
@@ -1019,7 +1019,7 @@ pub class Checker(failure : ?CheckFailure) {
 
     // 成员访问/成员调用（33c 只认「接收者是类的实例」与「接收者是类名（静态）」两种，
     // 字段读写先按名字放过——语料还没用到）
-    fn checkMember(e : Node) -> string {
+    fn checkMember(e : Node) -> String {
         var nm = nodeProp(e, "name")
         var isCall = nodeProp(e, "call") == "true"
         var recv = e.children[0]
@@ -1075,7 +1075,7 @@ pub class Checker(failure : ?CheckFailure) {
             // 当成结果类型返回，于是同一份源码两端报的不是一回事（`for (x in 0)` 就是
             // 靠这条暴露出来的）。文案与 Kotlin 的 Checker.checkMember 逐字一致。
             if (isPrimTypeName(recvType)) {
-                failAt(recvType + " 上没有成员——它既不是 JVM 类，也不是 string", e)
+                failAt(recvType + " 上没有成员——它既不是 JVM 类，也不是 String", e)
                 rtn "void"
             }
             rtn recvType
@@ -1089,7 +1089,7 @@ pub class Checker(failure : ?CheckFailure) {
         rtn mm!!.retText
     }
 
-    fn baseClsName(typeText : string) -> string {
+    fn baseClsName(typeText : String) -> String {
         var t = typeText
         if (t.endsWith("?")) { t = t.substring(0, t.length() - 1) }
         rtn t
@@ -1097,40 +1097,40 @@ pub class Checker(failure : ?CheckFailure) {
 
     // 当前语句是不是写在某个类的方法体里（33c 只检查顶层函数，所以恒 false；
     // 留着是为了 34 检查类方法体时不必改调用点）
-    fn inOwnClass(typeText : string) -> bool {
+    fn inOwnClass(typeText : String) -> Bool {
         rtn false
     }
 
-    fn checkBinary(e : Node) -> string {
+    fn checkBinary(e : Node) -> String {
         var left = checkExpr(e.children[0])
         var right = checkExpr(e.children[1])
         if (failure != null) { rtn "void" }
         var op = opText(nodeProp(e, "op"))
-        if (op == "==" || op == "!=") { rtn "bool" }
+        if (op == "==" || op == "!=") { rtn "Bool" }
         if (op == "<" || op == ">" || op == "<=" || op == ">=") {
             if (!isNumeric(left) || !isNumeric(right)) {
-                failAt("'" + op + "' 只能比较非空数值（byte / char / int / long / float / double），实际是 " + left + " 和 " + right + "（字符串只能用 == / !=；可空值要先解包）", e)
+                failAt("'" + op + "' 只能比较非空数值（Byte / Char / Int / Long / Float / Double），实际是 " + left + " 和 " + right + "（字符串只能用 == / !=；可空值要先解包）", e)
                 rtn "void"
             }
-            rtn "bool"
+            rtn "Bool"
         }
         if (op == "&&" || op == "||") {
-            if (left != "bool" || right != "bool") {
-                failAt("运算符 '" + op + "' 需要 bool，实际是 " + left + " 和 " + right, e)
+            if (left != "Bool" || right != "Bool") {
+                failAt("运算符 '" + op + "' 需要 Bool，实际是 " + left + " 和 " + right, e)
                 rtn "void"
             }
-            rtn "bool"
+            rtn "Bool"
         }
-        if (op == "+" && (left == "string" || right == "string")) { rtn "string" }
+        if (op == "+" && (left == "String" || right == "String")) { rtn "String" }
         if (!isNumeric(left) || !isNumeric(right)) {
-            failAt("运算符 '" + op + "' 需要数值（byte / char / int / long / float / double），实际是 " + left + " 和 " + right + "（字符串拼接只支持 '+'）", e)
+            failAt("运算符 '" + op + "' 需要数值（Byte / Char / Int / Long / Float / Double），实际是 " + left + " 和 " + right + "（字符串拼接只支持 '+'）", e)
             rtn "void"
         }
         rtn left
     }
 
     // AST 的 `op` 存的是记号种类（`PLUS`），报错与打印要用符号（`+`）
-    fn opText(kind : string) -> string {
+    fn opText(kind : String) -> String {
         if (kind == "PLUS") { rtn "+" }
         if (kind == "MINUS") { rtn "-" }
         if (kind == "STAR") { rtn "*" }
@@ -1147,11 +1147,11 @@ pub class Checker(failure : ?CheckFailure) {
         rtn kind
     }
 
-    fn isNumeric(t : string) -> bool {
-        rtn t == "byte" || t == "char" || t == "int" || t == "long" || t == "float" || t == "double"
+    fn isNumeric(t : String) -> Bool {
+        rtn t == "Byte" || t == "Char" || t == "Int" || t == "Long" || t == "Float" || t == "Double"
     }
 
-    fn acceptsText(from : string, to : string) -> bool {
+    fn acceptsText(from : String, to : String) -> Bool {
         var ft = typeOfTextT(from)
         var tt = typeOfTextT(to)
         if (tt.accepts(ft)) { rtn true }
@@ -1164,7 +1164,7 @@ pub class Checker(failure : ?CheckFailure) {
     }
 
     // `have` 是不是 `want` 的子类型（沿父类链 + 自己的接口 + 接口继承闭包）
-    fn isSubclassName(have : string, want : string) -> bool {
+    fn isSubclassName(have : String, want : String) -> Bool {
         if (have == want) { rtn true }
         var c = findCls(have)
         var guard = 0
@@ -1181,7 +1181,7 @@ pub class Checker(failure : ?CheckFailure) {
         rtn false
     }
 
-    fn ifaceExtendsName(nm : string, want : string) -> bool {
+    fn ifaceExtendsName(nm : String, want : String) -> Bool {
         if (nm == want) { rtn true }
         var i = findCls(nm)
         if (i == null) { rtn false }
@@ -1197,39 +1197,39 @@ pub class Checker(failure : ?CheckFailure) {
 
     // `x as T` / `x ?as T`：静态类型就是目标类型（Kotlin 侧同样只看目标）
     // 类名当值用：声明的类/接口/枚举 + 常用 JDK 类（自举链自己就在用 System/File/String）
-    // 内建成员的返回类型（string / 数组 / ArrayList），自举链编译自身要靠这些
-    fn builtinMemberType(recvType : string, nm : string, isCall : bool) -> string {
+    // 内建成员的返回类型（String / 数组 / ArrayList），自举链编译自身要靠这些
+    fn builtinMemberType(recvType : String, nm : String, isCall : Bool) -> String {
         var t = recvType
         if (t.length() > 0 && t.charAt(0) == '?') { t = rangeFrom(t, 1) }
         if (t.length() > 2 && t.charAt(t.length() - 1) == ']' && t.charAt(t.length() - 2) == '[') {
-            if (!isCall && nm == "length") { rtn "int" }
+            if (!isCall && nm == "length") { rtn "Int" }
             rtn ""
         }
-        if (t == "string") {
-            if (nm == "length" || nm == "indexOf" || nm == "lastIndexOf" || nm == "compareTo") { rtn "int" }
-            if (nm == "charAt") { rtn "char" }
-            if (nm == "substring" || nm == "trim" || nm == "toUpperCase" || nm == "toLowerCase" || nm == "replace" || nm == "toString") { rtn "string" }
-            if (nm == "contains" || nm == "startsWith" || nm == "endsWith" || nm == "isEmpty" || nm == "equals") { rtn "bool" }
-            if (nm == "split") { rtn "string[]" }
+        if (t == "String") {
+            if (nm == "length" || nm == "indexOf" || nm == "lastIndexOf" || nm == "compareTo") { rtn "Int" }
+            if (nm == "charAt") { rtn "Char" }
+            if (nm == "substring" || nm == "trim" || nm == "toUpperCase" || nm == "toLowerCase" || nm == "replace" || nm == "toString") { rtn "String" }
+            if (nm == "contains" || nm == "startsWith" || nm == "endsWith" || nm == "isEmpty" || nm == "equals") { rtn "Bool" }
+            if (nm == "split") { rtn "String[]" }
             rtn ""
         }
         if (t == "ArrayList") {
-            if (nm == "size" || nm == "indexOf") { rtn "int" }
+            if (nm == "size" || nm == "indexOf") { rtn "Int" }
             if (nm == "get") { rtn "Object" }
             if (nm == "add" || nm == "set" || nm == "remove" || nm == "clear") { rtn "void" }
-            if (nm == "contains" || nm == "isEmpty") { rtn "bool" }
+            if (nm == "contains" || nm == "isEmpty") { rtn "Bool" }
             rtn ""
         }
         if (t == "StringBuilder") {
-            if (nm == "toString") { rtn "string" }
-            if (nm == "length") { rtn "int" }
+            if (nm == "toString") { rtn "String" }
+            if (nm == "length") { rtn "Int" }
             rtn "StringBuilder"
         }
         if (t == "PrintStream") { rtn "void" }
         rtn ""
     }
 
-    fn isJdkClass(nm : string) -> bool {
+    fn isJdkClass(nm : String) -> Bool {
         if (nm == "System" || nm == "String" || nm == "Math" || nm == "File") { rtn true }
         if (nm == "Integer" || nm == "Long" || nm == "Double" || nm == "Float" || nm == "Boolean") { rtn true }
         if (nm == "Character" || nm == "Byte" || nm == "Short" || nm == "Object") { rtn true }
@@ -1238,46 +1238,46 @@ pub class Checker(failure : ?CheckFailure) {
     }
 
     // 自举链用到的 JDK 静态成员（只覆盖实际用到的那些，别的给 void）
-    fn jdkMemberType(recv : string, nm : string) -> string {
+    fn jdkMemberType(recv : String, nm : String) -> String {
         if (recv == "System") {
-            if (nm == "getProperty" || nm == "getenv") { rtn "?string" }
+            if (nm == "getProperty" || nm == "getenv") { rtn "?String" }
             if (nm == "err" || nm == "out") { rtn "PrintStream" }
-            if (nm == "currentTimeMillis" || nm == "nanoTime") { rtn "long" }
+            if (nm == "currentTimeMillis" || nm == "nanoTime") { rtn "Long" }
             rtn "void"
         }
         if (recv == "String") {
-            if (nm == "valueOf" || nm == "format") { rtn "string" }
+            if (nm == "valueOf" || nm == "format") { rtn "String" }
             rtn "void"
         }
         if (recv == "Integer") {
-            if (nm == "parseInt") { rtn "int" }
-            if (nm == "toString" || nm == "toHexString") { rtn "string" }
+            if (nm == "parseInt") { rtn "Int" }
+            if (nm == "toString" || nm == "toHexString") { rtn "String" }
             if (nm == "valueOf") { rtn "Integer" }
             rtn "void"
         }
         if (recv == "Long") {
-            if (nm == "parseLong") { rtn "long" }
-            if (nm == "toString") { rtn "string" }
+            if (nm == "parseLong") { rtn "Long" }
+            if (nm == "toString") { rtn "String" }
             rtn "void"
         }
         if (recv == "Math") {
-            if (nm == "abs") { rtn "int" }
-            rtn "double"
+            if (nm == "abs") { rtn "Int" }
+            rtn "Double"
         }
         if (recv == "File") {
-            if (nm == "mkdirs" || nm == "exists" || nm == "isFile" || nm == "isDirectory" || nm == "delete") { rtn "bool" }
-            if (nm == "getPath" || nm == "getAbsolutePath" || nm == "getName") { rtn "string" }
+            if (nm == "mkdirs" || nm == "exists" || nm == "isFile" || nm == "isDirectory" || nm == "delete") { rtn "Bool" }
+            if (nm == "getPath" || nm == "getAbsolutePath" || nm == "getName") { rtn "String" }
             rtn "void"
         }
         if (recv == "PrintStream") { rtn "void" }
         if (recv == "StringBuilder") {
-            if (nm == "toString") { rtn "string" }
+            if (nm == "toString") { rtn "String" }
             rtn "StringBuilder"
         }
         rtn ""
     }
 
-    fn isClassNameRef(nm : string) -> bool {
+    fn isClassNameRef(nm : String) -> Bool {
         if (findCls(nm) != null || enumNamesOf(nm)) { rtn true }
         if (nm == "System" || nm == "String" || nm == "Math" || nm == "Integer" || nm == "Long") { rtn true }
         if (nm == "Double" || nm == "Float" || nm == "Boolean" || nm == "Character" || nm == "Byte" || nm == "Short") { rtn true }
@@ -1285,21 +1285,21 @@ pub class Checker(failure : ?CheckFailure) {
         rtn false
     }
 
-    fn checkAs(e : Node) -> string {
+    fn checkAs(e : Node) -> String {
         checkExpr(e.children[0])
         var tgt = childNodeOf(e, NodeKind.TARGET)
         if (tgt == null) { rtn "void" }
         rtn nodeProp(tgt!!, "type")
     }
 
-    fn checkIs(e : Node) -> string {
+    fn checkIs(e : Node) -> String {
         var tgt = childNodeOf(e, NodeKind.TARGET)
         if (tgt != null && containsSub(nodeProp(tgt!!, "type"), "->")) {
             failAt("'is' 的目标不能是函数类型（DESIGN-30）", e)
             rtn "void"
         }
         checkExpr(e.children[0])
-        rtn "bool"
+        rtn "Bool"
     }
 
     fn captureScan(n : Node) -> void {
@@ -1319,7 +1319,7 @@ pub class Checker(failure : ?CheckFailure) {
         }
     }
 
-    fn checkLambda(e : Node) -> string {
+    fn checkLambda(e : Node) -> String {
         var fnType = curExpect
         if (!containsSub(fnType, "->")) { fnType = "" }
         var declaredRet = nodeProp(e, "ret")
@@ -1352,7 +1352,7 @@ pub class Checker(failure : ?CheckFailure) {
         rtn lambdaRet
     }
 
-    fn bindPattern(e : Node, pat : string, act : string, names : string[], vals : string[], bound : bool[]) -> void {
+    fn bindPattern(e : Node, pat : String, act : String, names : String[], vals : String[], bound : Bool[]) -> void {
         var p = pat
         var a = act
         if (p.length() > 0 && p.charAt(0) == '?') { p = dropOne(p) }
@@ -1362,7 +1362,7 @@ pub class Checker(failure : ?CheckFailure) {
             var ae = dropTwoTail(a)
             var pi = typeParamIndexIn(pe, names)
             if (pi >= 0 && isPrimTypeName(ae)) {
-                failAt("泛型参数 '" + pe + "' 绑到了基本类型 '" + ae + "'：'" + pe + "[]' 在 JVM 上擦成 Object[]，装不下基本类型数组（DESIGN-31 §8）——把实参换成引用元素数组（例如 string[] 或类数组）", e)
+                failAt("泛型参数 '" + pe + "' 绑到了基本类型 '" + ae + "'：'" + pe + "[]' 在 JVM 上擦成 Object[]，装不下基本类型数组（DESIGN-31 §8）——把实参换成引用元素数组（例如 String[] 或类数组）", e)
                 rtn
             }
             bindPattern(e, pe, ae, names, vals, bound)
@@ -1375,9 +1375,9 @@ pub class Checker(failure : ?CheckFailure) {
         }
     }
 
-    fn bindGenericCall(e : Node, sig : FnSig, types : string[], argc : int) -> string {
-        var vals : string[] = new string[sig.typeParamCount]
-        var bound : bool[] = new bool[sig.typeParamCount]
+    fn bindGenericCall(e : Node, sig : FnSig, types : String[], argc : Int) -> String {
+        var vals : String[] = new String[sig.typeParamCount]
+        var bound : Bool[] = new Bool[sig.typeParamCount]
         var k = 0
         while (k < argc) {
             bindPattern(e, sig.paramTexts[k], types[k], sig.typeParamNames, vals, bound)
@@ -1407,14 +1407,14 @@ pub fn childNodeOf(n : Node, kind : NodeKind) -> ?Node {
 }
 
 // 从属性串里取 `k=v`
-fn propIsWord(c : char) -> bool {
+fn propIsWord(c : Char) -> Bool {
     if (c >= 'a' && c <= 'z') { rtn true }
     if (c >= 'A' && c <= 'Z') { rtn true }
     if (c >= '0' && c <= '9') { rtn true }
     rtn c == '_'
 }
 
-fn propKeyStartsAt(t : string, i : int) -> bool {
+fn propKeyStartsAt(t : String, i : Int) -> Bool {
     var len = t.length()
     if (i >= len) { rtn false }
     if (t.charAt(i) != ' ') { rtn false }
@@ -1433,9 +1433,9 @@ fn propKeyStartsAt(t : string, i : int) -> bool {
     rtn t.charAt(j) == '='
 }
 
-// 属性串是 "k=v k=v"：值里可以有空格（函数类型 `(int) -> int`），
+// 属性串是 "k=v k=v"：值里可以有空格（函数类型 `(Int) -> Int`），
 // 只有「空格 + 标识符 + `=`」才算下一个属性的开头（与 Backend.rsf 的 prop 同一套）。
-pub fn nodeProp(n : Node, key : string) -> string {
+pub fn nodeProp(n : Node, key : String) -> String {
     var t = n.text
     var i = 0
     var len = t.length()
@@ -1457,27 +1457,27 @@ pub fn nodeProp(n : Node, key : string) -> string {
 
 // ---------------------------------------------------------------- 类模型（33c）
 
-// 一个方法/接口方法的签名（报错文案要印 `tag()` / `id(T)` / `run() -> int`）
-pub class MethInfo(name : string, argCount : int, paramTexts : string[], retText : string,
-                      isStatic : bool, isPrivate : bool, isAbstract : bool, isOverride : bool,
-                      hasBody : bool, line : int, col : int, isCtor : bool) {
-    var name : string = name
-    var argCount : int = argCount
-    var paramTexts : string[] = paramTexts
-    var retText : string = retText
-    var isStatic : bool = isStatic
-    var isPrivate : bool = isPrivate
-    var isAbstract : bool = isAbstract
-    var isOverride : bool = isOverride
-    var hasBody : bool = hasBody
-    var isCtor : bool = isCtor
+// 一个方法/接口方法的签名（报错文案要印 `tag()` / `id(T)` / `run() -> Int`）
+pub class MethInfo(name : String, argCount : Int, paramTexts : String[], retText : String,
+                      isStatic : Bool, isPrivate : Bool, isAbstract : Bool, isOverride : Bool,
+                      hasBody : Bool, line : Int, col : Int, isCtor : Bool) {
+    var name : String = name
+    var argCount : Int = argCount
+    var paramTexts : String[] = paramTexts
+    var retText : String = retText
+    var isStatic : Bool = isStatic
+    var isPrivate : Bool = isPrivate
+    var isAbstract : Bool = isAbstract
+    var isOverride : Bool = isOverride
+    var hasBody : Bool = hasBody
+    var isCtor : Bool = isCtor
     var fnNode : ?Node = null
-    var line : int = line
-    var col : int = col
+    var line : Int = line
+    var col : Int = col
 
     pub fn setFnNode(n : Node) -> void { fnNode = n }
 
-    pub fn sigText() -> string {
+    pub fn sigText() -> String {
         var out = name + "("
         var i = 0
         while (i < argCount) {
@@ -1488,29 +1488,29 @@ pub class MethInfo(name : string, argCount : int, paramTexts : string[], retText
         rtn out + ")"
     }
 
-    pub fn fullText() -> string { rtn sigText() + " -> " + retText }
+    pub fn fullText() -> String { rtn sigText() + " -> " + retText }
 }
 
-pub class ClsInfo(name : string, isFinal : bool, isAbstract : bool, isIface : bool,
-                     parent : string, line : int, col : int) {
-    var name : string = name
-    var isFinal : bool = isFinal
-    var isAbstract : bool = isAbstract
-    var isIface : bool = isIface
-    var parent : string = parent
-    var line : int = line
-    var col : int = col
-    var ifaces : string[] = new string[4]
-    var ifaceCount : int = 0
+pub class ClsInfo(name : String, isFinal : Bool, isAbstract : Bool, isIface : Bool,
+                     parent : String, line : Int, col : Int) {
+    var name : String = name
+    var isFinal : Bool = isFinal
+    var isAbstract : Bool = isAbstract
+    var isIface : Bool = isIface
+    var parent : String = parent
+    var line : Int = line
+    var col : Int = col
+    var ifaces : String[] = new String[4]
+    var ifaceCount : Int = 0
     var meths : MethInfo[] = new MethInfo[4]
-    var methCount : int = 0
+    var methCount : Int = 0
     var superNode : ?Node = null
 
     pub fn setSuper(n : Node) -> void { superNode = n }
 
-    pub fn addIface(nm : string) -> void {
+    pub fn addIface(nm : String) -> void {
         if (ifaceCount >= ifaces.length) {
-            var bigger = new string[ifaces.length * 2]
+            var bigger = new String[ifaces.length * 2]
             var i = 0
             while (i < ifaceCount) { bigger[i] = ifaces[i]; i = i + 1 }
             ifaces = bigger
@@ -1530,7 +1530,7 @@ pub class ClsInfo(name : string, isFinal : bool, isAbstract : bool, isIface : bo
         methCount = methCount + 1
     }
 
-    pub fn ownMeth(nm : string, argc : int) -> ?MethInfo {
+    pub fn ownMeth(nm : String, argc : Int) -> ?MethInfo {
         var i = 0
         while (i < methCount) {
             if (meths[i].name == nm && meths[i].argCount == argc) { rtn meths[i] }
@@ -1541,7 +1541,7 @@ pub class ClsInfo(name : string, isFinal : bool, isAbstract : bool, isIface : bo
 }
 
 // 检查一份源码：通过就 rtn null，否则返回第一处错
-pub fn checkSourceFull(text : string) -> Checker {
+pub fn checkSourceFull(text : String) -> Checker {
     var ast = parseSource(text)
     var c = new Checker(null)
     if (ast.kind == NodeKind.ERROR) { rtn c }
@@ -1550,7 +1550,7 @@ pub fn checkSourceFull(text : string) -> Checker {
 }
 
 // 只算「不可达代码」警告，不跑类型检查（`build`/`run` 驱动用）
-pub fn warningsOnly(text : string) -> Checker {
+pub fn warningsOnly(text : String) -> Checker {
     var ast = parseSource(text)
     var c = new Checker(null)
     if (ast.kind == NodeKind.ERROR) { rtn c }
@@ -1559,13 +1559,13 @@ pub fn warningsOnly(text : string) -> Checker {
     rtn c
 }
 
-pub fn checkSource(text : string) -> ?CheckFailure {
+pub fn checkSource(text : String) -> ?CheckFailure {
     var c = checkSourceFull(text)
     rtn c.failureOf()
 }
 
 // 与 Kotlin `Main` 同款：`[rsf] 警告: <文件名>:<行>: <文案>`（只有行号，没有列）
-pub fn printWarnings(c : Checker, file : string) -> void {
+pub fn printWarnings(c : Checker, file : String) -> void {
     var i = 0
     while (i < c.warningCount()) {
         System.err.println("[rsf] 警告: " + file + ":" + ("" + c.warnLine(i)) + ": " + c.warnText(i))
@@ -1575,7 +1575,7 @@ pub fn printWarnings(c : Checker, file : string) -> void {
 
 // ---------------------------------------------------------------- 阶段 33d：纯字符串/类型名工具
 
-pub fn containsSub(s : string, sub : string) -> bool {
+pub fn containsSub(s : String, sub : String) -> Bool {
     var i = 0
     while (i + sub.length() <= s.length()) {
         if (s.substring(i, i + sub.length()) == sub) { rtn true }
@@ -1584,16 +1584,16 @@ pub fn containsSub(s : string, sub : string) -> bool {
     rtn false
 }
 
-fn dropOne(s : string) -> string {
+fn dropOne(s : String) -> String {
     rtn s.substring(1, s.length())
 }
 
-fn dropTwoTail(s : string) -> string {
+fn dropTwoTail(s : String) -> String {
     rtn s.substring(0, s.length() - 2)
 }
 
-// `(int) -> bool` 的返回部分（`->` 之后、去掉空白）
-pub fn retPartOf(fnType : string) -> string {
+// `(Int) -> Bool` 的返回部分（`->` 之后、去掉空白）
+pub fn retPartOf(fnType : String) -> String {
     var i = 0
     while (i + 1 < fnType.length()) {
         if (fnType.charAt(i) == '-' && fnType.charAt(i + 1) == '>') {
@@ -1606,12 +1606,12 @@ pub fn retPartOf(fnType : string) -> string {
     rtn "void"
 }
 
-fn isPrimTypeName(t : string) -> bool {
-    if (t == "int" || t == "long" || t == "short" || t == "byte" || t == "char" || t == "float" || t == "double" || t == "bool") { rtn true }
+fn isPrimTypeName(t : String) -> Bool {
+    if (t == "Int" || t == "Long" || t == "short" || t == "Byte" || t == "Char" || t == "Float" || t == "Double" || t == "Bool") { rtn true }
     rtn false
 }
 
-fn typeParamIndexIn(name : string, names : string[]) -> int {
+fn typeParamIndexIn(name : String, names : String[]) -> Int {
     var i = 0
     while (i < names.length) {
         if (names[i] == name) { rtn i }
@@ -1621,7 +1621,7 @@ fn typeParamIndexIn(name : string, names : string[]) -> int {
 }
 
 // 只处理 33d 需要的三种形状：`T`、`T[]`、`?T`
-fn substSimple(t : string, names : string[], vals : string[]) -> string {
+fn substSimple(t : String, names : String[], vals : String[]) -> String {
     var i = 0
     while (i < names.length) {
         if (t == names[i]) { rtn vals[i] }

@@ -29,7 +29,7 @@ object RsfTextAttributes {
         DefaultLanguageHighlighterColors.KEYWORD,
     )
 
-    /** `int` `double` `string` `byte` `char` 这些类型名：黄灰。 */
+    /** `Int` `Double` `String` `Byte` `Char` 这些类型名：黄灰。 */
     val TYPE = TextAttributesKey.createTextAttributesKey(
         "RSF_TYPE",
         colored(Color(0xA9, 0x9C, 0x6B)),

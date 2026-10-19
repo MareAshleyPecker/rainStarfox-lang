@@ -1,12 +1,12 @@
 // 阶段 52：C 后端探针 1 —— 算术、分支、循环、递归
-fn fib(n : int) -> int {
+fn fib(n : Int) -> Int {
     if (n < 2) { rtn n }
     rtn fib(n - 1) + fib(n - 2)
 }
 
-fn sumTo(n : int) -> int {
-    var s : int = 0
-    var i : int = 1
+fn sumTo(n : Int) -> Int {
+    var s : Int = 0
+    var i : Int = 1
     while (i <= n) {
         s = s + i
         i = i + 1
@@ -17,7 +17,7 @@ fn sumTo(n : int) -> int {
 fn main() -> void {
     println(fib(10))
     println(sumTo(100))
-    var total : int = 0
+    var total : Int = 0
     for (j in 1..4 step 1) { total = total + j * j }
     println(total)
     if (total > 20) { println("big") } else { println("small") }

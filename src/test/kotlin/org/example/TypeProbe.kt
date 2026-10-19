@@ -11,19 +11,19 @@ import org.example.complie.sema.RsfType
  * 自举侧的 `rsfSrc/bootstrap/TypeProbe.rsf` 必须打出逐字节相同的文本。
  */
 private val ROWS: List<Pair<String, RsfType>> = listOf(
-    "int" to RsfType.INT,
-    "?int" to RsfType.INT.asNullable(),
-    "long" to RsfType.LONG,
-    "byte" to RsfType.BYTE,
-    "char" to RsfType.CHAR,
+    "Int" to RsfType.INT,
+    "?Int" to RsfType.INT.asNullable(),
+    "Long" to RsfType.LONG,
+    "Byte" to RsfType.BYTE,
+    "Char" to RsfType.CHAR,
     "void" to RsfType.VOID,
     "null" to RsfType.NULL,
-    "string" to RsfType.STRING,
-    "?string" to RsfType.STRING.asNullable(),
-    "int[]" to RsfType.INT.arrayOf(1),
-    "int[][]" to RsfType.INT.arrayOf(2),
-    "Box&<int>" to RsfType(RsfBase.EXTERNAL, false, "demo/Box", listOf(RsfType.INT)),
-    "?Box&<string>" to RsfType(RsfBase.EXTERNAL, true, "demo/Box", listOf(RsfType.STRING)),
+    "String" to RsfType.STRING,
+    "?String" to RsfType.STRING.asNullable(),
+    "Int[]" to RsfType.INT.arrayOf(1),
+    "Int[][]" to RsfType.INT.arrayOf(2),
+    "Box&<Int>" to RsfType(RsfBase.EXTERNAL, false, "demo/Box", listOf(RsfType.INT)),
+    "?Box&<String>" to RsfType(RsfBase.EXTERNAL, true, "demo/Box", listOf(RsfType.STRING)),
     "T" to RsfType(RsfBase.TYPE_PARAM, false, "T"),
     "T[]" to RsfType(RsfBase.TYPE_PARAM, false, "T", emptyList(), 1),
     "Object" to RsfType(RsfBase.EXTERNAL, false, "java/lang/Object"),
@@ -57,7 +57,7 @@ fun main() {
             println("$i $j ${flag(a.second.accepts(b.second))}")
         }
     }
-    println("--- substitute T -> int ---")
+    println("--- substitute T -> Int ---")
     val subst = mapOf("T" to RsfType.INT)
     for ((label, t) in ROWS) {
         val r = t.substitute(subst)

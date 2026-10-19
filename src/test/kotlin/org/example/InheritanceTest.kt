@@ -48,13 +48,13 @@ class InheritanceTest {
     @Test
     fun `类默认可继承 方法默认可覆盖 并调用 super 方法`() {
         val src = rsfSource(
-            "class Base(x : int) {\n" +
-                "    pub fn tag() -> string {\n" +
+            "class Base(x : Int) {\n" +
+                "    pub fn tag() -> String {\n" +
                 "        rtn \"base\"\n" +
                 "    }\n" +
                 "}\n" +
-                "class D(y : int) : Base(y) {\n" +
-                "    override fn tag() -> string {\n" +
+                "class D(y : Int) : Base(y) {\n" +
+                "    override fn tag() -> String {\n" +
                 "        rtn super.tag()\n" +
                 "    }\n" +
                 "}\n",
@@ -90,10 +90,10 @@ class InheritanceTest {
     fun `父类排最前 接口跟在后面 父类实现的接口要求子类不用再实现`() {
         val src = rsfSource(
             "pub interface Tag {\n" +
-                "    fn tag() -> string\n" +
+                "    fn tag() -> String\n" +
                 "}\n" +
                 "class Base : Tag {\n" +
-                "    override fn tag() -> string {\n" +
+                "    override fn tag() -> String {\n" +
                 "        rtn \"base\"\n" +
                 "    }\n" +
                 "}\n" +
@@ -117,12 +117,12 @@ class InheritanceTest {
     fun `接口写在父类前面要报错`() {
         val e = fails(
             "pub interface Tag {\n" +
-                "    fn tag() -> string\n" +
+                "    fn tag() -> String\n" +
                 "}\n" +
                 "class Base {\n" +
                 "}\n" +
                 "class D : Tag, Base() {\n" +
-                "    override fn tag() -> string {\n" +
+                "    override fn tag() -> String {\n" +
                 "        rtn \"d\"\n" +
                 "    }\n" +
                 "}\n",
@@ -135,17 +135,17 @@ class InheritanceTest {
     fun `super 接口名 能挑出指定接口的默认实现`() {
         val src = rsfSource(
             "pub interface A {\n" +
-                "    fn m() -> string {\n" +
+                "    fn m() -> String {\n" +
                 "        rtn \"a\"\n" +
                 "    }\n" +
                 "}\n" +
                 "pub interface B {\n" +
-                "    fn m() -> string {\n" +
+                "    fn m() -> String {\n" +
                 "        rtn \"b\"\n" +
                 "    }\n" +
                 "}\n" +
                 "class C : A, B {\n" +
-                "    override fn m() -> string {\n" +
+                "    override fn m() -> String {\n" +
                 "        rtn super(B).m()\n" +
                 "    }\n" +
                 "}\n",
@@ -171,14 +171,14 @@ class InheritanceTest {
     fun `字段布局是父类字段在前 下标是绝对下标 owner 是声明类`() {
         val src = rsfSource(
             "class Base {\n" +
-                "    var a : int = 0\n" +
+                "    var a : Int = 0\n" +
                 "}\n" +
                 "class Sub : Base() {\n" +
-                "    var b : string = \"\"\n" +
-                "    pub fn getA() -> int {\n" +
+                "    var b : String = \"\"\n" +
+                "    pub fn getA() -> Int {\n" +
                 "        rtn this.a\n" +
                 "    }\n" +
-                "    pub fn getB() -> string {\n" +
+                "    pub fn getB() -> String {\n" +
                 "        rtn this.b\n" +
                 "    }\n" +
                 "}\n",
@@ -208,11 +208,11 @@ class InheritanceTest {
     @Test
     fun `抽象类能被继承 子类实现抽象方法就能过`() {
         val src = rsfSource(
-            "abstract class Shape(x : int) {\n" +
-                "    pub abstract fn area() -> double\n" +
+            "abstract class Shape(x : Int) {\n" +
+                "    pub abstract fn area() -> Double\n" +
                 "}\n" +
-                "class Sq(y : int) : Shape(y) {\n" +
-                "    override fn area() -> double {\n" +
+                "class Sq(y : Int) : Shape(y) {\n" +
+                "    override fn area() -> Double {\n" +
                 "        rtn 1.0\n" +
                 "    }\n" +
                 "}\n",
@@ -230,7 +230,7 @@ class InheritanceTest {
     @Test
     fun `允许继承 JDK 类`() {
         val src = rsfSource(
-            "class MyError(msg : string) : Exception(msg) {\n" +
+            "class MyError(msg : String) : Exception(msg) {\n" +
                 "}\n",
         )
         val program = Rsf.parse(src)
@@ -245,9 +245,9 @@ class InheritanceTest {
     @Test
     fun `次构造里的 super 实参 委托给父类构造器`() {
         val src = rsfSource(
-            "class Base(x : int) {\n" +
+            "class Base(x : Int) {\n" +
                 "}\n" +
-                "class D(v : int) : Base(v) {\n" +
+                "class D(v : Int) : Base(v) {\n" +
                 "    constructor() {\n" +
                 "        super(1)\n" +
                 "    }\n" +
@@ -281,7 +281,7 @@ class InheritanceTest {
     fun `继承 final 类要报错`() {
         val e = fails(
             "final class Base {\n" +
-                "    var x : int = 0\n" +
+                "    var x : Int = 0\n" +
                 "}\n" +
                 "class Sub : Base() {\n" +
                 "}\n",
@@ -294,13 +294,13 @@ class InheritanceTest {
     @Test
     fun `覆盖父类 final 方法要报错`() {
         val e = fails(
-            "class Base(x : int) {\n" +
-                "    final fn tag() -> string {\n" +
+            "class Base(x : Int) {\n" +
+                "    final fn tag() -> String {\n" +
                 "        rtn \"base\"\n" +
                 "    }\n" +
                 "}\n" +
-                "class D(y : int) : Base(y) {\n" +
-                "    override fn tag() -> string {\n" +
+                "class D(y : Int) : Base(y) {\n" +
+                "    override fn tag() -> String {\n" +
                 "        rtn \"d\"\n" +
                 "    }\n" +
                 "}\n",
@@ -312,13 +312,13 @@ class InheritanceTest {
     @Test
     fun `final 类不能再被继承 但可以 override 父类方法`() {
         val ok = rsfSource(
-            "class Base(x : int) {\n" +
-                "    fn tag() -> string {\n" +
+            "class Base(x : Int) {\n" +
+                "    fn tag() -> String {\n" +
                 "        rtn \"base\"\n" +
                 "    }\n" +
                 "}\n" +
-                "final class D(y : int) : Base(y) {\n" +
-                "    override fn tag() -> string {\n" +
+                "final class D(y : Int) : Base(y) {\n" +
+                "    override fn tag() -> String {\n" +
                 "        rtn \"d\"\n" +
                 "    }\n" +
                 "}\n",
@@ -327,7 +327,7 @@ class InheritanceTest {
 
         val e = fails(
             "final class Base {\n" +
-                "    var x : int = 0\n" +
+                "    var x : Int = 0\n" +
                 "}\n" +
                 "class Sub : Base() {\n" +
                 "}\n",
@@ -338,18 +338,18 @@ class InheritanceTest {
     @Test
     fun `override 之后不写 final 仍可被孙子类覆盖`() {
         val src = rsfSource(
-            "class A(x : int) {\n" +
-                "    fn tag() -> string {\n" +
+            "class A(x : Int) {\n" +
+                "    fn tag() -> String {\n" +
                 "        rtn \"a\"\n" +
                 "    }\n" +
                 "}\n" +
-                "class B(y : int) : A(y) {\n" +
-                "    override fn tag() -> string {\n" +
+                "class B(y : Int) : A(y) {\n" +
+                "    override fn tag() -> String {\n" +
                 "        rtn \"b\"\n" +
                 "    }\n" +
                 "}\n" +
-                "class C(z : int) : B(z) {\n" +
-                "    override fn tag() -> string {\n" +
+                "class C(z : Int) : B(z) {\n" +
+                "    override fn tag() -> String {\n" +
                 "        rtn \"c\"\n" +
                 "    }\n" +
                 "}\n",
@@ -360,18 +360,18 @@ class InheritanceTest {
     @Test
     fun `override final 之后孙子类不能再覆盖`() {
         val e = fails(
-            "class A(x : int) {\n" +
-                "    fn tag() -> string {\n" +
+            "class A(x : Int) {\n" +
+                "    fn tag() -> String {\n" +
                 "        rtn \"a\"\n" +
                 "    }\n" +
                 "}\n" +
-                "class B(y : int) : A(y) {\n" +
-                "    override final fn tag() -> string {\n" +
+                "class B(y : Int) : A(y) {\n" +
+                "    override final fn tag() -> String {\n" +
                 "        rtn \"b\"\n" +
                 "    }\n" +
                 "}\n" +
-                "class C(z : int) : B(z) {\n" +
-                "    override fn tag() -> string {\n" +
+                "class C(z : Int) : B(z) {\n" +
+                "    override fn tag() -> String {\n" +
                 "        rtn \"c\"\n" +
                 "    }\n" +
                 "}\n",
@@ -397,13 +397,13 @@ class InheritanceTest {
     @Test
     fun `同签名的方法漏写 override 要报错`() {
         val e = fails(
-            "class Base(x : int) {\n" +
-                "    pub fn tag() -> string {\n" +
+            "class Base(x : Int) {\n" +
+                "    pub fn tag() -> String {\n" +
                 "        rtn \"base\"\n" +
                 "    }\n" +
                 "}\n" +
-                "class D(y : int) : Base(y) {\n" +
-                "    pub fn tag() -> string {\n" +
+                "class D(y : Int) : Base(y) {\n" +
+                "    pub fn tag() -> String {\n" +
                 "        rtn \"d\"\n" +
                 "    }\n" +
                 "}\n",
@@ -416,10 +416,10 @@ class InheritanceTest {
     fun `字段遮蔽要报错`() {
         val e = fails(
             "class Base {\n" +
-                "    var a : int = 0\n" +
+                "    var a : Int = 0\n" +
                 "}\n" +
                 "class Sub : Base() {\n" +
-                "    var a : string = \"\"\n" +
+                "    var a : String = \"\"\n" +
                 "}\n",
         )
         assertEquals("checker", e.phase)
@@ -429,11 +429,11 @@ class InheritanceTest {
     @Test
     fun `两个父类要报错`() {
         val e = fails(
-            "class A(x : int) {\n" +
+            "class A(x : Int) {\n" +
                 "}\n" +
-                "class B(y : int) {\n" +
+                "class B(y : Int) {\n" +
                 "}\n" +
-                "class C(z : int) : A(z), B(z) {\n" +
+                "class C(z : Int) : A(z), B(z) {\n" +
                 "}\n",
         )
         assertEquals("parser", e.phase)
@@ -468,7 +468,7 @@ class InheritanceTest {
     @Test
     fun `内置类型不能当父类`() {
         val e = fails(
-            "class C : int {\n" +
+            "class C : Int {\n" +
                 "}\n",
         )
         assertEquals("parser", e.phase)
@@ -478,9 +478,9 @@ class InheritanceTest {
     @Test
     fun `父类构造实参类型不符要报错`() {
         val e = fails(
-            "class Base(x : int) {\n" +
+            "class Base(x : Int) {\n" +
                 "}\n" +
-                "class D(y : int) : Base(\"s\") {\n" +
+                "class D(y : Int) : Base(\"s\") {\n" +
                 "}\n",
         )
         assertEquals("checker", e.phase)
@@ -494,9 +494,9 @@ class InheritanceTest {
     @Test
     fun `父类构造实参不能引用 this`() {
         val e = fails(
-            "class Base(x : int) {\n" +
+            "class Base(x : Int) {\n" +
                 "}\n" +
-                "class D(y : int) : Base(this) {\n" +
+                "class D(y : Int) : Base(this) {\n" +
                 "}\n",
         )
         assertEquals("checker", e.phase)
@@ -506,13 +506,13 @@ class InheritanceTest {
     @Test
     fun `super 不能用在静态方法里`() {
         val e = fails(
-            "class Base(x : int) {\n" +
-                "    pub fn tag() -> string {\n" +
+            "class Base(x : Int) {\n" +
+                "    pub fn tag() -> String {\n" +
                 "        rtn \"base\"\n" +
                 "    }\n" +
                 "}\n" +
-                "class D(y : int) : Base(y) {\n" +
-                "    pub stc fn use() -> string {\n" +
+                "class D(y : Int) : Base(y) {\n" +
+                "    pub stc fn use() -> String {\n" +
                 "        rtn super.tag()\n" +
                 "    }\n" +
                 "}\n",
@@ -524,7 +524,7 @@ class InheritanceTest {
     @Test
     fun `super 不能用在类外`() {
         val e = fails(
-            "fn top() -> string {\n" +
+            "fn top() -> String {\n" +
                 "    rtn super.tag()\n" +
                 "}\n",
         )
@@ -535,11 +535,11 @@ class InheritanceTest {
     @Test
     fun `super 实参 必须是构造器体的第一句`() {
         val e = fails(
-            "class Base(x : int) {\n" +
+            "class Base(x : Int) {\n" +
                 "}\n" +
-                "class D(v : int) : Base(v) {\n" +
+                "class D(v : Int) : Base(v) {\n" +
                 "    constructor() {\n" +
-                "        var t : int = 0\n" +
+                "        var t : Int = 0\n" +
                 "        super(1)\n" +
                 "    }\n" +
                 "}\n",
@@ -551,8 +551,8 @@ class InheritanceTest {
     @Test
     fun `抽象类不能 new`() {
         val e = fails(
-            "abstract class Shape(x : int) {\n" +
-                "    pub abstract fn area() -> double\n" +
+            "abstract class Shape(x : Int) {\n" +
+                "    pub abstract fn area() -> Double\n" +
                 "}\n" +
                 "fn make() -> Shape {\n" +
                 "    rtn new Shape(1)\n" +
@@ -567,7 +567,7 @@ class InheritanceTest {
     fun `抽象方法不能写函数体`() {
         val e = fails(
             "abstract class Shape {\n" +
-                "    pub abstract fn area() -> double {\n" +
+                "    pub abstract fn area() -> Double {\n" +
                 "        rtn 1.0\n" +
                 "    }\n" +
                 "}\n",
@@ -591,7 +591,7 @@ class InheritanceTest {
     fun `子类没实现抽象成员要报错`() {
         val e = fails(
             "abstract class Shape {\n" +
-                "    pub abstract fn area() -> double\n" +
+                "    pub abstract fn area() -> Double\n" +
                 "}\n" +
                 "class Sq : Shape() {\n" +
                 "}\n",
@@ -616,11 +616,11 @@ class InheritanceTest {
     @Test
     fun `泛型父类的类型实参与构造实参各写各的位置`() {
         val src = rsfSource(
-            "class Base(x : int) {\n" +
+            "class Base(x : Int) {\n" +
                 "}\n" +
                 "class Box&<T>(v : T) : Base(1) {\n" +
                 "}\n" +
-                "class IntBox : Box&<int>(2) {\n" +
+                "class IntBox : Box&<Int>(2) {\n" +
                 "}\n",
         )
         val program = Rsf.parse(src)
@@ -641,9 +641,9 @@ class InheritanceTest {
     @Test
     fun `父类的类型实参个数不对要报错`() {
         val e = fails(
-            "class Base(x : int) {\n" +
+            "class Base(x : Int) {\n" +
                 "}\n" +
-                "class D : Base&<int>(1) {\n" +
+                "class D : Base&<Int>(1) {\n" +
                 "}\n",
         )
         assertEquals("checker", e.phase)
@@ -664,18 +664,18 @@ class InheritanceTest {
     @Test
     fun `带父类的程序 build 跑得动且两端 stdout 逐字节相同`() {
         val program = """
-            class Base(p : int) {
-                var x : int = p
-                fn value() -> int {
+            class Base(p : Int) {
+                var x : Int = p
+                fn value() -> Int {
                     rtn x
                 }
-                fn tag() -> string {
+                fn tag() -> String {
                     rtn "base"
                 }
             }
-            class Derived(p : int) : Base(p) {
-                var y : int = p + 1
-                override fn tag() -> string {
+            class Derived(p : Int) : Base(p) {
+                var y : Int = p + 1
+                override fn tag() -> String {
                     rtn super.tag() + "+derived/" + intToString(y)
                 }
             }
@@ -703,15 +703,15 @@ class InheritanceTest {
     @Test
     fun `子类构造器先调父类 init 且 super 方法发 invokespecial`() {
         val program = """
-            class Base(p : int) {
-                var x : int = p
-                fn tag() -> string {
+            class Base(p : Int) {
+                var x : Int = p
+                fn tag() -> String {
                     rtn "base"
                 }
             }
-            class Derived(p : int) : Base(p) {
-                var y : int = p + 1
-                override fn tag() -> string {
+            class Derived(p : Int) : Base(p) {
+                var y : Int = p + 1
+                override fn tag() -> String {
                     rtn super.tag() + "!"
                 }
             }
@@ -743,16 +743,16 @@ class InheritanceTest {
     @Test
     fun `抽象方法与抽象类都带 ACC_ABSTRACT 且抽象方法没有 Code`() {
         val program = """
-            abstract class Shape(nm : string) {
-                var name : string = nm
-                abstract fn area() -> int
-                fn describe() -> string {
+            abstract class Shape(nm : String) {
+                var name : String = nm
+                abstract fn area() -> Int
+                fn describe() -> String {
                     rtn name + "=" + intToString(area())
                 }
             }
-            class Square(side0 : int) : Shape("square") {
-                var side : int = side0
-                override fn area() -> int {
+            class Square(side0 : Int) : Shape("square") {
+                var side : Int = side0
+                override fn area() -> Int {
                     rtn side * side
                 }
             }
@@ -780,11 +780,11 @@ class InheritanceTest {
     @Test
     fun `toString 沿整条父链渲染且两端逐字节一致`() {
         val program = """
-            class Base(x : int) {
-                var a : int = x
+            class Base(x : Int) {
+                var a : Int = x
             }
-            class Child(x : int, y : int) : Base(x) {
-                var b : int = y
+            class Child(x : Int, y : Int) : Base(x) {
+                var b : Int = y
             }
             fn main() -> void {
                 var c : Child = new Child(1, 2)
@@ -805,8 +805,8 @@ class InheritanceTest {
     fun `JDK 父类的构造与继承来的方法两端一致`() {
         val program = """
             import java.lang.Exception
-            class MyError(msg : string) : Exception(msg) {
-                fn describe() -> string {
+            class MyError(msg : String) : Exception(msg) {
+                fn describe() -> String {
                     rtn "MyError:" + getMessage()
                 }
             }
@@ -829,29 +829,29 @@ class InheritanceTest {
     fun `接口默认方法与类继承混用两端一致`() {
         val program = """
             interface Greeter {
-                fn greet() -> string {
+                fn greet() -> String {
                     rtn "hi"
                 }
             }
             interface Named {
-                fn name() -> string
-                fn greet() -> string {
+                fn name() -> String
+                fn greet() -> String {
                     rtn "named-hi"
                 }
             }
             class Base {
-                fn base() -> string {
+                fn base() -> String {
                     rtn "base"
                 }
             }
             class E : Base(), Greeter, Named {
-                override fn name() -> string {
+                override fn name() -> String {
                     rtn "E"
                 }
-                override fn greet() -> string {
+                override fn greet() -> String {
                     rtn super(Named).greet()
                 }
-                fn which() -> string {
+                fn which() -> String {
                     rtn super(Greeter).greet() + ":" + name()
                 }
             }
@@ -871,14 +871,14 @@ class InheritanceTest {
         // K1 时这条测的是「解释器显式报还没实现（K3）」；K3 落地后同一条程序必须真的跑出
         // 结果——语义层 check 通过、解释器却跑不了的那种缝隙，就由这条测试盯着。
         val out = runInterpreted(
-            "class Base(x : int) {\n" +
-                "    var v : int = x\n" +
-                "    pub fn tag() -> string {\n" +
+            "class Base(x : Int) {\n" +
+                "    var v : Int = x\n" +
+                "    pub fn tag() -> String {\n" +
                 "        rtn \"base\"\n" +
                 "    }\n" +
                 "}\n" +
-                "class D(y : int) : Base(y) {\n" +
-                "    override fn tag() -> string {\n" +
+                "class D(y : Int) : Base(y) {\n" +
+                "    override fn tag() -> String {\n" +
                 "        rtn super.tag() + \"+d\"\n" +
                 "    }\n" +
                 "}\n" +
@@ -899,11 +899,11 @@ class InheritanceTest {
     @Test
     fun `G1 子类能上转型成父类：变量、实参、返回值、数组元素、字段都算`() {
         val src = rsfSource(
-            "class A(nm : string) {\n" +
+            "class A(nm : String) {\n" +
                 "}\n" +
-                "class B(nm : string) : A(nm) {\n" +
+                "class B(nm : String) : A(nm) {\n" +
                 "}\n" +
-                "class C(nm : string) : B(nm) {\n" +
+                "class C(nm : String) : B(nm) {\n" +
                 "}\n" +
                 "class Holder(v : A) {\n" +
                 "    var slot : A = v\n" +
@@ -935,12 +935,12 @@ class InheritanceTest {
     fun `G2 隐式 this 调的父类方法沿类链找 记的是声明它的类`() {
         val src = rsfSource(
             "class Base {\n" +
-                "    pub fn base() -> string {\n" +
+                "    pub fn base() -> String {\n" +
                 "        rtn \"base\"\n" +
                 "    }\n" +
                 "}\n" +
                 "class D : Base() {\n" +
-                "    pub fn use() -> string {\n" +
+                "    pub fn use() -> String {\n" +
                 "        rtn base()\n" +
                 "    }\n" +
                 "}\n",
@@ -956,12 +956,12 @@ class InheritanceTest {
     @Test
     fun `G3 继承字段的写路径沿类链找 owner 是声明类 下标父类字段在前`() {
         val src = rsfSource(
-            "class Base(p : int) {\n" +
-                "    var a : int = p\n" +
-                "    var b : int = 10\n" +
+            "class Base(p : Int) {\n" +
+                "    var a : Int = p\n" +
+                "    var b : Int = 10\n" +
                 "}\n" +
-                "class Child(p : int, c : int) : Base(p) {\n" +
-                "    var d : int = c\n" +
+                "class Child(p : Int, c : Int) : Base(p) {\n" +
+                "    var d : Int = c\n" +
                 "    pub fn bump() -> void {\n" +
                 "        b = b + 1\n" +
                 "    }\n" +
@@ -995,9 +995,9 @@ class InheritanceTest {
                 "        rtn v\n" +
                 "    }\n" +
                 "}\n" +
-                "class IntHolder(v0 : int) : Holder&<int>(v0) {\n" +
+                "class IntHolder(v0 : Int) : Holder&<Int>(v0) {\n" +
                 "}\n" +
-                "class Wrap(v0 : string) : Holder&<string>(v0) {\n" +
+                "class Wrap(v0 : String) : Holder&<String>(v0) {\n" +
                 "}\n" +
                 "fn main() -> void {\n" +
                 "    var h : IntHolder = new IntHolder(5)\n" +
@@ -1009,7 +1009,7 @@ class InheritanceTest {
         )
         val program = Rsf.parse(src)
         val model = Rsf.analyze(program, src)
-        // `h.get()` 必须是 int、`w.get()` 必须是 string（父类的 T 各按子类代换过），
+        // `h.get()` 必须是 Int、`w.get()` 必须是 String（父类的 T 各按子类代换过），
         // 否则 intToString / println 那两行会红。
         val types = model.classModel.members.keys.filter { it.name == "get" }.map { model.typeOf(it) }.toSet()
         assertEquals(setOf(RsfType.INT, RsfType.STRING), types)
@@ -1019,8 +1019,8 @@ class InheritanceTest {
     fun `G5 JDK 父类继承来的方法能按名字调 且记下声明它的 JVM 类`() {
         val src = rsfSource(
             "import java.lang.Exception\n" +
-                "class MyError(msg : string) : Exception(msg) {\n" +
-                "    pub fn describe() -> string {\n" +
+                "class MyError(msg : String) : Exception(msg) {\n" +
+                "    pub fn describe() -> String {\n" +
                 "        rtn \"MyError:\" + getMessage()\n" +
                 "    }\n" +
                 "}\n",
@@ -1042,7 +1042,7 @@ class InheritanceTest {
         // 父构造器**之后**、构造体**之前**跑。顺序错一个位置 stdout 就不一样。
         val out = runInterpreted(
             "class Base {\n" +
-                "    constructor(msg : string) {\n" +
+                "    constructor(msg : String) {\n" +
                 "        println(\"base:\" + msg)\n" +
                 "    }\n" +
                 "    constructor() {\n" +
@@ -1050,7 +1050,7 @@ class InheritanceTest {
                 "    }\n" +
                 "}\n" +
                 "class Child : Base() {\n" +
-                "    var x : int = 1\n" +
+                "    var x : Int = 1\n" +
                 "    constructor() {\n" +
                 "        super(\"explicit\")\n" +
                 "        println(\"child-body:x=\" + intToString(x))\n" +
@@ -1075,10 +1075,10 @@ class InheritanceTest {
     @Test
     fun `K3 字段绝对下标：父类字段排在前 子类字段跟着排 两边读的是同一格`() {
         val out = runInterpreted(
-            "class Base(p : int) {\n" +
-                "    var a : int = p\n" +
-                "    var b : int = 10\n" +
-                "    pub fn sum() -> int {\n" +
+            "class Base(p : Int) {\n" +
+                "    var a : Int = p\n" +
+                "    var b : Int = 10\n" +
+                "    pub fn sum() -> Int {\n" +
                 "        rtn a + b\n" +
                 "    }\n" +
                 "    pub fn bump() -> void {\n" +
@@ -1086,9 +1086,9 @@ class InheritanceTest {
                 "        rtn\n" +
                 "    }\n" +
                 "}\n" +
-                "class Child(p : int, c : int) : Base(p) {\n" +
-                "    var d : int = c + 1\n" +
-                "    pub fn total() -> int {\n" +
+                "class Child(p : Int, c : Int) : Base(p) {\n" +
+                "    var d : Int = c + 1\n" +
+                "    pub fn total() -> Int {\n" +
                 "        rtn sum() + d\n" +
                 "    }\n" +
                 "}\n" +
@@ -1111,31 +1111,31 @@ class InheritanceTest {
     fun `K3 虚分派：静态类型是父类 跑的是子类那一份覆盖`() {
         val out = runInterpreted(
             "class A {\n" +
-                "    pub fn t() -> string {\n" +
+                "    pub fn t() -> String {\n" +
                 "        rtn \"A\"\n" +
                 "    }\n" +
                 "}\n" +
                 "class B : A() {\n" +
-                "    override fn t() -> string {\n" +
+                "    override fn t() -> String {\n" +
                 "        rtn \"B>\" + super.t()\n" +
                 "    }\n" +
                 "}\n" +
                 "class C : B() {\n" +
-                "    override fn t() -> string {\n" +
+                "    override fn t() -> String {\n" +
                 "        rtn \"C>\" + super.t()\n" +
                 "    }\n" +
                 "}\n" +
-                "class Animal(nm : string) {\n" +
-                "    var name : string = nm\n" +
-                "    pub fn sound() -> string {\n" +
+                "class Animal(nm : String) {\n" +
+                "    var name : String = nm\n" +
+                "    pub fn sound() -> String {\n" +
                 "        rtn \"...\"\n" +
                 "    }\n" +
-                "    pub fn who() -> string {\n" +
+                "    pub fn who() -> String {\n" +
                 "        rtn name\n" +
                 "    }\n" +
                 "}\n" +
-                "class Dog(nm : string) : Animal(nm) {\n" +
-                "    override fn sound() -> string {\n" +
+                "class Dog(nm : String) : Animal(nm) {\n" +
+                "    override fn sound() -> String {\n" +
                 "        rtn \"woof\"\n" +
                 "    }\n" +
                 "}\n" +
@@ -1160,34 +1160,34 @@ class InheritanceTest {
     fun `K3 super(接口) 只跑指定接口那一份默认实现 不是虚分派`() {
         val out = runInterpreted(
             "pub interface Greeter {\n" +
-                "    pub fn greet() -> string {\n" +
+                "    pub fn greet() -> String {\n" +
                 "        rtn \"hi\"\n" +
                 "    }\n" +
                 "}\n" +
                 "pub interface Named {\n" +
-                "    pub fn name() -> string\n" +
-                "    pub fn greet() -> string {\n" +
+                "    pub fn name() -> String\n" +
+                "    pub fn greet() -> String {\n" +
                 "        rtn \"named-hi\"\n" +
                 "    }\n" +
                 "}\n" +
                 "class Base {\n" +
-                "    pub fn base() -> string {\n" +
+                "    pub fn base() -> String {\n" +
                 "        rtn \"base\"\n" +
                 "    }\n" +
                 "}\n" +
                 "class D : Base(), Greeter {\n" +
-                "    pub fn greet2() -> string {\n" +
+                "    pub fn greet2() -> String {\n" +
                 "        rtn super(Greeter).greet() + \"/\" + base()\n" +
                 "    }\n" +
                 "}\n" +
                 "class E : Base(), Greeter, Named {\n" +
-                "    override fn name() -> string {\n" +
+                "    override fn name() -> String {\n" +
                 "        rtn \"E\"\n" +
                 "    }\n" +
-                "    override fn greet() -> string {\n" +
+                "    override fn greet() -> String {\n" +
                 "        rtn super(Named).greet()\n" +
                 "    }\n" +
-                "    pub fn which() -> string {\n" +
+                "    pub fn which() -> String {\n" +
                 "        rtn super(Greeter).greet() + \":\" + name()\n" +
                 "    }\n" +
                 "}\n" +
@@ -1210,10 +1210,10 @@ class InheritanceTest {
     fun `K3 接口实现在父类里写、子类继承：按接口调用要沿类链找得到`() {
         val out = runInterpreted(
             "pub interface Named {\n" +
-                "    pub fn label() -> string\n" +
+                "    pub fn label() -> String\n" +
                 "}\n" +
                 "class Base : Named {\n" +
-                "    override fn label() -> string {\n" +
+                "    override fn label() -> String {\n" +
                 "        rtn \"base-label\"\n" +
                 "    }\n" +
                 "}\n" +
@@ -1234,8 +1234,8 @@ class InheritanceTest {
     fun `K3 JDK 父类：反射造出父类实例 getMessage 能调`() {
         val out = runInterpreted(
             "import java.lang.Exception\n" +
-                "class MyError(msg : string) : Exception(msg) {\n" +
-                "    pub fn describe() -> string {\n" +
+                "class MyError(msg : String) : Exception(msg) {\n" +
+                "    pub fn describe() -> String {\n" +
                 "        rtn \"MyError:\" + getMessage()\n" +
                 "    }\n" +
                 "}\n" +
@@ -1255,11 +1255,11 @@ class InheritanceTest {
     @Test
     fun `K3 toString 把整条父链的字段都渲染出来（父类字段在前）`() {
         val out = runInterpreted(
-            "class Base(x : int) {\n" +
-                "    var a : int = x\n" +
+            "class Base(x : Int) {\n" +
+                "    var a : Int = x\n" +
                 "}\n" +
-                "class Child(x : int, y : int) : Base(x) {\n" +
-                "    var b : int = y\n" +
+                "class Child(x : Int, y : Int) : Base(x) {\n" +
+                "    var b : Int = y\n" +
                 "}\n" +
                 "fn main() -> void {\n" +
                 "    var c : Child = new Child(1, 2)\n" +
@@ -1488,7 +1488,7 @@ class InheritanceTest {
     fun `缺口 A classpath 上 final 的类不能当父类`() {
         val e = fails(
             "import java.lang.StringBuilder\n" +
-                "class SB(s : string) : StringBuilder(s) {\n" +
+                "class SB(s : String) : StringBuilder(s) {\n" +
                 "}\n" +
                 "fn main() -> void {\n" +
                 "    rtn\n" +
@@ -1505,20 +1505,20 @@ class InheritanceTest {
     /**
      * 缺口 B：JDK 抽象父类继承来的抽象方法必须在这一支上被实现。
      *
-     * `class L : AbstractList&<int>()` 现在放行的话，解释器能 `new` 出对象、字节码产物也能
+     * `class L : AbstractList&<Int>()` 现在放行的话，解释器能 `new` 出对象、字节码产物也能
      * 装载，直到真去调 `get(0)` 才抛 `AbstractMethodError`——又是一处分叉。报错必须点名缺了谁。
      */
     @Test
     fun `缺口 B 继承 JDK 抽象类要把它继承来的抽象方法实现掉`() {
         val e = fails(
             "import java.util.AbstractList\n" +
-                "class L : AbstractList&<int>() {\n" +
+                "class L : AbstractList&<Int>() {\n" +
                 "}\n" +
                 "fn main() -> void {\n" +
                 "    rtn\n" +
                 "}\n",
         )
-        assertTrue(e.detail.contains("get(int)"), e.detail)
+        assertTrue(e.detail.contains("get(Int)"), e.detail)
         assertTrue(e.detail.contains("size()"), e.detail)
     }
 
@@ -1531,8 +1531,8 @@ class InheritanceTest {
     @Test
     fun `缺口 C JDK 父类上的 super 调用打到声明类那一份`() {
         val program = "import java.lang.Exception\n" +
-            "class MyErr(msg : string) : Exception(msg) {\n" +
-            "    fn describe() -> string {\n" +
+            "class MyErr(msg : String) : Exception(msg) {\n" +
+            "    fn describe() -> String {\n" +
             "        rtn \"e:\" + super.getMessage()\n" +
             "    }\n" +
             "}\n" +
@@ -1575,8 +1575,8 @@ class InheritanceTest {
     @Test
     fun `缺口 D 父类构造器由语义模型选中 两端读同一份`() {
         val program = "import java.lang.Exception\n" +
-            "class MyError(msg : string) : Exception(msg) {\n" +
-            "    fn describe() -> string {\n" +
+            "class MyError(msg : String) : Exception(msg) {\n" +
+            "    fn describe() -> String {\n" +
             "        rtn \"MyError:\" + getMessage()\n" +
             "    }\n" +
             "}\n" +
@@ -1610,7 +1610,7 @@ class InheritanceTest {
         // 同一个类的两条边就会互相覆盖。
         val secondary = "import java.lang.Exception\n" +
             "class E : Exception() {\n" +
-            "    constructor(m : string) {\n" +
+            "    constructor(m : String) {\n" +
             "        super(m)\n" +
             "    }\n" +
             "}\n" +
@@ -1643,7 +1643,7 @@ class InheritanceTest {
     fun `缺口 E JDK 父类的 protected 构造器解释器也建得出来`() {
         val program = "import java.lang.ClassLoader\n" +
             "class MyLoader : ClassLoader() {\n" +
-            "    fn tag() -> string {\n" +
+            "    fn tag() -> String {\n" +
             "        rtn \"loader\"\n" +
             "    }\n" +
             "}\n" +
@@ -1668,7 +1668,7 @@ class InheritanceTest {
     fun `缺口 F static 方法不继承 报文不再自相矛盾`() {
         val e = fails(
             "class Base {\n" +
-                "    stc fn make() -> string {\n" +
+                "    stc fn make() -> String {\n" +
                 "        rtn \"base-static\"\n" +
                 "    }\n" +
                 "}\n" +
@@ -1699,11 +1699,11 @@ class InheritanceTest {
     @Test
     fun `K4b JDK 父类用户类的 toString 与裸 println 同一个字符串`() {
         val program = "import java.lang.Exception\n" +
-            "class E2(m : string) : Exception(m) {\n" +
-            "    fn implicit() -> string {\n" +
+            "class E2(m : String) : Exception(m) {\n" +
+            "    fn implicit() -> String {\n" +
             "        rtn toString()\n" +
             "    }\n" +
-            "    fn explicit() -> string {\n" +
+            "    fn explicit() -> String {\n" +
             "        rtn this.toString()\n" +
             "    }\n" +
             "}\n" +
@@ -1734,8 +1734,8 @@ class InheritanceTest {
     @Test
     fun `K4b JDK 父类用户类的 equals 按 rsf 对象同一性算`() {
         val program = "import java.lang.Exception\n" +
-            "class E3(m : string) : Exception(m) {\n" +
-            "    fn same(o : E3) -> bool {\n" +
+            "class E3(m : String) : Exception(m) {\n" +
+            "    fn same(o : E3) -> Bool {\n" +
             "        rtn this.equals(o)\n" +
             "    }\n" +
             "}\n" +
@@ -1767,8 +1767,8 @@ class InheritanceTest {
     @Test
     fun `K4b JDK 父类用户类的 hashCode 按 identity hash 算`() {
         val program = "import java.lang.Exception\n" +
-            "class E4(m : string) : Exception(m) {\n" +
-            "    fn h() -> int {\n" +
+            "class E4(m : String) : Exception(m) {\n" +
+            "    fn h() -> Int {\n" +
             "        rtn hashCode()\n" +
             "    }\n" +
             "}\n" +
@@ -1798,7 +1798,7 @@ class InheritanceTest {
     fun `K4b 用户类上的 getClass 编译期就被拒`() {
         val e = fails(
             "import java.lang.Exception\n" +
-                "class Err3(m : string) : Exception(m) {\n" +
+                "class Err3(m : String) : Exception(m) {\n" +
                 "}\n" +
                 "fn main() -> void {\n" +
                 "    var a : Err3 = new Err3(\"x\")\n" +
@@ -1832,7 +1832,7 @@ class InheritanceTest {
     fun `K4b Object 上别的实例方法不经 JDK 父链漏进用户类`() {
         val notify = fails(
             "import java.lang.Exception\n" +
-                "class Err5(m : string) : Exception(m) {\n" +
+                "class Err5(m : String) : Exception(m) {\n" +
                 "}\n" +
                 "fn main() -> void {\n" +
                 "    var a : Err5 = new Err5(\"x\")\n" +
@@ -1844,7 +1844,7 @@ class InheritanceTest {
 
         val clone = fails(
             "import java.lang.Exception\n" +
-                "class Err6(m : string) : Exception(m) {\n" +
+                "class Err6(m : String) : Exception(m) {\n" +
                 "}\n" +
                 "fn main() -> void {\n" +
                 "    var a : Err6 = new Err6(\"x\")\n" +
@@ -1882,8 +1882,8 @@ class InheritanceTest {
         // 不是「两边都退化成 DEFAULT」：README.md:978 / DESIGN-25.md:10 的写法要真的收成
         // PUBLIC，默认「可继承」由缺失 final 表达（阶段 27），而且整条链路都不报错。
         val doc = rsfSource(
-            "pub class A(x : int) {\n" +
-                "    pub fn tag() -> string { rtn \"a\" }\n" +
+            "pub class A(x : Int) {\n" +
+                "    pub fn tag() -> String { rtn \"a\" }\n" +
                 "}\n",
         )
         val program = Rsf.parse(doc)
@@ -1900,7 +1900,7 @@ class InheritanceTest {
      */
     @Test
     fun `K5a-fix 两种顺序的 AST dump 逐字节相同`() {
-        val member = "    pub final fn tag() -> string { rtn \"a\" }\n"
+        val member = "    pub final fn tag() -> String { rtn \"a\" }\n"
         val a = AstDump.dump(Rsf.parse(rsfSource("final pub class A {\n" + member + "}\n")))
         val b = AstDump.dump(Rsf.parse(rsfSource("pub final class A {\n" + member + "}\n")))
         assertEquals(a, b)

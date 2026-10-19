@@ -21,10 +21,10 @@ internal object RsfJson {
     fun objectsAt(root: Any?, key: String): List<Map<String, Any?>> =
         arrayAt(root, key).filterIsInstance<Map<String, Any?>>()
 
-    fun string(map: Map<String, Any?>, key: String, fallback: String = ""): String =
+    fun String(map: Map<String, Any?>, key: String, fallback: String = ""): String =
         map[key]?.toString() ?: fallback
 
-    fun int(map: Map<String, Any?>, key: String, fallback: Int = 0): Int =
+    fun Int(map: Map<String, Any?>, key: String, fallback: Int = 0): Int =
         (map[key] as? Double)?.toInt() ?: fallback
 
     private class Reader(private val s: String) {
@@ -36,7 +36,7 @@ internal object RsfJson {
             return when (s[i]) {
                 '{' -> obj()
                 '[' -> arr()
-                '"' -> str()
+                '"' -> Str()
                 't' -> take("true", true)
                 'f' -> take("false", false)
                 'n' -> take("null", null)
@@ -64,7 +64,7 @@ internal object RsfJson {
             while (i < s.length) {
                 skip()
                 if (i >= s.length || s[i] != '"') break
-                val key = str()
+                val key = Str()
                 skip()
                 if (i < s.length && s[i] == ':') i++
                 out[key] = value()
@@ -100,7 +100,7 @@ internal object RsfJson {
             return out
         }
 
-        private fun str(): String {
+        private fun Str(): String {
             val sb = StringBuilder()
             i++ // 开引号
             while (i < s.length) {

@@ -33,21 +33,21 @@ class AnnotationSemaTest {
 
     // ============================================================== A：注解声明
 
-    /** A1 正例：string / 基本类型 / 枚举 / 注解 / 它们的一维数组都在白名单里。 */
+    /** A1 正例：String / 基本类型 / 枚举 / 注解 / 它们的一维数组都在白名单里。 */
     @Test
-    fun `元素白名单：string、基本类型、枚举、注解、一维数组都能用`() {
+    fun `元素白名单：String、基本类型、枚举、注解、一维数组都能用`() {
         val (_, model) = analyzeProgram(
             """
             enum TokenKind { A, B }
 
-            annotation Inner(flag : bool = false)
+            annotation Inner(flag : Bool = false)
 
             annotation Marker(
-                name : string,
-                n : int,
+                name : String,
+                n : Int,
                 kind : TokenKind,
                 inner : Inner,
-                xs : int[],
+                xs : Int[],
             )
 
             fn main() -> void { println("ok") }
@@ -71,7 +71,7 @@ class AnnotationSemaTest {
         checkFails(
             """
             class Dog {
-                var x : int = 0
+                var x : Int = 0
             }
 
             annotation Marker(value : Dog)
@@ -80,7 +80,7 @@ class AnnotationSemaTest {
             """,
             line = 5,
             "注解元素 'value' 的类型 'Dog' 不合法",
-            "注解元素只能是 string、基本类型、枚举、注解，或它们的数组",
+            "注解元素只能是 String、基本类型、枚举、注解，或它们的数组",
         )
     }
 
@@ -89,12 +89,12 @@ class AnnotationSemaTest {
     fun `元素类型不合法：二维数组`() {
         checkFails(
             """
-            annotation Marker(grid : int[][])
+            annotation Marker(grid : Int[][])
 
             fn main() -> void { println("ok") }
             """,
             line = 1,
-            "注解元素 'grid' 的类型 'int[][]' 不合法",
+            "注解元素 'grid' 的类型 'Int[][]' 不合法",
         )
     }
 
@@ -117,7 +117,7 @@ class AnnotationSemaTest {
     fun `元素不能是可空类型`() {
         checkFails(
             """
-            annotation Marker(value : ?string)
+            annotation Marker(value : ?String)
 
             fn main() -> void { println("ok") }
             """,
@@ -127,14 +127,14 @@ class AnnotationSemaTest {
     }
 
     /**
-     * A2 反例：可空的基本类型（注意 `?int[]` 这种「可空数组」写法在 **Parser** 就被拒了：
-     * 「数组本来就是可空的……去掉 '?' 写成 'int[]'」，所以语义层这条守卫只需要基本类型这条路径）。
+     * A2 反例：可空的基本类型（注意 `?Int[]` 这种「可空数组」写法在 **Parser** 就被拒了：
+     * 「数组本来就是可空的……去掉 '?' 写成 'Int[]'」，所以语义层这条守卫只需要基本类型这条路径）。
      */
     @Test
     fun `元素不能是可空的基本类型`() {
         checkFails(
             """
-            annotation Marker(count : ?int)
+            annotation Marker(count : ?Int)
 
             fn main() -> void { println("ok") }
             """,
@@ -148,7 +148,7 @@ class AnnotationSemaTest {
     fun `元素默认值类型要对得上`() {
         val (_, model) = analyzeProgram(
             """
-            annotation Marker(value : string = "x", count : int = 3, flag : bool = true)
+            annotation Marker(value : String = "x", count : Int = 3, flag : Bool = true)
 
             fn main() -> void { println("ok") }
             """,
@@ -157,18 +157,18 @@ class AnnotationSemaTest {
         assertTrue(spec.elements.all { it.hasDefault })
     }
 
-    /** A 反例（默认值）：`int` 的元素写字符串默认值。 */
+    /** A 反例（默认值）：`Int` 的元素写字符串默认值。 */
     @Test
     fun `元素默认值类型不对要报错`() {
         checkFails(
             """
-            annotation Marker(count : int = "x")
+            annotation Marker(count : Int = "x")
 
             fn main() -> void { println("ok") }
             """,
             line = 1,
             "注解元素 'count' 的默认值",
-            "和声明的 int 对不上",
+            "和声明的 Int 对不上",
         )
     }
 
@@ -177,9 +177,9 @@ class AnnotationSemaTest {
     fun `伴生实体名字不能和元素重名`() {
         checkFails(
             """
-            annotation Marker(value : string) {
+            annotation Marker(value : String) {
                 companion entity value {
-                    fn describe() -> string { rtn "d" }
+                    fn describe() -> String { rtn "d" }
                 }
             }
 
@@ -196,12 +196,12 @@ class AnnotationSemaTest {
         checkFails(
             """
             class Base {
-                var x : int = 0
+                var x : Int = 0
             }
 
-            annotation Marker(value : string) {
+            annotation Marker(value : String) {
                 companion entity Impl : Base {
-                    fn describe() -> string { rtn "d" }
+                    fn describe() -> String { rtn "d" }
                 }
             }
 
@@ -218,9 +218,9 @@ class AnnotationSemaTest {
     fun `伴生实体可以继承接口`() {
         val (_, model) = analyzeProgram(
             """
-            annotation Marker(value : string) {
+            annotation Marker(value : String) {
                 companion entity Impl : Runnable {
-                    fn describe() -> string { rtn value }
+                    fn describe() -> String { rtn value }
                     fn run() -> void { println(value) }
                 }
             }
@@ -237,10 +237,10 @@ class AnnotationSemaTest {
     fun `伴生构造器缺少元素对应参数`() {
         checkFails(
             """
-            annotation Marker(value : string, count : int = 0) {
+            annotation Marker(value : String, count : Int = 0) {
                 companion entity Impl {
-                    constructor(value : string) { }
-                    fn describe() -> string { rtn value }
+                    constructor(value : String) { }
+                    fn describe() -> String { rtn value }
                 }
             }
 
@@ -256,10 +256,10 @@ class AnnotationSemaTest {
     fun `伴生构造器参数顺序必须一致`() {
         checkFails(
             """
-            annotation Marker(value : string, count : int = 0) {
+            annotation Marker(value : String, count : Int = 0) {
                 companion entity Impl {
-                    constructor(count : int, value : string) { }
-                    fn describe() -> string { rtn value }
+                    constructor(count : Int, value : String) { }
+                    fn describe() -> String { rtn value }
                 }
             }
 
@@ -277,17 +277,17 @@ class AnnotationSemaTest {
     fun `伴生构造器参数类型必须一致`() {
         checkFails(
             """
-            annotation Marker(value : string) {
+            annotation Marker(value : String) {
                 companion entity Impl {
-                    constructor(value : int) { }
-                    fn describe() -> string { rtn "d" }
+                    constructor(value : Int) { }
+                    fn describe() -> String { rtn "d" }
                 }
             }
 
             fn main() -> void { println("ok") }
             """,
             line = 3,
-            "companion entity 的构造器参数 'value' 的类型应该是 string，写的是 int",
+            "companion entity 的构造器参数 'value' 的类型应该是 String，写的是 Int",
         )
     }
 
@@ -296,10 +296,10 @@ class AnnotationSemaTest {
     fun `伴生构造器多出参数`() {
         checkFails(
             """
-            annotation Marker(value : string) {
+            annotation Marker(value : String) {
                 companion entity Impl {
-                    constructor(value : string, extra : int) { }
-                    fn describe() -> string { rtn value }
+                    constructor(value : String, extra : Int) { }
+                    fn describe() -> String { rtn value }
                 }
             }
 
@@ -315,9 +315,9 @@ class AnnotationSemaTest {
     fun `没写构造器时自动生成主构造`() {
         val (_, model) = analyzeProgram(
             """
-            annotation Marker(value : string, count : int = 0) {
+            annotation Marker(value : String, count : Int = 0) {
                 companion entity Impl {
-                    fn describe() -> string { rtn value }
+                    fn describe() -> String { rtn value }
                 }
             }
 
@@ -330,7 +330,7 @@ class AnnotationSemaTest {
         assertTrue(companion.constructor.isConstructor)
         assertEquals(listOf("value", "count"), companion.constructor.params.map { it.name })
         assertEquals(
-            listOf("string", "int"),
+            listOf("String", "Int"),
             companion.constructor.params.map { it.type.name },
         )
         // 元素的同名字段 + 公开访问器都是自动获得的（§1）
@@ -349,10 +349,10 @@ class AnnotationSemaTest {
     fun `伴生实体在语义层是一个类`() {
         val (_, model) = analyzeProgram(
             """
-            annotation Marker(value : string) {
+            annotation Marker(value : String) {
                 companion entity Impl {
-                    var hits : int = 0
-                    fn describe() -> string { rtn "d" }
+                    var hits : Int = 0
+                    fn describe() -> String { rtn "d" }
                 }
             }
 
@@ -378,9 +378,9 @@ class AnnotationSemaTest {
     fun `注解名与伴生名都能当类型`() {
         val (program, model) = analyzeProgram(
             """
-            annotation Marker(value : string, count : int = 0) {
+            annotation Marker(value : String, count : Int = 0) {
                 companion entity Impl {
-                    fn describe() -> string { rtn "d" }
+                    fn describe() -> String { rtn "d" }
                 }
             }
 
@@ -407,9 +407,9 @@ class AnnotationSemaTest {
     fun `伴生名写错要报错`() {
         checkFails(
             """
-            annotation Marker(value : string) {
+            annotation Marker(value : String) {
                 companion entity Impl {
-                    fn describe() -> string { rtn "d" }
+                    fn describe() -> String { rtn "d" }
                 }
             }
 
@@ -428,7 +428,7 @@ class AnnotationSemaTest {
     fun `没有伴生实体时写伴生类型要报错`() {
         checkFails(
             """
-            annotation Marker(value : string)
+            annotation Marker(value : String)
 
             fn main() -> void {
                 var x : Marker::Impl = null
@@ -445,9 +445,9 @@ class AnnotationSemaTest {
     fun `没写名字的伴生实体写不出类型`() {
         checkFails(
             """
-            annotation Marker(value : string) {
+            annotation Marker(value : String) {
                 companion entity {
-                    fn describe() -> string { rtn value }
+                    fn describe() -> String { rtn value }
                 }
             }
 
@@ -468,7 +468,7 @@ class AnnotationSemaTest {
         checkFails(
             """
             class Dog {
-                var x : int = 0
+                var x : Int = 0
             }
 
             fn main() -> void {
@@ -487,10 +487,10 @@ class AnnotationSemaTest {
     fun `注解不能当父类型`() {
         checkFails(
             """
-            annotation Marker(value : string)
+            annotation Marker(value : String)
 
             class Point : Marker {
-                var x : int = 0
+                var x : Int = 0
             }
 
             fn main() -> void { println("ok") }
@@ -505,11 +505,11 @@ class AnnotationSemaTest {
     fun `注解可以标在类上`() {
         val (program, model) = analyzeProgram(
             """
-            annotation Marker(value : string)
+            annotation Marker(value : String)
 
             @Marker("hi")
             class Point {
-                var x : int = 0
+                var x : Int = 0
             }
 
             fn main() -> void { println("ok") }
@@ -530,7 +530,7 @@ class AnnotationSemaTest {
             """
             @Nope("hi")
             class Point {
-                var x : int = 0
+                var x : Int = 0
             }
 
             fn main() -> void { println("ok") }
@@ -548,10 +548,10 @@ class AnnotationSemaTest {
             """
             @Nope("hi")
             class Point {
-                var x : int = 0
+                var x : Int = 0
             }
 
-            annotation Tag(value : int = 1)
+            annotation Tag(value : Int = 1)
 
             fn main() -> void { println("ok") }
             """,
@@ -566,16 +566,16 @@ class AnnotationSemaTest {
     fun `实参配对：位置式与具名式都能用`() {
         val (program, model) = analyzeProgram(
             """
-            annotation Marker(value : string, count : int, flag : bool = false)
+            annotation Marker(value : String, count : Int, flag : Bool = false)
 
             @Marker(count = 3, value = "hi")
             class Point {
-                var x : int = 0
+                var x : Int = 0
             }
 
             @Marker("hi", count = 3)
             class Line {
-                var x : int = 0
+                var x : Int = 0
             }
 
             fn main() -> void { println("ok") }
@@ -597,11 +597,11 @@ class AnnotationSemaTest {
     fun `没有默认值的元素必须给值`() {
         checkFails(
             """
-            annotation Marker(value : string, count : int)
+            annotation Marker(value : String, count : Int)
 
             @Marker("hi")
             class Point {
-                var x : int = 0
+                var x : Int = 0
             }
 
             fn main() -> void { println("ok") }
@@ -616,11 +616,11 @@ class AnnotationSemaTest {
     fun `具名实参元素不存在要报错`() {
         checkFails(
             """
-            annotation Marker(value : string)
+            annotation Marker(value : String)
 
             @Marker(nope = 1)
             class Point {
-                var x : int = 0
+                var x : Int = 0
             }
 
             fn main() -> void { println("ok") }
@@ -636,17 +636,17 @@ class AnnotationSemaTest {
     fun `实参类型对不上要报错`() {
         checkFails(
             """
-            annotation Marker(value : string)
+            annotation Marker(value : String)
 
             @Marker(3)
             class Point {
-                var x : int = 0
+                var x : Int = 0
             }
 
             fn main() -> void { println("ok") }
             """,
             line = 3,
-            "注解 'Marker' 的元素 'value' 需要 string，实际给的是 int（3）",
+            "注解 'Marker' 的元素 'value' 需要 String，实际给的是 Int（3）",
         )
     }
 
@@ -655,11 +655,11 @@ class AnnotationSemaTest {
     fun `实参个数给多了要报错`() {
         checkFails(
             """
-            annotation Marker(value : string)
+            annotation Marker(value : String)
 
             @Marker("a", "b")
             class Point {
-                var x : int = 0
+                var x : Int = 0
             }
 
             fn main() -> void { println("ok") }
@@ -674,11 +674,11 @@ class AnnotationSemaTest {
     fun `同一个元素给两次值要报错`() {
         checkFails(
             """
-            annotation Marker(value : string)
+            annotation Marker(value : String)
 
             @Marker(value = "a", value = "b")
             class Point {
-                var x : int = 0
+                var x : Int = 0
             }
 
             fn main() -> void { println("ok") }
@@ -695,11 +695,11 @@ class AnnotationSemaTest {
             """
             enum TokenKind { A, B }
 
-            annotation Marker(kind : TokenKind, name : string = "x")
+            annotation Marker(kind : TokenKind, name : String = "x")
 
             @Marker(TokenKind.A)
             class Point {
-                var x : int = 0
+                var x : Int = 0
             }
 
             fn main() -> void { println("ok") }
@@ -712,12 +712,12 @@ class AnnotationSemaTest {
     fun `同一个目标重复标同一个注解要报错`() {
         checkFails(
             """
-            annotation Marker(value : string)
+            annotation Marker(value : String)
 
             @Marker("a")
             @Marker("b")
             class Point {
-                var x : int = 0
+                var x : Int = 0
             }
 
             fn main() -> void { println("ok") }
@@ -732,10 +732,10 @@ class AnnotationSemaTest {
     fun `方法上重复标同一个注解要报错`() {
         checkFails(
             """
-            annotation Tag(value : int = 1)
+            annotation Tag(value : Int = 1)
 
             class Point {
-                var x : int = 0
+                var x : Int = 0
 
                 @Tag(1)
                 @Tag(2)
@@ -754,13 +754,13 @@ class AnnotationSemaTest {
     fun `同一个目标可以标不同的注解`() {
         analyzeProgram(
             """
-            annotation A(value : int = 1)
-            annotation B(value : string = "x")
+            annotation A(value : Int = 1)
+            annotation B(value : String = "x")
 
             @A
             @B
             class Point {
-                var x : int = 0
+                var x : Int = 0
             }
 
             fn main() -> void { println("ok") }
@@ -773,16 +773,16 @@ class AnnotationSemaTest {
     fun `访问器撞上已有方法要报错`() {
         checkFails(
             """
-            annotation Marker(value : string) {
+            annotation Marker(value : String) {
                 companion entity Impl {
-                    fn describe() -> string { rtn value }
+                    fn describe() -> String { rtn value }
                 }
             }
 
             @Marker("hi")
             class Point {
-                var x : int = 0
-                fn Marker() -> string { rtn "already here" }
+                var x : Int = 0
+                fn Marker() -> String { rtn "already here" }
             }
 
             fn main() -> void { println("ok") }
@@ -797,15 +797,15 @@ class AnnotationSemaTest {
     fun `访问器撞上已有字段要报错`() {
         checkFails(
             """
-            annotation Marker(value : string) {
+            annotation Marker(value : String) {
                 companion entity Impl {
-                    fn describe() -> string { rtn value }
+                    fn describe() -> String { rtn value }
                 }
             }
 
             @Marker("hi")
             class Point {
-                var Marker : string = "already here"
+                var Marker : String = "already here"
             }
 
             fn main() -> void { println("ok") }
@@ -820,19 +820,19 @@ class AnnotationSemaTest {
     fun `使用点配出方案B的访问器规格`() {
         val (_, model) = analyzeProgram(
             """
-            annotation Marker(value : string) {
+            annotation Marker(value : String) {
                 companion entity Impl {
-                    fn describe() -> string { rtn value }
+                    fn describe() -> String { rtn value }
                 }
             }
 
             @Marker("on the class")
             class Point {
                 @Marker("on the field")
-                var x : int = 0
+                var x : Int = 0
 
                 @Marker("on the method")
-                fn shift(dx : int) -> void { x = x + dx }
+                fn shift(dx : Int) -> void { x = x + dx }
             }
 
             fn main() -> void { println("ok") }
@@ -843,8 +843,8 @@ class AnnotationSemaTest {
         assertEquals(
             listOf(
                 "pub static Marker\$Impl Marker()",
-                "pub static Marker\$Impl Marker(string member)",
-                "pub static Marker\$Impl Marker(string member)",
+                "pub static Marker\$Impl Marker(String member)",
+                "pub static Marker\$Impl Marker(String member)",
             ),
             accessors.map { it.signature() },
         )
@@ -857,21 +857,21 @@ class AnnotationSemaTest {
     fun `可标注位置覆盖类接口注解方法字段`() {
         val (_, model) = analyzeProgram(
             """
-            annotation Tag(value : int = 1)
+            annotation Tag(value : Int = 1)
 
             @Tag(1)
             interface Greeter {
                 @Tag(2)
-                fn greet(name : string) -> void
+                fn greet(name : String) -> void
             }
 
             @Tag(3)
-            annotation Holder(value : int = 0)
+            annotation Holder(value : Int = 0)
 
             @Tag(4)
             class Point {
                 @Tag(5)
-                var x : int = 0
+                var x : Int = 0
 
                 @Tag(6)
                 fn shift() -> void { x = x + 1 }
@@ -902,7 +902,7 @@ class AnnotationSemaTest {
     fun `顶层函数上的注解允许但没有访问器`() {
         val (_, model) = analyzeProgram(
             """
-            annotation Tag(value : int = 1)
+            annotation Tag(value : Int = 1)
 
             @Tag(7)
             fn hello() -> void { println("hi") }
@@ -921,9 +921,9 @@ class AnnotationSemaTest {
     fun `带伴生实体的注解不能标在顶层函数上`() {
         checkFails(
             """
-            annotation Marker(value : string) {
+            annotation Marker(value : String) {
                 companion entity Impl {
-                    fn describe() -> string { rtn value }
+                    fn describe() -> String { rtn value }
                 }
             }
 
@@ -943,10 +943,10 @@ class AnnotationSemaTest {
     fun `new 注解与 new 伴生名都合法`() {
         val (program, model) = analyzeProgram(
             """
-            annotation Marker(value : string, count : int = 0) {
+            annotation Marker(value : String, count : Int = 0) {
                 companion entity Impl {
-                    var hits : int = 0
-                    fn describe() -> string { rtn "Marker(" + value + ")" }
+                    var hits : Int = 0
+                    fn describe() -> String { rtn "Marker(" + value + ")" }
                     fn run() -> void { println("run") }
                 }
             }
@@ -982,7 +982,7 @@ class AnnotationSemaTest {
     fun `没有伴生实体不能 new`() {
         checkFails(
             """
-            annotation Marker(value : string)
+            annotation Marker(value : String)
 
             fn main() -> void {
                 var a : Marker = new Marker("hi")
@@ -999,9 +999,9 @@ class AnnotationSemaTest {
     fun `new 少给没有默认值的元素要报错`() {
         checkFails(
             """
-            annotation Marker(value : string) {
+            annotation Marker(value : String) {
                 companion entity Impl {
-                    fn describe() -> string { rtn value }
+                    fn describe() -> String { rtn value }
                 }
             }
 
@@ -1021,9 +1021,9 @@ class AnnotationSemaTest {
     fun `new 实参类型不对要报错`() {
         checkFails(
             """
-            annotation Marker(value : string) {
+            annotation Marker(value : String) {
                 companion entity Impl {
-                    fn describe() -> string { rtn value }
+                    fn describe() -> String { rtn value }
                 }
             }
 
@@ -1033,7 +1033,7 @@ class AnnotationSemaTest {
             }
             """,
             line = 8,
-            "new Marker(...) 的第 1 个实参类型不对：元素 'value' 需要 string，实际给的是 int（3）",
+            "new Marker(...) 的第 1 个实参类型不对：元素 'value' 需要 String，实际给的是 Int（3）",
         )
     }
 
@@ -1042,10 +1042,10 @@ class AnnotationSemaTest {
     fun `赋给注解类型的变量只剩元素可见`() {
         val (_, model) = analyzeProgram(
             """
-            annotation Marker(value : string, count : int = 0) {
+            annotation Marker(value : String, count : Int = 0) {
                 companion entity Impl {
-                    var hits : int = 0
-                    fn describe() -> string { rtn "d" }
+                    var hits : Int = 0
+                    fn describe() -> String { rtn "d" }
                 }
             }
 
@@ -1068,10 +1068,10 @@ class AnnotationSemaTest {
     fun `行为方法在注解类型上不可见`() {
         checkFails(
             """
-            annotation Marker(value : string, count : int = 0) {
+            annotation Marker(value : String, count : Int = 0) {
                 companion entity Impl {
-                    var hits : int = 0
-                    fn describe() -> string { rtn "d" }
+                    var hits : Int = 0
+                    fn describe() -> String { rtn "d" }
                 }
             }
 
@@ -1091,9 +1091,9 @@ class AnnotationSemaTest {
     fun `注解类型上没有的元素名要报错`() {
         checkFails(
             """
-            annotation Marker(value : string) {
+            annotation Marker(value : String) {
                 companion entity Impl {
-                    fn describe() -> string { rtn value }
+                    fn describe() -> String { rtn value }
                 }
             }
 
@@ -1113,10 +1113,10 @@ class AnnotationSemaTest {
     fun `伴生类型上行为方法可见`() {
         val (program, model) = analyzeProgram(
             """
-            annotation Marker(value : string) {
+            annotation Marker(value : String) {
                 companion entity Impl {
-                    var hits : int = 0
-                    fn describe() -> string { rtn value }
+                    var hits : Int = 0
+                    fn describe() -> String { rtn value }
                 }
             }
 

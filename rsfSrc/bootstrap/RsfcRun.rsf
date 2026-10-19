@@ -9,8 +9,8 @@ import "Warn.rsf"
 
 import java.lang.System
 
-fn pickRunFile() -> string {
-    var given : ?string = System.getProperty("rsf.rsfc.file")
+fn pickRunFile() -> String {
+    var given : ?String = System.getProperty("rsf.rsfc.file")
     if (given == null) {
         System.err.println("usage: java -Drsf.rsfc.file=<源.rsf> -cp <out>;<jar> RsfcRun")
         System.exit(2)
@@ -19,7 +19,7 @@ fn pickRunFile() -> string {
     rtn given!!
 }
 
-fn baseNameOfPath(path : string) -> string {
+fn baseNameOfPath(path : String) -> String {
     var i = path.length() - 1
     while (i >= 0) {
         var c = path.charAt(i)
@@ -37,7 +37,7 @@ fn main() -> void {
     try {
         ast = loadProgram(path)!!
         loaded = true
-    } catch (loadError : string) {
+    } catch (loadError : String) {
         message = loadError
         loaded = false
     }
@@ -54,7 +54,7 @@ fn main() -> void {
     ws.printWarnings(ast, path)
     try {
         runProgram(ast)!!
-    } catch (e : string) {
+    } catch (e : String) {
         if (isSignal(e) && signalKind(e) == "X") {
             System.err.println("运行期错误: " + signalPayload(e))
         } else if (isSignal(e)) {

@@ -39,7 +39,7 @@ object RsfTokens {
     /** `if` `else` `while` `for` `goto` `break` `continue` `rtn` `return`。 */
     val CONTROL_KEYWORD = RsfTokenType("CONTROL_KEYWORD")
 
-    /** `int` `long` `double` `float` `string` `bool` `byte` `char`。 */
+    /** `Int` `Long` `Double` `Float` `String` `Bool` `Byte` `Char`。 */
     val TYPE_KEYWORD = RsfTokenType("TYPE_KEYWORD")
 
     /** `void` 单独一类：它没有值、只出现在返回子句里，配色跟别的类型区分开（淡灰）。 */
@@ -133,12 +133,12 @@ object RsfKeywords {
 
     /**
      * 类型关键字。**必须和编译器前端的 Lexer.KEYWORDS 对齐**（多一个少一个都会让高亮串味）。
-     * 阶段 16 加上了 `byte` / `char`，同一个列表在编译器自己的补全表
+     * 阶段 16 加上了 `Byte` / `Char`，同一个列表在编译器自己的补全表
      * （EditorSupport.TYPES）里也有一份。
      */
     val TYPES = setOf(
-        "void", "int", "long", "float", "double", "string", "str", "bool", "boolean",
-        "byte", "char",
+        "void", "Int", "Long", "Float", "Double", "String", "Str", "Bool", "Boolean",
+        "Byte", "Char",
     )
 
     val ALL: Set<String> = MODIFIERS + CONTROL + TYPES

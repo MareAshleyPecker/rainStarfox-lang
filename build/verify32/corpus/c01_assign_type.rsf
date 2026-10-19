@@ -1,4 +1,4 @@
 fn main() {
-    var x : int = "s"
+    var x : Int = "s"
     println("" + x)
 }

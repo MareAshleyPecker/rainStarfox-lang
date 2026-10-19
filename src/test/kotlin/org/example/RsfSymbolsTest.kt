@@ -33,7 +33,7 @@ class RsfSymbolsTest {
         val text = """/// 这是上一段的注释
 
 /// 真正的文档：返回一。
-pub fn one() -> int {
+pub fn one() -> Int {
     rtn 1
 }
 
@@ -51,16 +51,16 @@ fn main() -> void {
 
     @Test
     fun `类里的方法调用能解析到类成员而不是同名全局函数`() {
-        val at = resolver("""fn value() -> int {
+        val at = resolver("""fn value() -> Int {
     rtn 0
 }
 
 pub class Box {
-    pub fn value() -> int {
+    pub fn value() -> Int {
         rtn 1
     }
 
-    pub fn use() -> int {
+    pub fn use() -> Int {
         rtn value()
     }
 }
@@ -77,14 +77,14 @@ pub class Box {
         val dir = File.createTempFile("rsf-hover", "").let { it.delete(); it.mkdirs(); it }
         val file = File(dir, "h.rsf")
         file.writeText("""/// 加法。
-pub fn add(a : int, b : int) -> int {
+pub fn add(a : Int, b : Int) -> Int {
     rtn a + b
 }
 """, Charsets.UTF_8)
         val program = Rsf.load(file, dir)
         val add = RsfSymbols.index(program).first { it.name == "add" }
         val markdown = RsfSymbols.hoverMarkdown(add, dir.path)
-        assertTrue(markdown.contains("add(a : int, b : int) -> int"), markdown)
+        assertTrue(markdown.contains("add(a : Int, b : Int) -> Int"), markdown)
         assertTrue(markdown.contains("加法。"), markdown)
         assertTrue(markdown.contains("h.rsf:2"), markdown)
     }

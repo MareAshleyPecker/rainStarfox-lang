@@ -8,7 +8,7 @@ fn main() -> void {
     try {
         var b : B = a as B
         println("不可达")
-    } catch (e : string) {
+    } catch (e : String) {
         println(e)
         if (true) {
             println(e)

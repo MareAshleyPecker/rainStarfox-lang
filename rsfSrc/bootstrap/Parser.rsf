@@ -17,7 +17,7 @@
 // **rsf 现在没有继承/接口**（阶段 20 才有），所以写不出「Expr / Stmt / Decl 多态
 // 节点层次」那种设计——那需要「一个数组装不同子类」。这里用的是**胖节点**：
 //
-//     pub class Node(kind : NodeKind, text : string)
+//     pub class Node(kind : NodeKind, text : String)
 //         kind      —— NodeKind 枚举，说明这是哪一种节点
 //         text      —— 这一层的**属性串**，形如 "name=foo mutable=true"，字段之间正好一个空格
 //         children  —— 子节点数组（用 add 追加，内部满 8 个翻倍）
@@ -122,7 +122,7 @@ pub enum NodeKind {
     // dumpAst 是通用递归（没有任何 per-kind 分支），所以只能靠一个子节点把这一行带出来。
     // TARGET 的 text 就是 `type=<TypeInfo.text()>`，与 VAR / PARAM 打类型文本的口径同一套。
     AS, IS, TARGET,
-    // 阶段 30c：函数值字面量 `lam(x : int) -> int { … }`（自举同步第 11 刀）。同样追加在末尾。
+    // 阶段 30c：函数值字面量 `lam(x : Int) -> Int { … }`（自举同步第 11 刀）。同样追加在末尾。
     // 形状与 AstDump.kt 的 LambdaExpr 分支逐字节对齐：text = `params=<n> ret=<类型文本|->`，
     // 孩子依次是 PARAM（每个形参一行，text 是 `name=… type=…`）和最后那个 BLOCK；
     // **没有 PARAMS 包一层** —— Kotlin 那边 lambda 的形参不打 PARAMS 行。
@@ -131,7 +131,7 @@ pub enum NodeKind {
 
 // 枚举值 -> dump 里的名字。写成显式 switch（而不是靠 `"" + k` 拿 toString）有两个好处：
 // 名字和 AstDump.kt 里写死的字符串**能一眼对上**，而且这一层穷尽性由编译器把关。
-pub fn kindName(k : NodeKind) -> string {
+pub fn kindName(k : NodeKind) -> String {
     switch (k) {
         NodeKind.PROGRAM : rtn "PROGRAM"
         NodeKind.PKG : rtn "PKG"
@@ -231,10 +231,10 @@ pub fn kindName(k : NodeKind) -> string {
 
 // ---------------------------------------------------------------- 胖节点
 
-pub class Node(kind : NodeKind, text : string) {
+pub class Node(kind : NodeKind, text : String) {
     var kind : NodeKind = kind
     // 阶段 33：列号（1 基，0 = 没定）。只给 Checker 报错用，**不进属性串** ⇒ dump 与对拍不受影响。
-    var col : int = 0
+    var col : Int = 0
 
     // 阶段 33：把源位置挂到节点上（链式写法：`new Node(...).at(tok)`）
     pub fn at(t : Token) -> Node {
@@ -250,20 +250,20 @@ pub class Node(kind : NodeKind, text : string) {
     }
     // 属性串：`name=foo mutable=true`（字段之间正好一个空格）。
     // 值里的空格/换行已经在 escapeValue 里转义掉了，所以「按空格切」是无歧义的。
-    var text : string = text
+    var text : String = text
     var children : Node[] = new Node[0]
-    var childCount : int = 0
+    var childCount : Int = 0
     // 源码行号（1 起）；**0 表示还没定**，由最近的语句起头 token 补上，发射时统一钳到 >=1。
     // 只用来生成 `LineNumberTable`：Kotlin 侧每个 AST 节点带 `at: SourceLine`，这里对应地记一个行号。
     // dump（astLine）不打印它，所以不影响 17b 的差分对拍。
-    var line : int = 0
+    var line : Int = 0
 
     constructor(kind : NodeKind) {
         this(kind, "")
     }
 
     // 追加一个属性。属性顺序 = put 的顺序，必须与 AstDump.kt 里那几个函数写字段的顺序一致。
-    pub fn put(name : string, value : string) -> Node {
+    pub fn put(name : String, value : String) -> Node {
         if (text.length() == 0) {
             text = name + "=" + value
         } else {
@@ -301,25 +301,25 @@ pub class Node(kind : NodeKind, text : string) {
 //   * **不是 Node**：`parseTypeRef()` 直接返回这个三字段的小对象，字符串形式按需拼。
 //
 // `name` 里可能带前导 `?`（可空写在名字里，和 Kotlin 版的 `TypeRef.name` 一样）；
-// `args` 存的是**实参表内部**的文本（`int` / `int,string`），空串表示没有 `&<...>`；
+// `args` 存的是**实参表内部**的文本（`Int` / `Int,String`），空串表示没有 `&<...>`；
 // `nested` 存嵌套类型的第二段（`Marker::Impl` 里的 `Impl`），空串表示没有 `::`
 // （和 Kotlin 版 `TypeRef.nested : String?` 一样，v1 只允许一层）。
 
-pub class TypeInfo(name : string, args : string, depth : int, nested : string) {
-    var name : string = name
-    var args : string = args
-    var depth : int = depth
-    var nested : string = nested
-    // 阶段 30c：函数类型 `(int) -> int`。与 Kotlin 的 TypeRef.fnParams / fnRet 同一个口径：
+pub class TypeInfo(name : String, args : String, depth : Int, nested : String) {
+    var name : String = name
+    var args : String = args
+    var depth : Int = depth
+    var nested : String = nested
+    // 阶段 30c：函数类型 `(Int) -> Int`。与 Kotlin 的 TypeRef.fnParams / fnRet 同一个口径：
     // 函数类型的名字固定是 "fn" / "?fn"（可空），形参与返回类型另存。
     // 形参存成**逗号分隔的类型文本**（每个元素自己已经渲染好，可以再含空格与括号），
     // 这样 Backend 只要按深度 0 的逗号切一刀就能还原参数表。
-    var isFn : bool = false
-    var fnParams : string = ""
-    var fnRet : string = ""
+    var isFn : Bool = false
+    var fnParams : String = ""
+    var fnRet : String = ""
 
-    // 造一个函数类型的副本（`(int) -> int` / `?(int) -> int`）
-    pub fn asFn(params : string, ret : string) -> TypeInfo {
+    // 造一个函数类型的副本（`(Int) -> Int` / `?(Int) -> Int`）
+    pub fn asFn(params : String, ret : String) -> TypeInfo {
         var t = new TypeInfo(name, args, depth, nested)
         t.isFn = true
         t.fnParams = params
@@ -327,9 +327,9 @@ pub class TypeInfo(name : string, args : string, depth : int, nested : string) {
         rtn t
     }
 
-    pub fn text() -> string {
+    pub fn text() -> String {
         // 阶段 30c：函数类型先拼签名，再挂数组后缀（与 AstDump.typeText 同一套）：
-        //   (int,int) -> int      ?(int) -> int      ((int) -> int)[]
+        //   (Int,Int) -> Int      ?(Int) -> Int      ((Int) -> Int)[]
         if (isFn) {
             var sig = "(" + fnParams + ") -> " + fnRet
             if (startsWithChar(name, '?')) { sig = "?" + sig }
@@ -342,7 +342,7 @@ pub class TypeInfo(name : string, args : string, depth : int, nested : string) {
         rtn out + repeatText("[]", depth)
     }
 
-    pub fn argsOrDash() -> string {
+    pub fn argsOrDash() -> String {
         if (args.length() == 0) { rtn "-" }
         rtn args
     }
@@ -350,7 +350,7 @@ pub class TypeInfo(name : string, args : string, depth : int, nested : string) {
 
 // ---------------------------------------------------------------- 小工具
 
-fn repeatText(s : string, n : int) -> string {
+fn repeatText(s : String, n : Int) -> String {
     var out = ""
     for (var i = 0; i < n; i = i + 1) {
         out = out + s
@@ -358,17 +358,17 @@ fn repeatText(s : string, n : int) -> string {
     rtn out
 }
 
-fn boolText(b : bool) -> string {
+fn boolText(b : Bool) -> String {
     if (b) { rtn "true" }
     rtn "false"
 }
 
-fn startsWithChar(s : string, c : char) -> bool {
+fn startsWithChar(s : String, c : Char) -> Bool {
     if (s.length() == 0) { rtn false }
     rtn s.charAt(0) == c
 }
 
-pub fn isTypeKeyword(kind : string) -> bool {
+pub fn isTypeKeyword(kind : String) -> Bool {
     if (kind == "KW_VOID") { rtn true }
     if (kind == "KW_INT") { rtn true }
     if (kind == "KW_LONG") { rtn true }
@@ -381,68 +381,68 @@ pub fn isTypeKeyword(kind : string) -> bool {
     rtn false
 }
 
-pub fn isControlKeyword(kind : string) -> bool {
+pub fn isControlKeyword(kind : String) -> Bool {
     if (kind == "KW_PUBLIC") { rtn true }
     if (kind == "KW_PRIVATE") { rtn true }
     if (kind == "KW_PROTECTED") { rtn true }
     rtn false
 }
 
-fn isStaticKeyword(kind : string) -> bool { rtn kind == "KW_STATIC" }
+fn isStaticKeyword(kind : String) -> Bool { rtn kind == "KW_STATIC" }
 
-fn isOverrideKeyword(kind : string) -> bool { rtn kind == "KW_OVERRIDE" }
+fn isOverrideKeyword(kind : String) -> Bool { rtn kind == "KW_OVERRIDE" }
 
 // 阶段 25：继承修饰词（阶段 27 起只剩 `final` / `abstract`，与 Kotlin 侧
 // TokenKind.isInheritKeyword 同口径，见 src/main/kotlin/org/example/complie/lexing/Token.kt）。
 // 注意 `super` **不在**这里：它不是修饰词，而是表达式位置上的接收者。
-fn isInheritKeyword(kind : string) -> bool {
+fn isInheritKeyword(kind : String) -> Bool {
     if (kind == "KW_FINAL") { rtn true }
     rtn kind == "KW_ABSTRACT"
 }
 
 // 排在声明前面的修饰词（与 Kotlin 侧 TokenKind.isModifierKeyword 同口径：
 // 权限修饰词 / stc / override / 继承修饰词）。接口体的成员循环要用它把一整个修饰词串数完。
-fn isModifierKeyword(kind : string) -> bool {
+fn isModifierKeyword(kind : String) -> Bool {
     if (isControlKeyword(kind)) { rtn true }
     if (isStaticKeyword(kind)) { rtn true }
     if (isInheritKeyword(kind)) { rtn true }
     rtn isOverrideKeyword(kind)
 }
 
-fn isVarKeyword(kind : string) -> bool {
+fn isVarKeyword(kind : String) -> Bool {
     if (kind == "KW_VAR") { rtn true }
     rtn kind == "KW_IMUTVAR"
 }
 
-fn isReturnKeyword(kind : string) -> bool {
+fn isReturnKeyword(kind : String) -> Bool {
     if (kind == "KW_RTN") { rtn true }
     rtn kind == "KW_RETURN"
 }
 
-fn isComparisonKind(kind : string) -> bool {
+fn isComparisonKind(kind : String) -> Bool {
     if (kind == "LT") { rtn true }
     if (kind == "GT") { rtn true }
     if (kind == "LE") { rtn true }
     rtn kind == "GE"
 }
 
-fn isEqualityKind(kind : string) -> bool {
+fn isEqualityKind(kind : String) -> Bool {
     if (kind == "EQ") { rtn true }
     rtn kind == "NE"
 }
 
-fn isAddKind(kind : string) -> bool {
+fn isAddKind(kind : String) -> Bool {
     if (kind == "PLUS") { rtn true }
     rtn kind == "MINUS"
 }
 
-fn isMulKind(kind : string) -> bool {
+fn isMulKind(kind : String) -> Bool {
     if (kind == "STAR") { rtn true }
     if (kind == "SLASH") { rtn true }
     rtn kind == "PERCENT"
 }
 
-fn isLiteralKind(kind : string) -> bool {
+fn isLiteralKind(kind : String) -> Bool {
     if (kind == "INT_LIT") { rtn true }
     if (kind == "LONG_LIT") { rtn true }
     if (kind == "FLOAT_LIT") { rtn true }
@@ -452,31 +452,31 @@ fn isLiteralKind(kind : string) -> bool {
 }
 
 // 控制词 -> ControlType 的名字（Kotlin 版是 ControlType.of(kind).name）
-fn controlName(kind : string) -> string {
+fn controlName(kind : String) -> String {
     if (kind == "KW_PUBLIC") { rtn "PUBLIC" }
     if (kind == "KW_PRIVATE") { rtn "PRIVATE" }
     if (kind == "KW_PROTECTED") { rtn "PROTECTED" }
     rtn "DEFAULT"
 }
 
-// 类型关键字 -> 规范类型名（Kotlin 版的 canonicalTypeName：别名 str / boolean 归一化）
-fn canonicalTypeName(kind : string) -> string {
+// 类型关键字 -> 规范类型名（Kotlin 版的 canonicalTypeName：别名 Str / Boolean 归一化）
+fn canonicalTypeName(kind : String) -> String {
     if (kind == "KW_VOID") { rtn "void" }
-    if (kind == "KW_INT") { rtn "int" }
-    if (kind == "KW_LONG") { rtn "long" }
-    if (kind == "KW_FLOAT") { rtn "float" }
-    if (kind == "KW_DOUBLE") { rtn "double" }
-    if (kind == "KW_STRING") { rtn "string" }
-    if (kind == "KW_BOOL") { rtn "bool" }
-    if (kind == "KW_BYTE") { rtn "byte" }
-    if (kind == "KW_CHAR") { rtn "char" }
+    if (kind == "KW_INT") { rtn "Int" }
+    if (kind == "KW_LONG") { rtn "Long" }
+    if (kind == "KW_FLOAT") { rtn "Float" }
+    if (kind == "KW_DOUBLE") { rtn "Double" }
+    if (kind == "KW_STRING") { rtn "String" }
+    if (kind == "KW_BOOL") { rtn "Bool" }
+    if (kind == "KW_BYTE") { rtn "Byte" }
+    if (kind == "KW_CHAR") { rtn "Char" }
     rtn ""
 }
 
 // 阶段 28b：反引号只允许出现在「标签声明」和 `goto` 之后。其它位置（表达式、变量名、
 // 字段名、函数名、goto 以外的语句首……）一律报这一句 —— 与 Kotlin 版
 // Parser.labelNameOnlyError（:3090）**逐字一致**（含逗号后没有空格）。
-pub fn labelNameOnlyMessage() -> string {
+pub fn labelNameOnlyMessage() -> String {
     rtn "反引号只用来写标签名（合法写法只有 `名字:` 与 goto `名字` 两种），变量 / 字段 / 函数名不能用反引号"
 }
 
@@ -488,7 +488,7 @@ pub fn labelNameOnlyMessage() -> string {
 // 为什么非要转义空格：dump 的行格式是「字段之间正好一个空格」，值里再出现空格
 // 就没法按空格切了 —— 而字符串字面量 `"hello world"` 里就有空格。
 
-pub fn escapeValue(s : string) -> string {
+pub fn escapeValue(s : String) -> String {
     var out = ""
     for (var i = 0; i < s.length(); i = i + 1) {
         var c = s.charAt(i)
@@ -521,12 +521,12 @@ pub fn escapeValue(s : string) -> string {
     rtn out
 }
 
-fn hexDigitChar(v : int) -> char {
+fn hexDigitChar(v : Int) -> Char {
     if (v < 10) { rtn toChar(48 + v) }
     rtn toChar(87 + v)
 }
 
-fn hex2(v : int) -> string {
+fn hex2(v : Int) -> String {
     rtn "" + hexDigitChar(v / 16) + hexDigitChar(v % 16)
 }
 
@@ -536,7 +536,7 @@ fn hex2(v : int) -> string {
 // rsf 没有 split/join，只能自己走一遍字符；trim 用内置的 isWhitespace
 // （正是 Kotlin 的 Char.isWhitespace，所以两边裁的是同一批字符）。
 
-fn trimWhitespace(s : string) -> string {
+fn trimWhitespace(s : String) -> String {
     var from = 0
     var to = s.length()
     while (from < to) {
@@ -550,7 +550,7 @@ fn trimWhitespace(s : string) -> string {
     rtn s.substring(from, to)
 }
 
-fn normalizeImportPath(raw : string) -> string {
+fn normalizeImportPath(raw : String) -> String {
     var out = ""
     var line = ""
     for (var i = 0; i < raw.length(); i = i + 1) {
@@ -571,20 +571,20 @@ fn normalizeImportPath(raw : string) -> string {
 // 走的也是同一批 JVM 方法，所以源码文本与值的十进制写法不同的那种输入
 // （`007`、`3.141592653589793238`、`2.5D`）两端也能对上。
 
-fn intLiteralText(t : Token) -> string {
+fn intLiteralText(t : Token) -> String {
     rtn Integer.toString(Integer.parseInt(t.text))
 }
 
-fn longLiteralText(t : Token) -> string {
+fn longLiteralText(t : Token) -> String {
     // 词法阶段已经把后缀统一成小写，所以 LONG_LIT 的文本一定是「数字 + l」
     rtn Long.toString(Long.parseLong(dropLast(t.text)))
 }
 
-fn floatLiteralText(t : Token) -> string {
+fn floatLiteralText(t : Token) -> String {
     rtn Float.toString(Float.parseFloat(dropLast(t.text)))
 }
 
-fn doubleLiteralText(t : Token) -> string {
+fn doubleLiteralText(t : Token) -> String {
     // 带 d 后缀要去掉；不带后缀的（源码里写了小数点）整串就是数字
     if (endsWithLetter(t.text, 'd')) {
         rtn Double.toString(Double.parseDouble(dropLast(t.text)))
@@ -599,51 +599,51 @@ fn doubleLiteralText(t : Token) -> string {
 // **baseName 为空串**表示（类名不可能是空串，不会歧义）。
 // 父类型列表本身仍是一个 Node（SUPERS），与接口那条通路共用。
 
-pub class SuperClause(baseName : string, baseDisplay : string, baseArgs : Node, interfaces : Node) {
-    var baseName : string = baseName
+pub class SuperClause(baseName : String, baseDisplay : String, baseArgs : Node, interfaces : Node) {
+    var baseName : String = baseName
     // dump 里 `SUPER_CLASS display=` 打的是**类型文本**（可能带 `&<T>`），不是裸名字
-    var baseDisplay : string = baseDisplay
+    var baseDisplay : String = baseDisplay
     var baseArgs : Node = baseArgs
     var interfaces : Node = interfaces
 }
 
-pub class InheritMods(isFinal : bool, isAbstract : bool) {
-    var isFinal : bool = isFinal
-    var isAbstract : bool = isAbstract
+pub class InheritMods(isFinal : Bool, isAbstract : Bool) {
+    var isFinal : Bool = isFinal
+    var isAbstract : Bool = isAbstract
 }
 
 // ================================================================ 语法分析器本体
 
 pub class Parser(tokens : Token[]) {
     var ts : Token[] = tokens
-    var pos : int = 0
+    var pos : Int = 0
 
     // `for (i in a..b)` 解糖时生成不重名的内部变量名（与 Kotlin 版的 synthCounter 一个意思，
     // 连「第几个 for-in」的编号顺序都要一样，否则 __rsf_forEnd0 会对不上 __rsf_forEnd1）
-    var synth : int = 0
+    var synth : Int = 0
 
-    var failed : bool = false
-    var failMessage : string = ""
-    var failLine : int = 0
-    var failCol : int = 0
+    var failed : Bool = false
+    var failMessage : String = ""
+    var failLine : Int = 0
+    var failCol : Int = 0
     // 接口里的方法**可以没有体**（抽象方法）——这是接口与类在语法上唯一的分叉。
     // parseInterfaceDecl 在成员循环期间把它置 true、循环结束还原；parseFuncDecl 靠它
     // 决定「没有 '{' 时不打 BLOCK、也不报错」。不给 parseFuncDecl 加参数，是为了不动
     // 它在别处的既有调用点（顶层 / 类体）。
-    var abstractBodyOk : bool = false
+    var abstractBodyOk : Bool = false
     // `override` 只准写在**类体 / 接口体**的方法上——这是 Kotlin 版 parseFuncDecl 的
     // `allowOverride` 开关（缺省 false：顶层写 `override fun` 要判失败）。同样用「置位/还原」
     // 的字段表达，不加参数，保住 parseFuncDecl 的既有调用点形状与顶层的既有行为。
-    var overrideOk : bool = false
+    var overrideOk : Bool = false
     // `final` / `abstract` 只准写在**类头**与**类体里的方法**前面（阶段 25；阶段 27 起只剩这两个词）——
     // 这是 Kotlin 版 `parseInheritModifiers` 的 `allowInheritModifiers` 开关
     // （Parser.kt:1505，缺省 false：接口体与顶层都不认这两个词）。同样用「置位/还原」
     // 的字段表达，保住 parseFuncDecl 的既有调用点形状。
-    var inheritOk : bool = false
+    var inheritOk : Bool = false
 
     // ------------------------------------------------------------ 出错
 
-    fn failAt(t : Token, message : string) -> void {
+    fn failAt(t : Token, message : String) -> void {
         if (failed) { rtn }
         failed = true
         failLine = t.line
@@ -659,7 +659,7 @@ pub class Parser(tokens : Token[]) {
 
     // ------------------------------------------------------------ 记号流
 
-    fn peekAt(offset : int) -> Token {
+    fn peekAt(offset : Int) -> Token {
         var i = pos + offset
         if (i >= ts.length) { i = ts.length - 1 }
         rtn ts[i]
@@ -675,9 +675,9 @@ pub class Parser(tokens : Token[]) {
         rtn ts[i]
     }
 
-    fn check(kind : string) -> bool { rtn peek().kind == kind }
+    fn check(kind : String) -> Bool { rtn peek().kind == kind }
 
-    fn checkAt(offset : int, kind : string) -> bool { rtn peekAt(offset).kind == kind }
+    fn checkAt(offset : Int, kind : String) -> Bool { rtn peekAt(offset).kind == kind }
 
     // 与 Kotlin 版一样：EOF 上 advance 不动（不然会越界，循环也停不下来）
     fn advance() -> Token {
@@ -686,7 +686,7 @@ pub class Parser(tokens : Token[]) {
         rtn t
     }
 
-    fn matchOne(kind : string) -> bool {
+    fn matchOne(kind : String) -> Bool {
         if (!check(kind)) { rtn false }
         advance()
         rtn true
@@ -694,25 +694,25 @@ pub class Parser(tokens : Token[]) {
 
     // 没有可变参数 / 重载，所以按参数个数各写一个（这是 rsf 目前最直接的缺口之一，
     // 见报告里「rsf 还缺什么」）
-    fn matchAny2(a : string, b : string) -> bool {
+    fn matchAny2(a : String, b : String) -> Bool {
         if (matchOne(a)) { rtn true }
         rtn matchOne(b)
     }
 
-    fn matchAny3(a : string, b : string, c : string) -> bool {
+    fn matchAny3(a : String, b : String, c : String) -> Bool {
         if (matchOne(a)) { rtn true }
         if (matchOne(b)) { rtn true }
         rtn matchOne(c)
     }
 
-    fn matchAny4(a : string, b : string, c : string, d : string) -> bool {
+    fn matchAny4(a : String, b : String, c : String, d : String) -> Bool {
         if (matchOne(a)) { rtn true }
         if (matchOne(b)) { rtn true }
         if (matchOne(c)) { rtn true }
         rtn matchOne(d)
     }
 
-    fn expect(kind : string, message : string) -> Token {
+    fn expect(kind : String, message : String) -> Token {
         if (!check(kind)) {
             failAt(peek(), message)
             rtn advance()
@@ -720,15 +720,15 @@ pub class Parser(tokens : Token[]) {
         rtn advance()
     }
 
-    fn hasFailed() -> bool { rtn failed }
-    fn errorMessage() -> string { rtn failMessage }
-    fn errorLine() -> int { rtn failLine }
-    fn errorCol() -> int { rtn failCol }
+    fn hasFailed() -> Bool { rtn failed }
+    fn errorMessage() -> String { rtn failMessage }
+    fn errorLine() -> Int { rtn failLine }
+    fn errorCol() -> Int { rtn failCol }
 
     // 从节点的 `k=v` 属性串里取一个值。**只给不含空格的短值用**（名字、类型参数表这类）：
-    // 扫到空格或结尾就停。带空格的类型文本（`(int) -> int`）要走 Backend/Interp 那边
+    // 扫到空格或结尾就停。带空格的类型文本（`(Int) -> Int`）要走 Backend/Interp 那边
     // 的 prop/attr（它们的结束判据是「空格 + 标识符 + '='」）。
-    fn nodeProp(n : Node, key : string) -> string {
+    fn nodeProp(n : Node, key : String) -> String {
         var mark = key + "="
         var at = n.text.indexOf(mark)
         if (at < 0) { rtn "" }
@@ -812,7 +812,7 @@ pub class Parser(tokens : Token[]) {
     }
 
     // 包名段之间 ` . ` ` \ ` `/` 都收，混写也行，最后统一成点分形式
-    fn parsePackageDecl() -> string {
+    fn parsePackageDecl() -> String {
         advance()   // pkg
         var parts = readPkgIdent()
         var going = true
@@ -836,7 +836,7 @@ pub class Parser(tokens : Token[]) {
         rtn parts
     }
 
-    fn readPkgIdent() -> string {
+    fn readPkgIdent() -> String {
         var t = peek()
         if (t.kind != "IDENT") {
             failAt(t, "包名需要标识符（例如 pkg util 或 pkg a.b）")
@@ -849,7 +849,7 @@ pub class Parser(tokens : Token[]) {
     // 声明前面那一串修饰词的个数（权限 / stc / override / final / abstract）。
     // 阶段 25 起 `class Base` 里 `class` 前面不再是「一个可选的权限修饰词」，
     // 所以四个前瞻都要按 Kotlin 版 modifierRun 的口径**整串**跳过去再认声明关键字。
-    fn modifierRun() -> int {
+    fn modifierRun() -> Int {
         var offset = 0
         while (isModifierKeyword(peekAt(offset).kind)) {
             offset = offset + 1
@@ -860,7 +860,7 @@ pub class Parser(tokens : Token[]) {
     // 继承修饰词后面是不是一个字段：`var x` / `final var x`。
     // 字段不吃继承修饰词（阶段 25 禁止字段遮蔽，DESIGN-25 §5），要单独给一句准确的报错
     // （Kotlin 版 isFieldDeclAheadAfterInherit，Parser.kt:1422）。
-    fn isFieldDeclAheadAfterInherit() -> bool {
+    fn isFieldDeclAheadAfterInherit() -> Bool {
         if (!isInheritKeyword(peek().kind)) { rtn false }
         var n = 0
         while (isInheritKeyword(peekAt(n).kind)) {
@@ -869,24 +869,24 @@ pub class Parser(tokens : Token[]) {
         rtn isVarKeyword(peekAt(n).kind)
     }
 
-    fn isClassDeclAhead() -> bool {
+    fn isClassDeclAhead() -> Bool {
         rtn peekAt(modifierRun()).kind == "KW_CLASS"
     }
 
-    fn isEnumDeclAhead() -> bool {
+    fn isEnumDeclAhead() -> Bool {
         rtn peekAt(modifierRun()).kind == "KW_ENUM"
     }
 
     // `interface` 是硬关键字，写接口不用修饰词也认；带了 pub 也要认，
     // 所以先跳过前缀里的修饰词（与 isClassDeclAhead 同一招）。
-    fn isInterfaceDeclAhead() -> bool {
+    fn isInterfaceDeclAhead() -> Bool {
         rtn peekAt(modifierRun()).kind == "KW_INTERFACE"
     }
 
     // 阶段 21：`annotation` 跟 `interface` 一样是硬关键字，带了 pub 也要认。
     // 注意调用点（parseProgram）**已经把声明前的注解收掉了**，所以这里只需要跳过修饰词，
     // 与 isClassDeclAhead / isEnumDeclAhead / isInterfaceDeclAhead 完全同款。
-    fn isAnnotationDeclAhead() -> bool {
+    fn isAnnotationDeclAhead() -> Bool {
         rtn peekAt(modifierRun()).kind == "KW_ANNOTATION"
     }
 
@@ -912,13 +912,24 @@ pub class Parser(tokens : Token[]) {
             rtn new Node(NodeKind.MODULE_IMPORT).put("path", "")
         }
 
-        var firstTok = expect("IDENT", kw.text + " 后面需要一个类名（点分路径，例如 java.lang.Math）或者一个字符串路径")
+        // 阶段 55：`Int`/`String`/`Long` 成了关键字，而 JDK 里有同名类
+        // （`java.lang.Long` 等），所以 import 路径段按「关键字也放行」收。
+        var firstTok = expectPathSegment(kw.text + " 后面需要一个类名（点分路径，例如 java.lang.Math）或者一个字符串路径")
         var path2 = firstTok.text
         while (matchOne("DOT")) {
-            var seg = expect("IDENT", "'.' 后面需要标识符")
+            var seg = expectPathSegment("'.' 后面需要标识符")
             path2 = path2 + "." + seg.text
         }
         rtn new Node(NodeKind.CLASS_IMPORT).put("path", escapeValue(path2))
+    }
+
+    fn expectPathSegment(msg : String) -> Token {
+        var t = peek()
+        if (t.kind == "IDENT" || t.kind.startsWith("KW_")) {
+            rtn advance()
+        }
+        failAt(t, msg)
+        rtn t
     }
 
     // ============================================================ 枚举
@@ -979,7 +990,7 @@ pub class Parser(tokens : Token[]) {
 
         // 类型参数子句 `class Box&<T>` / `class Pair&<K, V>`
         var typeParams = new Node(NodeKind.TYPE_PARAMS)
-        var seenParams = new string[8]
+        var seenParams = new String[8]
         var seenCount = 0
         if (check("AMP")) {
             advance()
@@ -997,7 +1008,7 @@ pub class Parser(tokens : Token[]) {
                     failAt(paramTok, "类型参数不能和类同名（都叫 '" + nameTok.text + "'）")
                 }
                 if (seenCount >= seenParams.length) {
-                    var bigger : string[] = new string[seenParams.length * 2]
+                    var bigger : String[] = new String[seenParams.length * 2]
                     for (var i = 0; i < seenCount; i = i + 1) { bigger[i] = seenParams[i] }
                     seenParams = bigger
                 }
@@ -1035,7 +1046,7 @@ pub class Parser(tokens : Token[]) {
         // `:` 父类型子句：阶段 25 起「最前面那个带实参表的」是**父类**、其余是接口
         // （Kotlin 版 parseSuperClause，Parser.kt:850）。类与接口共用同一个父类型列表解析函数。
         // **顺序固定为「主构造括号 → ':' 子句 → '{'」**：Kotlin 版 parseClassDecl 就是这样
-        // 排的（主构造先吃掉类头那对括号，再解析父类型），`class Impl(x : int) : Greeter`
+        // 排的（主构造先吃掉类头那对括号，再解析父类型），`class Impl(x : Int) : Greeter`
         // 里的 `:` 在括号**后面**——子句解析放前面会让那个 `:` 撞上 expect('{')。
         var sup = parseSuperClause(nameTok.text)
 
@@ -1121,7 +1132,7 @@ pub class Parser(tokens : Token[]) {
 
     // 次构造：`constructor(参数) { ... }`。没有返回类型、不能写权限修饰词、不能 stc。
     // annotations：构造器声明前的注解表（类体里带注解的构造器在语法层就被拒，这里只是照签名带过来）。
-    fn parseConstructor(className : string, annotations : Node) -> Node {
+    fn parseConstructor(className : String, annotations : Node) -> Node {
         if (isControlKeyword(peek().kind)) {
             failAt(peek(), "constructor 不能写权限修饰词：构造器只能通过 new 调用")
         }
@@ -1165,7 +1176,7 @@ pub class Parser(tokens : Token[]) {
     // Parser.kt:790 的 parseInheritModifiers 一一对应：同一个词写两遍、`open` 与 `final`
     // 同时写、`abstract` 与另两个一起写，都在**这里**当场判失败（报错位置指到后面那个词）。
     // ⇒ 三个词**至多一个为真**。`super` 不在这条通路上（它是表达式接收者，不是修饰词）。
-    fn parseInheritModifiers(kindWord : string) -> InheritMods {
+    fn parseInheritModifiers(kindWord : String) -> InheritMods {
         var sawFinal = false
         var sawAbstract = false
         while (isInheritKeyword(peek().kind) && !failed) {
@@ -1188,7 +1199,7 @@ pub class Parser(tokens : Token[]) {
 
     // 两段修饰词合并（Kotlin 版 mergeInherit，Parser.kt:1724）：修饰词与注解可以夹着写
     // （`open @M final fun f()`），所以 parseFuncDecl 的收集循环可能前后收到两段。
-    fn mergeInheritMods(cur : InheritMods, kindWord : string) -> InheritMods {
+    fn mergeInheritMods(cur : InheritMods, kindWord : String) -> InheritMods {
         var next = parseInheritModifiers(kindWord)
         if (cur.isFinal && next.isFinal) { failAt(peek(), kindWord + " 上 'final' 写了两遍——写一次就够了") }
         if (cur.isAbstract && next.isAbstract) { failAt(peek(), kindWord + " 上 'abstract' 写了两遍——写一次就够了") }
@@ -1207,7 +1218,7 @@ pub class Parser(tokens : Token[]) {
     // 类头 `:` 子句：父类可选（**最多一个**），父接口 0..n 个。
     // 判据是**语法**的（「类型引用后面紧跟着 `(`」），Kotlin 版 parseSuperClause
     // （Parser.kt:850）同口径：「这个名字到底是不是一份可以继承的类」留给语义层。
-    fn parseSuperClause(className : string) -> SuperClause {
+    fn parseSuperClause(className : String) -> SuperClause {
         if (!check("COLON")) {
             rtn new SuperClause("", "", new Node(NodeKind.ARGS), new Node(NodeKind.SUPERS).countTag())
         }
@@ -1242,7 +1253,7 @@ pub class Parser(tokens : Token[]) {
     // 只看两项：IDENT 加上紧跟的 `(`——因为父类的实参表是**必须写的**（DESIGN-25 §2），
     // 「带括号的类型名」在 `:` 子句里只可能是父类。泛型父类要把 `&<...>` 尖括号对跳过去，
     // 再看后面是不是构造实参表的 `(`（Kotlin 版 isBaseAhead，Parser.kt:893）。
-    fn isBaseAhead() -> bool {
+    fn isBaseAhead() -> Bool {
         if (!check("IDENT")) { rtn false }
         var n = 1
         if (peekAt(n).kind == "AMP") {
@@ -1269,7 +1280,7 @@ pub class Parser(tokens : Token[]) {
 
     // 父类构造实参表：`Base(实参)`。**必须写**——没有括号直接报错（DESIGN-25 §2）。
     // 返回的是一个还没打 count 的 ARGS 节点，由调用方 countTag 后挂到 SUPER_CLASS 下面。
-    fn parseSuperArgs(className : string) -> Node {
+    fn parseSuperArgs(className : String) -> Node {
         if (!check("LPAREN")) {
             failAt(peek(), "类 '" + className + "' 的父类后面必须写出构造实参：写法是 `: 父类名(实参)` 或 `: 父类名()`（父类可能没有无参构造器，所以这一对括号不能省），实际读到 '" + peek().text + "'")
             rtn new Node(NodeKind.ARGS)
@@ -1303,7 +1314,7 @@ pub class Parser(tokens : Token[]) {
 
     // 父类型列表本体。`stopAtBase` = 碰到「带实参表的父类」就停下、把它留给调用方
     // （Kotlin 版 parseSupertypeItems(owner, stopAtBase)，Parser.kt:1011）。
-    fn parseSupertypeItems(supers : Node, stopAtBase : bool) -> Node {
+    fn parseSupertypeItems(supers : Node, stopAtBase : Bool) -> Node {
         var going = true
         while (going && !failed) {
             if (stopAtBase && isBaseAhead()) {
@@ -1352,7 +1363,7 @@ pub class Parser(tokens : Token[]) {
 
         // 类型参数子句与类完全同形（`interface Box&<T>`），重名检查同 parseClassDecl
         var typeParams = new Node(NodeKind.TYPE_PARAMS)
-        var seenParams = new string[8]
+        var seenParams = new String[8]
         var seenCount = 0
         if (check("AMP")) {
             advance()
@@ -1369,7 +1380,7 @@ pub class Parser(tokens : Token[]) {
                     failAt(paramTok, "类型参数不能和接口同名（都叫 '" + nameTok.text + "'）")
                 }
                 if (seenCount >= seenParams.length) {
-                    var bigger : string[] = new string[seenParams.length * 2]
+                    var bigger : String[] = new String[seenParams.length * 2]
                     for (var i = 0; i < seenCount; i = i + 1) { bigger[i] = seenParams[i] }
                     seenParams = bigger
                 }
@@ -1562,7 +1573,7 @@ pub class Parser(tokens : Token[]) {
     // 伴生实体自己也能带注解，但**语义层忽略**（与 Kotlin 版 parseAnnotationBody 一样：
     // 收下就丢掉，AST 里 CompanionEntityDecl 根本没有注解字段），所以这里不把结果往上挂。
     // 解析出来的 COMPANION 直接挂到 owner（ANNOTATION 节点）上，位置紧跟在 ANNOTATION_ELEMENTS 之后。
-    fn parseAnnotationBody(annotationName : string, owner : Node) -> void {
+    fn parseAnnotationBody(annotationName : String, owner : Node) -> void {
         parseAnnotations()
         if (check("KW_COMPANION")) {
             owner.add(parseCompanionEntity(annotationName))
@@ -1573,12 +1584,12 @@ pub class Parser(tokens : Token[]) {
         }
     }
 
-    // 元素表：`(value : string = "x", count : int = 0,)`——**允许尾逗号**，重名在解析期报错。
+    // 元素表：`(value : String = "x", count : Int = 0,)`——**允许尾逗号**，重名在解析期报错。
     // 重名只能拿数组线性查（rsf 还没有 HashSet，与类型参数那段同一个写法）。
-    fn parseAnnotationElementList(annotationName : string) -> Node {
+    fn parseAnnotationElementList(annotationName : String) -> Node {
         expect("LPAREN", "注解 '" + annotationName + "' 的元素表缺少 '('")
         var elements = new Node(NodeKind.ANNOTATION_ELEMENTS)
-        var seenNames = new string[8]
+        var seenNames = new String[8]
         var seenCount = 0
         if (!check("RPAREN")) {
             var going = true
@@ -1590,7 +1601,7 @@ pub class Parser(tokens : Token[]) {
                     }
                 }
                 if (seenCount >= seenNames.length) {
-                    var bigger : string[] = new string[seenNames.length * 2]
+                    var bigger : String[] = new String[seenNames.length * 2]
                     for (var i = 0; i < seenCount; i = i + 1) { bigger[i] = seenNames[i] }
                     seenNames = bigger
                 }
@@ -1635,7 +1646,7 @@ pub class Parser(tokens : Token[]) {
     //（与 Kotlin 版 validateAnnotationDefault / isDefaultConstantLiteral 同口径）。
     // 枚举常量 / 注解 / 数组默认值 v1 不支持 ⇒ 这里直接判失败。
     // 注意 rsf 的 isLiteralKind 少了 BOOL_LIT/NULL_LIT，所以这里逐个列全，不用它。
-    fn parseAnnotationDefault(owner : string) -> Node {
+    fn parseAnnotationDefault(owner : String) -> Node {
         var e = parseExpr()
         var ok = false
         if (e.kind == NodeKind.INT_LIT || e.kind == NodeKind.LONG_LIT || e.kind == NodeKind.FLOAT_LIT ||
@@ -1661,7 +1672,7 @@ pub class Parser(tokens : Token[]) {
     // 伴生实体：`companion entity [名字] [: 父接口, ...] { 普通类体 }`。
     // 名字可省（匿名，dump 里打占位 `name=-`）；父接口子句复用第 1 刀的 parseSupertypeList()；
     // 体就是普通类体（字段 / 方法 / 构造器），复用同一批解析函数。
-    fn parseCompanionEntity(annotationName : string) -> Node {
+    fn parseCompanionEntity(annotationName : String) -> Node {
         var companionTok = expect("KW_COMPANION", "伴生实体缺少 'companion'")
         expect("KW_ENTITY", "companion 后面缺少 'entity'（伴生实体要写成 companion entity [名字] [: 父接口] { ... }）")
 
@@ -1724,13 +1735,13 @@ pub class Parser(tokens : Token[]) {
     }
 
     // 字段：`var 名字 : 类型 = 初值`（类型与初值都必须写）
-    // annotations：声明前收到的注解序列（`@Marker var f : int = 0`），空表也挂（count=0），挂在最后
+    // annotations：声明前收到的注解序列（`@Marker var f : Int = 0`），空表也挂（count=0），挂在最后
     fn parseFieldDecl(annotations : Node) -> Node {
         var kwTok = advance()
         var mutable = kwTok.kind == "KW_VAR"
         var nameTok = expect("IDENT", "字段缺少名字：写法是 '" + kwTok.text + " 名字 : 类型 = 初值'")
         if (!check("COLON")) {
-            failAt(peek(), "字段必须写类型：'" + kwTok.text + " " + nameTok.text + " : int = 初值'")
+            failAt(peek(), "字段必须写类型：'" + kwTok.text + " " + nameTok.text + " : Int = 初值'")
         }
         advance()   // :
         var ty = parseSuffixType("字段 '" + nameTok.text + "' 的类型要写成 '" + kwTok.text + " " + nameTok.text + " : 类型 = 初值'")
@@ -1821,7 +1832,7 @@ pub class Parser(tokens : Token[]) {
         // 阶段 31：泛型函数的类型参数表 `fn id&<T, U>(...)`（与类/接口同形，但**非空才挂**节点，
         // 因为 AstDump 的 FUNC 分支只在写了时打 TYPE_PARAMS —— 普通函数的 dump 一个字都不能变）。
         var fnTypeParams = new Node(NodeKind.TYPE_PARAMS)
-        var fnTpSeen = new string[4]
+        var fnTpSeen = new String[4]
         var fnTpCount = 0
         if (check("AMP")) {
             advance()
@@ -1838,7 +1849,7 @@ pub class Parser(tokens : Token[]) {
                     failAt(tpTok, "类型参数不能和函数同名（都叫 '" + nameTok.text + "'）")
                 }
                 if (fnTpCount >= fnTpSeen.length) {
-                    var biggerTp : string[] = new string[fnTpSeen.length * 2]
+                    var biggerTp : String[] = new String[fnTpSeen.length * 2]
                     for (var i = 0; i < fnTpCount; i = i + 1) { biggerTp[i] = fnTpSeen[i] }
                     fnTpSeen = biggerTp
                 }
@@ -1927,7 +1938,7 @@ pub class Parser(tokens : Token[]) {
         rtn n
     }
 
-    fn emptyFunc(control : string, isStatic : bool, isOverride : bool) -> Node {
+    fn emptyFunc(control : String, isStatic : Bool, isOverride : Bool) -> Node {
         var n = new Node(NodeKind.FUNC)
             .put("control", control)
             .put("stc", boolText(isStatic))
@@ -1946,10 +1957,10 @@ pub class Parser(tokens : Token[]) {
         rtn n
     }
 
-    // 参数表：`(int a, b : string)`。两种风格靠记号前瞻分流，同一个表里可以混写。
-    // 阶段 30c：`allowUntyped` —— lambda 的形参类型可以省（`lam(x) -> int { … }`），
+    // 参数表：`(Int a, b : String)`。两种风格靠记号前瞻分流，同一个表里可以混写。
+    // 阶段 30c：`allowUntyped` —— lambda 的形参类型可以省（`lam(x) -> Int { … }`），
     // 省了就落成空类型占位，留给 Backend 按期望类型补（Kotlin 侧 Param(TypeRef(""))）。
-    fn parseParamList(missingParen : string, allowUntyped : bool) -> Node {
+    fn parseParamList(missingParen : String, allowUntyped : Bool) -> Node {
         expect("LPAREN", missingParen)
         var params = new Node(NodeKind.PARAMS)
         if (!check("RPAREN")) {
@@ -1963,7 +1974,7 @@ pub class Parser(tokens : Token[]) {
         rtn params.countTag()
     }
 
-    fn parseParam(allowUntyped : bool) -> Node {
+    fn parseParam(allowUntyped : Bool) -> Node {
         var t = peek()
 
         // 1. Kotlin 风格：名字 : 类型
@@ -1983,7 +1994,7 @@ pub class Parser(tokens : Token[]) {
             rtn new Node(NodeKind.PARAM).put("type", ty2.text()).put("name", escapeValue(nameTok2.text))
         }
 
-        // 4. 阶段 30c：lambda 的形参可以只写名字（`lam(x) -> int`）。
+        // 4. 阶段 30c：lambda 的形参可以只写名字（`lam(x) -> Int`）。
         // 注意 text 的键序是 `name=` 在前 —— AstDump 的 LambdaExpr 分支打的是
         // `PARAM name=… type=…`，与函数的 `PARAM type=… name=…` 恰好相反。
         if (allowUntyped && t.kind == "IDENT" && (checkAt(1, "COMMA") || checkAt(1, "RPAREN"))) {
@@ -1996,9 +2007,9 @@ pub class Parser(tokens : Token[]) {
     }
 
     // `名字 : 类型` 里冒号后面那个类型槽（局部变量、字段、Kotlin 风格参数共用）
-    fn parseSuffixType(hint : string) -> TypeInfo {
+    fn parseSuffixType(hint : String) -> TypeInfo {
         var t = peek()
-        // 阶段 30c：`(` 也要放行——`x : (int) -> int` 里的类型是函数类型
+        // 阶段 30c：`(` 也要放行——`x : (Int) -> Int` 里的类型是函数类型
         if (!isTypeKeyword(t.kind) && t.kind != "IDENT" && t.kind != "QUESTION" && t.kind != "LPAREN") {
             failAt(t, hint)
             rtn new TypeInfo("?", "", 0, "")
@@ -2009,8 +2020,8 @@ pub class Parser(tokens : Token[]) {
     // 类型引用：可空 `?` 前缀、泛型实参 `&<...>`、嵌套类型 `注解名::伴生名`、数组后缀 `[]`（可叠多层）
     fn parseTypeRef() -> TypeInfo {
         var nullable = matchOne("QUESTION")
-        // 阶段 30c：类型位置的 `(` —— 函数类型 `(int, string) -> bool` /
-        // 「给函数类型加括号再挂 `[]`」`((int) -> int)[]`。与 Kotlin 的
+        // 阶段 30c：类型位置的 `(` —— 函数类型 `(Int, String) -> Bool` /
+        // 「给函数类型加括号再挂 `[]`」`((Int) -> Int)[]`。与 Kotlin 的
         // Parser.kt:1841 `if (check(LPAREN)) return parseParenType(nullable)` 同一位置。
         if (check("LPAREN")) { rtn parseParenType(nullable) }
         var t = peek()
@@ -2025,7 +2036,7 @@ pub class Parser(tokens : Token[]) {
                 advance()
                 name = t.text
             } else {
-                failAt(t, "这里需要一个类型（void / int / long / float / double / string / bool / byte / char，或者一个类名）")
+                failAt(t, "这里需要一个类型（void / Int / Long / Float / Double / String / Bool / Byte / Char，或者一个类名）")
                 rtn new TypeInfo("?", "", 0, "")
             }
         }
@@ -2061,7 +2072,7 @@ pub class Parser(tokens : Token[]) {
             }
         }
 
-        // `[]` 只吃**紧挨着的**一对空括号（`new int[5]` 里的 `[5]` 是维度、不是类型后缀）
+        // `[]` 只吃**紧挨着的**一对空括号（`new Int[5]` 里的 `[5]` 是维度、不是类型后缀）
         var depth = 0
         while (check("LBRACKET") && checkAt(1, "RBRACKET") && !failed) {
             advance()
@@ -2076,11 +2087,11 @@ pub class Parser(tokens : Token[]) {
 
     // 类型位置的 `(`（阶段 30c）：函数类型，或者「给函数类型加括号再挂 `[]`」。
     // 两种写法靠**配对的 `)` 后面那个记号**区分，没有歧义：
-    //   (int, string) -> bool    函数类型：`)` 后面是 `->`
+    //   (Int, String) -> Bool    函数类型：`)` 后面是 `->`
     //   () -> void               参数表可以为空
-    //   ((int) -> int)[]         分组：`)` 后面是 `[`（整体括号 + 数组后缀）
-    // 分组那一层是**必需的**：`int[] -> int` 里 `[]` 属于参数类型。
-    fn parseParenType(nullable : bool) -> TypeInfo {
+    //   ((Int) -> Int)[]         分组：`)` 后面是 `[`（整体括号 + 数组后缀）
+    // 分组那一层是**必需的**：`Int[] -> Int` 里 `[]` 属于参数类型。
+    fn parseParenType(nullable : Bool) -> TypeInfo {
         var at = peek()
         var closeOffset = matchingParenOffset()
         if (closeOffset < 0) {
@@ -2095,16 +2106,16 @@ pub class Parser(tokens : Token[]) {
             failAt(at, "函数类型要写成 '(参数类型表) -> 返回类型'（DESIGN-30）")
             rtn new TypeInfo("?", "", 0, "")
         }
-        // 分组：`((int) -> int)[]`。`?` 只能写在整个函数类型最前面（`?(int) -> int`）。
+        // 分组：`((Int) -> Int)[]`。`?` 只能写在整个函数类型最前面（`?(Int) -> Int`）。
         if (nullable) {
-            failAt(at, "'?' 要写在函数类型的最前面（?(int) -> int），不要套在括号外面")
+            failAt(at, "'?' 要写在函数类型的最前面（?(Int) -> Int），不要套在括号外面")
             rtn new TypeInfo("?", "", 0, "")
         }
         advance()   // (
         var inner = parseTypeRef()
         expect("RPAREN", "类型外面的括号没有闭合，缺少 ')'")
         if (!inner.isFn || inner.fnRet.length() == 0) {
-            failAt(at, "类型外面的括号只能用来包函数类型（例如 ((int) -> int)[]）：'(" + inner.text() + ")' 直接写成 '" + inner.text() + "'")
+            failAt(at, "类型外面的括号只能用来包函数类型（例如 ((Int) -> Int)[]）：'(" + inner.text() + ")' 直接写成 '" + inner.text() + "'")
             rtn inner
         }
         var depth = 0
@@ -2119,7 +2130,7 @@ pub class Parser(tokens : Token[]) {
     }
 
     // 函数类型本体（阶段 30c）：`(` 类型列表 `)` `->` 类型。返回类型**必填**。
-    fn parseFunctionType(nullable : bool, at : Token) -> TypeInfo {
+    fn parseFunctionType(nullable : Bool, at : Token) -> TypeInfo {
         advance()   // (
         var params = ""
         if (!check("RPAREN")) {
@@ -2149,7 +2160,7 @@ pub class Parser(tokens : Token[]) {
 
     // 从当前位置（必须是 `(`）数到配对 `)` 的偏移；数不到返回 -1。
     // 4096 的防御与 Kotlin Parser.kt:2009 的 matchingParenOffset 一致。
-    fn matchingParenOffset() -> int {
+    fn matchingParenOffset() -> Int {
         var depth = 0
         var i = 0
         var going = true
@@ -2171,8 +2182,8 @@ pub class Parser(tokens : Token[]) {
         rtn -1
     }
 
-    // 类型实参表 `&<int>` / `&<string, int>` / `&<Box&<int>>`；返回的是**内部**文本
-    fn parseTypeArgs() -> string {
+    // 类型实参表 `&<Int>` / `&<String, Int>` / `&<Box&<Int>>`；返回的是**内部**文本
+    fn parseTypeArgs() -> String {
         advance()   // &
         expect("LT", "'&' 后面缺少 '<'：类型实参要写成 '&<实参类型>'（单独的 '<' 是比较运算）")
         var out = ""
@@ -2276,7 +2287,7 @@ pub class Parser(tokens : Token[]) {
             rtn errorNode()
         }
         if (k == "KW_CATCH") {
-            failAt(t, "'catch' 只能跟在 try 块后面，写法是 try { ... } catch (e : string) { ... }")
+            failAt(t, "'catch' 只能跟在 try 块后面，写法是 try { ... } catch (e : String) { ... }")
             rtn errorNode()
         }
 
@@ -2378,7 +2389,7 @@ pub class Parser(tokens : Token[]) {
         var failTok = advance()
         var next = peek()
         if (next.kind == "RBRACE" || next.kind == "EOF" || next.kind == "SEMI" || next.line != failTok.line) {
-            failAt(next, "'fail' 后面要跟错误消息，写法是 'fail \"出错了\"'（消息必须是 string 表达式）")
+            failAt(next, "'fail' 后面要跟错误消息，写法是 'fail \"出错了\"'（消息必须是 String 表达式）")
             rtn errorNode()
         }
         var n = new Node(NodeKind.FAIL)
@@ -2386,19 +2397,19 @@ pub class Parser(tokens : Token[]) {
         rtn n
     }
 
-    // `try { ... } catch (e : string) { ... }`（也收老写法 `catch (e string)`）
+    // `try { ... } catch (e : String) { ... }`（也收老写法 `catch (e String)`）
     fn parseTry() -> Node {
         advance()   // try
         var body = parseBody("try")
 
         if (!check("KW_CATCH")) {
-            failAt(peek(), "try 块后面必须跟一个 catch，写法是 try { ... } catch (e : string) { ... }")
+            failAt(peek(), "try 块后面必须跟一个 catch，写法是 try { ... } catch (e : String) { ... }")
             rtn errorNode()
         }
         advance()   // catch
 
-        expect("LPAREN", "catch 后面需要 '('，写法是 catch (错误变量 : string)")
-        var nameTok = expect("IDENT", "catch 里需要错误变量名，写法是 catch (e : string)")
+        expect("LPAREN", "catch 后面需要 '('，写法是 catch (错误变量 : String)")
+        var nameTok = expect("IDENT", "catch 里需要错误变量名，写法是 catch (e : String)")
 
         if (matchOne("COLON")) {
             if (check("KW_STRING")) {
@@ -2408,7 +2419,7 @@ pub class Parser(tokens : Token[]) {
             }
         } else {
             if (check("KW_STRING")) {
-                advance()   // 老写法 catch (e string)
+                advance()   // 老写法 catch (e String)
             } else {
                 failAt(peek(), catchTypeError(nameTok.text))
             }
@@ -2422,8 +2433,8 @@ pub class Parser(tokens : Token[]) {
         rtn n
     }
 
-    fn catchTypeError(name : string) -> string {
-        rtn "catch 的错误变量类型只能是 string。两种写法都可以：Kotlin 风格 'catch (" + name + " : string)'，或者 Java 风格 'catch (" + name + " string)'"
+    fn catchTypeError(name : String) -> String {
+        rtn "catch 的错误变量类型只能是 String。两种写法都可以：Kotlin 风格 'catch (" + name + " : String)'，或者 Java 风格 'catch (" + name + " String)'"
     }
 
     // if：花括号块、`c : 语句`、以及「三目出现在语句位置」（值被丢弃）
@@ -2466,7 +2477,7 @@ pub class Parser(tokens : Token[]) {
 
     // if / while / for / case / else / try / catch 的体：花括号块，或者冒号后面的单条语句
     // （单条语句也被包成一个只有一条语句的块，于是下游只有一种「体」形状）
-    fn parseBody(what : string) -> Node {
+    fn parseBody(what : String) -> Node {
         if (check("LBRACE")) {
             var lb = peek().line
             var blk = parseBlock()
@@ -2644,7 +2655,7 @@ pub class Parser(tokens : Token[]) {
     // `super.成员名(实参)`：只认方法调用（Kotlin 版 parseSuperMember，Parser.kt:2847）。
     // 落成的是普通 MEMBER 节点（与 parsePostfix 里 `a.b(实参)` 同形），
     // 接收者孩子就是上面那个 SUPER 节点。
-    fn parseSuperMember(sup : Node, who : string) -> Node {
+    fn parseSuperMember(sup : Node, who : String) -> Node {
         var dotTok = peek()
         expect("DOT", "'" + who + "' 后面需要 '.'：写法是 " + who + ".方法名(实参)")
         var nameTok = expect("IDENT", "'" + who + ".' 后面需要成员名")
@@ -2873,15 +2884,15 @@ pub class Parser(tokens : Token[]) {
         rtn outer.countTag()
     }
 
-    fn varNode(name : string) -> Node {
+    fn varNode(name : String) -> Node {
         rtn new Node(NodeKind.VAR).put("name", escapeValue(name))
     }
 
-    fn intNode(value : string) -> Node {
+    fn intNode(value : String) -> Node {
         rtn new Node(NodeKind.INT_LIT).put("value", value)
     }
 
-    fn binaryNode(op : string, left : Node, right : Node) -> Node {
+    fn binaryNode(op : String, left : Node, right : Node) -> Node {
         var opTok = prevToken()
         // 运算符的位置不取 `opTok`：Kotlin 侧报错指在**左操作数**起点（c15 期望 2:19 而不是 2:23）
         var n = new Node(NodeKind.BINARY).put("op", op).atNode(left)
@@ -3094,7 +3105,7 @@ pub class Parser(tokens : Token[]) {
 
     // `f!!(1)` 的调用名（照抄 Kotlin 的 calleeText，Parser.kt:3129）：
     // 剥掉 `!!` 再看这到底是谁的名字；认不出来就给空串。
-    fn calleeTextOf(e : Node) -> string {
+    fn calleeTextOf(e : Node) -> String {
         if (e.kind == NodeKind.FORCE) { rtn calleeTextOf(e.children[0]) }
         if (e.kind == NodeKind.VAR) { rtn nodeProp(e, "name") }
         if (e.kind == NodeKind.MEMBER) { rtn nodeProp(e, "name") }
@@ -3102,12 +3113,12 @@ pub class Parser(tokens : Token[]) {
     }
 
     // `as` / `is` 后面的目标类型（阶段 24，自举同步 24b）。
-    // 复用 parseTypeRef()，所以 `A`、`A[]`、`Box&<int>`、`A::Nested` 都能写；
+    // 复用 parseTypeRef()，所以 `A`、`A[]`、`Box&<Int>`、`A::Nested` 都能写；
     // 只多一条限制：**目标不许可空**。null 的三种行为已经被拍死
     // （`null is A` 恒 false、`null as A` 抛、`null ?as A` 得 null，见 DESIGN-24 §3 的 Q2），
     // 目标再写 `?` 不会带来任何区别，只会让人误会「有 '?' 才是安全的那一种」——
     // 所以直接在语法层拒掉。
-    fn parseCastTarget(opText : string) -> TypeInfo {
+    fn parseCastTarget(opText : String) -> TypeInfo {
         var t = peek()
         // `?` 单拎出来报：否则会落到下面「需要一个目标类型」那条，把人引向
         // 「该写什么类型」而不是「不许写 ?」，而 n1 的判据看的就是这条口径。
@@ -3137,7 +3148,7 @@ pub class Parser(tokens : Token[]) {
 
     // `failAt` 文案里那个「实际读到的记号」：口径对齐 Kotlin 版 Token.describe()
     // （EOF 说「文件结束」、标识符带引号说明、字面量原样、其余打记号原文）。
-    fn tokenDescribe(t : Token) -> string {
+    fn tokenDescribe(t : Token) -> String {
         if (t.kind == "EOF") { rtn "文件结束" }
         if (t.kind == "IDENT") { rtn "标识符 '" + t.text + "'" }
         if (t.kind == "INT_LIT" || t.kind == "LONG_LIT" || t.kind == "FLOAT_LIT" ||
@@ -3148,7 +3159,7 @@ pub class Parser(tokens : Token[]) {
     }
 
     // 去掉首字符（`?A` -> `A`）。只在「可空目标」那条错误文案里用，语义是 String.removePrefix。
-    fn dropFirstChar(s : string) -> string {
+    fn dropFirstChar(s : String) -> String {
         if (s.length() <= 1) { rtn "" }
         rtn s.substring(1, s.length())
     }
@@ -3158,7 +3169,7 @@ pub class Parser(tokens : Token[]) {
     // 写完一个转换/判型后立刻看一眼下一个记号：若是 `as` / `?as` / `is` / `!is` 就报错。
     // 理由：`a as A as B` 的结论等价于 `a as B`（判型只认最后那个类型），
     // 中间那层既不改变结果、也不做额外检查，链下去只让人误会它「逐层收窄」。
-    fn expectNoChainedCast(opText : string) -> void {
+    fn expectNoChainedCast(opText : String) -> void {
         var t = peek()
         var next = ""
         if (t.kind == "KW_AS") { next = "as" }
@@ -3235,12 +3246,35 @@ pub class Parser(tokens : Token[]) {
         if (k == "KW_LAM") {
             rtn parseLambda()
         }
+        // 阶段 55：内置类型名成了关键字，但 JDK 里有同名类（`Long.MAX_VALUE`、
+        // `String(bytes)`），所以「关键字 + '.'」按标识符收、「关键字 + '('」按构造收
+        // ——与 Kotlin 版 Parser.parsePrimary 同一规则。
+        if (isTypeKeyword(k) && peekAt(1).kind == "DOT") {
+            advance()
+            rtn new Node(NodeKind.VAR).put("name", escapeValue(t.text)).at(t)
+        }
+        if (isTypeKeyword(k) && peekAt(1).kind == "LPAREN") {
+            advance()
+            expect("LPAREN", "'" + t.text + "' 后面缺少 '('")
+            var kwArgs = new Node(NodeKind.ARGS)
+            if (!check("RPAREN")) {
+                var gk = true
+                while (gk && !failed) {
+                    kwArgs.add(parseExpr())
+                    if (!matchOne("COMMA")) { gk = false }
+                }
+            }
+            expect("RPAREN", "构造 '" + t.text + "' 的参数表没有闭合，缺少 ')'")
+            var kwNew = new Node(NodeKind.NEW).put("class", escapeValue(t.text)).put("typeArgs", "-")
+            kwNew.add(kwArgs.countTag())
+            rtn kwNew.at(t)
+        }
         if (k == "IDENT") {
             advance()
-            // `Box&<int>(0)`：类型实参只会出现在类型上，所以「标识符 +&<...> + (」无歧义地是一次构造
+            // `Box&<Int>(0)`：类型实参只会出现在类型上，所以「标识符 +&<...> + (」无歧义地是一次构造
             if (check("AMP")) {
                 var typeArgs = parseTypeArgs()
-                expect("LPAREN", "'" + t.text + "&<...>' 后面缺少 '('：构造对象要写实参表，例如 new " + t.text + "&<int>(0)（new 可以省）")
+                expect("LPAREN", "'" + t.text + "&<...>' 后面缺少 '('：构造对象要写实参表，例如 new " + t.text + "&<Int>(0)（new 可以省）")
                 var newArgs = new Node(NodeKind.ARGS)
                 if (!check("RPAREN")) {
                     var g2 = true
@@ -3294,7 +3328,7 @@ pub class Parser(tokens : Token[]) {
         var newTok = prevToken()
         var t = peek()
         if (!isTypeKeyword(t.kind) && t.kind != "IDENT") {
-            failAt(t, "'new' 后面需要类名（new Point(1, 2)）或者数组类型（new int[5]）")
+            failAt(t, "'new' 后面需要类名（new Point(1, 2)）或者数组类型（new Int[5]）")
             rtn errorNode()
         }
         var ty = parseTypeRef()
@@ -3312,7 +3346,7 @@ pub class Parser(tokens : Token[]) {
                 expect("RBRACKET", "'new " + ty.text() + "[...]' 缺少 ']'")
             }
             if (ty.depth > 0) {
-                failAt(t, "new 后面的数组类型不能再写 '[]'：长度写在方括号里，例如 new int[5]")
+                failAt(t, "new 后面的数组类型不能再写 '[]'：长度写在方括号里，例如 new Int[5]")
             }
             var arr = new Node(NodeKind.NEW_ARRAY).put("elem", ty.text())
             arr.add(dims.countTag())
@@ -3344,19 +3378,19 @@ pub class Parser(tokens : Token[]) {
         rtn n
     }
 
-    // 函数值字面量（阶段 30c）：`lam(x : int) -> int { rtn x + 1 }`。
+    // 函数值字面量（阶段 30c）：`lam(x : Int) -> Int { rtn x + 1 }`。
     // 形参类型与返回子句**都可以省**（省了留给 Backend 按期望类型补）。
     // 节点形状与 AstDump.kt 的 LambdaExpr 分支逐字节对齐：
     //   text = `params=<n> ret=<类型文本|->`，孩子依次是 PARAM… 然后 BLOCK。
     fn parseLambda() -> Node {
         advance()   // lam
-        var params = parseParamList("'lam' 后面需要一个形参表：写法是 lam(x : int) -> int { … }", true)
+        var params = parseParamList("'lam' 后面需要一个形参表：写法是 lam(x : Int) -> Int { … }", true)
         var ret = "-"
         if (matchOne("ARROW")) {
             ret = parseTypeRef().text()
         }
         if (!check("LBRACE")) {
-            failAt(peek(), "lambda 体要写成块：lam(…) -> 类型 { … }（写法是 lam(x : int) -> int { rtn x + 1 }）")
+            failAt(peek(), "lambda 体要写成块：lam(…) -> 类型 { … }（写法是 lam(x : Int) -> Int { rtn x + 1 }）")
             rtn errorNode()
         }
         var body = parseBlock()
@@ -3377,8 +3411,8 @@ pub class Parser(tokens : Token[]) {
     }
 
     // lambda 形参的 PARAM 节点是 `type=<类型> name=<名字>`，这里把类型那一段抠出来。
-    // 类型文本可能自带空格（`(int) -> int`），所以不能按空格切，要找**最后**那个 ` name=`。
-    fn lambdaParamTypeOf(p : Node) -> string {
+    // 类型文本可能自带空格（`(Int) -> Int`），所以不能按空格切，要找**最后**那个 ` name=`。
+    fn lambdaParamTypeOf(p : Node) -> String {
         var t = p.text
         var at = t.indexOf(" name=")
         if (at < 0) { rtn "" }
@@ -3390,7 +3424,7 @@ pub class Parser(tokens : Token[]) {
 
 // 解析一份源码。**合法输入上与 Kotlin 版 Parser 建出结构相同的树**。
 // 失败时不抛（rsf 版不用异常）：返回一个 kind = ERROR 的节点，消息在 text 里。
-pub fn parseSource(source : string) -> Node {
+pub fn parseSource(source : String) -> Node {
     var ts = lex(source)
     if (ts.length == 0) {
         // 词法就挂了：Kotlin 版这时抛的是 RsfError，rsf 版把词法消息落进 ERROR 节点
@@ -3410,7 +3444,7 @@ pub fn parseSource(source : string) -> Node {
 }
 
 // 判定一份源码能不能解析（对拍「两边都失败」那条边界用的）
-pub fn parseFailed(source : string) -> bool {
+pub fn parseFailed(source : String) -> Bool {
     var ts = lex(source)
     if (ts.length == 0) { rtn true }
     var p = new Parser(ts)
@@ -3420,7 +3454,7 @@ pub fn parseFailed(source : string) -> bool {
 }
 
 // 解析失败时的消息（没失败就是空串）
-pub fn parseErrorMessage(source : string) -> string {
+pub fn parseErrorMessage(source : String) -> String {
     var ts = lex(source)
     if (ts.length == 0) { rtn lexError(source) }
     var p = new Parser(ts)
@@ -3430,7 +3464,7 @@ pub fn parseErrorMessage(source : string) -> string {
 
 // 解析失败时的行 / 列（1 基）；没失败或词法阶段就挂了给 -1。
 // 阶段 32c 的 `CheckCli` 要用它把失败翻成 `file:行:列: error[parser]: 文案`。
-pub fn parseErrorLine(source : string) -> int {
+pub fn parseErrorLine(source : String) -> Int {
     var ts = lex(source)
     if (ts.length == 0) { rtn -1 }
     var p = new Parser(ts)
@@ -3439,7 +3473,7 @@ pub fn parseErrorLine(source : string) -> int {
     rtn p.errorLine()
 }
 
-pub fn parseErrorCol(source : string) -> int {
+pub fn parseErrorCol(source : String) -> Int {
     var ts = lex(source)
     if (ts.length == 0) { rtn -1 }
     var p = new Parser(ts)
@@ -3449,20 +3483,20 @@ pub fn parseErrorCol(source : string) -> int {
 }
 
 // 读文件再解析（路径用 / 分隔；不写死任何绝对路径）
-pub fn parseFile(path : string) -> !Node {
+pub fn parseFile(path : String) -> !Node {
     var text = readText(path)!!
     rtn parseSource(text)
 }
 
 // ================================================================ dump
 
-fn astLine(node : Node, depth : int) -> string {
+fn astLine(node : Node, depth : Int) -> String {
     var head = repeatText("  ", depth) + kindName(node.kind)
     if (node.text.length() > 0) { head = head + " " + node.text }
     rtn head
 }
 
-pub fn dumpAstAt(node : Node, depth : int) -> void {
+pub fn dumpAstAt(node : Node, depth : Int) -> void {
     println(astLine(node, depth))
     for (var i = 0; i < node.childCount; i = i + 1) {
         dumpAstAt(node.children[i], depth + 1)
@@ -3474,7 +3508,7 @@ pub fn dumpAst(node : Node) -> void {
 }
 
 // 与 dumpAst 同样的内容，但拼成一个字符串返回（测试与工具用起来更方便）
-pub fn astTextAt(node : Node, depth : int) -> string {
+pub fn astTextAt(node : Node, depth : Int) -> String {
     var out = astLine(node, depth) + "\n"
     for (var i = 0; i < node.childCount; i = i + 1) {
         out = out + astTextAt(node.children[i], depth + 1)
@@ -3482,7 +3516,7 @@ pub fn astTextAt(node : Node, depth : int) -> string {
     rtn out
 }
 
-pub fn astText(node : Node) -> string {
+pub fn astText(node : Node) -> String {
     rtn astTextAt(node, 0)
 }
 
@@ -3492,4 +3526,4 @@ pub fn astText(node : Node) -> string {
 // 留在库里会让任何 import 它的程序撞名。入口单独放在 `ParserCli.rsf`。
 //
 // rsf 的 main 也**收不到命令行参数**，所以 ParserCli 用系统属性 `rsf.ast.file`
-// 指定输入（属性不存在时 `System.getProperty` 返回 null，要按 `?string` 接住再兜底）。
+// 指定输入（属性不存在时 `System.getProperty` 返回 null，要按 `?String` 接住再兜底）。

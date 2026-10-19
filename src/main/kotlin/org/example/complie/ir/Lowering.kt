@@ -98,7 +98,7 @@ class IFieldAssign(val stmt: MemberAssignStmt) : Instr {
  * 而且这一条还要在**目标求完之后、右值求完之后**插一次越界检查
  * （解释器与字节码两端都按这个顺序做，副作用顺序才能一致）。
  *
- * 注意数组的**读**（`a[i]`）与**创建**（`new int[5]`）不需要新指令：它们都出现在
+ * 注意数组的**读**（`a[i]`）与**创建**（`new Int[5]`）不需要新指令：它们都出现在
  * 表达式位置，而 IR 里的表达式本来就是 AST 节点（表达式内部没有 goto）。
  */
 class IIndexAssign(val stmt: IndexAssignStmt) : Instr {
@@ -202,7 +202,7 @@ class ISwitch(
      * 1. **控制流图上**没有这条边。没写 `else` ⇒ Checker 已保证 case 覆盖了枚举的
      *    每一个值，于是「都不命中」在类型正确的程序里不可能发生。把它算成一条边会
      *    让「所有路径都 return」的分析误报——而
-     *    `fun nameOf(k : TokenKind) -> string { switch (k) { case A : rtn "a" ... } }`
+     *    `fun nameOf(k : TokenKind) -> String { switch (k) { case A : rtn "a" ... } }`
      *    正是最自然的枚举分派写法，不能判它「可能掉出函数末尾」。
      * 2. **运行期仍然要有明确的落点**：旁路确实存在——引用类型数组的元素默认是 null，
      *    `switch (arr[1])` 里的值就可能是 null，而枚举常量都不是 null，于是哪一支都
@@ -265,7 +265,7 @@ class TryHandler(
 /**
  * 把函数体摊平成一维指令序列。
  *
- * 槽位从 0 开始分配：先是参数（按签名顺序，long/double 占两格），然后是函数体里
+ * 槽位从 0 开始分配：先是参数（按签名顺序，Long/Double 占两格），然后是函数体里
  * 每个变量声明一个**永不复用**的槽位。理论上兄弟块里的变量可以共享槽位，
  * 但 goto 能让控制流从任意位置跳进任意块，两个不同类型却共用槽位的变量会在
  * 汇合点撞车（栈帧合并成冲突类型，JVM 直接拒绝）。不复用是拿一点点局部变量
@@ -285,7 +285,7 @@ class Lowering(
      */
     private val firstSlot: Int = 0,
     /**
-     * `try { ... } catch (e : string) { ... }` 里那个 catch 变量的绑定。
+     * `try { ... } catch (e : String) { ... }` 里那个 catch 变量的绑定。
      *
      * 它跟普通局部变量一样要占一格槽位，但它没有 `VarDeclStmt` 可以挂，所以单开一张表。
      */
@@ -381,7 +381,7 @@ class Lowering(
             is GotoStmt -> out.add(IGoto(stmt.label, stmt.at))
 
             /*
-             * `try { 保护体 } catch (e : string) { 处理体 }`：
+             * `try { 保护体 } catch (e : String) { 处理体 }`：
              *
              * ```
              * try.start:      <- 保护范围从这里开始
@@ -523,7 +523,7 @@ class Lowering(
 
                 // `while (true)` 且循环体里没有能逃出本层的 break —— 这就是死循环，
                 // 出口边不存在。不做这个特判的话，后面「所有路径都 return」的分析会
-                // 认为函数可能掉出末尾，对 `fun f() -> int { while (true) { rtn 1 } }`
+                // 认为函数可能掉出末尾，对 `fun f() -> Int { while (true) { rtn 1 } }`
                 // 这种完全合法的写法误报。
                 val canExit = stmt.condition !is BoolLit ||
                     (stmt.condition as BoolLit).value.not() ||
@@ -563,7 +563,7 @@ class Lowering(
                     if (stmt.elseBody?.let { containsBreak(it) } == true) return true
                 }
                 // try 的保护体和处理体都在本层：里面写的 break 就是跳出本层循环。
-                // 漏掉这一条的话，`while (true) { try { break } catch (e : string) { } }`
+                // 漏掉这一条的话，`while (true) { try { break } catch (e : String) { } }`
                 // 会被当成死循环，后面的可达性分析跟着一起错。
                 is TryStmt -> {
                     if (containsBreak(stmt.body)) return true
@@ -750,7 +750,7 @@ sealed interface Capture {
  *
  * 帧布局（两端必须一模一样，30c 要对拍）：
  * ```
- * 槽 0 ..                捕获项（`this` 在前，然后按首次引用顺序，long/double 占两格）
+ * 槽 0 ..                捕获项（`this` 在前，然后按首次引用顺序，Long/Double 占两格）
  * 槽 captureSlotCount .. 形参（按签名顺序）
  * 槽 ...                 体里的局部变量（[Lowering] 分配，永不复用）
  * ```
@@ -773,7 +773,7 @@ class LambdaClosure(
     /** 形参个数——也就是 SAM 接口的 arity。 */
     val arity: Int get() = params.size
 
-    /** 捕获项一共占多少槽（long/double 各占两格）。 */
+    /** 捕获项一共占多少槽（Long/Double 各占两格）。 */
     val captureSlotCount: Int = captures.sumOf { it.type.slots }
 
     /** 合成方法的确定性名字（工单 §1）。 */
@@ -837,7 +837,7 @@ object ClosureScopes {
  * - 形参的 `Binding` 是 Checker 在 `checkLambda` 里新造的（`paramIndex >= 0`），
  *   按「下标 + 名字」认回它属于哪一层；
  * - catch 变量同理（Checker 也是在 catch 体里新造一个 `Binding`），按名字认回最近的
- *   `catch (名字 : string)`；
+ *   `catch (名字 : String)`；
  * - 其余的一律是外层帧的值，从**读到它的那一层**一路标到函数帧：每一层都得捕获，
  *   因为每一层都要把值再传给下一层。
  *

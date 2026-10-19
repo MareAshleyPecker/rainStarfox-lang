@@ -1,5 +1,5 @@
 final class B {
-    var v : int = 0
+    var v : Int = 0
 }
 class D : B() {
 }

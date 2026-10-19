@@ -18,7 +18,7 @@ import org.example.complie.diag.SourceFile
 internal const val LEGACY_VAR_KEYWORD: String = "varis"
 
 /** 老写法 `varis` 的统一报错文案：说清改成了什么、以及一句话能照抄的改写。 */
-internal const val LEGACY_VAR_MESSAGE: String = "'varis' 已改名为 'var'：请写成 'var x : int = 0'"
+internal const val LEGACY_VAR_MESSAGE: String = "'varis' 已改名为 'var'：请写成 'var x : Int = 0'"
 
 /**
  * 函数声明关键字的老写法（2026-10-18 阶段 29 起唯一写法是 `fn`）。
@@ -86,19 +86,19 @@ private val KEYWORDS: Map<String, TokenKind> = buildMap {
     put("true", TokenKind.KW_TRUE)
     put("false", TokenKind.KW_FALSE)
     put("null", TokenKind.KW_NULL)
-    // 类型关键字（str / boolean 是别名）
+    // 类型关键字（阶段 55：除 void 外首字母大写，像 Kotlin；Str / Boolean 是别名）
     put("void", TokenKind.KW_VOID)
-    put("int", TokenKind.KW_INT)
-    put("long", TokenKind.KW_LONG)
-    put("float", TokenKind.KW_FLOAT)
-    put("double", TokenKind.KW_DOUBLE)
-    put("string", TokenKind.KW_STRING)
-    put("str", TokenKind.KW_STRING)
-    put("bool", TokenKind.KW_BOOL)
-    put("boolean", TokenKind.KW_BOOL)
-    // 阶段 16：byte / char
-    put("byte", TokenKind.KW_BYTE)
-    put("char", TokenKind.KW_CHAR)
+    put("Int", TokenKind.KW_INT)
+    put("Long", TokenKind.KW_LONG)
+    put("Float", TokenKind.KW_FLOAT)
+    put("Double", TokenKind.KW_DOUBLE)
+    put("String", TokenKind.KW_STRING)
+    put("Str", TokenKind.KW_STRING)
+    put("Bool", TokenKind.KW_BOOL)
+    put("Boolean", TokenKind.KW_BOOL)
+    // 阶段 16：Byte / Char
+    put("Byte", TokenKind.KW_BYTE)
+    put("Char", TokenKind.KW_CHAR)
     // 阶段 24：类型转换 / 类型判断的操作符关键字（`x as A` / `x is A`）
     put("as", TokenKind.KW_AS)
     put("is", TokenKind.KW_IS)
@@ -107,7 +107,7 @@ private val KEYWORDS: Map<String, TokenKind> = buildMap {
 /**
  * rainStarfox 词法分析器。把 .rsf 源码切成 [Token] 流。
  *
- * 支持：双斜杠行注释、斜杠-星号块注释、十进制整数 / long / float / double
+ * 支持：双斜杠行注释、斜杠-星号块注释、十进制整数 / Long / Float / Double
  * 字面量、带转义的字符串字面量。
  *
  * 注意：本文件的注释里不能出现块的开始定界符，Kotlin 的块注释是会嵌套的。
@@ -283,16 +283,16 @@ class Lexer(private val source: SourceFile) {
         val lexeme = raw + if (suffix == '\u0000') "" else suffix.toString()
 
         return when (suffix) {
-            'l' -> Token(TokenKind.LONG_LIT, lexeme, at, raw.toLongOrNull() ?: overflow(raw, at, "long"))
-            'f' -> Token(TokenKind.FLOAT_LIT, lexeme, at, raw.toFloatOrNull() ?: overflow(raw, at, "float"))
-            'd' -> Token(TokenKind.DOUBLE_LIT, lexeme, at, raw.toDoubleOrNull() ?: overflow(raw, at, "double"))
+            'l' -> Token(TokenKind.LONG_LIT, lexeme, at, raw.toLongOrNull() ?: overflow(raw, at, "Long"))
+            'f' -> Token(TokenKind.FLOAT_LIT, lexeme, at, raw.toFloatOrNull() ?: overflow(raw, at, "Float"))
+            'd' -> Token(TokenKind.DOUBLE_LIT, lexeme, at, raw.toDoubleOrNull() ?: overflow(raw, at, "Double"))
             '\u0000' -> if (hasDot) {
-                Token(TokenKind.DOUBLE_LIT, lexeme, at, raw.toDoubleOrNull() ?: overflow(raw, at, "double"))
+                Token(TokenKind.DOUBLE_LIT, lexeme, at, raw.toDoubleOrNull() ?: overflow(raw, at, "Double"))
             } else {
                 val v = raw.toIntOrNull()
                     ?: throw RsfError(
                         "lexer",
-                        "整数字面量 $raw 超出 int 范围，请加 L 后缀写成 long",
+                        "整数字面量 $raw 超出 Int 范围，请加 L 后缀写成 Long",
                         at.line, at.column, source,
                     )
                 Token(TokenKind.INT_LIT, lexeme, at, v)
@@ -459,7 +459,7 @@ class Lexer(private val source: SourceFile) {
             ')' -> one(TokenKind.RPAREN)
             '{' -> one(TokenKind.LBRACE)
             '}' -> one(TokenKind.RBRACE)
-            // 阶段 13：数组（类型后缀 `int[]`、下标 `a[0]`、创建 `new int[5]`）
+            // 阶段 13：数组（类型后缀 `Int[]`、下标 `a[0]`、创建 `new Int[5]`）
             '[' -> one(TokenKind.LBRACKET)
             ']' -> one(TokenKind.RBRACKET)
             ',' -> one(TokenKind.COMMA)

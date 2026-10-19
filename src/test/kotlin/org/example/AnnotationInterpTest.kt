@@ -28,7 +28,7 @@ import kotlin.test.assertTrue
  * 的 stdout **逐字节相同** —— 这是这个项目里「两端一致」唯一的验证方式，只看一头会漏。
  *
  * 已知差异（不算 bug，DESIGN-21 §3 选的是运行时机 B）：`public static Marker()` /
- * `Marker(string member)` 那套方案 B 访问器与懒构造缓存、`annotationType()` 都是
+ * `Marker(String member)` 那套方案 B 访问器与懒构造缓存、`annotationType()` 都是
  * **字节码独有**的（rsf 源码里看不见，Checker 也没这些成员），所以解释器不建缓存、
  * 不建模——本文件不测它们（它们由 `AnnotationCodegenTest` 在 Java 侧守着）。
  */
@@ -41,9 +41,9 @@ class AnnotationInterpTest {
     fun `new 伴生实例的元素字段按构造器实参赋值`() {
         parity(
             """
-            annotation Marker(value : string = "d", count : int = 0) {
+            annotation Marker(value : String = "d", count : Int = 0) {
                 companion entity Impl {
-                    var hits : int = 0
+                    var hits : Int = 0
                 }
             }
 
@@ -62,9 +62,9 @@ class AnnotationInterpTest {
     fun `省略的实参取元素默认值`() {
         parity(
             """
-            annotation Marker(value : string = "d", count : int = 0) {
+            annotation Marker(value : String = "d", count : Int = 0) {
                 companion entity Impl {
-                    var hits : int = 0
+                    var hits : Int = 0
                 }
             }
 
@@ -84,9 +84,9 @@ class AnnotationInterpTest {
     fun `元素字段读取与元素访问器同值`() {
         parity(
             """
-            annotation Marker(value : string = "d", count : int = 0) {
+            annotation Marker(value : String = "d", count : Int = 0) {
                 companion entity Impl {
-                    var hits : int = 0
+                    var hits : Int = 0
                 }
             }
 
@@ -107,9 +107,9 @@ class AnnotationInterpTest {
     fun `元素访问器可以重复调用且值稳定`() {
         parity(
             """
-            annotation Marker(value : string = "d") {
+            annotation Marker(value : String = "d") {
                 companion entity Impl {
-                    var hits : int = 0
+                    var hits : Int = 0
                 }
             }
 
@@ -123,15 +123,15 @@ class AnnotationInterpTest {
         )
     }
 
-    /** (1)(3) 各类型元素都能赋值/读出：bool / long / double / byte / char / string[]。 */
+    /** (1)(3) 各类型元素都能赋值/读出：Bool / Long / Double / Byte / Char / String[]。 */
     @Test
     fun `各类型元素在解释器里按构造器实参赋值`() {
         parity(
             """
-            annotation Meta(tags : string[], flag : bool = true, big : long = 9L,
-                            d : double = 1.5, b : byte = 2, ch : char = 'z') {
+            annotation Meta(tags : String[], flag : Bool = true, big : Long = 9L,
+                            d : Double = 1.5, b : Byte = 2, ch : Char = 'z') {
                 companion entity Impl {
-                    fn describe() -> string {
+                    fn describe() -> String {
                         return "tags=" + tags[0] + "," + tags.length + " flag=" + flag +
                             " big=" + big + " d=" + d + " b=" + b + " ch=" + ch
                     }
@@ -139,7 +139,7 @@ class AnnotationInterpTest {
             }
 
             fn main() -> void {
-                var ts : string[] = new string[2]
+                var ts : String[] = new String[2]
                 ts[0] = "aa"
                 var m : Meta = new Meta(ts, false)
                 println(m.flag)
@@ -169,13 +169,13 @@ class AnnotationInterpTest {
     fun `伴生行为方法可调用且看得见元素`() {
         parity(
             """
-            annotation Marker(value : string = "d", count : int = 0) {
+            annotation Marker(value : String = "d", count : Int = 0) {
                 companion entity Impl {
-                    var hits : int = 0
-                    fn describe() -> string {
+                    var hits : Int = 0
+                    fn describe() -> String {
                         return value + "/" + count
                     }
-                    fn bump() -> int {
+                    fn bump() -> Int {
                         hits = hits + 1
                         return hits
                     }
@@ -200,12 +200,12 @@ class AnnotationInterpTest {
         parity(
             """
             interface Namer {
-                fn name() -> string
+                fn name() -> String
             }
 
-            annotation Marker(value : string = "d") {
+            annotation Marker(value : String = "d") {
                 companion entity Impl : Namer {
-                    fn name() -> string {
+                    fn name() -> String {
                         return "n:" + value
                     }
                 }
@@ -229,12 +229,12 @@ class AnnotationInterpTest {
     fun `伴生体里按裸名读元素`() {
         parity(
             """
-            annotation Marker(value : string = "d", count : int = 0) {
+            annotation Marker(value : String = "d", count : Int = 0) {
                 companion entity Impl {
-                    fn describe() -> string {
+                    fn describe() -> String {
                         return value + "/" + count
                     }
-                    fn onlyValue() -> string {
+                    fn onlyValue() -> String {
                         return value
                     }
                 }
@@ -255,12 +255,12 @@ class AnnotationInterpTest {
     fun `伴生体里按裸名调元素访问器`() {
         parity(
             """
-            annotation Marker(value : string = "d", count : int = 0) {
+            annotation Marker(value : String = "d", count : Int = 0) {
                 companion entity Impl {
-                    fn viaAccessor() -> string {
+                    fn viaAccessor() -> String {
                         return value() + "/" + count()
                     }
-                    fn mixed() -> string {
+                    fn mixed() -> String {
                         return value + "/" + count()
                     }
                 }
@@ -283,9 +283,9 @@ class AnnotationInterpTest {
     fun `new Marker_Impl 与 new Marker 等价`() {
         parity(
             """
-            annotation Marker(value : string = "d", count : int = 0) {
+            annotation Marker(value : String = "d", count : Int = 0) {
                 companion entity Impl {
-                    fn describe() -> string {
+                    fn describe() -> String {
                         return value + "/" + count
                     }
                 }
@@ -312,9 +312,9 @@ class AnnotationInterpTest {
             Rsf.analyze(
                 source(
                     """
-                    annotation Marker(value : string = "d") {
+                    annotation Marker(value : String = "d") {
                         companion entity Impl {
-                            fn describe() -> string {
+                            fn describe() -> String {
                                 return value
                             }
                         }
@@ -339,7 +339,7 @@ class AnnotationInterpTest {
             Rsf.analyze(
                 source(
                     """
-                    annotation Plain(v : string = "d")
+                    annotation Plain(v : String = "d")
 
                     fn main() -> void {
                         var p : Plain = new Plain()
@@ -357,11 +357,11 @@ class AnnotationInterpTest {
     fun `手写构造器的伴生类元素字段照样赋值`() {
         parity(
             """
-            annotation Marker(value : string = "d", count : int = 0) {
+            annotation Marker(value : String = "d", count : Int = 0) {
                 companion entity Impl {
-                    constructor(value : string, count : int) {
+                    constructor(value : String, count : Int) {
                     }
-                    fn describe() -> string {
+                    fn describe() -> String {
                         return value + "/" + count
                     }
                 }
@@ -383,16 +383,16 @@ class AnnotationInterpTest {
     fun `元素访问器返回数组元素本身`() {
         parity(
             """
-            annotation Marker(tags : string[]) {
+            annotation Marker(tags : String[]) {
                 companion entity Impl {
-                    fn first() -> string {
+                    fn first() -> String {
                         return tags[0]
                     }
                 }
             }
 
             fn main() -> void {
-                var ts : string[] = new string[2]
+                var ts : String[] = new String[2]
                 ts[0] = "aa"
                 ts[1] = "bb"
                 var m : Marker = new Marker(ts)
@@ -414,19 +414,19 @@ class AnnotationInterpTest {
     @Test
     fun `注解使用点的具名实参与位置式同输出`() {
         val named = """
-            annotation Marker(value : string = "d", count : int = 0) {
+            annotation Marker(value : String = "d", count : Int = 0) {
                 companion entity Impl {
-                    var hits : int = 0
+                    var hits : Int = 0
                 }
             }
 
             @Marker(value = "hi", count = 3)
             pub class Tagged {
                 @Marker("f")
-                var name : string = "n"
+                var name : String = "n"
 
                 @Marker(count = 1)
-                pub fn hello() -> string {
+                pub fn hello() -> String {
                     var m : Marker = new Marker("hi", 3)
                     return m.value() + "/" + m.count()
                 }
@@ -439,19 +439,19 @@ class AnnotationInterpTest {
             }
         """
         val positional = """
-            annotation Marker(value : string = "d", count : int = 0) {
+            annotation Marker(value : String = "d", count : Int = 0) {
                 companion entity Impl {
-                    var hits : int = 0
+                    var hits : Int = 0
                 }
             }
 
             @Marker("hi", 3)
             pub class Tagged {
                 @Marker("f")
-                var name : string = "n"
+                var name : String = "n"
 
                 @Marker("1")
-                pub fn hello() -> string {
+                pub fn hello() -> String {
                     var m : Marker = new Marker("hi", 3)
                     return m.value() + "/" + m.count()
                 }
@@ -479,9 +479,9 @@ class AnnotationInterpTest {
             Rsf.analyze(
                 source(
                     """
-                    annotation Marker(value : string = "d") {
+                    annotation Marker(value : String = "d") {
                         companion entity Impl {
-                            var hits : int = 0
+                            var hits : Int = 0
                         }
                     }
 
@@ -502,12 +502,12 @@ class AnnotationInterpTest {
         parity(
             """
             interface Greeter {
-                fn greet(n : string) -> string
+                fn greet(n : String) -> String
             }
 
             class Dog : Greeter {
-                var name : string = "d"
-                fn greet(n : string) -> string {
+                var name : String = "d"
+                fn greet(n : String) -> String {
                     return "woof:" + n
                 }
             }

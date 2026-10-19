@@ -1,7 +1,7 @@
 fn main() -> void {
     try {
         println("t")
-    } catch (e : string) {
+    } catch (e : String) {
         if (true) {
             println("c1")
         }

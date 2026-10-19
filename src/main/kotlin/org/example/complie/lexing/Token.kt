@@ -3,9 +3,9 @@ package org.example.complie.lexing
 enum class TokenKind(val text: String) {
     // ---- 字面量 ----
     INT_LIT("整数字面量"),
-    LONG_LIT("long 字面量"),
-    FLOAT_LIT("float 字面量"),
-    DOUBLE_LIT("double 字面量"),
+    LONG_LIT("Long 字面量"),
+    FLOAT_LIT("Float 字面量"),
+    DOUBLE_LIT("Double 字面量"),
     STRING_LIT("字符串字面量"),
     /** 字符字面量：单引号包一个字符（`'a'`、`'\n'`、`'\u0041'`），阶段 16。 */
     CHAR_LIT("字符字面量"),
@@ -16,7 +16,7 @@ enum class TokenKind(val text: String) {
     // ---- 关键字 ----
     KW_FUN("fn"),
     /**
-     * lambda 字面量（阶段 30）：`lam(x : int) -> int { rtn x + 1 }`。
+     * lambda 字面量（阶段 30）：`lam(x : Int) -> Int { rtn x + 1 }`。
      *
      * 它是**普通关键字**——不参与 [isModifierKeyword] 判定（`lam` 只能出现在
      * 表达式位置，不像 `public` / `static` 那样摆在声明前面），所以这里只加词法，
@@ -71,7 +71,7 @@ enum class TokenKind(val text: String) {
      */
     KW_ENUM("enum"),
     /**
-     * 接口声明（阶段 20）：`public interface Greeter { fn greet(name: string) -> string }`。
+     * 接口声明（阶段 20）：`public interface Greeter { fn greet(name: String) -> String }`。
      *
      * 注意与阶段 21 的 `@interface`（注解类型，JVM 侧 `ACC_ANNOTATION|ACC_INTERFACE`）
      * 是**两回事**：那是个带 `@` 前缀的独立记号/独立节点，别把这条关键字复用过去。
@@ -82,12 +82,12 @@ enum class TokenKind(val text: String) {
     /**
      * 次构造（阶段 18）：`constructor(参数) { ... }`，只能写在类体里。
      *
-     * 主构造写在类头的括号里（`class P(int x0)`），次构造用这个关键字——
+     * 主构造写在类头的括号里（`class P(Int x0)`），次构造用这个关键字——
      * 两者都不写返回类型，也**不能**用「名字等于类名的方法」冒充（那个现在直接报错）。
      */
     KW_CONSTRUCTOR("constructor"),
     /**
-     * 注解声明（阶段 21）：`public annotation Marker(value : string = "x") { ... }`。
+     * 注解声明（阶段 21）：`public annotation Marker(value : String = "x") { ... }`。
      *
      * 注意与 [KW_INTERFACE] 是**两个不同的关键字**：注解虽然也编译成 JVM 接口
      * （`ACC_ANNOTATION|ACC_INTERFACE`），但语法里它是独立的一种声明，
@@ -136,7 +136,7 @@ enum class TokenKind(val text: String) {
      */
     KW_AS("as"),
     /**
-     * `is`（阶段 24）：`值 is 目标类型` / `值 !is 目标类型`，结果是 `bool`。
+     * `is`（阶段 24）：`值 is 目标类型` / `值 !is 目标类型`，结果是 `Bool`。
      *
      * 同样是硬关键字、同样是后缀运算符，不进任何修饰词集合。
      */
@@ -161,7 +161,7 @@ enum class TokenKind(val text: String) {
     KW_GOTO("goto"),
     /** 抛出一个错误：`fail "消息"`（阶段 14）。 */
     KW_FAIL("fail"),
-    /** 捕获错误：`try { ... } catch (e : string) { ... }`（阶段 14；老写法 `catch (e string)` 也收）。 */
+    /** 捕获错误：`try { ... } catch (e : String) { ... }`（阶段 14；老写法 `catch (e String)` 也收）。 */
     KW_TRY("try"),
     KW_CATCH("catch"),
     KW_TRUE("true"),
@@ -170,16 +170,16 @@ enum class TokenKind(val text: String) {
 
     // ---- 类型关键字 ----
     KW_VOID("void"),
-    KW_INT("int"),
-    KW_LONG("long"),
-    KW_FLOAT("float"),
-    KW_DOUBLE("double"),
-    KW_STRING("string"),
-    KW_BOOL("bool"),
+    KW_INT("Int"),
+    KW_LONG("Long"),
+    KW_FLOAT("Float"),
+    KW_DOUBLE("Double"),
+    KW_STRING("String"),
+    KW_BOOL("Bool"),
     /** 8 位有符号整数（阶段 16）：JVM 描述符 `B`。 */
-    KW_BYTE("byte"),
+    KW_BYTE("Byte"),
     /** 16 位无符号字符（阶段 16）：JVM 描述符 `C`。 */
-    KW_CHAR("char"),
+    KW_CHAR("Char"),
 
     // ---- 标点与运算符 ----
     LPAREN("("),
@@ -188,7 +188,7 @@ enum class TokenKind(val text: String) {
     RBRACE("}"),
     /**
      * 方括号（阶段 13）：数组。三种用法——
-     * 类型后缀（`int[]`）、下标访问（`a[0]`）、数组创建（`new int[5]`）。
+     * 类型后缀（`Int[]`）、下标访问（`a[0]`）、数组创建（`new Int[5]`）。
      */
     LBRACKET("["),
     RBRACKET("]"),
@@ -203,7 +203,7 @@ enum class TokenKind(val text: String) {
      * 写法固定是「`@` 写在被标注的声明前面」，和 `public` / `static` / `override`
      * 这些修饰词**顺序任意、可连写多个**；v1 的可标注位置是类 / 接口 / 注解声明 /
      * 方法 / 字段，参数与局部变量上写 `@` 会在语法阶段报错。
-     * 注意它不参与返回子句：`fn f() :: int` 仍然报旧错（`::` 只留给 `A::B` 嵌套类型）。
+     * 注意它不参与返回子句：`fn f() :: Int` 仍然报旧错（`::` 只留给 `A::B` 嵌套类型）。
      */
     AT("@"),
     QUESTION("?"),
@@ -226,7 +226,7 @@ enum class TokenKind(val text: String) {
     PERCENT("%"),
     BANG("!"),
     /**
-     * `&`：**只**用来引入泛型的类型实参表 `&<int>`。
+     * `&`：**只**用来引入泛型的类型实参表 `&<Int>`。
      *
      * 逻辑与是单独一个记号 [ANDAND]（阶段 19c 起），所以这里的 `&` 只可能出现在
      * `&<...>` 里；反过来 `&` 也**必须**紧跟 `<` 才有意义，
@@ -242,8 +242,8 @@ enum class TokenKind(val text: String) {
      * `&&`：逻辑与（**短路**），阶段 19c 起。
      *
      * 和 [AMP] 是**两个不同的记号**，这一点是刻意的：`&` 只用来引出泛型实参表
-     * `&<int>`，而 `&&` 是逻辑运算。词法上按「两个字符」先认 `&&`，剩下孤零零的
-     * 一个 `&` 才当 [AMP]——所以 `Box&<int>` 与 `a && b` 在同一行里也不会打架
+     * `&<Int>`，而 `&&` 是逻辑运算。词法上按「两个字符」先认 `&&`，剩下孤零零的
+     * 一个 `&` 才当 [AMP]——所以 `Box&<Int>` 与 `a && b` 在同一行里也不会打架
      * （有测试守着这条）。
      */
     ANDAND("&&"),

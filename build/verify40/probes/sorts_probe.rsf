@@ -1,7 +1,7 @@
 import "../../../rsfSrc/core/Sorts.rsf"
 
 fn main() -> void {
-    var xs = new string[5]
+    var xs = new String[5]
     xs[0] = "pear"
     xs[1] = "apple"
     xs[2] = "fig"
@@ -11,7 +11,7 @@ fn main() -> void {
     println(sorted[0] + " " + sorted[1] + " " + sorted[2] + " " + sorted[3] + " " + sorted[4])
     println("" + Sorts.binarySearchStrings(sorted, "fig") + " " + Sorts.binarySearchStrings(sorted, "zzz"))
     println("" + Sorts.compareStrings("abc", "abd") + " " + Sorts.compareStrings("abc", "abc") + " " + Sorts.compareStrings("ab", "abc"))
-    var ls = new long[4]
+    var ls = new Long[4]
     ls[0] = 9000000000L
     ls[1] = -3L
     ls[2] = 42L

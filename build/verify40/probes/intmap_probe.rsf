@@ -1,7 +1,7 @@
 import "../../../rsfSrc/core/IntMap.rsf"
 
 fn main() -> void {
-    var m : IntMap&<string> = new IntMap&<string>()
+    var m : IntMap&<String> = new IntMap&<String>()
     m.put(1, "one")
     m.put(2, "two")
     m.put(-3, "minus")

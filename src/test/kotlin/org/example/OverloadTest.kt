@@ -20,7 +20,7 @@ import kotlin.test.assertTrue
  * 1. **顶层函数与类方法共用一套重载解析**（按实参个数 → 类型打分 → 挑最低分）；
  * 2. **最低分并列就报错**并列出候选签名，绝不静默取「声明在前」的那个
  *    ——**构造器保持老规矩**（同分取声明在前），那个差异写在 BOOTSTRAP.md / README.md 里；
- * 3. **擦除后同描述符的重载必须编译期拒绝**（`f(Box&<int>)` 与 `f(Box&<string>)`）；
+ * 3. **擦除后同描述符的重载必须编译期拒绝**（`f(Box&<Int>)` 与 `f(Box&<String>)`）；
  * 4. 选中结果只由 Checker 决定一次，**解释器与字节码两端读同一份**——
  *    每条正面用例都同时断言「输出对不对」和「两端逐字节一致」。
  *
@@ -34,23 +34,23 @@ class OverloadTest {
     @Test
     fun `按参数个数重载 顶层函数与类方法两端一致`() {
         val program = """
-            fn tag() -> string {
+            fn tag() -> String {
                 rtn "无参"
             }
-            fn tag(a : int) -> string {
+            fn tag(a : Int) -> String {
                 rtn "一参：" + a
             }
-            fn tag(a : int, b : int) -> string {
+            fn tag(a : Int, b : Int) -> String {
                 rtn "两参：" + (a + b)
             }
 
             class Greeter {
-                var who : string = "world"
+                var who : String = "world"
 
-                fn greet() -> string {
+                fn greet() -> String {
                     rtn "hello"
                 }
-                fn greet(name : string) -> string {
+                fn greet(name : String) -> String {
                     rtn "hello, " + name
                 }
             }
@@ -75,27 +75,27 @@ class OverloadTest {
     }
 
     @Test
-    fun `按精确类型重载 int string bool 各选各的`() {
+    fun `按精确类型重载 Int String Bool 各选各的`() {
         val program = """
-            fn kind(a : int) -> string {
-                rtn "int"
+            fn kind(a : Int) -> String {
+                rtn "Int"
             }
-            fn kind(a : string) -> string {
-                rtn "string"
+            fn kind(a : String) -> String {
+                rtn "String"
             }
-            fn kind(a : bool) -> string {
-                rtn "bool"
+            fn kind(a : Bool) -> String {
+                rtn "Bool"
             }
 
             class Teller {
-                fn kind(a : int) -> string {
-                    rtn "m-int"
+                fn kind(a : Int) -> String {
+                    rtn "m-Int"
                 }
-                fn kind(a : string) -> string {
-                    rtn "m-string"
+                fn kind(a : String) -> String {
+                    rtn "m-String"
                 }
-                fn kind(a : bool) -> string {
-                    rtn "m-bool"
+                fn kind(a : Bool) -> String {
+                    rtn "m-Bool"
                 }
             }
 
@@ -113,7 +113,7 @@ class OverloadTest {
 
         val (interpreted, compiled) = bothEnds(program)
         assertEquals(
-            listOf("int", "string", "bool", "m-int", "m-string", "m-bool"),
+            listOf("Int", "String", "Bool", "m-Int", "m-String", "m-Bool"),
             lines(interpreted),
         )
         assertEquals(interpreted, compiled)
@@ -122,43 +122,43 @@ class OverloadTest {
     @Test
     fun `按加宽距离重载 精确优先且窄加宽优先`() {
         val program = """
-            fn pick(a : int) -> string {
-                rtn "int"
+            fn pick(a : Int) -> String {
+                rtn "Int"
             }
-            fn pick(a : long) -> string {
-                rtn "long"
+            fn pick(a : Long) -> String {
+                rtn "Long"
             }
-            fn pick(a : double) -> string {
-                rtn "double"
-            }
-
-            // 没有 int 这一档时：byte 加宽到 long 是 2 分、到 double 是 4 分 ⇒ 选 long
-            fn narrow(a : long) -> string {
-                rtn "narrow-long"
-            }
-            fn narrow(a : double) -> string {
-                rtn "narrow-double"
+            fn pick(a : Double) -> String {
+                rtn "Double"
             }
 
-            // 字面量特例（0..127 的 int 字面量能给 byte）只值 1 分，精确匹配的 int 是 0 分
-            fn lit(a : byte) -> string {
-                rtn "lit-byte"
+            // 没有 Int 这一档时：Byte 加宽到 Long 是 2 分、到 Double 是 4 分 ⇒ 选 Long
+            fn narrow(a : Long) -> String {
+                rtn "narrow-Long"
             }
-            fn lit(a : int) -> string {
-                rtn "lit-int"
+            fn narrow(a : Double) -> String {
+                rtn "narrow-Double"
+            }
+
+            // 字面量特例（0..127 的 Int 字面量能给 Byte）只值 1 分，精确匹配的 Int 是 0 分
+            fn lit(a : Byte) -> String {
+                rtn "lit-Byte"
+            }
+            fn lit(a : Int) -> String {
+                rtn "lit-Int"
             }
 
             fn main() -> void {
-                var b : byte = 5
+                var b : Byte = 5
                 println(pick(b))
-                var i : int = 7
+                var i : Int = 7
                 println(pick(i))
-                var l : long = 9L
+                var l : Long = 9L
                 println(pick(l))
                 println(pick(1.5))
                 println(narrow(b))
                 println(lit(5))
-                var bb : byte = 5
+                var bb : Byte = 5
                 println(lit(bb))
                 rtn
             }
@@ -166,7 +166,7 @@ class OverloadTest {
 
         val (interpreted, compiled) = bothEnds(program)
         assertEquals(
-            listOf("int", "int", "long", "double", "narrow-long", "lit-int", "lit-byte"),
+            listOf("Int", "Int", "Long", "Double", "narrow-Long", "lit-Int", "lit-Byte"),
             lines(interpreted),
         )
         assertEquals(interpreted, compiled)
@@ -176,22 +176,22 @@ class OverloadTest {
     fun `静态方法与实例方法各自重载 含类内隐式调用`() {
         val program = """
             class Calc {
-                stc fn name(a : int) -> string {
-                    rtn "stc-int"
+                stc fn name(a : Int) -> String {
+                    rtn "stc-Int"
                 }
-                stc fn name(a : string) -> string {
-                    rtn "stc-string"
+                stc fn name(a : String) -> String {
+                    rtn "stc-String"
                 }
 
-                fn name(a : int, b : int) -> string {
+                fn name(a : Int, b : Int) -> String {
                     rtn "inst-两参：" + (a + b)
                 }
 
                 // 类体内裸写方法名：隐式 this / 隐式类名，同样走重载解析
-                fn viaThis() -> string {
+                fn viaThis() -> String {
                     rtn name(1, 2)
                 }
-                stc fn viaClass() -> string {
+                stc fn viaClass() -> String {
                     rtn name("s")
                 }
             }
@@ -209,7 +209,7 @@ class OverloadTest {
 
         val (interpreted, compiled) = bothEnds(program)
         assertEquals(
-            listOf("stc-int", "stc-string", "stc-string", "inst-两参：3", "inst-两参：3"),
+            listOf("stc-Int", "stc-String", "stc-String", "inst-两参：3", "inst-两参：3"),
             lines(interpreted),
         )
         assertEquals(interpreted, compiled)
@@ -218,7 +218,7 @@ class OverloadTest {
     @Test
     fun `重载之间的递归与互相调用`() {
         val program = """
-            fn count(n : int) -> int {
+            fn count(n : Int) -> Int {
                 if (n <= 0) {
                     rtn 0
                 }
@@ -226,14 +226,14 @@ class OverloadTest {
             }
 
             // 两参的那一个递归回**自己**（不是递归回一参的那个）
-            fn count(n : int, label : string) -> string {
+            fn count(n : Int, label : String) -> String {
                 if (n <= 0) {
                     rtn label
                 }
                 rtn label + count(n - 1, label)
             }
 
-            fn sum(lo : int, hi : int) -> int {
+            fn sum(lo : Int, hi : Int) -> Int {
                 if (lo > hi) {
                     rtn 0
                 }
@@ -241,13 +241,13 @@ class OverloadTest {
             }
 
             // 两个重载互相调用
-            fn odd(n : int) -> bool {
+            fn odd(n : Int) -> Bool {
                 if (n == 0) {
                     rtn false
                 }
                 rtn even(n - 1)
             }
-            fn even(n : int) -> bool {
+            fn even(n : Int) -> Bool {
                 if (n == 0) {
                     rtn true
                 }
@@ -272,7 +272,7 @@ class OverloadTest {
     @Test
     fun `可能失败的重载共存 try 与 elvis 都能用`() {
         val program = """
-            fn risky(a : int) -> !int {
+            fn risky(a : Int) -> !Int {
                 if (a < 0) {
                     fail "negative"
                 }
@@ -280,7 +280,7 @@ class OverloadTest {
             }
 
             // 同一个名字下的普通重载：不带 `!`，调用点不用处理错误
-            fn risky(a : int, b : int) -> int {
+            fn risky(a : Int, b : Int) -> Int {
                 rtn a + b
             }
 
@@ -288,7 +288,7 @@ class OverloadTest {
                 try {
                     println(risky(3))
                     println(risky(9))
-                } catch (e : string) {
+                } catch (e : String) {
                     println("err " + e)
                 }
 
@@ -302,7 +302,7 @@ class OverloadTest {
                 try {
                     var v = risky(-5)
                     println("不会到这里：" + v)
-                } catch (e : string) {
+                } catch (e : String) {
                     println("接住 " + e)
                 }
                 rtn
@@ -324,25 +324,25 @@ class OverloadTest {
                     value = v0
                 }
 
-                fn put(v : T) -> string {
+                fn put(v : T) -> String {
                     value = v
                     rtn "一参"
                 }
 
-                // 形参里同样有 T：Box&<int> 上它与上一句只有个数不同，不构成擦除冲突
-                fn put(v : T, times : int) -> string {
+                // 形参里同样有 T：Box&<Int> 上它与上一句只有个数不同，不构成擦除冲突
+                fn put(v : T, times : Int) -> String {
                     value = v
                     rtn "两参 " + times
                 }
             }
 
             fn main() -> void {
-                var b = new Box&<int>(0)
+                var b = new Box&<Int>(0)
                 println(b.put(7))
                 println(b.put(8, 2))
                 println(b.value)
 
-                var s = new Box&<string>("hi")
+                var s = new Box&<String>("hi")
                 println(s.put("yo"))
                 println(s.value)
                 rtn
@@ -357,7 +357,7 @@ class OverloadTest {
     @Test
     fun `main 可以重载 无参的那个才是入口`() {
         val program = """
-            fn main(a : int) -> void {
+            fn main(a : Int) -> void {
                 println("带参 " + a)
                 rtn
             }
@@ -386,16 +386,16 @@ class OverloadTest {
             Rsf.analyze(
                 source(
                     "class Box&<T> {\n    var value : T = 0\n}\n" +
-                        "fn f(a : Box&<int>) -> int {\n    rtn 1\n}\n" +
-                        "fn f(a : Box&<string>) -> int {\n    rtn 2\n}\n" +
+                        "fn f(a : Box&<Int>) -> Int {\n    rtn 1\n}\n" +
+                        "fn f(a : Box&<String>) -> Int {\n    rtn 2\n}\n" +
                         "fn main() -> void {\n    rtn\n}\n",
                 ),
             )
         }
         assertTrue(top.detail.contains("擦除"), top.detail)
         assertTrue(top.detail.contains("LBox;"), top.detail)
-        assertTrue(top.detail.contains("Box&<int>"), top.detail)
-        assertTrue(top.detail.contains("Box&<string>"), top.detail)
+        assertTrue(top.detail.contains("Box&<Int>"), top.detail)
+        assertTrue(top.detail.contains("Box&<String>"), top.detail)
         assertTrue(top.detail.contains("函数 'f'"), top.detail)
 
         // 同一个类的两个方法之间
@@ -404,8 +404,8 @@ class OverloadTest {
                 source(
                     "class Box&<T> {\n    var value : T = 0\n}\n" +
                         "class Holder {\n" +
-                        "    fn f(a : Box&<int>) -> int {\n        rtn 1\n    }\n" +
-                        "    fn f(a : Box&<string>) -> int {\n        rtn 2\n    }\n" +
+                        "    fn f(a : Box&<Int>) -> Int {\n        rtn 1\n    }\n" +
+                        "    fn f(a : Box&<String>) -> Int {\n        rtn 2\n    }\n" +
                         "}\n" +
                         "fn main() -> void {\n    rtn\n}\n",
                 ),
@@ -419,8 +419,8 @@ class OverloadTest {
         val byReturn = assertFailsWith<RsfError> {
             Rsf.analyze(
                 source(
-                    "fn g(a : int) -> int {\n    rtn 1\n}\n" +
-                        "fn g(a : int) -> string {\n    rtn \"s\"\n}\n" +
+                    "fn g(a : Int) -> Int {\n    rtn 1\n}\n" +
+                        "fn g(a : Int) -> String {\n    rtn \"s\"\n}\n" +
                         "fn main() -> void {\n    rtn\n}\n",
                 ),
             )
@@ -434,10 +434,10 @@ class OverloadTest {
         val e = assertFailsWith<RsfError> {
             Rsf.analyze(
                 source(
-                    "class A {\n    var x : int = 0\n}\n" +
-                        "class B {\n    var x : int = 0\n}\n" +
-                        "fn pick(v : ?A) -> string {\n    rtn \"A\"\n}\n" +
-                        "fn pick(v : ?B) -> string {\n    rtn \"B\"\n}\n" +
+                    "class A {\n    var x : Int = 0\n}\n" +
+                        "class B {\n    var x : Int = 0\n}\n" +
+                        "fn pick(v : ?A) -> String {\n    rtn \"A\"\n}\n" +
+                        "fn pick(v : ?B) -> String {\n    rtn \"B\"\n}\n" +
                         "fn main() -> void {\n    println(pick(null))\n    rtn\n}\n",
                 ),
             )
@@ -455,36 +455,36 @@ class OverloadTest {
         val many = assertFailsWith<RsfError> {
             Rsf.analyze(
                 source(
-                    "fn f(a : int) -> string {\n    rtn \"int\"\n}\n" +
-                        "fn f(a : string) -> string {\n    rtn \"string\"\n}\n" +
+                    "fn f(a : Int) -> String {\n    rtn \"Int\"\n}\n" +
+                        "fn f(a : String) -> String {\n    rtn \"String\"\n}\n" +
                         "fn main() -> void {\n    println(f(true))\n    rtn\n}\n",
                 ),
             )
         }
         assertTrue(many.detail.contains("对不上任何候选"), many.detail)
-        assertTrue(many.detail.contains("f(a : int)"), many.detail)
-        assertTrue(many.detail.contains("f(a : string)"), many.detail)
-        assertTrue(many.detail.contains("bool"), many.detail)
+        assertTrue(many.detail.contains("f(a : Int)"), many.detail)
+        assertTrue(many.detail.contains("f(a : String)"), many.detail)
+        assertTrue(many.detail.contains("Bool"), many.detail)
 
         // 个数不对：也要把候选列出来
         val arity = assertFailsWith<RsfError> {
             Rsf.analyze(
                 source(
-                    "fn f(a : int) -> string {\n    rtn \"int\"\n}\n" +
-                        "fn f(a : string) -> string {\n    rtn \"string\"\n}\n" +
+                    "fn f(a : Int) -> String {\n    rtn \"Int\"\n}\n" +
+                        "fn f(a : String) -> String {\n    rtn \"String\"\n}\n" +
                         "fn main() -> void {\n    println(f(1, 2))\n    rtn\n}\n",
                 ),
             )
         }
         assertTrue(arity.detail.contains("参数个数不对"), arity.detail)
-        assertTrue(arity.detail.contains("f(a : int)"), arity.detail)
-        assertTrue(arity.detail.contains("f(a : string)"), arity.detail)
+        assertTrue(arity.detail.contains("f(a : Int)"), arity.detail)
+        assertTrue(arity.detail.contains("f(a : String)"), arity.detail)
 
         // 只有一个候选时，仍然说清是**哪一个实参**不对（老文案）
         val single = assertFailsWith<RsfError> {
             Rsf.analyze(
                 source(
-                    "fn add(a : int) -> int {\n    rtn a\n}\n" +
+                    "fn add(a : Int) -> Int {\n    rtn a\n}\n" +
                         "fn main() -> void {\n    println(add(true))\n    rtn\n}\n",
                 ),
             )
@@ -509,7 +509,7 @@ class OverloadTest {
         Rsf.analyze(
             source(
                 "fn pick&<T>(a : T) -> T {\n    rtn a\n}\n" +
-                    "fn main() -> void {\n    var x : int = pick(7)\n    rtn\n}\n",
+                    "fn main() -> void {\n    var x : Int = pick(7)\n    rtn\n}\n",
             ),
         )
     }
@@ -519,8 +519,8 @@ class OverloadTest {
         val top = assertFailsWith<RsfError> {
             Rsf.analyze(
                 source(
-                    "fn a(x : int) -> int {\n    rtn x\n}\n" +
-                        "fn a(y : int) -> int {\n    rtn y\n}\n",
+                    "fn a(x : Int) -> Int {\n    rtn x\n}\n" +
+                        "fn a(y : Int) -> Int {\n    rtn y\n}\n",
                 ),
             )
         }
@@ -529,9 +529,9 @@ class OverloadTest {
         val method = assertFailsWith<RsfError> {
             Rsf.analyze(
                 source(
-                    "class P {\n    var x : int = 0\n" +
-                        "    fn f(a : int) -> int {\n        rtn a\n    }\n" +
-                        "    fn f(b : int) -> int {\n        rtn b\n    }\n}\n",
+                    "class P {\n    var x : Int = 0\n" +
+                        "    fn f(a : Int) -> Int {\n        rtn a\n    }\n" +
+                        "    fn f(b : Int) -> Int {\n        rtn b\n    }\n}\n",
                 ),
             )
         }

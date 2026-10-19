@@ -1,27 +1,27 @@
 // 阶段 50：核心标准库 · 整数键哈希表 IntMap
 //
-// `HashMap` 只收 string 键（自举链只需要那个），但写普通程序时 int 键更常见：
+// `HashMap` 只收 String 键（自举链只需要那个），但写普通程序时 Int 键更常见：
 // 编号表、坐标压平、稀疏数组都用得上。实现与 HashMap 同一套：开放寻址 + 线性探测
 // + 2 倍扩容，删除时把同簇重新插回。
 pub class IntMap&<T> {
-    var keys : int[] = new int[8]
+    var keys : Int[] = new Int[8]
     var vals : T[] = new T[8]
-    var used : bool[] = new bool[8]
-    var n : int = 0
+    var used : Bool[] = new Bool[8]
+    var n : Int = 0
 
-    pub fn size() -> int { rtn n }
+    pub fn size() -> Int { rtn n }
 
-    pub fn isEmpty() -> bool { rtn n == 0 }
+    pub fn isEmpty() -> Bool { rtn n == 0 }
 
     // 乘一个奇数再取正：连续键也能散开；-2147483648 取反还是自己，单独归零
-    pub fn hashOf(k : int) -> int {
+    pub fn hashOf(k : Int) -> Int {
         var h = k * 31 + 17
         if (h == -2147483647 - 1) { rtn 0 }
         if (h < 0) { h = -h }
         rtn h
     }
 
-    pub fn slotOf(k : int) -> int {
+    pub fn slotOf(k : Int) -> Int {
         var cap = keys.length
         var i = hashOf(k) % cap
         while (used[i]) {
@@ -31,7 +31,7 @@ pub class IntMap&<T> {
         rtn i
     }
 
-    pub fn put(k : int, v : T) -> void {
+    pub fn put(k : Int, v : T) -> void {
         if ((n + 1) * 4 > keys.length * 3) { rehash() }
         var i = slotOf(k)
         if (!used[i]) {
@@ -42,7 +42,7 @@ pub class IntMap&<T> {
         vals[i] = v
     }
 
-    pub fn get(k : int) -> ?T {
+    pub fn get(k : Int) -> ?T {
         var cap = keys.length
         var i = hashOf(k) % cap
         while (used[i]) {
@@ -52,7 +52,7 @@ pub class IntMap&<T> {
         rtn null
     }
 
-    pub fn containsKey(k : int) -> bool {
+    pub fn containsKey(k : Int) -> Bool {
         var cap = keys.length
         var i = hashOf(k) % cap
         while (used[i]) {
@@ -62,7 +62,7 @@ pub class IntMap&<T> {
         rtn false
     }
 
-    pub fn remove(k : int) -> bool {
+    pub fn remove(k : Int) -> Bool {
         var cap = keys.length
         var i = hashOf(k) % cap
         while (used[i]) {
@@ -90,9 +90,9 @@ pub class IntMap&<T> {
         var oldVals = vals
         var oldUsed = used
         var cap = oldKeys.length * 2
-        keys = new int[cap]
+        keys = new Int[cap]
         vals = new T[cap]
-        used = new bool[cap]
+        used = new Bool[cap]
         n = 0
         var i = 0
         while (i < oldKeys.length) {

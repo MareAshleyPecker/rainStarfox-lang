@@ -272,7 +272,7 @@ class RsfLexer : Lexer() {
                 when {
                     after.type == RsfTokens.IDENTIFIER -> out.add(n)
                     after.type == RsfTokens.LBRACKET -> out.add(n)
-                    // 泛型 `Box&<int> b`：`&` 在插件里归在 OPERATION
+                    // 泛型 `Box&<Int> b`：`&` 在插件里归在 OPERATION
                     after.type == RsfTokens.OPERATION && lexemeOf(after) == "&" -> out.add(n)
                     else -> {}
                 }

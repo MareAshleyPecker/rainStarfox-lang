@@ -79,7 +79,7 @@ class GenericFnTest {
             Rsf.parse(
                 source(
                     """
-                    fn plain(x : int) -> int {
+                    fn plain(x : Int) -> Int {
                         rtn x
                     }
                     """,
@@ -100,8 +100,8 @@ class GenericFnTest {
                     rtn x
                 }
                 fn main() -> void {
-                    var a : int = id(1)
-                    var b : string = id("s")
+                    var a : Int = id(1)
+                    var b : String = id("s")
                     rtn
                 }
                 """,
@@ -118,7 +118,7 @@ class GenericFnTest {
                     rtn a
                 }
                 fn main() -> void {
-                    var a : string = firstOf("x", 2)
+                    var a : String = firstOf("x", 2)
                     rtn
                 }
                 """,
@@ -135,8 +135,8 @@ class GenericFnTest {
                     rtn xs[0]
                 }
                 fn main() -> void {
-                    var xs : string[] = new string[2]
-                    var a : string = head(xs)
+                    var xs : String[] = new String[2]
+                    var a : String = head(xs)
                     rtn
                 }
                 """,
@@ -156,8 +156,8 @@ class GenericFnTest {
                     rtn v!!
                 }
                 fn main() -> void {
-                    var s : ?string = null
-                    var a : string = orElse(s, "x")
+                    var s : ?String = null
+                    var a : String = orElse(s, "x")
                     rtn
                 }
                 """,
@@ -180,8 +180,8 @@ class GenericFnTest {
                     rtn new Box&<T>(v)
                 }
                 fn main() -> void {
-                    var b : Box&<int> = wrap(9)
-                    var a : int = b.value
+                    var b : Box&<Int> = wrap(9)
+                    var a : Int = b.value
                     rtn
                 }
                 """,
@@ -195,8 +195,8 @@ class GenericFnTest {
             source(
                 """
                 class Calc {
-                    var base : int = 0
-                    constructor(b : int) {
+                    var base : Int = 0
+                    constructor(b : Int) {
                         base = b
                     }
                     pub fn same&<T>(x : T) -> T {
@@ -208,8 +208,8 @@ class GenericFnTest {
                 }
                 fn main() -> void {
                     var c : Calc = new Calc(3)
-                    var a : int = c.same(11)
-                    var b : string = Calc.pick("x", "y")
+                    var a : Int = c.same(11)
+                    var b : String = Calc.pick("x", "y")
                     rtn
                 }
                 """,
@@ -219,18 +219,18 @@ class GenericFnTest {
 
     @Test
     fun `非泛型重载优先`() {
-        // 若挑了泛型版本，返回值是 int，赋给 string 会报错
+        // 若挑了泛型版本，返回值是 Int，赋给 String 会报错
         Rsf.analyze(
             source(
                 """
-                fn f(x : int) -> string {
+                fn f(x : Int) -> String {
                     rtn "fixed"
                 }
-                fn f&<T>(x : T) -> int {
+                fn f&<T>(x : T) -> Int {
                     rtn 0
                 }
                 fn main() -> void {
-                    var s : string = f(1)
+                    var s : String = f(1)
                     rtn
                 }
                 """,
@@ -250,7 +250,7 @@ class GenericFnTest {
                         rtn null
                     }
                     fn main() -> void {
-                        var x : ?int = make()
+                        var x : ?Int = make()
                         rtn
                     }
                     """,
@@ -270,7 +270,7 @@ class GenericFnTest {
                         rtn a
                     }
                     fn main() -> void {
-                        var x : int = same(1, "s")
+                        var x : Int = same(1, "s")
                         rtn
                     }
                     """,
@@ -302,7 +302,7 @@ class GenericFnTest {
             Rsf.analyze(
                 source(
                     """
-                    fn f&<>(x : int) -> int {
+                    fn f&<>(x : Int) -> Int {
                         rtn x
                     }
                     """,
@@ -319,7 +319,7 @@ class GenericFnTest {
                 source(
                     """
                     class C {
-                        var x : int = 0
+                        var x : Int = 0
                         constructor&<T>(v : T) {
                         }
                     }
@@ -337,7 +337,7 @@ class GenericFnTest {
                 source(
                     """
                     class Base {
-                        pub fn tag(x : int) -> int {
+                        pub fn tag(x : Int) -> Int {
                             rtn x
                         }
                     }
@@ -419,11 +419,11 @@ class GenericFnTest {
                 rtn xs[0]
             }
             fn main() {
-                var s : ?string = null
+                var s : ?String = null
                 println(orElse(s, "fallback"))
-                var t : ?string = "given"
+                var t : ?String = "given"
                 println(orElse(t, "fallback"))
-                var ss : string[] = new string[2]
+                var ss : String[] = new String[2]
                 ss[0] = "hey"
                 println(first(ss))
             }
@@ -438,8 +438,8 @@ class GenericFnTest {
         val (interp, jvm) = runBoth(
             """
             class Calc {
-                var base : int = 0
-                constructor(b : int) {
+                var base : Int = 0
+                constructor(b : Int) {
                     base = b
                 }
                 pub fn same&<T>(x : T) -> T {
@@ -471,7 +471,7 @@ class GenericFnTest {
                         rtn xs[0]
                     }
                     fn main() {
-                        var xs : int[] = new int[3]
+                        var xs : Int[] = new Int[3]
                         println("" + first(xs))
                     }
                     """,

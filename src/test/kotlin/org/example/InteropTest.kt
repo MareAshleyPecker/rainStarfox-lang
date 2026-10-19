@@ -21,13 +21,13 @@ import kotlin.test.assertTrue
  *
  * 覆盖三件事：
  *
- * 1. **`byte` / `char` 上的一元负号（后端缺陷回归）**：Checker 把 `-b` 的结果定成
- *    `int`（提升），而字节码后端原来只认 INT / LONG / FLOAT / DOUBLE 四种静态类型 ⇒
+ * 1. **`Byte` / `Char` 上的一元负号（后端缺陷回归）**：Checker 把 `-b` 的结果定成
+ *    `Int`（提升），而字节码后端原来只认 INT / LONG / FLOAT / DOUBLE 四种静态类型 ⇒
  *    `rsf check` 放行、`rsf run` 正常、**`rsf build` 崩**。这是三方不一致里最坏的一种，
  *    所以除了修，还要有一条把「check / run / build 三条路」一起钉住的测试。
- * 2. **多类型实参的擦除互操作**：`HashMap&<string, int>` 的
+ * 2. **多类型实参的擦除互操作**：`HashMap&<String, Int>` 的
  *    `put` / `get` / `containsKey` 要能用——17c 的解释器只能手写符号表就是卡在这。
- * 3. **外部类的 `new`**：`new File("x")` / `new ArrayList&<string>()` /
+ * 3. **外部类的 `new`**：`new File("x")` / `new ArrayList&<String>()` /
  *    `new StringBuilder(16)` 两端一致；17d 要用 rsf 调 ASM 的 `new ClassWriter(...)`，
  *    所以连 ASM 本身可用也一起钉在这里。
  *
@@ -38,18 +38,18 @@ class InteropTest {
     // ================================================================== 一元负号（后端缺陷回归）
 
     /**
-     * `byte` / `char` 上的一元负号：三条路（check / run / build）结果一致。
+     * `Byte` / `Char` 上的一元负号：三条路（check / run / build）结果一致。
      *
-     * 缺陷原样：`var b : byte = 5` + `-b` ⇒ `rsf check` stderr 0 字节、`rsf run` 打出 -5、
+     * 缺陷原样：`var b : Byte = 5` + `-b` ⇒ `rsf check` stderr 0 字节、`rsf run` 打出 -5、
      * `rsf build` 抛 `IllegalStateException: 一元减号的操作数不是数值`。
-     * 修法：后端按**提升后**的基础类型发指令（byte / char 在 JVM 栈上就是 int）。
+     * 修法：后端按**提升后**的基础类型发指令（Byte / Char 在 JVM 栈上就是 Int）。
      */
     @Test
-    fun `byte 与 char 上的一元负号三条路都一致`() {
+    fun `Byte 与 Char 上的一元负号三条路都一致`() {
         val program = """
             fn main() -> void {
-                var b : byte = 5
-                var c : char = 'A'
+                var b : Byte = 5
+                var c : Char = 'A'
                 println(-b)
                 println(-(b + b))
                 println(-charToInt(c))
@@ -67,7 +67,7 @@ class InteropTest {
         assertEquals(
             listOf("-5", "-10", "-65", "5", "-4", "-65"),
             lines(interpreted),
-            "一元负号的语义（byte / char 都先提升成 int）",
+            "一元负号的语义（Byte / Char 都先提升成 Int）",
         )
         assertEquals(
             normalize(interpreted),
@@ -82,19 +82,19 @@ class InteropTest {
      * 这条测试的由来：一元负号那个缺陷的本质是「`when (静态类型)` 只列了四种类型」。
      * 全量排查下来，`BytecodeCompiler` 里按基础类型分派的地方只有两处——
      * 一元负号（已修）与二元算术（用的是**结果类型**，Checker 一定给提升后的四种之一，
-     * 所以安全）；`widenInsn` 的加宽表 byte / char 的每条出口都列全了。
+     * 所以安全）；`widenInsn` 的加宽表 Byte / Char 的每条出口都列全了。
      * 这条用真实语料把结论钉住，而不是只靠读代码。
      */
     @Test
     fun `基础类型的一元与二元运算三条路都一致`() {
         val program = """
             fn main() -> void {
-                var b : byte = 5
-                var c : char = 'A'
-                var i : int = 7
-                var l : long = 9L
-                var f : float = 1.5f
-                var d : double = 2.25
+                var b : Byte = 5
+                var c : Char = 'A'
+                var i : Int = 7
+                var l : Long = 9L
+                var f : Float = 1.5f
+                var d : Double = 2.25
 
                 println("-b = " + (-b))
                 println("-c = " + (-c))
@@ -138,7 +138,7 @@ class InteropTest {
                 println("toByte(200) = " + toByte(200))
                 println("toChar(66) = " + toChar(66))
                 println("charToInt('A') = " + charToInt('A'))
-                var t : bool = true
+                var t : Bool = true
                 println("!t = " + (!t))
                 rtn
             }
@@ -167,9 +167,9 @@ class InteropTest {
      * `HashMap&<K, V>`：**多个类型实参**也要能把签名里擦除成 `Object` 的形参/返回值
      * 还原成对应的实参类型。
      *
-     * 以前只有「恰好一个类型实参」的 `ArrayList&<int>` 能用；`HashMap&<string, int>`
+     * 以前只有「恰好一个类型实参」的 `ArrayList&<Int>` 能用；`HashMap&<String, Int>`
      * 的 `put` 两个形参都是 `Object`，一个实参都接不住
-     * （报「没有匹配的方法 'put'（实参：string, int）」）。
+     * （报「没有匹配的方法 'put'（实参：String, Int）」）。
      */
     @Test
     fun `HashMap 多类型实参的擦除互操作两端一致`() {
@@ -177,7 +177,7 @@ class InteropTest {
             import java.util.HashMap
 
             fn main() -> void {
-                var m : HashMap&<string, int> = new HashMap&<string, int>()
+                var m : HashMap&<String, Int> = new HashMap&<String, Int>()
                 m.put("a", 7)
                 m.put("b", 9)
                 println("size = " + m.size())
@@ -187,12 +187,12 @@ class InteropTest {
                 println("has z = " + m.containsKey("z"))
                 println("a + b = " + (m.get("a") + m.get("b")))
 
-                var s : HashMap&<string, string> = new HashMap&<string, string>()
+                var s : HashMap&<String, String> = new HashMap&<String, String>()
                 s.put("k", "v")
                 println("s = " + s.get("k"))
                 println("s.len = " + s.get("k").length())
 
-                var n : HashMap&<int, string> = new HashMap&<int, string>()
+                var n : HashMap&<Int, String> = new HashMap&<Int, String>()
                 n.put(3, "three")
                 println("n = " + n.get(3))
                 println("n.size = " + n.size())
@@ -221,7 +221,7 @@ class InteropTest {
      *
      * 这条是 17d 能不能用 `HashMap` 的关键：常量池去重 / 槽分配都是
      * 「`m.put(k, v)` 写一句、不管返回值」。做多类型实参还原之后，`put` 的静态返回类型
-     * 变成了 `V`（`int`），如果语句位置照样 CHECKCAST + 拆箱，第一次 put 直接 NPE。
+     * 变成了 `V`（`Int`），如果语句位置照样 CHECKCAST + 拆箱，第一次 put 直接 NPE。
      * 修法：**结果被丢弃时不做泛型结果收敛**（字节码 `emitExpr(discard = true)`、
      * 解释器 `eval(discard = true)`），这也正是 Java 的行为（`map.put(...)` 当语句不拆箱）。
      */
@@ -231,7 +231,7 @@ class InteropTest {
             import java.util.HashMap
 
             fn main() -> void {
-                var m : HashMap&<string, int> = new HashMap&<string, int>()
+                var m : HashMap&<String, Int> = new HashMap&<String, Int>()
                 m.put("a", 1)
                 m.put("a", 2)
                 m.put("b", 5)
@@ -264,25 +264,25 @@ class InteropTest {
         val program = """
             import java.util.HashMap
 
-            pub class Val(k : string) {
-                var kind : string = k
-                var iv : int = 0
+            pub class Val(k : String) {
+                var kind : String = k
+                var iv : Int = 0
             }
 
-            pub class Env(p : ?Env, nm : string) {
+            pub class Env(p : ?Env, nm : String) {
                 var parent : ?Env = p
-                var table : HashMap&<string, ?Val> = new HashMap&<string, ?Val>()
-                var owner : string = nm
+                var table : HashMap&<String, ?Val> = new HashMap&<String, ?Val>()
+                var owner : String = nm
 
                 constructor() {
                     this(null, "root")
                 }
 
-                pub fn define(name : string, value : Val) -> void {
+                pub fn define(name : String, value : Val) -> void {
                     table.put(name, value)
                 }
 
-                pub fn lookup(name : string) -> ?Val {
+                pub fn lookup(name : String) -> ?Val {
                     var e : ?Env = this
                     while (e != null) {
                         var hit : ?Val = e!!.table.get(name)
@@ -294,22 +294,22 @@ class InteropTest {
                     rtn null
                 }
 
-                pub fn has(name : string) -> bool {
+                pub fn has(name : String) -> Bool {
                     rtn table.containsKey(name)
                 }
 
-                pub fn count() -> int {
+                pub fn count() -> Int {
                     rtn table.size()
                 }
             }
 
             fn main() -> void {
                 var global = new Env()
-                global.define("x", new Val("int"))
-                global.define("y", new Val("string"))
+                global.define("x", new Val("Int"))
+                global.define("y", new Val("String"))
 
                 var inner = new Env(global, "inner")
-                inner.define("x", new Val("byte"))
+                inner.define("x", new Val("Byte"))
 
                 println("inner.x = " + inner.lookup("x")!!.kind)
                 println("inner.y = " + inner.lookup("y")!!.kind)
@@ -317,7 +317,7 @@ class InteropTest {
                 println("global.count = " + global.count())
                 println("inner.has(z) = " + inner.has("z"))
 
-                inner.define("y", new Val("long"))
+                inner.define("y", new Val("Long"))
                 println("inner.y2 = " + inner.lookup("y")!!.kind)
                 println("global.y = " + global.lookup("y")!!.kind)
                 rtn
@@ -327,8 +327,8 @@ class InteropTest {
         val interpreted = runInterpreted(program)
         assertEquals(
             listOf(
-                "inner.x = byte", "inner.y = string", "inner.count = 1", "global.count = 2",
-                "inner.has(z) = false", "inner.y2 = long", "global.y = string",
+                "inner.x = Byte", "inner.y = String", "inner.count = 1", "global.count = 2",
+                "inner.has(z) = false", "inner.y2 = Long", "global.y = String",
             ),
             lines(interpreted),
         )
@@ -338,19 +338,19 @@ class InteropTest {
         )
     }
 
-    /** 元素类型写成用户类的非可空形态（`HashMap&<string, Val>`）也要能用。 */
+    /** 元素类型写成用户类的非可空形态（`HashMap&<String, Val>`）也要能用。 */
     @Test
     fun `HashMap 装用户类的实参类型两端一致`() {
         val program = """
             import java.util.HashMap
 
-            pub class Val(k : string) {
-                var kind : string = k
+            pub class Val(k : String) {
+                var kind : String = k
             }
 
             fn main() -> void {
-                var strict : HashMap&<string, Val> = new HashMap&<string, Val>()
-                strict.put("only", new Val("bool"))
+                var strict : HashMap&<String, Val> = new HashMap&<String, Val>()
+                strict.put("only", new Val("Bool"))
                 println("kind = " + strict.get("only").kind)
                 println("has = " + strict.containsKey("only"))
                 println("size = " + strict.size())
@@ -359,7 +359,7 @@ class InteropTest {
         """.trimIndent() + "\n"
 
         val interpreted = runInterpreted(program)
-        assertEquals(listOf("kind = bool", "has = true", "size = 1"), lines(interpreted))
+        assertEquals(listOf("kind = Bool", "has = true", "size = 1"), lines(interpreted))
         assertEquals(
             normalize(interpreted),
             normalize(runCompiledClasses(program, "RsfInteropMapUserVal")),
@@ -373,7 +373,7 @@ class InteropTest {
             Rsf.analyze(
                 source(
                     "import java.util.HashMap\n\nfn main() -> void {\n" +
-                        "    var m : HashMap&<string> = new HashMap&<string>()\n    rtn\n}\n",
+                        "    var m : HashMap&<String> = new HashMap&<String>()\n    rtn\n}\n",
                 ),
             )
         }.exceptionOrNull()
@@ -404,7 +404,7 @@ class InteropTest {
                 var d = new File("dir", "two")
                 println("d = " + d.getName())
 
-                var l = new ArrayList&<string>()
+                var l = new ArrayList&<String>()
                 l.add("a")
                 l.add("b")
                 println("l.size = " + l.size())
@@ -446,7 +446,7 @@ class InteropTest {
             import java.util.ArrayList
 
             fn main() -> void {
-                var l = new ArrayList&<string>()
+                var l = new ArrayList&<String>()
                 l.add("hi")
                 var it = l.iterator()
                 if (it.hasNext()) {
@@ -472,7 +472,7 @@ class InteropTest {
      * 外部类**构造器重载**的挑选：先按实参**个数**、再按**类型**打分
      * （精确优先、加宽其次；两端读的是同一份决定）。
      *
-     * `StringBuilder()` / `StringBuilder(int)` / `StringBuilder(String)` 三个重载
+     * `StringBuilder()` / `StringBuilder(Int)` / `StringBuilder(String)` 三个重载
      * 正好把「个数」与「类型」两件事都覆盖到。
      */
     @Test
@@ -489,8 +489,8 @@ class InteropTest {
                 println("s2 = " + s2.length())
                 println("s2.text = " + s2.toString())
 
-                // 泛型外部类 + 基本类型实参：`<init>(int)` 要能挑中（以前会挑不到）
-                var l = new ArrayList&<string>(4)
+                // 泛型外部类 + 基本类型实参：`<init>(Int)` 要能挑中（以前会挑不到）
+                var l = new ArrayList&<String>(4)
                 l.add("x")
                 println("l.size = " + l.size())
                 rtn
@@ -514,11 +514,11 @@ class InteropTest {
         val program = """
             import java.util.ArrayList
 
-            pub class Point(x0 : int, y0 : int) {
-                var x : int = x0
-                var y : int = y0
+            pub class Point(x0 : Int, y0 : Int) {
+                var x : Int = x0
+                var y : Int = y0
 
-                pub fn sum() -> int {
+                pub fn sum() -> Int {
                     rtn x + y
                 }
             }
@@ -527,7 +527,7 @@ class InteropTest {
                 var p = new Point(1, 2)
                 println("sum = " + p.sum())
 
-                var l = new ArrayList&<int>()
+                var l = new ArrayList&<Int>()
                 l.add(p.sum())
                 l.add(10)
                 println("l.size = " + l.size())
@@ -614,7 +614,7 @@ class InteropTest {
                 mv.visitMaxs(0, 0)
                 mv.visitEnd()
                 cw.visitEnd()
-                var bytes : byte[] = cw.toByteArray()
+                var bytes : Byte[] = cw.toByteArray()
                 println("class bytes > 100 = " + (bytes.length > 100))
                 rtn
             }
@@ -630,7 +630,7 @@ class InteropTest {
 
     /**
      * 再往前一步：用 ASM 真的生成一份**合法**的 class 字节（`()I` 返回 42），
-     * 并检查魔数。这是「用 rsf 写字节码后端」的最小闭环（生成 → `byte[]`）。
+     * 并检查魔数。这是「用 rsf 写字节码后端」的最小闭环（生成 → `Byte[]`）。
      *
      * rsf 里没有 `ClassLoader.defineClass`（它是 protected，且 rsf 没有继承），
      * 所以「把字节变成一个真的类」这一步在测试侧（Kotlin）做——见本测试最后那段。
@@ -641,7 +641,7 @@ class InteropTest {
             import org.objectweb.asm.ClassWriter
             import org.objectweb.asm.Opcodes
 
-            fn emit() -> byte[] {
+            fn emit() -> Byte[] {
                 var cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES)
                 cw.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC, "RsfMadeClass", null, "java/lang/Object", null)
                 var mv = cw.visitMethod(Opcodes.ACC_PUBLIC + Opcodes.ACC_STATIC, "answer", "()I", null, null)
@@ -655,7 +655,7 @@ class InteropTest {
             }
 
             fn main() -> void {
-                var bytes : byte[] = emit()
+                var bytes : Byte[] = emit()
                 println("bytes = " + bytes.length)
                 println("magic ok = " + (bytes[0] == toByte(-54)))
                 rtn
@@ -684,10 +684,10 @@ class InteropTest {
     }
 
     /**
-     * 把 rsf 程序里 `emit()` 产出的 `byte[]` 取回来。
+     * 把 rsf 程序里 `emit()` 产出的 `Byte[]` 取回来。
      *
      * 同一份源码再编译一次、这次不跑 `main` 而是反射调 `emit()` —— rsf 的
-     * `byte[]` 在 JVM 上就是真的 `byte[]`，所以直接就能拿。
+     * `Byte[]` 在 JVM 上就是真的 `Byte[]`，所以直接就能拿。
      */
     private fun captureRsfGeneratedBytes(text: String): ByteArray {
         val src = source(text)

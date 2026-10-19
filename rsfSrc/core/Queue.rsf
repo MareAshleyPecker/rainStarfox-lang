@@ -4,12 +4,12 @@
 // 名字也叫得更直白（push/pop）。空队列取元素返回 null，由调用方自己判。
 pub class Queue&<T> {
     var items : T[] = new T[4]
-    var head : int = 0
-    var n : int = 0
+    var head : Int = 0
+    var n : Int = 0
 
-    pub fn size() -> int { rtn n }
+    pub fn size() -> Int { rtn n }
 
-    pub fn isEmpty() -> bool { rtn n == 0 }
+    pub fn isEmpty() -> Bool { rtn n == 0 }
 
     pub fn clear() -> void {
         head = 0
@@ -38,7 +38,7 @@ pub class Queue&<T> {
     }
 
     // 第 i 个（0 是队头），不消耗队列
-    pub fn get(i : int) -> T { rtn items[(head + i) % items.length] }
+    pub fn get(i : Int) -> T { rtn items[(head + i) % items.length] }
 
     pub fn toArray() -> T[] {
         var out : T[] = new T[n]

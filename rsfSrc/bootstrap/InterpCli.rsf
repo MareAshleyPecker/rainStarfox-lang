@@ -24,8 +24,8 @@ import "Sources.rsf"
 import java.lang.System
 
 // 挑输入：-Drsf.interp.file 给了就用它，没给就跑去仓库里的一个示例（相对路径）
-fn pickPath() -> string {
-    var given : ?string = System.getProperty("rsf.interp.file")
+fn pickPath() -> String {
+    var given : ?String = System.getProperty("rsf.interp.file")
     var path = given ?: "rsfSrc/lang/main.rsf"
     rtn path
 }
@@ -46,7 +46,7 @@ fn main() -> void {
     try {
         ast = loadProgram(path)!!
         loaded = true
-    } catch (loadError : string) {
+    } catch (loadError : String) {
         message = loadError
         loaded = false
     }
@@ -62,7 +62,7 @@ fn main() -> void {
 
     try {
         runProgram(ast)!!
-    } catch (e : string) {
+    } catch (e : String) {
         if (isSignal(e) && signalKind(e) == "X") {
             // 带外信号（`!!` 打到 null、除以零）：Kotlin 版那边抛的是 JVM 异常，
             // 消息就是载荷本身

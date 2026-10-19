@@ -23,27 +23,27 @@ class RsfJsonTest {
         assertEquals(1, diagnostics.size)
 
         val d = diagnostics[0]
-        assertEquals(2, RsfJson.int(d, "line"))
-        assertEquals(13, RsfJson.int(d, "col"))
-        assertEquals(18, RsfJson.int(d, "endCol"))
-        assertEquals("error", RsfJson.string(d, "severity"))
-        assertEquals("checker", RsfJson.string(d, "phase"))
-        assertEquals("未定义的函数 'greet'", RsfJson.string(d, "message"))
+        assertEquals(2, RsfJson.Int(d, "line"))
+        assertEquals(13, RsfJson.Int(d, "col"))
+        assertEquals(18, RsfJson.Int(d, "endCol"))
+        assertEquals("error", RsfJson.String(d, "severity"))
+        assertEquals("checker", RsfJson.String(d, "phase"))
+        assertEquals("未定义的函数 'greet'", RsfJson.String(d, "message"))
     }
 
     @Test
     fun `解析补全输出`() {
         val raw = """
             {"items":[
-              {"label":"greet","kind":"function","detail":"greet(string who) -> string"},
-              {"label":"add","kind":"function","detail":"add(int a, int b) -> int"}
+              {"label":"greet","kind":"function","detail":"greet(String who) -> String"},
+              {"label":"add","kind":"function","detail":"add(Int a, Int b) -> Int"}
             ]}
         """.trimIndent()
 
         val items = RsfJson.objectsAt(RsfJson.parse(raw), "items")
         assertEquals(2, items.size)
-        assertEquals("greet", RsfJson.string(items[0], "label"))
-        assertEquals("add(int a, int b) -> int", RsfJson.string(items[1], "detail"))
+        assertEquals("greet", RsfJson.String(items[0], "label"))
+        assertEquals("add(Int a, Int b) -> Int", RsfJson.String(items[1], "detail"))
     }
 
     @Test
@@ -60,19 +60,19 @@ class RsfJsonTest {
         // 半截 JSON（编译器被杀、管道断了）： tolerate 成「能读多少读多少」，
         // 缺的字段一律给默认值，绝不能抛异常把编辑器带崩
         val partial = RsfJson.objectsAt(RsfJson.parse("{\"diagnostics\":[{\"line\":"), "diagnostics")
-        assertTrue(partial.all { RsfJson.string(it, "message").isEmpty() })
-        assertTrue(partial.all { RsfJson.int(it, "line", 1) == 1 })
+        assertTrue(partial.all { RsfJson.String(it, "message").isEmpty() })
+        assertTrue(partial.all { RsfJson.Int(it, "line", 1) == 1 })
         assertTrue(RsfJson.objectsAt(RsfJson.parse(""), "diagnostics").isEmpty())
         // 缺字段时给默认值，而不是让调用方拿到 null 后崩在别处
-        assertEquals(1, RsfJson.int(emptyMap(), "line", 1))
-        assertEquals("", RsfJson.string(emptyMap(), "message"))
+        assertEquals(1, RsfJson.Int(emptyMap(), "line", 1))
+        assertEquals("", RsfJson.String(emptyMap(), "message"))
     }
 
     @Test
     fun `转义字符正确还原`() {
         val raw = """{"diagnostics":[{"line":1,"col":1,"endCol":2,"severity":"error","phase":"lexer","message":"字符串没有闭合：\"abc\n\" 这里"}]}"""
         val d = RsfJson.objectsAt(RsfJson.parse(raw), "diagnostics")[0]
-        val message = RsfJson.string(d, "message")
+        val message = RsfJson.String(d, "message")
         assertTrue(message.contains("\"abc"), message)
         assertTrue(message.contains("\n"), "换行转义没还原：$message")
         assertTrue(message.contains("这里"), message)

@@ -4,7 +4,7 @@
 // 不做正则、不做格式化（Text.rsf 里已有 repeat / pad / split / join）。
 pub class Strings {
     // 子串出现次数（不重叠）；target 为空返回 0
-    pub stc fn count(s : string, target : string) -> int {
+    pub stc fn count(s : String, target : String) -> Int {
         if (target.length() == 0) { rtn 0 }
         var c = 0
         var i = 0
@@ -20,7 +20,7 @@ pub class Strings {
     }
 
     // 把所有 target 换成 repl（从左到右；target 为空原样返回）
-    pub stc fn replace(s : string, target : string, repl : string) -> string {
+    pub stc fn replace(s : String, target : String, repl : String) -> String {
         if (target.length() == 0) { rtn s }
         var out = ""
         var i = 0
@@ -36,26 +36,26 @@ pub class Strings {
         rtn out
     }
 
-    pub stc fn equalsIgnoreCase(a : string, b : string) -> bool {
+    pub stc fn equalsIgnoreCase(a : String, b : String) -> Bool {
         rtn a.toLowerCase() == b.toLowerCase()
     }
 
-    pub stc fn startsWithIgnoreCase(s : string, prefix : string) -> bool {
+    pub stc fn startsWithIgnoreCase(s : String, prefix : String) -> Bool {
         if (prefix.length() > s.length()) { rtn false }
         rtn s.substring(0, prefix.length()).toLowerCase() == prefix.toLowerCase()
     }
 
-    pub stc fn capitalize(s : string) -> string {
+    pub stc fn capitalize(s : String) -> String {
         if (s.length() == 0) { rtn s }
         rtn s.substring(0, 1).toUpperCase() + s.substring(1)
     }
 
-    pub stc fn uncapitalize(s : string) -> string {
+    pub stc fn uncapitalize(s : String) -> String {
         if (s.length() == 0) { rtn s }
         rtn s.substring(0, 1).toLowerCase() + s.substring(1)
     }
 
-    pub stc fn reverse(s : string) -> string {
+    pub stc fn reverse(s : String) -> String {
         var out = ""
         var i = s.length() - 1
         while (i >= 0) {
@@ -66,7 +66,7 @@ pub class Strings {
     }
 
     // 截到 width 个字符；超长时末尾补 "..."
-    pub stc fn ellipsis(s : string, width : int) -> string {
+    pub stc fn ellipsis(s : String, width : Int) -> String {
         if (width <= 0) { rtn "" }
         if (s.length() <= width) { rtn s }
         if (width <= 3) { rtn s.substring(0, width) }
@@ -74,7 +74,7 @@ pub class Strings {
     }
 
     // 左右用 pad 填到 width（已经够宽就原样返回）
-    pub stc fn center(s : string, width : int, pad : char) -> string {
+    pub stc fn center(s : String, width : Int, pad : Char) -> String {
         if (s.length() >= width) { rtn s }
         var need = width - s.length()
         var left = need / 2
@@ -94,25 +94,25 @@ pub class Strings {
         rtn out
     }
 
-    stc fn isSpace(ch : char) -> bool {
+    stc fn isSpace(ch : Char) -> Bool {
         var c = charToInt(ch)
         rtn c == 32 || c == 9 || c == 10 || c == 13
     }
 
-    pub stc fn trimStart(s : string) -> string {
+    pub stc fn trimStart(s : String) -> String {
         var i = 0
         while (i < s.length() && isSpace(s.charAt(i))) { i = i + 1 }
         rtn s.substring(i, s.length())
     }
 
-    pub stc fn trimEnd(s : string) -> string {
+    pub stc fn trimEnd(s : String) -> String {
         var i = s.length() - 1
         while (i >= 0 && isSpace(s.charAt(i))) { i = i - 1 }
         rtn s.substring(0, i + 1)
     }
 
     // 全是 ASCII 数字且非空
-    pub stc fn isDigits(s : string) -> bool {
+    pub stc fn isDigits(s : String) -> Bool {
         if (s.length() == 0) { rtn false }
         var i = 0
         while (i < s.length()) {
@@ -124,8 +124,8 @@ pub class Strings {
     }
 
     // 按空白段切词（连续空白只算一个分隔符，首尾空白不产生空词）
-    pub stc fn words(s : string) -> string[] {
-        var out : string[] = new string[8]
+    pub stc fn words(s : String) -> String[] {
+        var out : String[] = new String[8]
         var n = 0
         var i = 0
         while (i < s.length()) {
@@ -135,7 +135,7 @@ pub class Strings {
             while (i < s.length() && !isSpace(s.charAt(i))) { i = i + 1 }
             var piece = s.substring(start, i)
             if (n == out.length) {
-                var bigger : string[] = new string[out.length * 2]
+                var bigger : String[] = new String[out.length * 2]
                 var k = 0
                 while (k < n) { bigger[k] = out[k]; k = k + 1 }
                 out = bigger
@@ -143,19 +143,19 @@ pub class Strings {
             out[n] = piece
             n = n + 1
         }
-        var exact : string[] = new string[n]
+        var exact : String[] = new String[n]
         var j = 0
         while (j < n) { exact[j] = out[j]; j = j + 1 }
         rtn exact
     }
 
     // 两端去空白（charToInt 口径与 trimStart/trimEnd 一致）
-    pub stc fn trim(s : string) -> string {
+    pub stc fn trim(s : String) -> String {
         rtn trimEnd(trimStart(s))
     }
 
     // 安全切片：越界的 from/to 夹到 [0, length]，from > to 给空串
-    pub stc fn slice(s : string, from : int, to : int) -> string {
+    pub stc fn slice(s : String, from : Int, to : Int) -> String {
         var a = from
         var b = to
         if (a < 0) { a = 0 }
@@ -165,17 +165,17 @@ pub class Strings {
     }
 
     // 忽略大小写的包含判断
-    pub stc fn containsIgnoreCase(s : string, sub : string) -> bool {
+    pub stc fn containsIgnoreCase(s : String, sub : String) -> Bool {
         rtn s.toLowerCase().contains(sub.toLowerCase())
     }
 
-    pub stc fn endsWithIgnoreCase(s : string, suffix : string) -> bool {
+    pub stc fn endsWithIgnoreCase(s : String, suffix : String) -> Bool {
         if (suffix.length() > s.length()) { rtn false }
         rtn s.substring(s.length() - suffix.length(), s.length()).toLowerCase() == suffix.toLowerCase()
     }
 
     // 全是 ASCII 字母且非空
-    pub stc fn isAlpha(s : string) -> bool {
+    pub stc fn isAlpha(s : String) -> Bool {
         if (s.length() == 0) { rtn false }
         var i = 0
         while (i < s.length()) {

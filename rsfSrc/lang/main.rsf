@@ -4,10 +4,10 @@
 //   <访问控制>   = pub / prot / prv（可省，写在最左；省了就是 pub）
 //   <返回类型槽> = `fun` 后面那一格，缺省是 void
 //   返回子句     = -> T  或者  : T（两种等价；'::' 不再当返回子句，留给 Marker::Impl 这类嵌套写法）
-//   参数写法     = 两种风格都行、可以混：Java 风格 `int a` / Kotlin 风格 `a : int`，逗号分隔
+//   参数写法     = 两种风格都行、可以混：Java 风格 `Int a` / Kotlin 风格 `a : Int`，逗号分隔
 //   变量 / 字段  = Kotlin 后缀风格：`var 名字 : 类型 = 初值`（类型可省）
 //   构造对象     = `new` 可以省：`Point(1, 2)` 等价于 `new Point(1, 2)`
-//   可空         = 类型名前加 ?，例如 ?string / ?int
+//   可空         = 类型名前加 ?，例如 ?String / ?Int
 //
 // 变量：  var      = 可变（可以重新赋值）
 //         imutvar  = 不可变（重新赋值是编译错误）
@@ -15,42 +15,42 @@
 // 控制流：if / else / else if / while / for（两种写法）/ switch / try + catch /
 //         break / continue / goto + 标签 / 三目 / ?: / !!
 
-fn greeting() -> string {
+fn greeting() -> String {
     rtn "hello, rainStarfox!"
 }
 
-fn add(a : int, b : int) -> int {
+fn add(a : Int, b : Int) -> Int {
     rtn a + b
 }
 
-prv fn secret() : int {
+prv fn secret() : Int {
     rtn 42
 }
 
 // 递归
-fn fact(n : int) -> int {
+fn fact(n : Int) -> Int {
     if (n <= 1) { rtn 1 }
     rtn n * fact(n - 1)
 }
 
-fn fib(n : int) -> int {
+fn fib(n : Int) -> Int {
     if (n < 2) { rtn n }
     rtn fib(n - 1) + fib(n - 2)
 }
 
 // 参数按 C 的惯例是可变的
-fn twice(n : int) -> int {
+fn twice(n : Int) -> Int {
     n = n * 2
     rtn n
 }
 
 // 实参会自动加宽到形参类型
-fn mix(a : int, b : long, c : double) -> double {
+fn mix(a : Int, b : Long, c : Double) -> Double {
     rtn a + b + c
 }
 
 // 用 else 做分支
-fn classify(x : int) -> string {
+fn classify(x : Int) -> String {
     if (x < 0) {
         rtn "negative"
     } else if (x == 0) {
@@ -63,7 +63,7 @@ fn classify(x : int) -> string {
 }
 
 // 字符串参数 + 区间循环拼接
-fn stars(n : int) -> string {
+fn stars(n : Int) -> String {
     var out = ""
     for (i in 0..n - 1) {
         out = out + "*"
@@ -72,19 +72,19 @@ fn stars(n : int) -> string {
 }
 
 // ---- ?T 可空 ----
-// 返回类型写 ?string 就表示「可能返回 null」，调用方必须处理
-fn findName(id : int) : ?string {
+// 返回类型写 ?String 就表示「可能返回 null」，调用方必须处理
+fn findName(id : Int) : ?String {
     if (id == 1) { rtn "rainStarfox" }
     rtn null
 }
 
 // 参数也可以可空
-fn greet(who : ?string) -> string {
+fn greet(who : ?String) -> String {
     rtn "hello, " + (who ?: "stranger")
 }
 
 // 可空的基本类型会装箱成包装类
-fn maybeInt(n : int) -> ?int {
+fn maybeInt(n : Int) -> ?Int {
     if (n > 0) { rtn n * 10 }
     rtn null
 }
@@ -118,7 +118,7 @@ fn main() -> void {
     println("maybeInt(-1) = " + none)
     println("maybeInt(-1) ?: -1 = " + (none ?: -1))
 
-    var declared : ?string = null
+    var declared : ?String = null
     println("declared = " + declared)
 
     // ---- 三目（表达式，可以喂给 rtn） ----

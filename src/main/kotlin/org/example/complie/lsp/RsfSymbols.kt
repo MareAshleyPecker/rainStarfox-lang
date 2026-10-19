@@ -36,7 +36,7 @@ object RsfSymbols {
         val name: String,
         /** `function` / `method` / `constructor` / `class` / `interface` / `enum` / `annotation` / `field` / `variable` */
         val kind: String,
-        /** 一行签名，例如 `add(a : int, b : int) -> int`。 */
+        /** 一行签名，例如 `add(a : Int, b : Int) -> Int`。 */
         val detail: String,
         /** RDoc 正文（没有就是空串）。 */
         val doc: String,
@@ -335,7 +335,7 @@ object RsfSymbols {
         return "class ${cls.name}$generics$parent"
     }
 
-    /** 签名渲染：`add(a : int, b : int) -> int`（和补全条目同一口径）。 */
+    /** 签名渲染：`add(a : Int, b : Int) -> Int`（和补全条目同一口径）。 */
     fun signature(fn: FuncDecl): String {
         val ps = fn.params.joinToString(", ") { "${it.name} : ${it.type.display()}" }
         val mark = if (fn.ret.mayError) "!" else ""

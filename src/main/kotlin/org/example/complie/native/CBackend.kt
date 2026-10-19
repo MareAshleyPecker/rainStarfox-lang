@@ -646,12 +646,12 @@ class CBackend(private val model: SemanticModel) {
     }
 
     private fun baseOf(ref: TypeRef): RsfBase = when (ref.name) {
-        "int" -> RsfBase.INT
-        "long" -> RsfBase.LONG
-        "bool" -> RsfBase.BOOL
-        "string" -> RsfBase.STRING
-        "char" -> RsfBase.CHAR
-        "byte" -> RsfBase.BYTE
+        "Int" -> RsfBase.INT
+        "Long" -> RsfBase.LONG
+        "Bool" -> RsfBase.BOOL
+        "String" -> RsfBase.STRING
+        "Char" -> RsfBase.CHAR
+        "Byte" -> RsfBase.BYTE
         else -> {
             if (classes.containsKey(ref.name) || model.enums.containsKey(ref.name)) RsfBase.EXTERNAL
             else fail("数组元素类型 '${ref.name}'")

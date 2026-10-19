@@ -1,4 +1,4 @@
-// rainStarfox 阶段 16 示例：byte / char 与标准库切片
+// rainStarfox 阶段 16 示例：Byte / Char 与标准库切片
 //
 // 跑：rsf run   rsfSrc/lang/stdlib.rsf      （解释器）
 //     rsf build rsfSrc/lang/stdlib.rsf      （字节码：生成 stdlib.class）
@@ -6,17 +6,17 @@
 //
 // 这一阶段补的是「自己写一个词法器」最少要用的那套积木：
 //
-//   - char 字面量（'a' / '\n' / '\u0041'）与 byte / char 两个基础类型；
+//   - Char 字面量（'a' / '\n' / '\u0041'）与 Byte / Char 两个基础类型；
 //   - 字符分类与大小写：isDigit / isLetter / isWhitespace / toUpper / toLower；
 //   - 字符与码点互转：charToInt / toChar，以及窄化用的 toByte；
-//   - 字符串切片：length() / charAt(int) -> char / substring(int, int) -> string
+//   - 字符串切片：length() / charAt(Int) -> Char / substring(Int, Int) -> String
 //     （这三个是 java.lang.String 自己的方法，走 JVM 互操作，不是内置函数）；
-//   - parseInt(string) -> !int：唯一会「失败」的一个，三种处理方式在下面都演示了。
+//   - parseInt(String) -> !Int：唯一会「失败」的一个，三种处理方式在下面都演示了。
 
 // ------------------------------------------------------------------ 字符分类
 
 // 词法器的第一步：一个字符算数字、字母、空白，还是别的
-fn kindOf(c : char) -> string {
+fn kindOf(c : Char) -> String {
     if (isDigit(c)) { rtn "数字" }
     if (isLetter(c)) { rtn "字母" }
     if (isWhitespace(c)) { rtn "空白" }
@@ -24,13 +24,13 @@ fn kindOf(c : char) -> string {
 }
 
 // 十六进制字符 -> 数值。这里同时用了 charToInt（取码点）和 toLower（统一大小写）
-fn hexValue(c : char) -> int {
+fn hexValue(c : Char) -> Int {
     if (isDigit(c)) { rtn charToInt(c) - charToInt('0') }
     rtn charToInt(toLower(c)) - charToInt('a') + 10
 }
 
 // 把转义字符写成能看懂的名字：'\n' 这种打出来是看不见的
-fn escapeName(c : char) -> string {
+fn escapeName(c : Char) -> String {
     if (c == '\n') { rtn "\\n" }
     if (c == '\t') { rtn "\\t" }
     if (c == '\r') { rtn "\\r" }
@@ -43,7 +43,7 @@ fn escapeName(c : char) -> string {
 // ------------------------------------------------------------------ 字符串切片
 
 // 只用 length / charAt / substring 这三个，把字符串倒过来（数组还没实现，所以不落地）
-fn reverse(s : string) -> string {
+fn reverse(s : String) -> String {
     var out = ""
     var i = s.length() - 1
     while (i >= 0) {
@@ -54,7 +54,7 @@ fn reverse(s : string) -> string {
 }
 
 // 统计每个字符的种类，返回「数字 x 个，字母 y 个，空白 z 个」
-fn summarize(s : string) -> string {
+fn summarize(s : String) -> String {
     var digits = 0
     var letters = 0
     var spaces = 0
@@ -70,23 +70,23 @@ fn summarize(s : string) -> string {
 // ------------------------------------------------------------------ 主程序
 
 fn main() -> void {
-    println("== byte ==")
-    // byte 与 int 的边界：字面量可以直接给（0..127），算术一律按 int 提升
-    var b : byte = 100
+    println("== Byte ==")
+    // Byte 与 Int 的边界：字面量可以直接给（0..127），算术一律按 Int 提升
+    var b : Byte = 100
     println("b = " + b)
     println("b + b = " + (b + b))
     println("b * 3 = " + (b * 3))
     println("toByte(200) = " + toByte(200))
     println("toByte(-1) = " + toByte(-1))
 
-    // ?byte 走的是既有的 ?T 机制：装箱成 java/lang/Byte，null 可以兜底
-    var maybe : ?byte = null
+    // ?Byte 走的是既有的 ?T 机制：装箱成 java/lang/Byte，null 可以兜底
+    var maybe : ?Byte = null
     println("maybe = " + maybe)
     println("maybe ?: toByte(7) = " + (maybe ?: toByte(7)))
 
     println("")
-    println("== char 字面量与转义 ==")
-    var c : char = 'a'
+    println("== Char 字面量与转义 ==")
+    var c : Char = 'a'
     println("c = " + c)
     println("转义 '\\n' 的码点是 " + charToInt('\n') + "，名字是 " + escapeName('\n'))
     println("转义：\\t 的名字是 " + escapeName('\t'))
@@ -111,7 +111,7 @@ fn main() -> void {
 
     println("")
     println("== 字符串切片 ==")
-    var text : string = "Rsf 16"
+    var text : String = "Rsf 16"
     println("text = " + text)
     println("text.length() = " + text.length())
     println("text.charAt(0) = " + text.charAt(0))
@@ -133,11 +133,11 @@ fn main() -> void {
     try {
         var n = parseInt("12a")
         println("不该走到这里：" + n)
-    } catch (e : string) {
+    } catch (e : String) {
         println("接住了：" + e)
     }
 
-    // (c) 正常路径：解析成功就是普通 int
+    // (c) 正常路径：解析成功就是普通 Int
     var count = parseInt("108") ?: 0
     println("count / 2 = " + (count / 2))
     rtn

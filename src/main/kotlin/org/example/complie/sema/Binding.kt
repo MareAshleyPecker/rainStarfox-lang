@@ -16,7 +16,7 @@ class Binding(
     val paramIndex: Int,
     val at: SourceLine,
     /**
-     * 是不是 `catch (e : string)` 的错误变量（阶段 14；老写法 `catch (e string)` 也收）。
+     * 是不是 `catch (e : String)` 的错误变量（阶段 14；老写法 `catch (e String)` 也收）。
      *
      * 它跟参数一样「进作用域就有值」，所以不参与确定性赋值分析；
      * 归错时也要给一句专门的话，而不是让它冒充 imutvar 局部变量。

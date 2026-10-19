@@ -53,13 +53,13 @@ class InterfaceRuntimeTest {
     fun `类类型接收者能调继承来的默认方法`() {
         val program = """
             pub interface Greeter {
-                fn greet(n : string) -> string
-                fn shout(n : string) -> string {
+                fn greet(n : String) -> String
+                fn shout(n : String) -> String {
                     rtn greet(n) + "!"
                 }
             }
             class Dog : Greeter {
-                pub fn greet(n : string) -> string {
+                pub fn greet(n : String) -> String {
                     rtn "woof"
                 }
             }
@@ -83,13 +83,13 @@ class InterfaceRuntimeTest {
     fun `默认方法内部调抽象方法也走接口分派`() {
         val program = """
             pub interface Calc {
-                fn twice(x : int) -> int
-                fn quad(x : int) -> int {
+                fn twice(x : Int) -> Int
+                fn quad(x : Int) -> Int {
                     rtn twice(twice(x))
                 }
             }
             class Doubler : Calc {
-                pub fn twice(x : int) -> int {
+                pub fn twice(x : Int) -> Int {
                     rtn x * 2
                 }
             }
@@ -117,19 +117,19 @@ class InterfaceRuntimeTest {
     fun `接口类型变量调抽象方法按真实类分派`() {
         val program = """
             pub interface Shape {
-                fn area() -> int
+                fn area() -> Int
             }
             class Sq : Shape {
-                pub fn area() -> int {
+                pub fn area() -> Int {
                     rtn 4
                 }
             }
             class Tri : Shape {
-                pub fn area() -> int {
+                pub fn area() -> Int {
                     rtn 3
                 }
             }
-            fn describe(s : Shape) -> string {
+            fn describe(s : Shape) -> String {
                 rtn "area=" + s.area()
             }
             fn main() -> void {
@@ -155,19 +155,19 @@ class InterfaceRuntimeTest {
     fun `接口继承接口时默认方法与父接口抽象方法都能调`() {
         val program = """
             pub interface Named {
-                fn name() -> string
+                fn name() -> String
             }
             pub interface Greeter : Named {
-                fn greet(n : string) -> string
-                fn hello() -> string {
+                fn greet(n : String) -> String
+                fn hello() -> String {
                     rtn "hi " + name() + " " + greet("x")
                 }
             }
             class Dog : Greeter {
-                pub fn name() -> string {
+                pub fn name() -> String {
                     rtn "dog"
                 }
-                pub fn greet(n : string) -> string {
+                pub fn greet(n : String) -> String {
                     rtn "woof-" + n
                 }
             }
@@ -203,10 +203,10 @@ class InterfaceRuntimeTest {
     fun `类同时实现 rsf 接口与 JDK 接口`() {
         val program = """
             pub interface Greeter {
-                fn greet() -> string
+                fn greet() -> String
             }
             class Dog : Greeter, Runnable {
-                pub fn greet() -> string {
+                pub fn greet() -> String {
                     rtn "woof"
                 }
                 pub fn run() -> void {
@@ -240,13 +240,13 @@ class InterfaceRuntimeTest {
     fun `默认方法里的 elvis 兜底两端一致`() {
         val program = """
             pub interface Fetcher {
-                fn load(n : int) -> !string
-                fn safe(n : int) -> string {
+                fn load(n : Int) -> !String
+                fn safe(n : Int) -> String {
                     rtn load(n) ?: "fallback"
                 }
             }
             class F : Fetcher {
-                pub fn load(n : int) -> !string {
+                pub fn load(n : Int) -> !String {
                     if (n < 0) {
                         fail "bad"
                     }
@@ -274,7 +274,7 @@ class InterfaceRuntimeTest {
                 source(
                     """
                         pub interface Greeter {
-                            fn greet() -> string
+                            fn greet() -> String
                         }
                         fn main() -> void {
                             var g = new Greeter()
@@ -300,12 +300,12 @@ class InterfaceRuntimeTest {
     fun `接口静态类型下调的是子接口覆盖后的默认方法`() {
         val program = """
             pub interface Named {
-                fn name() -> string {
+                fn name() -> String {
                     rtn "n"
                 }
             }
             pub interface Person : Named {
-                override fn name() -> string {
+                override fn name() -> String {
                     rtn "p"
                 }
             }
@@ -340,10 +340,10 @@ class InterfaceRuntimeTest {
                 Rsf.analyze(
                     source(
                         "pub interface Greeter {\n" +
-                            "    fn greet() -> string\n" +
+                            "    fn greet() -> String\n" +
                             "}\n" +
                             "class Dog : Greeter {\n" +
-                            "    $modifier" + "fn greet() -> string {\n" +
+                            "    $modifier" + "fn greet() -> String {\n" +
                             "        rtn \"woof\"\n" +
                             "    }\n" +
                             "}\n" +
@@ -365,13 +365,13 @@ class InterfaceRuntimeTest {
             Rsf.analyze(
                 source(
                     "pub interface A {\n" +
-                        "    fn say() -> string {\n        rtn \"a\"\n    }\n" +
+                        "    fn say() -> String {\n        rtn \"a\"\n    }\n" +
                         "}\n" +
                         "pub interface B {\n" +
-                        "    fn say() -> string {\n        rtn \"b\"\n    }\n" +
+                        "    fn say() -> String {\n        rtn \"b\"\n    }\n" +
                         "}\n" +
                         "class C : A, B {\n" +
-                        "    prv fn say() -> string {\n        rtn \"c\"\n    }\n" +
+                        "    prv fn say() -> String {\n        rtn \"c\"\n    }\n" +
                         "}\n",
                 ),
             )
@@ -396,13 +396,13 @@ class InterfaceRuntimeTest {
     fun `接口产物形状正确且调用点发 invokeinterface`() {
         val program = """
             pub interface Greeter {
-                fn greet(n : string) -> string
-                fn shout(n : string) -> string {
+                fn greet(n : String) -> String
+                fn shout(n : String) -> String {
                     rtn greet(n) + "!"
                 }
             }
             class Dog : Greeter, Runnable {
-                pub fn greet(n : string) -> string {
+                pub fn greet(n : String) -> String {
                     rtn "woof"
                 }
                 pub fn run() -> void {
@@ -553,8 +553,8 @@ class InterfaceRuntimeTest {
             import java.util.Collections
             import java.util.Comparator
 
-            class ByValue : Comparator&<string> {
-                pub fn compare(a : string, b : string) -> int {
+            class ByValue : Comparator&<String> {
+                pub fn compare(a : String, b : String) -> Int {
                     var x = parseInt(a) ?: 0
                     var y = parseInt(b) ?: 0
                     rtn x - y
@@ -562,7 +562,7 @@ class InterfaceRuntimeTest {
             }
 
             fn main() -> void {
-                var xs = new ArrayList&<string>()
+                var xs = new ArrayList&<String>()
                 xs.add("5")
                 xs.add("3")
                 Collections.sort(xs, new ByValue())
@@ -601,8 +601,8 @@ class InterfaceRuntimeTest {
 
     /**
      * **rsf 自己声明的泛型接口**也要桥：`interface Box&<T> { fun get() -> T }` 发到类文件里
-     * 是 `get()Ljava/lang/Object;`，而实现类写的是 `get() -> int`。没有桥，经接口回调
-     * （`b.get()` 静态类型是 `Box&<int>`）就是 `AbstractMethodError`。
+     * 是 `get()Ljava/lang/Object;`，而实现类写的是 `get() -> Int`。没有桥，经接口回调
+     * （`b.get()` 静态类型是 `Box&<Int>`）就是 `AbstractMethodError`。
      */
     @Test
     fun `泛型 rsf 接口的实现类补桥方法两端一致`() {
@@ -611,14 +611,14 @@ class InterfaceRuntimeTest {
                 fn get() -> T
             }
 
-            class IntBox : Box&<int> {
-                pub fn get() -> int {
+            class IntBox : Box&<Int> {
+                pub fn get() -> Int {
                     rtn 7
                 }
             }
 
             fn main() -> void {
-                var b : Box&<int> = new IntBox()
+                var b : Box&<Int> = new IntBox()
                 println(b.get())
                 rtn
             }
@@ -633,8 +633,8 @@ class InterfaceRuntimeTest {
         val program = """
             import java.util.Comparator
 
-            class ByValue : Comparator&<string> {
-                pub fn compare(a : string, b : string) -> int {
+            class ByValue : Comparator&<String> {
+                pub fn compare(a : String, b : String) -> Int {
                     rtn 0
                 }
             }

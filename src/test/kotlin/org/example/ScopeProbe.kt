@@ -47,17 +47,17 @@ fun main() {
     }
 
     state()
-    println("declare a:local:int -> ${dec("a", "local", "int")}")
-    println("declare a:local:int -> ${dec("a", "local", "int")}")
+    println("declare a:local:Int -> ${dec("a", "local", "Int")}")
+    println("declare a:local:Int -> ${dec("a", "local", "Int")}")
     println("lookup a -> ${look("a")}")
     println("lookup b -> ${look("b")}")
 
     enter()
     state()
-    println("declare b:param:string -> ${dec("b", "param", "string")}")
+    println("declare b:param:String -> ${dec("b", "param", "String")}")
     println("lookup b -> ${look("b")}")
     println("lookup a -> ${look("a")}")
-    println("declare a:local:long -> ${dec("a", "local", "long")}")
+    println("declare a:local:Long -> ${dec("a", "local", "Long")}")
     println("lookup a -> ${look("a")}")
 
     enter()

@@ -4,12 +4,12 @@
 // 空队列取元素返回 null，由调用方自己判。
 pub class Deque&<T> {
     var items : T[] = new T[4]
-    var head : int = 0
-    var n : int = 0
+    var head : Int = 0
+    var n : Int = 0
 
-    pub fn size() -> int { rtn n }
+    pub fn size() -> Int { rtn n }
 
-    pub fn isEmpty() -> bool { rtn n == 0 }
+    pub fn isEmpty() -> Bool { rtn n == 0 }
 
     pub fn clear() -> void {
         head = 0
@@ -55,10 +55,10 @@ pub class Deque&<T> {
     }
 
     // 按逻辑顺序取第 i 个（0 是队首）
-    pub fn get(i : int) -> T { rtn items[(head + i) % items.length] }
+    pub fn get(i : Int) -> T { rtn items[(head + i) % items.length] }
 
     fn grow() -> void {
-        var cap : int = items.length * 2
+        var cap : Int = items.length * 2
         var next : T[] = new T[cap]
         var i = 0
         while (i < n) {

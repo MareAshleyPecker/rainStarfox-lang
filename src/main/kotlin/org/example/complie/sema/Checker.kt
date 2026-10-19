@@ -167,11 +167,11 @@ class Checker(
     // ---------------------------------------------------------------- 函数类型（阶段 30）
 
     /**
-     * 函数类型的**签名表**：`"(int) -> int"` → 形参类型 + 返回类型。
+     * 函数类型的**签名表**：`"(Int) -> Int"` → 形参类型 + 返回类型。
      *
      * 函数类型本身在 [RsfType] 里只是一个 `EXTERNAL` 类型（internal name 是
-     * `rsf/fn/(int) -> int`），报错时正好印成 `(int) -> int`；可空性不参与键
-     * （`?(int) -> int` 与非空版共用同一条签名）。调用函数值、拿期望类型补 `lam`
+     * `rsf/fn/(Int) -> Int`），报错时正好印成 `(Int) -> Int`；可空性不参与键
+     * （`?(Int) -> Int` 与非空版共用同一条签名）。调用函数值、拿期望类型补 `lam`
      * 的形参类型，都要把「形参表 / 返回类型」再取回来，所以另存一张表，
      * 键就是那段显示文本（见 `RsfType.fnTypeText`）。
      */
@@ -222,7 +222,7 @@ class Checker(
      */
     private var handledNode: Expr? = null
 
-    /** `try { ... } catch (e : string) { ... }` 的 catch 变量绑定；Lowering 用它分配槽位。 */
+    /** `try { ... } catch (e : String) { ... }` 的 catch 变量绑定；Lowering 用它分配槽位。 */
     private val catchBindings = IdentityHashMap<TryStmt, Binding>()
 
     /** 当前正在检查的语句属于哪个文件（多文件时用）。
@@ -240,7 +240,7 @@ class Checker(
         // 接口名要先占住（阶段 20）：`class Dog : Greeter` 和 `fun f(g : Greeter)` 都得
         // 看得见它，而这两件事分别发生在类声明的第二遍和函数声明的第一遍里。
         declareInterfaceNames()
-        // 类要先声明：顶层函数的签名里可能用到类名（`fun f(Point p) -> int`），
+        // 类要先声明：顶层函数的签名里可能用到类名（`fun f(Point p) -> Int`），
         // 反过来的顺序会让 resolveType 看不到类表。
         declareClasses()
         // 类继承的**声明级**规矩（阶段 25）：父类得是 open、字段不许遮蔽、覆盖要写
@@ -479,11 +479,11 @@ class Checker(
         data class Rsf(
             val info: InterfaceInfo,
             /**
-             * `: Box&<int>` 里那串类型实参（解析后的）。空表 = 没写实参。
+             * `: Box&<Int>` 里那串类型实参（解析后的）。空表 = 没写实参。
              *
-             * 实现配对与调用点都要用它把接口方法签名里的 `T` 换成 `int`——
+             * 实现配对与调用点都要用它把接口方法签名里的 `T` 换成 `Int`——
              * 不换的话 `interface Box&<T> { fun get() -> T }` 会被判成「类里的
-             * `get() -> int` 返回类型和 `T` 不一致」而误报。
+             * `get() -> Int` 返回类型和 `T` 不一致」而误报。
              */
             val args: List<RsfType> = emptyList(),
         ) : SuperRef {
@@ -540,7 +540,7 @@ class Checker(
     // ------------------------------------------------------------------ 类继承（阶段 25 K1）
 
     /**
-     * 类声明 → 已解析的**父类**（`class D(y : int) : Base(y)` 里的 `Base`）。
+     * 类声明 → 已解析的**父类**（`class D(y : Int) : Base(y)` 里的 `Base`）。
      *
      * 父类不塞进 [classSuperRefs]：那张表是「父**接口**列表」，下游每一处都默认
      * 里面是接口（实现配对、`INVOKEVIRTUAL` 的 owner…）。父类的规矩完全不同
@@ -665,9 +665,9 @@ class Checker(
     /**
      * 把接收者的类型实参**一路上溯代换**到 [owner] 那一层（阶段 25 K1，G4）。
      *
-     * `class Holder&<T>(v0 : T) { fun get() -> T }` 配 `class IntHolder(v0 : int) :
-     * Holder&<int>(v0)` 时，`h.get()` 拿到的声明在 Holder 上、返回类型写的是 `T`：
-     * 只看 IntHolder 自己的类型实参（一个都没有）永远代不出 int，必须在每一跳
+     * `class Holder&<T>(v0 : T) { fun get() -> T }` 配 `class IntHolder(v0 : Int) :
+     * Holder&<Int>(v0)` 时，`h.get()` 拿到的声明在 Holder 上、返回类型写的是 `T`：
+     * 只看 IntHolder 自己的类型实参（一个都没有）永远代不出 Int，必须在每一跳
      * 把父类实参按当前代换算出来，一层层传到**声明它的那个类**。
      *
      * [startSubst] 是 [start] 那一层的代换表（`自己的类型参数 → 实际类型`）。
@@ -943,7 +943,7 @@ class Checker(
      * JDK 父**类**链上还没有被实现的抽象方法（阶段 25 K4，缺口 B）。
      *
      * 接口那一支由 [checkClassCovers] 报，rsf 父类那一支由 [unimplementedAbstractMembers]
-     * 报——这一支谁都没管：`class L : AbstractList<int>()` 会一路编到 JVM 装载之后才
+     * 报——这一支谁都没管：`class L : AbstractList<Int>()` 会一路编到 JVM 装载之后才
      * 抛 `AbstractMethodError`，而解释器侧因为父类实例是**真实**的 JDK 对象、
      * 拿不到抽象方法体，表现完全不同。所以在这里一次性补齐。
      *
@@ -1367,7 +1367,7 @@ class Checker(
         }
         val (owner, method) = found
         // 阶段 25 K1（G4）：父类方法的签名要按**它的类型参数**代换成子类里的具体类型
-        // （`class IntHolder : Holder&<int>` 的 `super.get()` 给回 int）。
+        // （`class IntHolder : Holder&<Int>` 的 `super.get()` 给回 Int）。
         val subst = substitutionFromInside(info, owner)
         val candidates = listOf(
             OverloadCandidate(method, memberParamTypes(method).map { it.substitute(memberSubstFor(method, subst)) }),
@@ -1658,7 +1658,7 @@ class Checker(
     /**
      * 注解元素表：解析类型 + 白名单校验（DESIGN-21 §6）。
      *
-     * 元素的**默认值**在这里也顺便查类型（`int` 的元素写 `= "x"` 要报错）——
+     * 元素的**默认值**在这里也顺便查类型（`Int` 的元素写 `= "x"` 要报错）——
      * Parser 只保证「默认值是个常量字面量」，字面量的类型和声明的类型对不对得上只有
      * 这里知道。默认值本身留在 `AnnotationElement.default` 上，两个后端要的
      * `AnnotationDefault` 就是那个常量。
@@ -1668,7 +1668,7 @@ class Checker(
         val out = ArrayList<AnnotationElementSpec>(decl.elements.size)
         for (el in decl.elements) {
             val type = resolveType(el.type)
-            // 可空：数组元素也可空（`int[]?` / `?int[]`）——两者在 JVM 上都是 null 装不进注解
+            // 可空：数组元素也可空（`Int[]?` / `?Int[]`）——两者在 JVM 上都是 null 装不进注解
             if (type.nullable || (type.isArray && type.elementType.nullable)) {
                 throw err(
                     "注解元素 '${el.name}' 不能是可空类型：注解元素在 JVM 里不能是 null",
@@ -1678,7 +1678,7 @@ class Checker(
             if (!isAnnotationElementType(type)) {
                 throw err(
                     "注解元素 '${el.name}' 的类型 '${el.type.display()}' 不合法：" +
-                        "注解元素只能是 string、基本类型、枚举、注解，或它们的数组",
+                        "注解元素只能是 String、基本类型、枚举、注解，或它们的数组",
                     el.type.at,
                 )
             }
@@ -1691,8 +1691,8 @@ class Checker(
     /**
      * 这个类型能不能当注解元素（DESIGN-21 §6 的白名单）。
      *
-     * 判据：`string` / 基本类型 / 枚举 / 注解 / **这些的一维数组**。void、null 类型、
-     * 类型参数、普通类/接口、二维数组都在白名单外（二维数组要写成 `int[][]`，
+     * 判据：`String` / 基本类型 / 枚举 / 注解 / **这些的一维数组**。void、null 类型、
+     * 类型参数、普通类/接口、二维数组都在白名单外（二维数组要写成 `Int[][]`，
      * 注解元素只到一维）。
      */
     private fun isAnnotationElementType(type: RsfType): Boolean {
@@ -1758,7 +1758,7 @@ class Checker(
     }
 
     /**
-     * 一个元素的访问器：`fun value() -> string`。
+     * 一个元素的访问器：`fun value() -> String`。
      *
      * [abstract] = true 时没有体（注解接口里的元素方法，DESIGN-21 §5 的
      * `ACC_PUBLIC|ACC_ABSTRACT`）；false 时体是 `rtn 元素名`（伴生类上的实现，
@@ -1852,8 +1852,8 @@ class Checker(
     /**
      * 用户手写的 `constructor(...)`：参数必须与注解元素**同名同序**（DESIGN-21 §6）。
      *
-     * 参数类型也要对得上——只比名字的话 `constructor(value : int)` 配 `value : string`
-     * 会生成一个字段是 string、参数是 int 的类，M3 写 `<init>` 时才发现。
+     * 参数类型也要对得上——只比名字的话 `constructor(value : Int)` 配 `value : String`
+     * 会生成一个字段是 String、参数是 Int 的类，M3 写 `<init>` 时才发现。
      */
     private fun checkCompanionConstructor(
         ctor: FuncDecl,
@@ -1919,11 +1919,11 @@ class Checker(
     )
 
     /**
-     * 合成的元素字段（`var value : string`）。
+     * 合成的元素字段（`var value : String`）。
      *
      * 初值只是**占位**：默认值字面量（有默认值时），否则与类型相配的零值——两者都必须
      * 是合法表达式，否则字节码后端按「普通字段初值」抄进 `<init>` 时会编出非法指令
-     * （`int` 字段拿到 null）。真正的赋值在 M3 的 `<init>` 里按构造器参数生成
+     * （`Int` 字段拿到 null）。真正的赋值在 M3 的 `<init>` 里按构造器参数生成
      * （见 [CompanionSpec]），M2 的初值类型检查对它用 [elementFields] 跳过。
      */
     private fun companionElementField(el: AnnotationElementSpec): FieldDecl = FieldDecl(
@@ -2136,7 +2136,7 @@ class Checker(
      *
      * 注解自己的成员是**元素**，元素名和访问器名（= 注解名）不可能一样
      * （Parser 已经保证元素名不与注解名相同——元素名是标识符，注解名也是，
-     * 而 `annotation Marker(Marker : int)` 在 Parser 里就重名报错了），所以返回空集即可。
+     * 而 `annotation Marker(Marker : Int)` 在 Parser 里就重名报错了），所以返回空集即可。
      */
     private fun memberNamesOfType(host: String): Set<String>? {
         classTable[host]?.let { info ->
@@ -2151,7 +2151,7 @@ class Checker(
      * 记下方案 B 要生成的访问器规格（M2 只出规格，M3 生成字节码）。
      *
      * 类型级（标在类/接口/注解本身上）：`public static <伴生类型> Marker()`；
-     * 成员级（标在方法/字段上）：`public static <伴生类型> Marker(string member)`。
+     * 成员级（标在方法/字段上）：`public static <伴生类型> Marker(String member)`。
      * 挂在哪：就是被标的那个类型（[AnnotationTarget.hostName]）。
      */
     private fun addAnnotationAccessor(
@@ -2354,9 +2354,9 @@ class Checker(
      *   落到这里的说明用户写错了位置）；
      * - 认不出来的名字 → 未知父类型。
      *
-     * 类型实参照收（`class C : Box&<int>`）：对 rsf 接口，实参要用来把方法签名里的
-     * `T` 换成 `int`（实现配对与调用点都靠它）；对 JVM 接口则一律忽略——
-     * JVM 的擦除把 `Comparator&<string>` 变成 `Comparator`，两端都只看擦除后的描述符。
+     * 类型实参照收（`class C : Box&<Int>`）：对 rsf 接口，实参要用来把方法签名里的
+     * `T` 换成 `Int`（实现配对与调用点都靠它）；对 JVM 接口则一律忽略——
+     * JVM 的擦除把 `Comparator&<String>` 变成 `Comparator`，两端都只看擦除后的描述符。
      */
     private fun resolveSuperTypeRef(
         ref: TypeRef,
@@ -2516,7 +2516,7 @@ class Checker(
      * 自己写了个字段；方法这条路则和类的方法共用 [resolveOverload] 那一套挑选规则
      * （重载、实参打分、错误文案全都天然一致，不用两处维护）。
      *
-     * [subst] 把接口的类型实参替进方法签名（`Box&<int> b` 的 `b.get()` 是 int）。
+     * [subst] 把接口的类型实参替进方法签名（`Box&<Int> b` 的 `b.get()` 是 Int）。
      * 注意方法可能**声明在父接口**里：那时签名里的类型参数名不一定和自己的一样，
      * 本阶段按「同名即同参」处理（泛型接口只要求能声明/实现/调用，见 DESIGN §3）。
      */
@@ -2649,8 +2649,8 @@ class Checker(
      * 只处理引用类型（数组、基本类型、类型变量都不归它管），判据是「沿着父类型链，
      * 能不能从 [valueType] 走到 [want]」：
      * - `I x = new Dog(...)`：Dog 实现 I，走名字链就够（[isSubtypeName]）；
-     * - `Box&<int> b = new IntBox()`：泛型接口要实现链上**逐跳代换**后才能比
-     *   （`class IntBox : Box&<int>` 把 T 兑现成 int），所以要带着类型实参走
+     * - `Box&<Int> b = new IntBox()`：泛型接口要实现链上**逐跳代换**后才能比
+     *   （`class IntBox : Box&<Int>` 把 T 兑现成 Int），所以要带着类型实参走
      *   （[isSubtypeWithArgs]）——这是「泛型接口能声明/实现/调用」必须的那一步。
      *
      * 判不出来时**返回 false**（用户看到一条正常的「不能把 X 赋给 Y」）：
@@ -2675,11 +2675,11 @@ class Checker(
      * 数组之间的赋值兼容（阶段 24）：JVM 的数组是**协变**的，`B[]` 能当 `A[]` 用。
      *
      * 逐层拆 `[]` 比元素类型，规则就和运行期那条 `INSTANCEOF` 完全一致：
-     * - 基本类型数组**不**协变：`int[]` 不是 `long[]`（JVM 也不让）；
+     * - 基本类型数组**不**协变：`Int[]` 不是 `Long[]`（JVM 也不让）；
      * - 引用元素按 [isSourceSubtype] 走类链/接口链（`C[]` 不是 `B[]`）；
      * - 类型参数擦除到 Object：`T[]` 与 `Object[]` 互相放得下。
      *
-     * 二维以上（`int[][]`、`B[][]`）递归处理，维度不同直接不兼容。
+     * 二维以上（`Int[][]`、`B[][]`）递归处理，维度不同直接不兼容。
      */
     private fun isArraySubtype(want: RsfType, valueType: RsfType): Boolean {
         if (!want.isArray || !valueType.isArray) return false
@@ -2702,13 +2702,13 @@ class Checker(
      * 带类型实参的子类型判定（阶段 20）：从 `[sub]&<[subArgs]>` 沿父类型链走到
      * `[sup]&<[supArgs]>` 了吗？
      *
-     * 每一跳都做一次代换：`class IntBox : Box&<int>` 里 IntBox 没有类型参数，
-     * 走到父类型时父类型的实参就是 `[int]`；若是 `class C&<T> : Box&<T>`，
-     * 则用 `T -> 实际实参` 把它代换出来。名字对上之后才比实参——`Box&<string>`
-     * 接不住 `Box&<int>` 的实现，这正是静态类型该拦住的东西。
+     * 每一跳都做一次代换：`class IntBox : Box&<Int>` 里 IntBox 没有类型参数，
+     * 走到父类型时父类型的实参就是 `[Int]`；若是 `class C&<T> : Box&<T>`，
+     * 则用 `T -> 实际实参` 把它代换出来。名字对上之后才比实参——`Box&<String>`
+     * 接不住 `Box&<Int>` 的实现，这正是静态类型该拦住的东西。
      *
      * 走到 classpath 上的类型时实参就没了（JVM 擦除），此时退回 [ClassPath.isSubtype]
-     * 按名字判——那条路本来就是擦除后的口径（`Comparator&<string>` → `Comparator`）。
+     * 按名字判——那条路本来就是擦除后的口径（`Comparator&<String>` → `Comparator`）。
      */
     private fun isSubtypeWithArgs(
         sub: String,
@@ -2726,8 +2726,8 @@ class Checker(
             if (cur == sup) {
                 // 目标没写实参 → 名字对上就算；写了实参 → 必须逐个对上
                 if (supArgs.isEmpty() || args == supArgs) return true
-                // 名字对上了、实参对不上：**这条分支彻底不成立**（`Box&<string>` 接不住
-                // `Box&<int>` 的实现），不能再掉到下面那条擦除判据上去——`ClassPath.isSubtype`
+                // 名字对上了、实参对不上：**这条分支彻底不成立**（`Box&<String>` 接不住
+                // `Box&<Int>` 的实现），不能再掉到下面那条擦除判据上去——`ClassPath.isSubtype`
                 // 在 sub == sup 时恒真，会把刚刚判死的结论又放行。
                 // args 为空表 = 走到这里时实参已经不可考（JVM 擦除），那才交给 ClassPath。
                 if (args.isNotEmpty()) continue
@@ -2746,8 +2746,8 @@ class Checker(
         val out = ArrayList<Pair<String, List<RsfType>>>()
         classTable[name]?.let { info ->
             val subst = substitutionFor(info.decl.typeParams, args)
-            // 阶段 25：父**类**那一跳（G1 的泛型版）：`class IntHolder : Holder&<int>`
-            // 要能从 IntHolder 走到 `Holder&<int>`，`Holder&<T>` 那侧的实参按本类
+            // 阶段 25：父**类**那一跳（G1 的泛型版）：`class IntHolder : Holder&<Int>`
+            // 要能从 IntHolder 走到 `Holder&<Int>`，`Holder&<T>` 那侧的实参按本类
             // 类型参数代换（`class D&<U> : Base&<U>`）。
             parentRecord(info)?.let { p -> out.add(p.internalName to p.args.map { it.substitute(subst) }) }
             for (s in classSuperRefs[info.decl].orEmpty()) {
@@ -2803,8 +2803,8 @@ class Checker(
     /**
      * 收集一个（可能带类型实参的）rsf 接口要求的全部方法，含它继承来的。
      *
-     * [args] 是这一层的类型实参（`class C : Box&<int>` 里的 `int`）：方法签名里的
-     * `T` 要换成它——不换的话 `fun get() -> T` 会和类里的 `fun get() -> int`
+     * [args] 是这一层的类型实参（`class C : Box&<Int>` 里的 `Int`）：方法签名里的
+     * `T` 要换成它——不换的话 `fun get() -> T` 会和类里的 `fun get() -> Int`
      * 判成「返回类型不一致」而误报。
      */
     private fun collectRsfRequired(
@@ -2875,7 +2875,7 @@ class Checker(
      *
      * 判据是「名字 + 参数（擦除后）+ 返回类型」：
      * - 三个都对上 → 算实现；返回类型不一致**报错**（返回类型不参与重载挑选，
-     *   但它参与覆盖——`-> int` 顶不住 `-> string`）；
+     *   但它参与覆盖——`-> Int` 顶不住 `-> String`）；
      * - 名字在、参数表对不上 → 报「签名不符」，并给出两边各自的写法；
      * - 名字都不在 → 收进「还缺哪些方法」的清单，一次全报出来。
      *
@@ -2999,7 +2999,7 @@ class Checker(
         return false
     }
 
-    /** 报错文案里的签名形态，如 `greet(string)`。 */
+    /** 报错文案里的签名形态，如 `greet(String)`。 */
     private fun describeSignature(m: FuncDecl): String =
         m.name + "(" + paramTypesOfDecl(m).joinToString(", ") { it.rsfName } + ")"
 
@@ -3239,8 +3239,8 @@ class Checker(
     private val classFieldTypes = IdentityHashMap<ClassDecl, List<RsfType>>()
 
     /**
-     * 构造**导入的 JVM 类**（`new ArrayList&<int>()`，或者省掉 `new` 的
-     * `ArrayList&<int>()`）→ 解析到的构造器。
+     * 构造**导入的 JVM 类**（`new ArrayList&<Int>()`，或者省掉 `new` 的
+     * `ArrayList&<Int>()`）→ 解析到的构造器。
      */
     private val externalNewTargets = IdentityHashMap<Expr, ResolvedMethod>()
 
@@ -3268,7 +3268,7 @@ class Checker(
     }
 
     /**
-     * 字段成员。[subst] 是泛型实参的替换表：`Box&<int>` 的 `value` 从 `T` 变成 `int`；
+     * 字段成员。[subst] 是泛型实参的替换表：`Box&<Int>` 的 `value` 从 `T` 变成 `Int`；
      * 在类体内部（`this.value` / 裸写 `value`）传空表，`T` 就还是占位。
      *
      * **阶段 25：字段布局是「父类字段在前」**（DESIGN-25 §5）。[info] 是**访问发生的类**，
@@ -3422,9 +3422,9 @@ class Checker(
         // （擦除后的参数描述符不能撞车）。构造器不适用——它保留老规矩（见 resolveCtor）。
         checkErasureConflicts(cls.name, methods)
 
-        // 构造器签名不能重复：`constructor(int)` 与主构造 `(int)` 同时存在就说不清 new 哪个。
-        // 判据用**解析后的参数类型**（不是源码写法）：`int` 和 `int`、`Box&<int>` 和
-        // `Box&<int>` 才算同一个签名——和 JVM 一样按擦除后的描述符比。
+        // 构造器签名不能重复：`constructor(Int)` 与主构造 `(Int)` 同时存在就说不清 new 哪个。
+        // 判据用**解析后的参数类型**（不是源码写法）：`Int` 和 `Int`、`Box&<Int>` 和
+        // `Box&<Int>` 才算同一个签名——和 JVM 一样按擦除后的描述符比。
         val seenSignatures = HashMap<String, FuncDecl>()
         for (c in constructors) {
             val key = methodParams[c].orEmpty().joinToString(",") { it.type.rsfName }
@@ -3487,11 +3487,11 @@ class Checker(
      * 同一个名字下的多个重载，在 JVM 上必须是**不同的方法**。
      *
      * 判据是**擦除后的参数描述符**（[RsfType.descriptor]，它天然不带泛型实参、
-     * 把类里的类型参数擦成 `Object`）：`f(Box&<int>)` 与 `f(Box&<string>)`
+     * 把类里的类型参数擦成 `Object`）：`f(Box&<Int>)` 与 `f(Box&<String>)`
      * 的描述符都是 `(LBox;)V`，JVM 里就是同一个方法，两个一起编出来只会有一个活下来
      * （后声明的把先声明的挡掉），所以必须在编译期拒绝，而不是产出一份自己都对不上的字节码。
      *
-     * **返回类型不参与判据**：重载只能靠参数区分，`f(int) -> int` 与 `f(int) -> string`
+     * **返回类型不参与判据**：重载只能靠参数区分，`f(Int) -> Int` 与 `f(Int) -> String`
      * 在调用点 `f(1)` 上一样说不清该返回什么。
      *
      * [owner] 为 null 表示顶层函数——它们全都编进同一个程序类的静态方法，判据相同。
@@ -3540,7 +3540,7 @@ class Checker(
                     "$where 有两个重载在 JVM 上是同一个方法：参数擦除后的描述符都是 ($key)。" +
                         "第 ${prev.at.line} 行的 ${signatureOf(prev)} 与这里的 ${signatureOf(d)} " +
                         "编译出来同名同描述符，一个类里只能留一个。" +
-                        "泛型实参不参与 JVM 的方法描述符（`Box&<int>` 与 `Box&<string>` " +
+                        "泛型实参不参与 JVM 的方法描述符（`Box&<Int>` 与 `Box&<String>` " +
                         "擦除后都是 `LBox;`），重载也**不看返回类型**——" +
                         "把其中一个改名，或者让它多收一个参数",
                     d.at,
@@ -3559,7 +3559,7 @@ class Checker(
             // 类体里 `T` 就是类型：字段、参数、返回、局部变量都能写
             typeParams = info.decl.typeParams.associateWith { RsfType.typeParam(it) }
 
-            // 主构造的参数在**字段初值**里可见（`class P(x0 : int) { var x : int = x0 }`）：
+            // 主构造的参数在**字段初值**里可见（`class P(x0 : Int) { var x : Int = x0 }`）：
             // 主构造的「体」就是字段初值，这段作用域等价于主构造的函数体。
             // 次构造的参数不在这里——它们的体是自己的 constructor(...) 块。
             for (b in info.primary?.let { methodParams[it] }.orEmpty()) {
@@ -3648,7 +3648,7 @@ class Checker(
         }
     }
 
-    /** 构造器的可读签名，报错用：`P(int x0, string s)`。 */
+    /** 构造器的可读签名，报错用：`P(Int x0, String s)`。 */
     private fun describeCtor(info: ClassInfo, ctor: FuncDecl): String {
         val types = methodParams[ctor].orEmpty()
         val parts = ctor.params.mapIndexed { i, p ->
@@ -3727,8 +3727,8 @@ class Checker(
      * 隐式可用）的 **JVM 类**。
      *
      * 这就是**自动 new**（`Point(1, 2)` 等价于 `new Point(1, 2)`）的全部判定依据：
-     * 一个纯粹的名字解析问题，没有前瞻、没有猜。内置类型名（`int` / `string`…）
-     * 不是类，`int(5)` 不会被当成构造。
+     * 一个纯粹的名字解析问题，没有前瞻、没有猜。内置类型名（`Int` / `String`…）
+     * 不是类，`Int(5)` 不会被当成构造。
      */
     private fun isConstructionName(name: String): Boolean =
         classTable.containsKey(name) || interfaceTable.containsKey(name) ||
@@ -3801,12 +3801,12 @@ class Checker(
         cls.typeParamCount?.let { checkArity(cls.simpleName, it, args, key.at) }
         val ctor = checkExternalConstructor(cls, key, arguments, args)
         externalNewTargets[key] = ResolvedMethod(ctor)
-        // 阶段 16b：`String(byte[])` 是**唯一**会落到这里的特例——
-        // `java/lang/String` 在内建类型里就叫 `string`（它有专门的拼接/输出处理，
+        // 阶段 16b：`String(Byte[])` 是**唯一**会落到这里的特例——
+        // `java/lang/String` 在内建类型里就叫 `String`（它有专门的拼接/输出处理，
         // ClassPath.typeFromDescriptor 也是这么映射的）。要是这里原样给外部类类型，
         // `"转回来 = " + String(bytes)` 会走「外部类 → String.valueOf(...)」，
         // 生成 `String.valueOf(Ljava/lang/String;)Ljava/lang/String;` 这种不存在的重载，
-        // 编译能过、运行期 NoSuchMethodError。归一成 string 之后两端行为一致
+        // 编译能过、运行期 NoSuchMethodError。归一成 String 之后两端行为一致
         // （解释器拿到的本来就是 java.lang.String）。
         return if (cls.internalName == "java/lang/String") {
             RsfType.STRING
@@ -3962,16 +3962,16 @@ class Checker(
      * 一个重载候选：选中的 `FuncDecl` + **这一处**的形参类型。
      *
      * 形参类型单独存：成员调用要先按接收者的类型实参把 `T` 换成实际类型
-     * （`Box&<int>` 的 `set(T)` 期望的是 `int`），打分与报错都必须用换过之后的。
+     * （`Box&<Int>` 的 `set(T)` 期望的是 `Int`），打分与报错都必须用换过之后的。
      */
     private class OverloadCandidate(val decl: FuncDecl, val params: List<RsfType>) {
-        /** 报错里的可读签名：`f(a : int, b : string)`，与 [signatureOf] 同一个风格。 */
+        /** 报错里的可读签名：`f(a : Int, b : String)`，与 [signatureOf] 同一个风格。 */
         val signature: String = decl.params.mapIndexed { i, p ->
             "${p.name} : ${params.getOrNull(i)?.rsfName ?: p.type.name}"
         }.let { "${decl.name}(${it.joinToString(", ")})" }
 
         /**
-         * 阶段 31：泛型候选**按这一处实参推导出来的**类型实参绑定（`T` → `int`）。
+         * 阶段 31：泛型候选**按这一处实参推导出来的**类型实参绑定（`T` → `Int`）。
          *
          * 非泛型候选永远是空表。泛型候选被选中时由 [resolveOverload] 填上：
          * 调用点要拿它把返回类型里的 `T` 换成实际类型，并记进
@@ -4004,15 +4004,15 @@ class Checker(
      * 口径（用户拍板）：
      * 1. **先按实参个数筛**：个数不同的候选直接出局；
      * 2. 再按类型打分：**精确 0 分**；隐式加宽按**档位距离**计分
-     *    （`byte → int` 1 分、`byte → long` 2 分、`int → double` 3 分…，
+     *    （`Byte → Int` 1 分、`Byte → Long` 2 分、`Int → Double` 3 分…，
      *    所以「窄加宽」压过「宽加宽」）；`null` 字面量给引用类型、
-     *    `0..127` 的整数字面量给 `byte` 各记 1 分；任何一项对不上，整个候选出局；
+     *    `0..127` 的整数字面量给 `Byte` 各记 1 分；任何一项对不上，整个候选出局；
      * 3. 总分**最低**者胜；**最低分并列就报错**并列出候选签名，绝不静默取
      *    「声明在前」的那个。
      *
      * **泛型候选（阶段 31）**：非泛型候选优先——先照上面 1-3 在**非泛型**候选里挑，
      * 一个都没接住才轮到泛型候选（[bindGeneric] 按实参推导类型参数，再用实例化后的
-     * 形参重新打分，还是同一把尺子）。所以 `f(int)` 永远赢过 `f&<T>(T)`，
+     * 形参重新打分，还是同一把尺子）。所以 `f(Int)` 永远赢过 `f&<T>(T)`，
      * 而 `f(1, 2)` 在有 `f&<T>(T, T)` 时也不必要求写类型实参（DESIGN-31 §5）。
      *
      * [candidates] 必须已经按实参个数筛过（调用方负责，这样「个数不对」的报错
@@ -4046,7 +4046,7 @@ class Checker(
         }
 
         // 非泛型一个都没接住 → 泛型候选上场：先按实参推导类型参数，再用
-        // **实例化之后**的形参正常打分（`T` 已经变成 `int`，加宽/空值规则照旧）。
+        // **实例化之后**的形参正常打分（`T` 已经变成 `Int`，加宽/空值规则照旧）。
         val attempts = genericCandidates.map { bindGeneric(it, argTypes, at) }
         val instantiated = ArrayList<OverloadCandidate>()
         for (b in attempts) {
@@ -4101,7 +4101,7 @@ class Checker(
      *
      * 函数级类型参数遮蔽同名的类级类型参数（DESIGN-31 §3）：`class Box&<T>` 里的
      * `fn first&<T>(xs : T[])` —— 这里的 `T` 是**方法的**，不是类的。候选形参如果先被
-     * 类级替换表换成 `int`，推导就再也看不到占位符了，所以先摘掉再代换。
+     * 类级替换表换成 `Int`，推导就再也看不到占位符了，所以先摘掉再代换。
      */
     private fun memberSubstFor(m: FuncDecl, subst: Map<String, RsfType>): Map<String, RsfType> =
         if (m.typeParams.isEmpty()) subst else subst.filterKeys { it !in m.typeParams }
@@ -4155,7 +4155,7 @@ class Checker(
         /** 实参是 `null` 字面量，提供不了类型信息。 */
         object Skip : BindStep
 
-        /** 结构对不上（`T[]` 收了非数组、`Box&<T>` 收了 `List&<int>`…）。 */
+        /** 结构对不上（`T[]` 收了非数组、`Box&<T>` 收了 `List&<Int>`…）。 */
         object Mismatch : BindStep
 
         class Conflict(
@@ -4223,11 +4223,11 @@ class Checker(
         if (arg.isNullLiteral) return BindStep.Skip
 
         // `T[]` ↔ `X[]`：数组维度逐层剥离。可空性属于「这一层数组」，不带给元素
-        // （`?int[]` 的元素是 `int`，不是 `?int`）。
+        // （`?Int[]` 的元素是 `Int`，不是 `?Int`）。
         if (param.arrayDepth > 0) {
             if (arg.arrayDepth <= 0) return BindStep.Mismatch
-            // 阶段 31b：`T[]` 在 JVM 上擦成 `[Ljava/lang/Object;`，而 `int[]` 是 `[I`，
-            // 两者不是子类型关系（`int[]` 装不进 `Object[]`）——真按这个绑定发码，类加载
+            // 阶段 31b：`T[]` 在 JVM 上擦成 `[Ljava/lang/Object;`，而 `Int[]` 是 `[I`，
+            // 两者不是子类型关系（`Int[]` 装不进 `Object[]`）——真按这个绑定发码，类加载
             // 就会 VerifyError。解释器那边能跑，两端就分叉了，所以在这里直接拒。
             val elemParam = param.elementType.asNonNull()
             val elemArg = arg.elementType.asNonNull()
@@ -4236,7 +4236,7 @@ class Checker(
                 throw err(
                     "泛型参数 '$name' 绑到了基本类型 '${elemArg.rsfName}'：" +
                         "'$name[]' 在 JVM 上擦成 Object[]，装不下基本类型数组（DESIGN-31 §8）" +
-                        "——把实参换成引用元素数组（例如 string[] 或类数组）",
+                        "——把实参换成引用元素数组（例如 String[] 或类数组）",
                     at,
                 )
             }
@@ -4262,7 +4262,7 @@ class Checker(
             }
         }
 
-        // `Box&<T>` ↔ `Box&<int>`：同基名、类型实参数目一致、逐个递归。
+        // `Box&<T>` ↔ `Box&<Int>`：同基名、类型实参数目一致、逐个递归。
         if (param.typeArgs.isNotEmpty()) {
             if (param.base != arg.base || param.externalName != arg.externalName) return BindStep.Mismatch
             if (param.typeArgs.size != arg.typeArgs.size) return BindStep.Mismatch
@@ -4271,7 +4271,7 @@ class Checker(
                 if (step != BindStep.Ok) return step
             }
         }
-        // 具体类型（`int`、`string`、`Box&<int>` 里的 int）：这里没有要绑的东西。
+        // 具体类型（`Int`、`String`、`Box&<Int>` 里的 Int）：这里没有要绑的东西。
         return BindStep.Ok
     }
 
@@ -4372,31 +4372,31 @@ class Checker(
      *
      * 与构造器的 [ctorArgCost] **故意不同**：那里加宽一律记 1 分（同分取声明在前），
      * 这里按**档位距离**计分，好让「窄加宽」压过「宽加宽」：
-     * `f(int)` 与 `f(long)` 同时存在时，`byte` 实参选 `f(int)`（1 分 < 2 分）。
+     * `f(Int)` 与 `f(Long)` 同时存在时，`Byte` 实参选 `f(Int)`（1 分 < 2 分）。
      *
-     * 档位表：`byte` 0 < `int` 1 < `long` 2 < `float` 3 < `double` 4。
-     * `char` **不在表里**——它跟谁都不能隐式转（见 RsfType.kt 的加宽表）。
+     * 档位表：`Byte` 0 < `Int` 1 < `Long` 2 < `Float` 3 < `Double` 4。
+     * `Char` **不在表里**——它跟谁都不能隐式转（见 RsfType.kt 的加宽表）。
      */
     private fun argCost(param: RsfType, arg: Expr, argType: RsfType): Int? {
         if (param == argType) return 0
         if (argType.isNullLiteral) return if (!param.isPrimitive) 1 else null
-        // 数值之间只有「加宽」这一条路（窄化、byte ↔ char 一律不给）
+        // 数值之间只有「加宽」这一条路（窄化、Byte ↔ Char 一律不给）
         if (param.isArithmetic && argType.isArithmetic) {
             widenDistance(argType.base, param.base)?.let { return it }
-            // 字面量特例：0..127 的整数字面量可以直接给 byte（`var b : byte = 5` 的同一条规矩）
+            // 字面量特例：0..127 的整数字面量可以直接给 Byte（`var b : Byte = 5` 的同一条规矩）
             return if (param.base == RsfBase.BYTE && byteRangeLiteral(arg) != null) 1 else null
         }
         return if (acceptsValue(param, arg, argType)) 1 else null
     }
 
-    /** 加宽的档位距离：`int → long` 1 分、`int → double` 3 分。不能加宽（含 char）返回 null。 */
+    /** 加宽的档位距离：`Int → Long` 1 分、`Int → Double` 3 分。不能加宽（含 Char）返回 null。 */
     private fun widenDistance(from: RsfBase, to: RsfBase): Int? {
         val a = widenLadder(from) ?: return null
         val b = widenLadder(to) ?: return null
         return if (b > a) b - a else null
     }
 
-    /** 隐式加宽阶梯上的档位；`char` 与 `bool` 不在阶梯上（null）。 */
+    /** 隐式加宽阶梯上的档位；`Char` 与 `Bool` 不在阶梯上（null）。 */
     private fun widenLadder(base: RsfBase): Int? = when (base) {
         RsfBase.BYTE -> 0
         RsfBase.INT -> 1
@@ -4407,8 +4407,8 @@ class Checker(
     }
 
     /**
-     * 构造**导入的 JVM 类**（`new ArrayList&<int>()`，或者省掉 `new` 的
-     * `ArrayList&<int>()`）。
+     * 构造**导入的 JVM 类**（`new ArrayList&<Int>()`，或者省掉 `new` 的
+     * `ArrayList&<Int>()`）。
      *
      * 构造器的签名从 class 文件里读（`<init>`），选重载的规则和普通方法一样。
      * 抽象类 / 接口不能构造——解释器会在反射时抛 InstantiationException、
@@ -4432,8 +4432,8 @@ class Checker(
         val element = singleTypeArg(typeArgs)
         // 泛型实参不参与描述符（JVM 是擦除的），但基本类型实参要按装箱去匹配
         // Java 的 `add(Object)` / `<init>(Object)` 这类形参。**只要写了类型实参就装箱**：
-        // 单实参（`ArrayList&<int>`）与多实参（`HashMap&<string, int>`）一样。
-        // 先按**原类型**试一遍（`new ArrayList&<string>(16)` 要挑到 `<init>(int)`，
+        // 单实参（`ArrayList&<Int>`）与多实参（`HashMap&<String, Int>`）一样。
+        // 先按**原类型**试一遍（`new ArrayList&<String>(16)` 要挑到 `<init>(Int)`，
         // Java 也是这么挑的），挑不到再按装箱后的形态试（那时形参是擦除后的 Object）。
         val lookup = if (typeArgs.isNotEmpty()) argTypes.map { boxForInterop(it) } else argTypes
         val ctor = (resolver.findConstructor(cls, argTypes) ?: resolver.findConstructor(cls, lookup))
@@ -4495,13 +4495,13 @@ class Checker(
     /**
      * 用户类的成员访问（字段或方法）。
      *
-     * [subst] 是泛型实参替换表：`b.set(7)` 里 `b` 是 `Box&<int>`，所以方法签名里的
-     * `T` 要换成 `int`——实参检查、返回类型都必须按换过之后的算。
+     * [subst] 是泛型实参替换表：`b.set(7)` 里 `b` 是 `Box&<Int>`，所以方法签名里的
+     * `T` 要换成 `Int`——实参检查、返回类型都必须按换过之后的算。
      */
     /**
      * 用户类沿父类链找到的**第一个 JDK 父类**（阶段 25 K1，G5）。
      *
-     * `class MyError(msg : string) : Exception(msg)` 的这条链是 MyError →（rsf 层没了）
+     * `class MyError(msg : String) : Exception(msg)` 的这条链是 MyError →（rsf 层没了）
      * → `java/lang/Exception`；也可能隔着几层 rsf 父类才碰到 JDK 类。
      */
     private fun jvmParentOf(info: ClassInfo): JvmClass? {
@@ -4626,7 +4626,7 @@ class Checker(
             val (owner, field) = found
             checkMemberVisible(owner, expr.name, expr.at)
             // 字段声明在祖先上时，要把接收者的实参一路代换到**声明类**那一层（G4）：
-            // `class IntHolder : Holder&<int>` 的 `h.v` 是 int，不是 Holder 的 T。
+            // `class IntHolder : Holder&<Int>` 的 `h.v` 是 Int，不是 Holder 的 T。
             val member = fieldMember(info, field, substitutionAlongChain(info, subst, owner))
             userMembers[expr] = member
             return member.type
@@ -4705,7 +4705,7 @@ class Checker(
         }
 
         // 形参类型也要按**声明它的那个类**那一层代换：继承来的 `get() -> T`
-        // 在 `class IntHolder : Holder&<int>` 上必须变成 `get() -> int`（G4）。
+        // 在 `class IntHolder : Holder&<Int>` 上必须变成 `get() -> Int`（G4）。
         val candidates = usable.map { (owner, m) ->
             val ownerSubst = substitutionAlongChain(info, subst, owner)
             OverloadCandidate(m, memberParamTypes(m).map { t -> t.substitute(memberSubstFor(m, ownerSubst)) })
@@ -4753,9 +4753,9 @@ class Checker(
      * 只找**有体**的：抽象方法要求实现类自己给，类里没写就是真没有（那是 [checkClassCovers]
      * 已经报过的错），在这里兜住反而会把「没实现」这种错误的报错地点挪走。
      *
-     * [subst] 是**接收者**的类型实参替换表（`Box&<int>` 的 `T`）：接口那一层的实参
+     * [subst] 是**接收者**的类型实参替换表（`Box&<Int>` 的 `T`）：接口那一层的实参
      * 由 [collectRsfRequired] 换过一遍，这里再换一次是因为类自己也可能是泛型的
-     * （`class C&<T> : Box&<T>` 而接收者是 `C&<int>`）。
+     * （`class C&<T> : Box&<T>` 而接收者是 `C&<Int>`）。
      */
     private fun checkInheritedInterfaceDefault(
         info: ClassInfo,
@@ -4799,7 +4799,7 @@ class Checker(
         if (method.ret.mayError) {
             requireErrorHandled(method.name, "!${method.ret.type.display()}", expr, expr.at)
         }
-        // 返回类型取**替换过接口实参**的那一份（`fun get() -> T` 在 `Box&<int>` 上是 int）
+        // 返回类型取**替换过接口实参**的那一份（`fun get() -> T` 在 `Box&<Int>` 上是 Int）
         return instantiateReturn(expr, chosen, wanted.ret.substitute(memberSubstFor(method, subst)))
     }
 
@@ -4843,8 +4843,8 @@ class Checker(
     /**
      * 类型实参里那个「元素类型」。
      *
-     * 只有**恰好一个**实参时才有意义：`ArrayList&<int>` 的元素是 int，
-     * 所以 `add(x)` 收的 x 是 int、`get()` 给回来的也是 int。`Map&<K, V>` 这种
+     * 只有**恰好一个**实参时才有意义：`ArrayList&<Int>` 的元素是 Int，
+     * 所以 `add(x)` 收的 x 是 Int、`get()` 给回来的也是 Int。`Map&<K, V>` 这种
      * 多个实参的，光看擦除后的描述符分不清哪个方法形参对应哪一个，所以不做替换
      * （形参/返回值就还是 `Object`）——这是本阶段的已知边界。
      */
@@ -4856,7 +4856,7 @@ class Checker(
      *
      * [varIndex] 来自**方法签名**（`HashMap.put` 的 `(TK;TV;)TV;` → 形参 `[0, 1]`、返回 `1`，
      * 见 [org.example.complie.interop.ClassPath.methodTypeVars]）。有了它，
-     * `HashMap&<string, int>` 的 `put` 才期望 `(string, int)`、`get()` 才给回 `int`——
+     * `HashMap&<String, Int>` 的 `put` 才期望 `(String, Int)`、`get()` 才给回 `Int`——
      * 光看擦除后的描述符（两个都是 `Object`）永远分不清。
      *
      * 返回 null = 这个方法位置跟类型变量无关（或签名缺失），调用方退回
@@ -4892,7 +4892,7 @@ class Checker(
     /**
      * private 成员只能在声明它的那个类里用（跟 JVM 的 ACC_PRIVATE 一致）。
      *
-     * 只对**方法**生效：字段的写法是 `var x : int = 0`，槽位里没有 `<ControlType>` 的位置，
+     * 只对**方法**生效：字段的写法是 `var x : Int = 0`，槽位里没有 `<ControlType>` 的位置，
      * 所以字段一律「类可见」。等字段也支持修饰词了，这里一起管。
      */
     private fun checkMemberVisible(info: ClassInfo, name: String, at: SourceLine) {
@@ -5004,7 +5004,7 @@ class Checker(
             is VarDeclStmt -> {
                 val annotated = stmt.declaredType?.let { resolveType(it) }
                 // 阶段 30：声明类型当**期望类型**，`lam` 里没写的形参类型 / 返回类型
-                // 就指望它（`var f : (int) -> int = lam(x) …`）。
+                // 就指望它（`var f : (Int) -> Int = lam(x) …`）。
                 val initType = withExpectation(annotated) { type(stmt.initializer) }
 
                 if (initType.isVoid) {
@@ -5017,14 +5017,14 @@ class Checker(
                 if (declared.isNullLiteral) {
                     throw err(
                         "没法从 null 推断变量类型。写成 'var ${stmt.name} : ?类型 = null' 指明类型，例如 " +
-                            "var ${stmt.name} : ?string = null",
+                            "var ${stmt.name} : ?String = null",
                         stmt.at,
                     )
                 }
                 if (annotated != null && !acceptsValue(annotated, stmt.initializer, initType)) {
                     // 阶段 30：函数类型对不上时给一句点名「类型不匹配」的话——
                     // 形状差一个类型就整段不可赋（结构相等，没有子类型），
-                    // 老文案「不能把 X 赋给 Y 变量」在 `(int) -> int` 上读不出差在哪。
+                    // 老文案「不能把 X 赋给 Y 变量」在 `(Int) -> Int` 上读不出差在哪。
                     if (annotated.isFunctionType || initType.isFunctionType) {
                         throw err(
                             "类型不匹配：变量 '${stmt.name}' 声明的是 ${annotated.rsfName}，" +
@@ -5088,7 +5088,7 @@ class Checker(
                     )
                 }
                 // 字段类型要按**接收者的类型实参**替换之后再比：
-                // `var Box&<int> b` 的 `b.value = 9` 里，字段声明是 `T`、写进去的是 `int`。
+                // `var Box&<Int> b` 的 `b.value = 9` 里，字段声明是 `T`、写进去的是 `Int`。
                 // 以前这里直接 `resolveType(field.type)`：既丢掉了替换（拿 `T` 去比），
                 // 又是在类体之外解析 `T`——`typeParams` 早清空了，于是报「未知类型 'T'」。
                 // 读路径（checkUserMember）本来就是传 subst 的，这里跟它对齐。
@@ -5110,8 +5110,8 @@ class Checker(
                 if (binding == null) {
                     // 不是局部变量 参数——在类的方法里就可能是在写字段（`v = v + 1`）
                     // 阶段 25 K1（G3）：裸字段写同样沿父类链找；被写的 owner 是声明类，
-                    // 类型也要按**声明类**那一层代换（`class IntHolder : Holder&<int>` 里
-                    // 裸写 `v` 必须是 int，G4）。
+                    // 类型也要按**声明类**那一层代换（`class IntHolder : Holder&<Int>` 里
+                    // 裸写 `v` 必须是 Int，G4）。
                     val info = currentClass
                     val found = info?.let { lookupField(it, stmt.name) }
                     if (found != null && info != null) {
@@ -5188,7 +5188,7 @@ class Checker(
             is IfStmt -> {
                 val condType = type(stmt.condition)
                 if (condType != RsfType.BOOL) {
-                    throw err("if 的条件必须是 bool，实际是 ${condType.rsfName}", stmt.condition.at)
+                    throw err("if 的条件必须是 Bool，实际是 ${condType.rsfName}", stmt.condition.at)
                 }
                 checkBlock(stmt.body, pushScope = true)
                 stmt.elseBody?.let { checkBlock(it, pushScope = true) }
@@ -5197,7 +5197,7 @@ class Checker(
             is WhileStmt -> {
                 val condType = type(stmt.condition)
                 if (condType != RsfType.BOOL) {
-                    throw err("while 的条件必须是 bool，实际是 ${condType.rsfName}", stmt.condition.at)
+                    throw err("while 的条件必须是 Bool，实际是 ${condType.rsfName}", stmt.condition.at)
                 }
                 loopDepth++
                 checkBlock(stmt.body, pushScope = true)
@@ -5208,7 +5208,7 @@ class Checker(
                 stmt.condition?.let {
                     val condType = type(it)
                     if (condType != RsfType.BOOL) {
-                        throw err("for 的条件必须是 bool，实际是 ${condType.rsfName}", it.at)
+                        throw err("for 的条件必须是 Bool，实际是 ${condType.rsfName}", it.at)
                     }
                 }
                 loopDepth++
@@ -5353,7 +5353,7 @@ class Checker(
      *
      * 检查顺序和两端的**求值顺序**对齐：接收者 → 下标 → 右值
      * （JVM 的 `*ASTORE` 就是这个次序，解释器照抄）。越界是运行期的事，
-     * 编译期只管类型：接收者必须是数组、下标必须是 `int`、右值必须能赋给元素类型。
+     * 编译期只管类型：接收者必须是数组、下标必须是 `Int`、右值必须能赋给元素类型。
      */
     private fun checkIndexAssign(stmt: IndexAssignStmt) {
         // 用 type() 而不是直接 checkIndexTarget：它会**记下**这个下标表达式的类型，
@@ -5376,7 +5376,7 @@ class Checker(
     }
 
     /**
-     * 下标表达式的公共检查（读、写都用得上）：接收者是不是数组、下标是不是 `int`。
+     * 下标表达式的公共检查（读、写都用得上）：接收者是不是数组、下标是不是 `Int`。
      * 返回**数组**的类型（调用方自己取 [RsfType.elementType]）。
      */
     private fun checkIndexTarget(expr: IndexExpr): RsfType {
@@ -5390,7 +5390,7 @@ class Checker(
                     if (receiverType.base == RsfBase.STRING) {
                         "要取字符串里的字符用 s.charAt(下标)（数组才用 a[下标]）"
                     } else {
-                        "数组要先声明成 T[]，例如 var a : int[] = new int[3]"
+                        "数组要先声明成 T[]，例如 var a : Int[] = new Int[3]"
                     },
                 expr.at,
             )
@@ -5398,7 +5398,7 @@ class Checker(
         val indexType = type(expr.index)
         if (indexType != RsfType.INT) {
             throw err(
-                "数组下标必须是 int，实际是 ${indexType.rsfName}" + indexHint(indexType),
+                "数组下标必须是 Int，实际是 ${indexType.rsfName}" + indexHint(indexType),
                 expr.index.at,
             )
         }
@@ -5408,23 +5408,23 @@ class Checker(
     /**
      * 下标 / 长度类型不对时补一句「该怎么转」。
      *
-     * rsf 的隐式转换比 Java 严（`byte` / `char` 不自己往 int 上贴），
-     * 而这两个位置**不做** byte/char 的隐式提升：下标是纯整数位置，混进字符只会写错。
+     * rsf 的隐式转换比 Java 严（`Byte` / `Char` 不自己往 Int 上贴），
+     * 而这两个位置**不做** Byte/Char 的隐式提升：下标是纯整数位置，混进字符只会写错。
      */
     private fun indexHint(got: RsfType): String = when (got.base) {
-        RsfBase.CHAR -> "；char 是字符不是整数，要取码点写 charToInt(c)"
-        RsfBase.BYTE -> "；byte 可以隐式加宽成 int，先 var i : int = b 再当下标"
-        RsfBase.LONG, RsfBase.FLOAT, RsfBase.DOUBLE -> "；长度和下标的类型都固定是 int"
+        RsfBase.CHAR -> "；Char 是字符不是整数，要取码点写 charToInt(c)"
+        RsfBase.BYTE -> "；Byte 可以隐式加宽成 Int，先 var i : Int = b 再当下标"
+        RsfBase.LONG, RsfBase.FLOAT, RsfBase.DOUBLE -> "；长度和下标的类型都固定是 Int"
         else -> ""
     }
 
     /**
      * `new T[n]` / `new T[n][m]`（阶段 13）。
      *
-     * 长度是**运行时求值**的 int 表达式（可以在循环里按需分配），所以编译期只查类型、
+     * 长度是**运行时求值**的 Int 表达式（可以在循环里按需分配），所以编译期只查类型、
      * 不查值；负数长度是运行期错误（两端做同一套检查，见 `ArrayRuntime`）。
      *
-     * 结果的类型 = 元素类型 + 维度数层 `[]`：`new int[3][4]` 是 `int[][]`。
+     * 结果的类型 = 元素类型 + 维度数层 `[]`：`new Int[3][4]` 是 `Int[][]`。
      * 多维就是「数组的数组」（JVM 的 `MULTIANEWARRAY`），没有「一块二维内存」这种特殊语义。
      */
     private fun checkNewArray(expr: NewArrayExpr): RsfType {
@@ -5434,7 +5434,7 @@ class Checker(
         }
         if (element.isArray) {
             throw err(
-                "数组类型不能写在 new 的类型位置：每一维的长度都要写在方括号里（new int[3][4]）",
+                "数组类型不能写在 new 的类型位置：每一维的长度都要写在方括号里（new Int[3][4]）",
                 expr.at,
             )
         }
@@ -5442,7 +5442,7 @@ class Checker(
             val dimType = type(dim)
             if (dimType != RsfType.INT) {
                 throw err(
-                    "new ${element.rsfName}[...] 的第 ${i + 1} 个长度必须是 int，实际是 ${dimType.rsfName}" +
+                    "new ${element.rsfName}[...] 的第 ${i + 1} 个长度必须是 Int，实际是 ${dimType.rsfName}" +
                         indexHint(dimType),
                     dim.at,
                 )
@@ -5508,7 +5508,7 @@ class Checker(
      * `fail <消息>`（阶段 14）。
      *
      * 两条规矩：
-     * 1. 消息必须是 `string`（JVM 上 RuntimeException 的消息就是字符串）；
+     * 1. 消息必须是 `String`（JVM 上 RuntimeException 的消息就是字符串）；
      * 2. 只能出现在**可能失败的函数**（返回类型 `!T`）里，或者 `try` 块里——
      *    否则这个错误没人接得住，跑起来只会一路穿到 JVM 外面变成栈回溯。
      */
@@ -5516,7 +5516,7 @@ class Checker(
         val msgType = type(stmt.message)
         if (msgType != RsfType.STRING) {
             throw err(
-                "'fail' 后面要跟一个 string 表达式当错误消息，实际是 ${msgType.rsfName}。" +
+                "'fail' 后面要跟一个 String 表达式当错误消息，实际是 ${msgType.rsfName}。" +
                     "例如：fail \"空字符串没法转数字\"",
                 stmt.message.at,
             )
@@ -5526,18 +5526,18 @@ class Checker(
             "'fail' 要用在 !T 函数里，或者包进 try 块：当前函数 '${currentFn.name}' 的返回类型是 " +
                 "${currentFn.ret.display()}（不是 !T），这里也不在任何 try 块内，所以这个错误没人接得住。" +
                 "办法一：把返回类型写成 '!${currentFn.ret.type.display()}'；" +
-                "办法二：try { fail \"...\" } catch (e : string) { ... }",
+                "办法二：try { fail \"...\" } catch (e : String) { ... }",
             stmt.at,
         )
     }
 
     /**
-     * `try { 保护体 } catch (e : string) { 处理体 }`（阶段 14；阶段 19b 起推荐 Kotlin 风格）。
+     * `try { 保护体 } catch (e : String) { 处理体 }`（阶段 14；阶段 19b 起推荐 Kotlin 风格）。
      *
      * - 保护体里的 `fail` 与未显式处理的 `!T` 调用都算「已处理」：异常被这个 try 接走。
      * - 处理体**不在**保护范围内（它自己抛的错不会又被自己接住），所以那里再写 `fail`、
      *   再调 `!T` 函数，仍要按规矩来。
-     * - catch 变量固定是 `string`、不可变，作用域只覆盖处理体。
+     * - catch 变量固定是 `String`、不可变，作用域只覆盖处理体。
      */
     private fun checkTry(stmt: TryStmt) {
         tryDepth++
@@ -5737,8 +5737,8 @@ class Checker(
     /**
      * 造一个函数类型，并把形状记进 [fnSignatures]。
      *
-     * [RsfType] 这边只留一个 `EXTERNAL` + 内部名 `rsf/fn/(int) -> int`：`rsfName`
-     * （= `simpleExternalName`）因此正好印成 `(int) -> int` / `?(int) -> int`，
+     * [RsfType] 这边只留一个 `EXTERNAL` + 内部名 `rsf/fn/(Int) -> Int`：`rsfName`
+     * （= `simpleExternalName`）因此正好印成 `(Int) -> Int` / `?(Int) -> Int`，
      * 相等性靠内部名字符串，跟结构相等等价（形参逐个 + 返回类型都进了那段文本）。
      */
     private fun fnType(params: List<RsfType>, ret: RsfType, nullable: Boolean): RsfType {
@@ -5866,18 +5866,18 @@ class Checker(
                     TokenKind.MINUS -> {
                         if (!operand.isArithmetic) {
                             throw err(
-                                "一元 '-' 只能用在数值上（byte / char / int / long / float / double），" +
+                                "一元 '-' 只能用在数值上（Byte / Char / Int / Long / Float / Double），" +
                                     "实际是 ${operand.rsfName}",
                                 expr.at,
                             )
                         }
-                        // byte / char 取负之后按 int 算（`-'a'` 是 -97，不是 char），
+                        // Byte / Char 取负之后按 Int 算（`-'a'` 是 -97，不是 Char），
                         // 跟加法的提升规则一致，也和编译产物里那条 INEG 对得上
                         RsfType(operand.base.promoted())
                     }
                     TokenKind.BANG -> {
                         if (operand != RsfType.BOOL) {
-                            throw err("'!' 只能用在 bool 上，实际是 ${operand.rsfName}", expr.at)
+                            throw err("'!' 只能用在 Bool 上，实际是 ${operand.rsfName}", expr.at)
                         }
                         RsfType.BOOL
                     }
@@ -5896,7 +5896,7 @@ class Checker(
                     TokenKind.STAR -> {
                         if (!operand.isPointer) {
                             throw err(
-                                "不能解引用 ${operand.rsfName}：'*' 只能用在指针上（例如 int* 或 Point*）",
+                                "不能解引用 ${operand.rsfName}：'*' 只能用在指针上（例如 Int* 或 Point*）",
                                 expr.at,
                             )
                         }
@@ -5976,8 +5976,8 @@ class Checker(
     /**
      * `lam` 字面量（DESIGN-30 §2）。
      *
-     * 形参类型和 `-> 返回类型` 都能省：省了就借**期望类型**（`var f : (int) -> int = lam(x) …`
-     * 里那个 `(int) -> int`）——借不到就是 §5 第 2 条。捕获一律**按值**：
+     * 形参类型和 `-> 返回类型` 都能省：省了就借**期望类型**（`var f : (Int) -> Int = lam(x) …`
+     * 里那个 `(Int) -> Int`）——借不到就是 §5 第 2 条。捕获一律**按值**：
      * 体里读到外层的 `var` 就是 §5 第 1 条（`imutvar` / 形参 / `this` 都行）。
      */
     private fun checkLambda(expr: LambdaExpr): RsfType {
@@ -6105,7 +6105,7 @@ class Checker(
         return if (expr.safe) target.asNullable() else target.asNonNull()
     }
 
-    /** `操作数 is 目标` / `操作数 !is 目标`（阶段 24）：结果恒为 `bool`，v1 不做智能转换。 */
+    /** `操作数 is 目标` / `操作数 !is 目标`（阶段 24）：结果恒为 `Bool`，v1 不做智能转换。 */
     private fun checkIs(expr: IsExpr): RsfType {
         val opText = if (expr.negated) "!is" else "is"
         castOperand(expr.operand, opText, expr.at)
@@ -6153,11 +6153,11 @@ class Checker(
      * - 目标必须是**引用类型或数组**（数值转换有专门函数，不走 `as`）；
      * - 目标**不许可空**（`?A` 由 Parser 拒，这里再兜一层——null 的三种行为由
      *   「写的是 as 还是 ?as」决定，跟目标带不带 `?` 无关）；
-     * - **非泛型类型不许写类型实参**（`A&<int>` 里 A 没有类型参数）。
+     * - **非泛型类型不许写类型实参**（`A&<Int>` 里 A 没有类型参数）。
      *
      * 泛型实参写了就是**允许但按擦除判**：目标类型本身照 [resolveType] 解析
      * （所以能查出未知类型、实参个数不对），运行期只看擦除后的那个类。
-     * 每次写都发一条 stderr 警告，免得用户以为 `Box&<int>` 和 `Box&<string>` 判得不一样。
+     * 每次写都发一条 stderr 警告，免得用户以为 `Box&<Int>` 和 `Box&<String>` 判得不一样。
      */
     private fun castTarget(ref: TypeRef, opText: String, expr: Expr, at: SourceLine): RsfType {
         // 阶段 30：v1 不许把函数类型当 `as` / `is` 的目标（DESIGN-30 §3 最后一条）。
@@ -6296,7 +6296,7 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
         }
         // 枚举值是**类型上的常量**，不是实例上的成员：`k.IDENT` 想表达的其实是
         // 「k 是不是 IDENT」，那是 `==` 的活。这里单列一条，免得用户对着
-        // 「既不是 JVM 类，也不是 string」那句猜。
+        // 「既不是 JVM 类，也不是 String」那句猜。
         if (isEnumType(receiverType)) {
             throw err(
                 "${receiverType.rsfName} 是枚举类型，枚举值要从**类型**上取：写成 " +
@@ -6322,7 +6322,7 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
             annotationTable[receiverType.externalName]?.let { return checkAnnotationMember(it, expr) }
         }
         // 用户自定义类的实例：`p.x` / `p.sum()`
-        // 泛型实参要替进成员签名里：`b` 是 `Box&<int>` 时 `b.get()` 才是 int
+        // 泛型实参要替进成员签名里：`b` 是 `Box&<Int>` 时 `b.get()` 才是 Int
         userClassOf(receiverType)?.let {
             return checkUserMember(it, expr, wantStatic = false, subst = substitutionFor(it, receiverType.typeArgs))
         }
@@ -6334,7 +6334,7 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
         }
         val className = resolver.classOf(receiverType)
             ?: throw err(
-                "${receiverType.rsfName} 上没有成员——它既不是 JVM 类，也不是 string",
+                "${receiverType.rsfName} 上没有成员——它既不是 JVM 类，也不是 String",
                 expr.at,
             )
 
@@ -6349,17 +6349,17 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
             return field.type
         }
 
-        // JVM 泛型的擦除互操作：`ArrayList&<int>` 的 `add(Object)` / `get(): Object`
+        // JVM 泛型的擦除互操作：`ArrayList&<Int>` 的 `add(Object)` / `get(): Object`
         // 其实是「元素类型」的位置，按实参替换回来。
-        // **多个类型实参**（`HashMap&<string, int>`）靠方法签名里的 `TK;` / `TV;` 对齐，
+        // **多个类型实参**（`HashMap&<String, Int>`）靠方法签名里的 `TK;` / `TV;` 对齐，
         // 见 [erasedActual]。
         val typeArgs = receiverType.typeArgs
         val element = singleTypeArg(typeArgs)
         val argTypes = args.map { type(it) }
-        // 选重载时先按原类型试（`get(int)` 这种），失败再按装箱后的形态试一次
+        // 选重载时先按原类型试（`get(Int)` 这种），失败再按装箱后的形态试一次
         // （`add(3)` / `put("a", 7)` 到 Java 侧是 `add(Integer)` / `put(String, Integer)`，
         // 而形参是擦除后的 Object）。**只要写了类型实参就试**——多类型实参的
-        // `HashMap&<string, int>` 同样靠这一趟才接得住基本类型。
+        // `HashMap&<String, Int>` 同样靠这一趟才接得住基本类型。
         val method = resolver.findMethod(className, expr.name, argTypes, wantStatic = false)
             ?: if (typeArgs.isNotEmpty()) {
                 resolver.findMethod(
@@ -6592,7 +6592,7 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
         val condType = type(expr.condition)
         if (condType != RsfType.BOOL) {
             throw err(
-                "三目运算符 'if 条件 ? 值1 : 值2' 的条件必须是 bool，实际是 ${condType.rsfName}",
+                "三目运算符 'if 条件 ? 值1 : 值2' 的条件必须是 Bool，实际是 ${condType.rsfName}",
                 expr.condition.at,
             )
         }
@@ -6649,7 +6649,7 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
      * 调用一个「可能失败」的东西（`!T` 函数 / `!T` 方法 / `parseInt`）必须显式处理错误，
      * 否则编译期拦住。
      *
-     * [retDisplay] 是返回类型的**源码写法**（`!int` 里那个 `int`），内置函数没有源码写法，
+     * [retDisplay] 是返回类型的**源码写法**（`!Int` 里那个 `Int`），内置函数没有源码写法，
      * 直接给它的类型名。三种处理方式都写进报错里——用户看到这条错就该知道下一步改哪里。
      */
     private fun requireErrorHandled(name: String, retDisplay: String, node: Expr, at: SourceLine) {
@@ -6658,7 +6658,7 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
         throw err(
             "'$name' 的返回类型是 '$retDisplay'（可能失败），" +
                 "调用它必须显式处理错误。三种写法任选一种：" +
-                "(a) 包进 try { ... } catch (e : string) { ... }；" +
+                "(a) 包进 try { ... } catch (e : String) { ... }；" +
                 "(b) 给兜底值 ${name}(...) ?: 默认值；" +
                 "(c) 往上抛 ${name}(...)!!（这样本函数的返回类型也得写成 !T）",
             at,
@@ -6812,7 +6812,7 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
         }
         val named = chain.values.toList()
         // 形参按**声明它的那个类**那一层代换（G4：`get() -> T` 在
-        // `class IntHolder : Holder&<int>` 上要变成 `get() -> int`）。
+        // `class IntHolder : Holder&<Int>` 上要变成 `get() -> Int`）。
         val candidates = named.map { (owner, m) ->
             OverloadCandidate(
                 m,
@@ -6861,7 +6861,7 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
     /**
      * 隐式 this 调用 **JDK 父类继承来**的方法（阶段 25 K1，G5）。
      *
-     * `class MyError(msg : string) : Exception(msg) { fun describe() -> string { rtn
+     * `class MyError(msg : String) : Exception(msg) { fun describe() -> String { rtn
      * getMessage() } }`：`getMessage` 不在任何 rsf 类型上，只有 JDK 的类层次知道它。
      * 解析结果记进 [implicitJvmCalls]（那里的值是 [ResolvedMethod]，rsf 的
      * [FuncDecl] 表达不了 JDK 方法）；找不到就返回 null，让 [checkCall] 照旧报
@@ -6996,36 +6996,36 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
     /**
      * 参数类型对不上时补一句「该用什么转」。
      *
-     * byte / char 与 int 之间没有隐式转换（见 RsfType.kt 的加宽表），而 rsf 又没有
-     * `(char) x` 这种强制转换语法——踩坑的人只会看到「需要 char，实际给人 int」，
+     * Byte / Char 与 Int 之间没有隐式转换（见 RsfType.kt 的加宽表），而 rsf 又没有
+     * `(Char) x` 这种强制转换语法——踩坑的人只会看到「需要 Char，实际给人 Int」，
      * 所以这里把该写的函数名直接说出来。
      */
     private fun builtinHint(name: String, got: RsfType): String = when {
-        // 「要 char、给了 int」：除了 toChar 自己（它要的就是 int）
+        // 「要 Char、给了 Int」：除了 toChar 自己（它要的就是 Int）
         got.base == RsfBase.INT && name != "toChar" && wantsChar(name) ->
-            "；'$name' 要的是 char，int 先用 toChar(...) 转过来"
+            "；'$name' 要的是 Char，Int 先用 toChar(...) 转过来"
 
-        // 「要 int、给了 char」
+        // 「要 Int、给了 Char」
         got.base == RsfBase.CHAR && name == "toByte" ->
-            "；char 要先 charToInt(...) 取码点，再 toByte(...)"
+            "；Char 要先 charToInt(...) 取码点，再 toByte(...)"
 
         got.base == RsfBase.CHAR && name == "intToString" ->
-            "；char 要先 charToInt(...) 取码点，再 intToString(...)"
+            "；Char 要先 charToInt(...) 取码点，再 intToString(...)"
 
         got.base == RsfBase.CHAR && name == "toChar" ->
-            "；它本来就是 char，不用再转"
+            "；它本来就是 Char，不用再转"
 
         else -> ""
     }
 
-    /** 这个内置函数的第一个参数是不是 `char`。 */
+    /** 这个内置函数的第一个参数是不是 `Char`。 */
     private fun wantsChar(name: String): Boolean {
         val builtin = Builtins[name] ?: return false
         return builtin.params.firstOrNull()?.base == RsfBase.CHAR
     }
 
     /**
-     * `add(a : int, b : long)` 这样的可读签名，用于报错。
+     * `add(a : Int, b : Long)` 这样的可读签名，用于报错。
      *
      * 渲染成 **Kotlin 后缀风格**（参数两种风格都能写，但示例与文档统一用这一种，
      * 报错里跟着走省得用户以为漏了什么）。
@@ -7049,8 +7049,8 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
             throw err("void 表达式不能参与运算", expr.at)
         }
 
-        // `&&` / `||`（阶段 19c）排在最前面：它们**只**收 bool，别的什么都不收，
-        // 所以 `null && x`、`"a" && b` 应该报「两边必须是 bool」，而不是掉进下面
+        // `&&` / `||`（阶段 19c）排在最前面：它们**只**收 Bool，别的什么都不收，
+        // 所以 `null && x`、`"a" && b` 应该报「两边必须是 Bool」，而不是掉进下面
         // 那条「null 只能用来做 == / !=」——后者的提示对这种写法没有指导性。
         if (op == TokenKind.ANDAND || op == TokenKind.OROR) {
             return checkLogical(expr, left, right, op)
@@ -7062,12 +7062,12 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
 
         return when (op) {
             TokenKind.PLUS, TokenKind.MINUS, TokenKind.STAR, TokenKind.SLASH, TokenKind.PERCENT -> {
-                // 字符串拼接：任意一边是 string 就按拼接走（可空也行，null 会拼成 "null"）
+                // 字符串拼接：任意一边是 String 就按拼接走（可空也行，null 会拼成 "null"）
                 if (op == TokenKind.PLUS &&
                     (left.base == RsfBase.STRING || right.base == RsfBase.STRING)
                 ) {
                     // 数组那边先拦住：JVM 上数组 toString 是身份哈希，两端没法一致。
-                    // 注意 `string[]` 的 base 也是 string，所以这里只问 isArray
+                    // 注意 `String[]` 的 base 也是 String，所以这里只问 isArray
                     if (left.isArray) throw err(arrayPrintHint(left), expr.at)
                     if (right.isArray) throw err(arrayPrintHint(right), expr.at)
                     RsfType.STRING
@@ -7079,12 +7079,12 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
                             expr.at,
                         )
                     }
-                    // 算术结果的类型用 RsfType.arithmetic（byte/char 一律提升成 int），
-                    // 而不是 promote——promote 里 `a == b` 那条捷径会让 `b + b` 也变成 byte，
-                    // 那就不符合 Java 的 binary numeric promotion 了（100 + 100 应当是 200 这个 int）
+                    // 算术结果的类型用 RsfType.arithmetic（Byte/Char 一律提升成 Int），
+                    // 而不是 promote——promote 里 `a == b` 那条捷径会让 `b + b` 也变成 Byte，
+                    // 那就不符合 Java 的 binary numeric promotion 了（100 + 100 应当是 200 这个 Int）
                     RsfType.arithmetic(left, right)
                         ?: throw err(
-                            "运算符 '${op.text}' 需要数值（byte / char / int / long / float / double），" +
+                            "运算符 '${op.text}' 需要数值（Byte / Char / Int / Long / Float / Double），" +
                                 "实际是 ${left.rsfName} 和 ${right.rsfName}" +
                                 if (op == TokenKind.PLUS) "（字符串拼接只支持 '+'）" else "",
                             expr.at,
@@ -7118,8 +7118,8 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
                         expr.at,
                     )
 
-                    // byte / char / int / long / float / double 之间可以互相比较：
-                    // 它们会先提升到共同宽度（byte/char → int），见 RsfType.promote
+                    // Byte / Char / Int / Long / Float / Double 之间可以互相比较：
+                    // 它们会先提升到共同宽度（Byte/Char → Int），见 RsfType.promote
                     left.isArithmetic && right.isArithmetic -> RsfType.BOOL
                     left == right -> RsfType.BOOL
                     else -> throw err(
@@ -7132,7 +7132,7 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
             TokenKind.LT, TokenKind.GT, TokenKind.LE, TokenKind.GE -> {
                 if (!left.isArithmetic || !right.isArithmetic) {
                     throw err(
-                        "'${op.text}' 只能比较非空数值（byte / char / int / long / float / double），" +
+                        "'${op.text}' 只能比较非空数值（Byte / Char / Int / Long / Float / Double），" +
                             "实际是 ${left.rsfName} 和 ${right.rsfName}" +
                             "（字符串只能用 == / !=；可空值要先解包）",
                         expr.at,
@@ -7146,12 +7146,12 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
     }
 
     /**
-     * `&&` / `||`（阶段 19c）的类型检查：**两边都必须是 `bool`**，结果也是 `bool`。
+     * `&&` / `||`（阶段 19c）的类型检查：**两边都必须是 `Bool`**，结果也是 `Bool`。
      *
      * 三条决定：
-     * - **不收可空 bool**（`?bool`）：`a && b` 里 a 是 null 时结果该是什么？没有好答案，
+     * - **不收可空 Bool**（`?Bool`）：`a && b` 里 a 是 null 时结果该是什么？没有好答案，
      *   所以要求先解包（`!!`）或给兜底（`?:`），跟算术、比较那边的规矩一致。
-     * - **两边分开报**（左边 / 右边），而不是笼统一句「两边必须是 bool」：
+     * - **两边分开报**（左边 / 右边），而不是笼统一句「两边必须是 Bool」：
      *   `n > 0 && flag()` 里到底哪边错了，只有分开说才一眼看得出来（题目要求
      *   报错文案里带类型名）。
      * - **不求值顺序相关的类型**：这里只做类型检查；「右边到底跑不跑」是运行期的事，
@@ -7165,14 +7165,14 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
     ): RsfType {
         if (left != RsfType.BOOL) {
             throw err(
-                "'${op.text}' 两边必须是 bool，左边是 ${left.rsfName}。" +
+                "'${op.text}' 两边必须是 Bool，左边是 ${left.rsfName}。" +
                     logicalHint(left),
                 expr.left.at,
             )
         }
         if (right != RsfType.BOOL) {
             throw err(
-                "'${op.text}' 两边必须是 bool，右边是 ${right.rsfName}。" +
+                "'${op.text}' 两边必须是 Bool，右边是 ${right.rsfName}。" +
                     logicalHint(right),
                 expr.right.at,
             )
@@ -7220,7 +7220,7 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
         val nullable = ref.name.startsWith("?")
 
         // 阶段 30：函数类型。形参 / 返回类型逐个解析，再拼成一个 EXTERNAL 形状。
-        // 函数类型没有泛型、也不参与数组维度（`((int) -> int)[]` 的元素类型由
+        // 函数类型没有泛型、也不参与数组维度（`((Int) -> Int)[]` 的元素类型由
         // Parser 在括号外面那一层已经处理掉了，这里只管非数组的那一层）。
         if (ref.isFunctionType) {
             val params = ref.fnParams.map { resolveType(it, env) }
@@ -7344,7 +7344,7 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
             return finish(RsfType.external(bare).let { if (nullable) it.asNullable() else it })
         }
 
-        // 4) 导入的 JVM 类（`ArrayList&<int>` 靠这条）。元数从 class 文件的
+        // 4) 导入的 JVM 类（`ArrayList&<Int>` 靠这条）。元数从 class 文件的
         //    泛型签名里数出来；数不出来（签名畸形）就不拦。
         val jvm = resolveJvmClass(bare)
         if (jvm != null) {
@@ -7391,7 +7391,7 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
         classImports[simpleName]?.let { ClassPath.find(it) }
             ?: ClassPath.find("java/lang/$simpleName")
 
-    /** 类型实参 → `T` 的替换表（`Box&<int>` 的成员里 `T` 换成 `int`）。
+    /** 类型实参 → `T` 的替换表（`Box&<Int>` 的成员里 `T` 换成 `Int`）。
 */
     private fun substitutionFor(info: ClassInfo, actual: List<RsfType>): Map<String, RsfType> {
         val params = info.decl.typeParams
@@ -7399,7 +7399,7 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
         return params.zip(actual).toMap()
     }
 
-    /** 同上，只是换成了接口的类型参数（阶段 20：`Box&<int>` 的接口版）。 */
+    /** 同上，只是换成了接口的类型参数（阶段 20：`Box&<Int>` 的接口版）。 */
     private fun substitutionFor(params: List<String>, actual: List<RsfType>): Map<String, RsfType> {
         if (params.isEmpty() || actual.isEmpty()) return emptyMap()
         return params.zip(actual).toMap()
@@ -7411,19 +7411,19 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
     /**
      * 「声明类型 [want] 能不能接住表达式 [value]（它的类型是 [valueType]）」。
      *
-     * 比 [RsfType.accepts] 只多一条**字面量特例**：`byte` 可以接住 `0..127` 的整数字面量。
+     * 比 [RsfType.accepts] 只多一条**字面量特例**：`Byte` 可以接住 `0..127` 的整数字面量。
      *
-     * 为什么非要这条特例：rsf 里**没有强制类型转换语法**（没有 `(byte) x`），
-     * 不给特例的话 `var b : byte = 5` 根本写不出来——只能用 `toByte(...)` 从别的
-     * byte 算，而第一个 byte 又无从产生。Java 的规矩（常量窄化）正是这么定的：
+     * 为什么非要这条特例：rsf 里**没有强制类型转换语法**（没有 `(Byte) x`），
+     * 不给特例的话 `var b : Byte = 5` 根本写不出来——只能用 `toByte(...)` 从别的
+     * Byte 算，而第一个 Byte 又无从产生。Java 的规矩（常量窄化）正是这么定的：
      * 编译期已知的值落在目标类型范围内就可以直接赋。
      *
      * 边界划得很清楚：
      * - 只认**直接写出来的**整数字面量（可以带一个一元负号，`-1` 算），
      *   变量、函数返回值、`1 + 2` 这类表达式一律不认——那些值的范围编译期推不出来，
      *   要转就写 `toByte(...)`；
-     * - 只对 `byte` 开这个口子。`char` **不接** int 字面量（`var c : char = 65` 报错）：
-     *   字符字面量 `'A'` 才是它的字面量形态，混着来只会让人分不清 char 和 int。
+     * - 只对 `Byte` 开这个口子。`Char` **不接** Int 字面量（`var c : Char = 65` 报错）：
+     *   字符字面量 `'A'` 才是它的字面量形态，混着来只会让人分不清 Char 和 Int。
      */
     private fun acceptsValue(want: RsfType, value: Expr, valueType: RsfType): Boolean {
         if (want.accepts(valueType)) return true
@@ -7445,7 +7445,7 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
         else -> false
     }
 
-    /** 字面量在 byte 范围内就返回它的值，否则 null（不是字面量也是 null）。 */
+    /** 字面量在 Byte 范围内就返回它的值，否则 null（不是字面量也是 null）。 */
     private fun byteRangeLiteral(expr: Expr): Int? {
         val n = when (expr) {
             is IntLit -> expr.value

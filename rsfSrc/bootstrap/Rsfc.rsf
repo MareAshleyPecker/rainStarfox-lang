@@ -15,7 +15,7 @@ import "Diag.rsf"
 
 import java.lang.System
 
-fn fileNameOf(path : string) -> string {
+fn fileNameOf(path : String) -> String {
     var i = path.length() - 1
     while (i >= 0) {
         var c = path.charAt(i)
@@ -25,7 +25,7 @@ fn fileNameOf(path : string) -> string {
     rtn path
 }
 
-fn tailFrom(s : string, from : int) -> string {
+fn tailFrom(s : String, from : Int) -> String {
     var out = ""
     var i = from
     while (i < s.length()) {
@@ -35,20 +35,20 @@ fn tailFrom(s : string, from : int) -> string {
     rtn out
 }
 
-fn padTo(s : string, width : int) -> string {
+fn padTo(s : String, width : Int) -> String {
     var out = s
     while (out.length() < width) { out = out + " " }
     rtn out
 }
 
 // 缺省那一档显示成 pub（与 Kotlin `ControlType.label` 一致）
-fn controlLabel(kind : string) -> string {
+fn controlLabel(kind : String) -> String {
     if (kind == "PRIVATE") { rtn "prv" }
     if (kind == "PROTECTED") { rtn "prot" }
     rtn "pub"
 }
 
-fn sigOf(fnode : Node) -> string {
+fn sigOf(fnode : Node) -> String {
     var control = padTo(controlLabel(nodeProp(fnode, "control")), 10)
     var st = ""
     if (nodeProp(fnode, "stc") == "true") { st = "stc " }
@@ -74,7 +74,7 @@ fn sigOf(fnode : Node) -> string {
     rtn control + " " + st + "fn" + mt + " " + nodeProp(fnode, "name") + "(" + ps + ") " + ret
 }
 
-fn fieldsText(cnode : Node) -> string {
+fn fieldsText(cnode : Node) -> String {
     var out = ""
     var fs = childNodeOf(cnode, NodeKind.FIELDS)
     if (fs != null) {
@@ -106,7 +106,7 @@ fn printClass(cnode : Node) -> void {
 }
 
 // Kotlin 侧 `signatureOf(m).trim()` 只去掉首尾空白，内部对齐空格保留
-fn trimSig(s : string) -> string {
+fn trimSig(s : String) -> String {
     var a = 0
     while (a < s.length() && s.charAt(a) == ' ') { a = a + 1 }
     var b = s.length()
@@ -114,7 +114,7 @@ fn trimSig(s : string) -> string {
     rtn s.substring(a, b)
 }
 
-fn printCheck(prg : Node, name : string) -> void {
+fn printCheck(prg : Node, name : String) -> void {
     println("[rsf] 检查通过: " + name)
     var funcs = childNodeOf(prg, NodeKind.FUNCS)
     var hasMain = false
@@ -142,8 +142,8 @@ fn printCheck(prg : Node, name : string) -> void {
     }
 }
 
-fn pickFile() -> string {
-    var given : ?string = System.getProperty("rsf.rsfc.file")
+fn pickFile() -> String {
+    var given : ?String = System.getProperty("rsf.rsfc.file")
     if (given == null) {
         System.err.println("usage: java -Drsf.rsfc.cmd=<check> -Drsf.rsfc.file=<path.rsf> -cp <out>;<jar> Rsfc")
         System.exit(2)
@@ -159,7 +159,7 @@ fn main() -> void {
     var readOk = true
     try {
         text = readText(path)!!
-    } catch (readError : string) {
+    } catch (readError : String) {
         readOk = false
     }
     if (!readOk) {

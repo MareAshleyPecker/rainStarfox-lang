@@ -31,5 +31,5 @@ clang out/hello.c -o hello              # 真·aarch64 原生程序
 ## 注意
 
 - 需要能跑 `java -jar` 的环境：Termux 的 `openjdk-17` 或 `openjdk-21` 都行；JRE 17 就够。
-- `--c` 产出的 C 只用 `stdint.h / stdbool.h / stdio.h / stdlib.h / string.h`，clang 直接编。
+- `--c` 产出的 C 只用 `stdint.h / stdbool.h / stdio.h / stdlib.h / String.h`，clang 直接编。
 - 编译器本体不是原生 aarch64 可执行文件（它是 JVM 程序）；要原生编译器得等自举链（`rsfSrc/bootstrap/`）能被 C 后端完整翻译。

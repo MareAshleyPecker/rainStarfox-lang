@@ -6,7 +6,7 @@
 //
 // 这三样是为了写自举的语法器补的（见 BOOTSTRAP.md）：
 //   * 没有 `&&` / `||` 时，`if (c == '/' && peek(1) == '/')` 只能写成嵌套 if；
-//   * 没有 enum 时，TokenKind 只能靠一串 `stc fun xxx() -> string` 拼字符串常量，
+//   * 没有 enum 时，TokenKind 只能靠一串 `stc fun xxx() -> String` 拼字符串常量，
 //     写错值名编译器一声不吭；
 //   * 没有 switch 时，按 kind 分派只能写成 if / else-if 长链。
 // 本文件把三者放在一起演示，并且**两条后端（解释器 / 字节码）输出逐字节一致**。
@@ -31,7 +31,7 @@ enum Op {
 }
 
 // 打印枚举就是打印**值名**：`println(k)` 与 `"kind = " + k` 都是 `IDENT`
-fn nameOf(k : TokenKind) -> string {
+fn nameOf(k : TokenKind) -> String {
     switch (k) {
         TokenKind.IDENT : rtn "标识符"
         TokenKind.INT_LIT : rtn "整数"
@@ -44,7 +44,7 @@ fn nameOf(k : TokenKind) -> string {
 }
 
 // `switch` 是语句：命中哪一支就只跑哪一支，没有 fallthrough（也不需要写 break）
-fn describe(k : TokenKind) -> string {
+fn describe(k : TokenKind) -> String {
     var out = ""
     switch (k) {
         TokenKind.IDENT : out = "名字"
@@ -59,7 +59,7 @@ fn describe(k : TokenKind) -> string {
 }
 
 // 带 `else` 的 switch：不必穷尽，剩下的都进 else
-fn isOperator(k : TokenKind) -> bool {
+fn isOperator(k : TokenKind) -> Bool {
     switch (k) {
         TokenKind.PLUS : rtn true
         TokenKind.MINUS : rtn true
@@ -76,7 +76,7 @@ fn opOf(k : TokenKind) -> ?Op {
     }
 }
 
-fn apply(a : int, b : int, op : Op) -> int {
+fn apply(a : Int, b : Int, op : Op) -> Int {
     switch (op) {
         Op.ADD : rtn a + b
         Op.SUB : rtn a - b
@@ -87,22 +87,22 @@ fn apply(a : int, b : int, op : Op) -> int {
 
 class Lexeme {
     var kind : TokenKind = TokenKind.EOF
-    var text : string = ""
+    var text : String = ""
     var ops : Op[] = new Op[2]
 
-    constructor(k : TokenKind, t : string) {
+    constructor(k : TokenKind, t : String) {
         kind = k
         text = t
     }
 
     // 枚举比较用 == / !=（枚举值是单例，比的就是「同一个常量」）
-    fn isIdent() -> bool {
+    fn isIdent() -> Bool {
         rtn kind == TokenKind.IDENT
     }
 }
 
 // 枚举值的数组：没填过的元素是 null，和枚举常量比较不会命中（两端都是 false）
-fn countKinds(items : TokenKind[], want : TokenKind) -> int {
+fn countKinds(items : TokenKind[], want : TokenKind) -> Int {
     var n = 0
     var i = 0
     while (i < items.length) {
@@ -118,19 +118,19 @@ fn countKinds(items : TokenKind[], want : TokenKind) -> int {
 // ---------------------------------------------------------------- 短路逻辑
 
 class Tracer {
-    var calls : int = 0
-    var log : string = ""
+    var calls : Int = 0
+    var log : String = ""
 }
 
 // 左边：记一笔调用、返回 false
-fn no(t : Tracer, tag : string) -> bool {
+fn no(t : Tracer, tag : String) -> Bool {
     t.calls = t.calls + 1
     t.log = t.log + tag
     rtn false
 }
 
 // 右边：记一笔调用、返回 true
-fn yes(t : Tracer, tag : string) -> bool {
+fn yes(t : Tracer, tag : String) -> Bool {
     t.calls = t.calls + 1
     t.log = t.log + tag
     rtn true
@@ -138,7 +138,7 @@ fn yes(t : Tracer, tag : string) -> bool {
 
 // 用短路把「先看边界、再看内容」写在一行里：
 // 下标越界检查放左边，左边为假时右边**根本不会被求值**
-fn startsWithSlash(s : string, i : int) -> bool {
+fn startsWithSlash(s : String, i : Int) -> Bool {
     rtn i < s.length() && s.charAt(i) == '/'
 }
 

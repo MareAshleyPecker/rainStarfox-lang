@@ -35,8 +35,8 @@ class CastTest {
             """
             class A { }
             class B : A() { }
-            interface Named { fn name() -> string }
-            class N : A(), Named { override fn name() -> string { rtn "n" } }
+            interface Named { fn name() -> String }
+            class N : A(), Named { override fn name() -> String { rtn "n" } }
 
             fn main() -> void {
                 var b : B = new B()
@@ -61,7 +61,7 @@ class CastTest {
     }
 
     @Test
-    fun `is 的结果就是 bool`() {
+    fun `is 的结果就是 Bool`() {
         val out = bothEnds(
             """
             class A { }
@@ -70,8 +70,8 @@ class CastTest {
             fn main() -> void {
                 var b : B = new B()
                 var a : A = b
-                var t : bool = a is B
-                var f : bool = a !is A
+                var t : Bool = a is B
+                var f : Bool = a !is A
                 println("" + t)
                 println("" + f)
                 if (t) { println("t") } else { println("else") }
@@ -89,7 +89,7 @@ class CastTest {
     fun `as 上转型是空操作`() {
         val out = bothEnds(
             """
-            class A { fn who() -> string { rtn "A" } }
+            class A { fn who() -> String { rtn "A" } }
             class B : A() { }
 
             fn main() -> void {
@@ -110,10 +110,10 @@ class CastTest {
     fun `as 下转型之后能调子类成员`() {
         val out = bothEnds(
             """
-            class A { fn who() -> string { rtn "A" } }
+            class A { fn who() -> String { rtn "A" } }
             class B : A() {
-                fn only() -> string { rtn "only-B" }
-                override fn who() -> string { rtn "B" }
+                fn only() -> String { rtn "only-B" }
+                override fn who() -> String { rtn "B" }
             }
 
             fn main() -> void {
@@ -144,7 +144,7 @@ class CastTest {
                 try {
                     var b : B = a as B
                     println("不该到这里")
-                } catch (e : string) {
+                } catch (e : String) {
                     println(e)
                 }
                 rtn
@@ -157,7 +157,7 @@ class CastTest {
 
     @Test
     fun `不相关的引用类型只到运行期才失败`() {
-        // Q5：静态只查四件事，不报「这两个类型不可能相关」。`string as A` 前端放行，
+        // Q5：静态只查四件事，不报「这两个类型不可能相关」。`String as A` 前端放行，
         // 运行期按 `Class.getName()` 打 `java.lang.String`。
         val out = bothEnds(
             """
@@ -167,7 +167,7 @@ class CastTest {
                 try {
                     var a : A = "hi" as A
                     println("不该到这里")
-                } catch (e : string) {
+                } catch (e : String) {
                     println(e)
                 }
                 rtn
@@ -193,7 +193,7 @@ class CastTest {
                 try {
                     var c : A = a as A
                     println("不该到这里")
-                } catch (e : string) {
+                } catch (e : String) {
                     println(e)
                 }
                 rtn
@@ -243,7 +243,7 @@ class CastTest {
         val out = bothEnds(
             """
             interface Greeter {
-                fn greet() -> string { rtn "hi" }
+                fn greet() -> String { rtn "hi" }
             }
             class Impl : Greeter { }
             class Base { }
@@ -308,7 +308,7 @@ class CastTest {
                 try {
                     var bs : B[] = as1 as B[]
                     println("不该到这里")
-                } catch (e : string) {
+                } catch (e : String) {
                     println(e)
                 }
                 rtn
@@ -330,12 +330,12 @@ class CastTest {
             }
 
             fn main() -> void {
-                var b : Box&<int> = new Box&<int>(7)
-                var o : Box&<int> = b as Box&<int>
-                var n : int = o.get()
+                var b : Box&<Int> = new Box&<Int>(7)
+                var o : Box&<Int> = b as Box&<Int>
+                var n : Int = o.get()
                 println("" + n)
-                println("" + (o is Box&<int>))
-                println("" + (o is Box&<string>))
+                println("" + (o is Box&<Int>))
+                println("" + (o is Box&<String>))
                 rtn
             }
         """.trimIndent()
@@ -345,10 +345,10 @@ class CastTest {
         val warnings = Rsf.analyze(source(program)).warnings
         assertTrue(
             warnings.any { it.contains("泛型实参只用于报错") },
-            "写了 &<int> 就要发一条 stderr 警告，实际：$warnings",
+            "写了 &<Int> 就要发一条 stderr 警告，实际：$warnings",
         )
         assertTrue(
-            warnings.any { it.contains("Box&<int>") },
+            warnings.any { it.contains("Box&<Int>") },
             "警告里要带上用户写的那个类型，实际：$warnings",
         )
     }
@@ -403,8 +403,8 @@ class CastTest {
                 source(
                     """
                     fn main() -> void {
-                        var n : int = 1
-                        var x : int = n as int
+                        var n : Int = 1
+                        var x : Int = n as Int
                         rtn
                     }
                     """.trimIndent(),
@@ -420,8 +420,8 @@ class CastTest {
                 source(
                     """
                     fn main() -> void {
-                        var n : int = 1
-                        println("" + (n is int))
+                        var n : Int = 1
+                        println("" + (n is Int))
                         rtn
                     }
                     """.trimIndent(),
@@ -438,7 +438,7 @@ class CastTest {
                     class A { }
                     fn main() -> void {
                         var a : A = new A()
-                        var x : A = a as int
+                        var x : A = a as Int
                         rtn
                     }
                     """.trimIndent(),
@@ -534,7 +534,7 @@ class CastTest {
                     class A { }
                     fn main() -> void {
                         var a : A = new A()
-                        var b : A = a as A&<int>
+                        var b : A = a as A&<Int>
                         rtn
                     }
                     """.trimIndent(),
@@ -584,8 +584,8 @@ class CastTest {
                     }
                     class A { }
                     fn main() -> void {
-                        var b : Box&<int> = new Box&<int>(1)
-                        println("" + (b is Box&<int>))
+                        var b : Box&<Int> = new Box&<Int>(1)
+                        println("" + (b is Box&<Int>))
                         var a : A[] = new A[0]
                         println("" + (a is A[]))
                         rtn
@@ -594,7 +594,7 @@ class CastTest {
                 ),
             ),
         )
-        assertTrue(dump.contains("TARGET type=Box&<int>"), dump)
+        assertTrue(dump.contains("TARGET type=Box&<Int>"), dump)
         assertTrue(dump.contains("TARGET type=A[]"), dump)
     }
 

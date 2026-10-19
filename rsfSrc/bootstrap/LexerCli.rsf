@@ -19,11 +19,11 @@ import java.lang.System
 // 挑输入：-Drsf.lex.file 给了就用它，没给就 dump 词法器自己的源码
 // （仓库内的相对路径，不写死绝对路径）。
 //
-// 注意 `System.getProperty` 的 rsf 类型是 `string` 但实际可能是 null（属性不存在时），
-// 所以这里用 `?string` 接，再自己兜底——第一次写成 `path.length() == 0` 直接吃了个
+// 注意 `System.getProperty` 的 rsf 类型是 `String` 但实际可能是 null（属性不存在时），
+// 所以这里用 `?String` 接，再自己兜底——第一次写成 `path.length() == 0` 直接吃了个
 // NullPointerException（编译产物上炸的，解释器那条路反而看不出问题）。
-fn pickPath() -> string {
-    var given : ?string = System.getProperty("rsf.lex.file")
+fn pickPath() -> String {
+    var given : ?String = System.getProperty("rsf.lex.file")
     var path = given ?: "rsfSrc/bootstrap/Lexer.rsf"
     rtn path
 }

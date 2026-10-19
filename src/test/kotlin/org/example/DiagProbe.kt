@@ -18,13 +18,13 @@ private class Case(
     val text: String,
 )
 
-private val LF = "fn main() {\n    var x : int = \n}\n"
+private val LF = "fn main() {\n    var x : Int = \n}\n"
 private val CRLF = "a\r\nb\r\nc"
 private val NO_TAIL = "one line no trailing newline"
 private val TAB = "tab\there\nx"
 
 private val CASES = listOf(
-    Case("checker", "不能把 string 赋给 int 变量 'x'", "demo.rsf", 2, 9, LF),
+    Case("checker", "不能把 String 赋给 Int 变量 'x'", "demo.rsf", 2, 9, LF),
     Case("parser", "这里需要一个表达式", "demo.rsf", 3, 1, LF),
     Case("checker", "没有位置", "demo.rsf", 0, 0, LF),
     Case("checker", "只有行号", "demo.rsf", 2, 0, LF),

@@ -33,12 +33,12 @@ import java.util.IdentityHashMap
 //
 // `RsfType` 本身没有「函数」这一档（阶段 30 不许改 RsfType.kt），函数类型借用
 // `EXTERNAL` + 内部名 `rsf/fn/<形状>` 表示：`simpleExternalName` 取最后一个 '/' 之后
-// 那段，正好是 `(int) -> int`，所以报错文案里读起来跟源码写法一样。
+// 那段，正好是 `(Int) -> Int`，所以报错文案里读起来跟源码写法一样。
 
 /** 函数类型内部名的前缀。 */
 const val FN_TYPE_PREFIX = "rsf/fn/"
 
-/** 函数类型的形状文本：`(int, string) -> bool`、`() -> void`。 */
+/** 函数类型的形状文本：`(Int, String) -> Bool`、`() -> void`。 */
 fun fnTypeText(params: List<RsfType>, ret: RsfType): String =
     "(" + params.joinToString(", ") { it.rsfName } + ") -> " + ret.rsfName
 
@@ -55,7 +55,7 @@ val RsfType.fnTypeText: String?
         return name.substring(FN_TYPE_PREFIX.length)
     }
 
-/** 是不是函数类型（`(int) -> int` 及其可空形式）。 */
+/** 是不是函数类型（`(Int) -> Int` 及其可空形式）。 */
 val RsfType.isFunctionType: Boolean get() = fnTypeText != null
 
 /**
@@ -67,7 +67,7 @@ val RsfType.isFunctionType: Boolean get() = fnTypeText != null
  * 的文本再读回来，**只有这一份**解析实现，两个后端共用。
  *
  * 文本是我们自己按 `(", ")` 拼的（见 [fnTypeText]），所以按顶层逗号切分是安全的：
- * 嵌套的函数类型自己带着括号（`((int) -> int) -> void`），递归下降能认出来。
+ * 嵌套的函数类型自己带着括号（`((Int) -> Int) -> void`），递归下降能认出来。
  * 读不懂就返回 null（调用方按「不是函数类型」处理），不在这里报错。
  */
 fun fnSignatureOf(text: String): Pair<List<RsfType>, RsfType>? {
@@ -120,7 +120,7 @@ private class FnTextParser(private val text: String) {
         while (i < text.length && text[i] != ',' && text[i] != ')' && text[i] != '[' && text[i] != '&') i++
         val name = text.substring(start, i)
         if (name.isEmpty()) return null
-        // 泛型实参（`Pair&<string, int>`）对描述符没有影响，跳过 `<...>`
+        // 泛型实参（`Pair&<String, Int>`）对描述符没有影响，跳过 `<...>`
         if (text.getOrNull(i) == '&') {
             i++
             if (text.getOrNull(i) != '<') return null
@@ -140,14 +140,14 @@ private class FnTextParser(private val text: String) {
         }
         val base = when (name) {
             "void" -> RsfBase.VOID
-            "bool" -> RsfBase.BOOL
-            "byte" -> RsfBase.BYTE
-            "char" -> RsfBase.CHAR
-            "int" -> RsfBase.INT
-            "long" -> RsfBase.LONG
-            "float" -> RsfBase.FLOAT
-            "double" -> RsfBase.DOUBLE
-            "string" -> RsfBase.STRING
+            "Bool" -> RsfBase.BOOL
+            "Byte" -> RsfBase.BYTE
+            "Char" -> RsfBase.CHAR
+            "Int" -> RsfBase.INT
+            "Long" -> RsfBase.LONG
+            "Float" -> RsfBase.FLOAT
+            "Double" -> RsfBase.DOUBLE
+            "String" -> RsfBase.STRING
             else -> RsfBase.EXTERNAL
         }
         return if (base == RsfBase.EXTERNAL) {
@@ -187,7 +187,7 @@ sealed interface UserMember {
  *
  * 后端拼 `ClassWriter.visit(..., interfaces = ...)` 时只该抄这里，不要自己拿
  * AST 上的名字再解析一遍：`class Dog : Greeter, Runnable` 里哪个是这份程序声明的接口、
- * 哪个是 classpath 上的 JDK 接口、实参又代换成了什么（`class IntBox : Box&<int>`），
+ * 哪个是 classpath 上的 JDK 接口、实参又代换成了什么（`class IntBox : Box&<Int>`），
  * 全都是 Checker 在 declareClasses / declareInterfaceBodies 里定下来的
  * （D2 的「父类型只能是接口」也是在那一刻判的）。
  */
@@ -199,7 +199,7 @@ data class SuperInterface(
      * JDK 接口是 `java/lang/Runnable` 这种全名。字节码要的是这个。
      */
     val internalName: String,
-    /** `: Box&<int>` 里那串实参（代换后的）；JDK 接口恒为空表（JVM 擦除）。 */
+    /** `: Box&<Int>` 里那串实参（代换后的）；JDK 接口恒为空表（JVM 擦除）。 */
     val args: List<RsfType> = emptyList(),
     /** true = classpath 上的接口（JDK）；false = 这份程序里声明的接口。 */
     val fromClassPath: Boolean = false,
@@ -237,7 +237,7 @@ data class SuperClass(
      */
     val internalName: String,
     /**
-     * 父类的**类型实参**（`class D : Box&<int>(1)` 里的 `int`；没写泛型就是空表）。
+     * 父类的**类型实参**（`class D : Box&<Int>(1)` 里的 `Int`；没写泛型就是空表）。
      *
      * 和 [SuperInterface.args] 一个意思：继承来的成员里出现 `T` 时要拿它替换
      * （[SuperDelegation.arguments] 才是**构造实参**，那是求值用的表达式，不是类型）。
@@ -306,7 +306,7 @@ data class SuperDelegation(
      * 实参表达式，**在委托方自己的帧里求值**。
      *
      * 两个来源都能落到这里：[stmt] 非空就是次构造里写的 `super(实参)`；
-     * [stmt] 为空就是主构造——实参来自类头的 `class D(y : int) : Base(y)`，
+     * [stmt] 为空就是主构造——实参来自类头的 `class D(y : Int) : Base(y)`，
      * 那条没有对应的语句节点，但语义完全一样。
      */
     val arguments: List<Expr>,
@@ -316,7 +316,7 @@ data class SuperDelegation(
      * JDK 父类那一趟选中的 `<init>`（阶段 25 K4，缺口 D）；rsf 父类时为 null。
      *
      * 选择放在**这一条边**上而不是「类 → 构造器」的一张表里：同一个类里两个构造器
-     * 可以委托给父类**不同的**构造器（`class E : Exception() { constructor(m : string)
+     * 可以委托给父类**不同的**构造器（`class E : Exception() { constructor(m : String)
      * { super(m) } }` 那一支上），按类存会互相覆盖。挑一次、两个后端都只读这一份。
      */
     val jvmCtor: JvmMethod? = null,
@@ -408,7 +408,7 @@ class ClassModel(
     /**
      * 类里「按名字直接调**父类继承来的 JDK 方法**」的调用（阶段 25 K1，G5）。
      *
-     * `class MyError(msg : string) : Exception(msg) { fun describe() -> string { rtn
+     * `class MyError(msg : String) : Exception(msg) { fun describe() -> String { rtn
      * getMessage() } }`：`getMessage` 声明在 `java/lang/Throwable` 上、接收者是隐式的
      * this，所以它既不是 [implicitCalls]（那里的值是 rsf 的 [FuncDecl]）、也不是
      * [memberTargets]（那里挂的是 `接收者.成员` 这种 [MemberExpr]）。
@@ -480,7 +480,7 @@ data class EnumValueRef(
 /**
  * 一个注解元素的**已解析**形状（阶段 21，M2）。
  *
- * [type] 已经过白名单校验（string / 基本类型 / 枚举 / 注解 / 这些的一维数组，且非可空），
+ * [type] 已经过白名单校验（String / 基本类型 / 枚举 / 注解 / 这些的一维数组，且非可空），
  * 后端可以直接照它走「元素值要发什么字节码」的分支，不必再看 AST 上的 [AnnotationElement.type]。
  * 默认值的**字面量表达式**仍留在 [decl] 上（`AnnotationDefault` 要的是那个常量）。
  */
@@ -626,7 +626,7 @@ data class AnnotationUseSite(
  * 方案 B 要在某个类型上生成的**注解访问器**规格（阶段 21，M2 只出规格，M3 才生成）。
  *
  * - 类型级（[memberName] 为 null）：`public static <伴生类型> <注解名>()`
- * - 成员级：[`public static <伴生类型> <注解名>(string member)`]，取不到返回 null
+ * - 成员级：[`public static <伴生类型> <注解名>(String member)`]，取不到返回 null
  */
 data class AnnotationAccessor(
     val annotation: AnnotationSpec,
@@ -634,7 +634,7 @@ data class AnnotationAccessor(
     val target: AnnotationTarget,
     /** 访问器挂到哪个类型上（被标的类/接口/注解；方案 B 只挂静态成员）。 */
     val hostName: String,
-    /** 成员级访问器的 `string member` 实参值；类型级是 null。 */
+    /** 成员级访问器的 `String member` 实参值；类型级是 null。 */
     val memberName: String?,
     /** 返回类型：伴生类的 JVM 内部名。 */
     val companionName: String,
@@ -642,14 +642,14 @@ data class AnnotationAccessor(
     /** 给人看的签名，如 `public static Marker$Impl Marker()`。 */
     fun signature(): String =
         "pub static $companionName ${annotation.name}(" +
-            (memberName?.let { "string member" } ?: "") + ")"
+            (memberName?.let { "String member" } ?: "") + ")"
 }
 
 /**
  * **一处泛型调用**推导出来的类型实参绑定（阶段 31）。
  *
  * 例：`fn id&<T>(x : T) -> T` 的调用点 `id("hi")` → [typeParams] = `["T"]`、
- * [bindings] = `{T: string}`、[returnType] = `string`。
+ * [bindings] = `{T: String}`、[returnType] = `String`。
  *
  * [bindings] 的键一定是 [typeParams] 里的名字，且**每个都有值**（推不出来的类型参数
  * 在检查阶段就报错了，走不到这里）。31a 只把它记在 [SemanticModel.genericCalls] 里，
@@ -658,7 +658,7 @@ data class AnnotationAccessor(
 data class GenericCallSite(
     /** 被调用函数自己的类型参数名（声明顺序）。 */
     val typeParams: List<String>,
-    /** 每个类型参数推导出的具体类型（`T` → `int`）。 */
+    /** 每个类型参数推导出的具体类型（`T` → `Int`）。 */
     val bindings: Map<String, RsfType>,
     /** 把返回类型里出现的类型参数代换掉之后的结果（= 调用表达式的类型）。 */
     val returnType: RsfType,
@@ -686,7 +686,7 @@ class SemanticModel(
     /**
      * `as` / `?as` / `is` / `!is` 的**目标类型**（阶段 24，按**解析后**的 [RsfType] 记）。
      *
-     * 为什么不复用 [exprTypes]：`is` / `!is` 的表达式类型是 `bool`，目标类型在那里没有位置；
+     * 为什么不复用 [exprTypes]：`is` / `!is` 的表达式类型是 `Bool`，目标类型在那里没有位置；
      * `?as` 的结果是 `?T`，把 `?` 剥回去也是一种重复知识。目标类型只解析一次，
      * 记在这里，两个后端直接读——INSTANCEOF / CHECKCAST 用的内部名和错误消息里印的
      * JVM 名都由它算出来，两端才不会各算一套。
@@ -742,8 +742,8 @@ class SemanticModel(
     ),
 
     /**
-     * 阶段 15：构造**导入的 JVM 类**（`new ArrayList&<int>()`，或者省掉 `new` 的
-     * `ArrayList&<int>()`）→ 解析到的构造器。
+     * 阶段 15：构造**导入的 JVM 类**（`new ArrayList&<Int>()`，或者省掉 `new` 的
+     * `ArrayList&<Int>()`）→ 解析到的构造器。
      *
      * 用户自定义类的构造记在 [ClassModel.newTargets] 里（那边要类声明），
      * 这里记的是 JVM 类的构造器：解释器靠它反射 newInstance，字节码后端靠它发
@@ -843,7 +843,7 @@ class SemanticModel(
     val annotationAccessors: List<AnnotationAccessor> = emptyList(),
 
     /**
-     * 阶段 31：**每一处泛型调用**推导出来的类型实参绑定（`T` → `int`）。
+     * 阶段 31：**每一处泛型调用**推导出来的类型实参绑定（`T` → `Int`）。
      *
      * 键是调用点那个表达式：顶层函数调用是 [CallExpr]，方法调用是 [MemberExpr]
      * （rsf 的成员调用就是「成员访问 + 实参表」，两者都可能是泛型函数的目标）。
@@ -851,7 +851,7 @@ class SemanticModel(
      *
      * 31a 只**记录**、不使用：这一刀不发码（两个后端对泛型函数一律报 17d）。
      * 31b 的字节码后端要按这张表在调用点插 `CHECKCAST`——擦除之后
-     * `fn id&<T>(x : T) -> T` 编出来是 `id(Object)Object`，`var s : string = id("x")`
+     * `fn id&<T>(x : T) -> T` 编出来是 `id(Object)Object`，`var s : String = id("x")`
      * 拿回来的静态类型却是 `Object`，不 cast 就过不了 JVM 的校验。
      */
     val genericCalls: IdentityHashMap<Expr, GenericCallSite> = IdentityHashMap(),
@@ -865,7 +865,7 @@ class SemanticModel(
     /**
      * 名为 main 的**无参**顶层函数，用作入口；没有则返回 null。
      *
-     * 阶段 19d 起 `main(int)` 是合法的重载但**不是入口**（JVM 只认 `main(String[])`）。
+     * 阶段 19d 起 `main(Int)` 是合法的重载但**不是入口**（JVM 只认 `main(String[])`）。
      * 两个无参 `main()` 会在 Checker 里以「入口歧义 + 擦除冲突」报错，所以
      * 这里取第一个无参候选是安全的。
      */
@@ -877,7 +877,7 @@ class SemanticModel(
     /**
      * 入口为什么跑不起来；能跑就是 null。
      *
-     * 单独有这一条是因为阶段 19d 起 `main(a : int)` 也是**合法的重载**，只是当不了入口。
+     * 单独有这一条是因为阶段 19d 起 `main(a : Int)` 也是**合法的重载**，只是当不了入口。
      * 那种情况下说「没有 main」会把人带偏，要说清是**参数**的问题。
      */
     val entryProblem: String?
@@ -1015,7 +1015,7 @@ class SemanticModel(
     /**
      * 一个 [RsfType] 在运行期的**类名**（`Class.getName()` 的写法）。
      *
-     * 数组按 JVM 的老规矩写描述符形式：`B[]` → `[LB;`、`int[][]` → `[[I`；
+     * 数组按 JVM 的老规矩写描述符形式：`B[]` → `[LB;`、`Int[][]` → `[[I`；
      * 泛型的类型参数按擦除算 `java.lang.Object`；可空基本类型是它的包装类。
      * `as` 失败时的文案里印的就是这个字符串（`rsf: 不能把 [LC; 当成 [LB;`）。
      */
@@ -1028,19 +1028,19 @@ class SemanticModel(
 
     /**
      * 数组**一层**元素在 `Class.getName()` 里的写法：引用类型是 `L全名;`、基本类型是
-     * 单字母描述符、多维再套一层 `[`。`B[]` → `[LB;`、`int[][]` → `[[I`。
+     * 单字母描述符、多维再套一层 `[`。`B[]` → `[LB;`、`Int[][]` → `[[I`。
      */
     private fun arrayElementNameOf(element: RsfType): String = when {
         element.isArray -> "[" + arrayElementNameOf(element.elementType)
         element.isPrimitive -> element.descriptor
-        // 引用元素（类 / 接口 / string / 擦除后的 Object）要带 L...;
+        // 引用元素（类 / 接口 / String / 擦除后的 Object）要带 L...;
         else -> "L" + jvmRuntimeClassNameOf(element) + ";"
     }
 
     private fun jvmRuntimeClassNameOf(type: RsfType): String = when {
         type.base == RsfBase.EXTERNAL ->
             jvmRuntimeNameOf(type.externalName ?: "java/lang/Object")
-        // 其余（基本类型 / string / 类型参数 / 可空基本类型的包装类）描述符里
+        // 其余（基本类型 / String / 类型参数 / 可空基本类型的包装类）描述符里
         // 已经写全了：`I`、`Ljava/lang/String;`、`Ljava/lang/Object;`
         else -> type.descriptor.let {
             if (it.startsWith("L")) it.substring(1, it.length - 1).replace('/', '.') else it

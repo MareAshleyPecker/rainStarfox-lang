@@ -14,16 +14,16 @@ class RsfMarkdownTest {
 
     @Test
     fun `代码围栏变成 pre-code`() {
-        val html = RsfMarkdown.toHtml("```rsf\nadd(a : int) -> int\n```\n")
+        val html = RsfMarkdown.toHtml("```rsf\nadd(a : Int) -> Int\n```\n")
         assertTrue(html.contains("<pre><code>"), html)
-        assertTrue(html.contains("add(a : int) -&gt; int"), html)
+        assertTrue(html.contains("add(a : Int) -&gt; Int"), html)
         assertTrue(html.contains("</code></pre>"), html)
     }
 
     @Test
     fun `正文里的尖括号被转义而不是当成标签`() {
-        val html = RsfMarkdown.toHtml("```rsf\nBox&<int>\n```\n")
-        assertTrue(html.contains("Box&amp;&lt;int&gt;"), html)
+        val html = RsfMarkdown.toHtml("```rsf\nBox&<Int>\n```\n")
+        assertTrue(html.contains("Box&amp;&lt;Int&gt;"), html)
     }
 
     @Test
@@ -35,7 +35,7 @@ class RsfMarkdownTest {
 
     @Test
     fun `未闭合的围栏也要收尾 不留下悬空标签`() {
-        val html = RsfMarkdown.toHtml("```rsf\nfn f() -> int\n")
+        val html = RsfMarkdown.toHtml("```rsf\nfn f() -> Int\n")
         assertEquals(1, Regex("<pre><code>").findAll(html).count())
         assertEquals(1, Regex("</code></pre>").findAll(html).count())
     }

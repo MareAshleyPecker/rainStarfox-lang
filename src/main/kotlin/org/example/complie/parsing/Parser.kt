@@ -74,14 +74,14 @@ import org.example.complie.lexing.TokenKind
  * - `<static>`：紧跟其后，控制「怎么调用」（类名.方法 / 对象.方法），可省略
  * - `<MainType>`：`fun` 之后、函数名之前的类型槽，缺省 `void`
  * - **返回类型子句只认 `->` 和 `:`**（2026-10-15 拍板：`::` 那条别名删掉，`::` 腾给
- *   `xxx::xx` 这种嵌套写法；`:` 与 `if c : 语句`、`var x : int` 各自在别的上下文，不冲突）；
+ *   `xxx::xx` 这种嵌套写法；`:` 与 `if c : 语句`、`var x : Int` 各自在别的上下文，不冲突）；
  *   可省略，缺省 `void`；可带 `?`（可空）或 `!`（可能出错）前缀
- * - **参数表两种风格都收，可以混写**：Java 风格 `int a` / Kotlin 风格 `a : int`
- * - **变量与字段只收 Kotlin 后缀风格**：`var x : int = 0`（类型可省，靠推断）
+ * - **参数表两种风格都收，可以混写**：Java 风格 `Int a` / Kotlin 风格 `a : Int`
+ * - **变量与字段只收 Kotlin 后缀风格**：`var x : Int = 0`（类型可省，靠推断）
  *
  * 语句：
  * ```
- * var x : int = 1        声明变量（Kotlin 后缀类型；类型可省）
+ * var x : Int = 1        声明变量（Kotlin 后缀类型；类型可省）
  * imutvar name = "hi"      不可变变量
  * x = 2                    赋值
  * rtn / return expr        返回（两个关键字等价）
@@ -93,7 +93,7 @@ import org.example.complie.lexing.TokenKind
  * while (c) { ... }        循环
  * break / continue         跳出 / 下一轮
  * fail "消息"              抛出一个错误（只能在 !T 函数里，或者 try 里）
- * try { ... } catch (e : string) { ... } 接住错误（也接受老写法 catch (e string)）
+ * try { ... } catch (e : String) { ... } 接住错误（也接受老写法 catch (e String)）
  * { ... }                  块（引入新作用域）
  * ```
  */
@@ -372,7 +372,7 @@ class Parser(
     /**
      * 注解声明：
      * ```
-     * [public|protected|private] annotation Marker(value : string = "x", count : int = 0) {
+     * [public|protected|private] annotation Marker(value : String = "x", count : Int = 0) {
      *     companion entity Impl : Runnable { ... }
      * }
      * ```
@@ -417,7 +417,7 @@ class Parser(
         )
     }
 
-    /** 注解的元素表：`(value : string = "x", count : int = 0)`。 */
+    /** 注解的元素表：`(value : String = "x", count : Int = 0)`。 */
     private fun parseAnnotationElementList(): List<AnnotationElement> {
         expect(TokenKind.LPAREN, "注解元素表缺少 '('")
         val elements = ArrayList<AnnotationElement>()
@@ -450,8 +450,8 @@ class Parser(
     /**
      * 一个注解元素：`名字 : 类型` 或 `名字 : 类型 = 常量默认值`。
      *
-     * 类型只收**后缀风格**（`value : string`），和字段/参数的后缀风格一致；
-     * 写成 Java 风格（`string value`）会在这里报错。
+     * 类型只收**后缀风格**（`value : String`），和字段/参数的后缀风格一致；
+     * 写成 Java 风格（`String value`）会在这里报错。
      */
     private fun parseAnnotationElement(): AnnotationElement {
         val nameTok = expect(
@@ -461,7 +461,7 @@ class Parser(
         expect(
             TokenKind.COLON,
             "注解元素 '${nameTok.lexeme}' 缺少类型：要写成「名字 : 类型」" +
-                "（例如 ${nameTok.lexeme} : string），当前读到 ${peek().describe()}",
+                "（例如 ${nameTok.lexeme} : String），当前读到 ${peek().describe()}",
         )
         val type = parseTypeRef()
         val default = if (match(TokenKind.ASSIGN)) parseAnnotationDefault(nameTok.lexeme) else null
@@ -469,7 +469,7 @@ class Parser(
     }
 
     /**
-     * 注解元素的默认值：v1 只收**常量字面量**——int/long/float/double/string/char/bool、
+     * 注解元素的默认值：v1 只收**常量字面量**——Int/Long/Float/Double/String/Char/Bool、
      * `null`，以及数值字面量前面一个 `-`。
      *
      * 枚举常量、注解、数组默认值明确不在 v1 里（DESIGN-21.md §12.6），这里报「暂不支持」，
@@ -497,7 +497,7 @@ class Parser(
         if (isDefaultConstantLiteral(value)) return
         throw error(
             start,
-            "注解元素 '$owner' 的默认值只支持常量字面量（int/long/float/double/string/char/bool/null，" +
+            "注解元素 '$owner' 的默认值只支持常量字面量（Int/Long/Float/Double/String/Char/Bool/null，" +
                 "数值可以带前导 '-'），实际读到 ${start.describe()}。" +
                 "枚举常量、注解、数组默认值 v1 都还不支持；要现算的默认值请写进伴生实体里",
         )
@@ -536,7 +536,7 @@ class Parser(
      * 伴生实体：
      * ```
      * companion entity Impl : Runnable {
-     *     var hits : int = 0
+     *     var hits : Int = 0
      *     fun run() -> void { }
      * }
      * ```
@@ -654,10 +654,10 @@ class Parser(
     /**
      * 类声明（阶段 18 起带主构造）：
      * ```
-     * public class Point(x0 : int, y0 : int) {   主构造：参数写在类头，字段初值里能用
-     *     var x : int = x0                     字段（类型 + 初值都要写；类型写在名字后面）
-     *     public fun sum() -> int { }            普通方法
-     *     constructor(v : int) { x = v }         次构造（可以写多个）
+     * public class Point(x0 : Int, y0 : Int) {   主构造：参数写在类头，字段初值里能用
+     *     var x : Int = x0                     字段（类型 + 初值都要写；类型写在名字后面）
+     *     public fun sum() -> Int { }            普通方法
+     *     constructor(v : Int) { x = v }         次构造（可以写多个）
      * }
      * ```
      *
@@ -718,8 +718,8 @@ class Parser(
         }
 
         // 父类 / 父接口子句（阶段 20 起是父接口，阶段 25 起最前面可以有一个父类）：
-        // `class Dog(n : string) : Greeter, Runnable { ... }`、
-        // `class D(y : int) : Base(y), Greeter { ... }`。
+        // `class Dog(n : String) : Greeter, Runnable { ... }`、
+        // `class D(y : Int) : Base(y), Greeter { ... }`。
         // 顺序固定为「主构造括号 → ':' 子句 → '{'」（DESIGN-20 §2）。
         val sup = parseSuperClause(nameTok.lexeme)
 
@@ -895,7 +895,7 @@ class Parser(
         if (!check(TokenKind.IDENT)) return false
         var n = 1
         // 泛型父类：实参表写在 `&<类型实参>` **之后**（DESIGN-25 §2）——
-        // `class IntBox : Box&<int>(1) { ... }`。所以带 `&<...>` 时要把尖括号对跳过去，
+        // `class IntBox : Box&<Int>(1) { ... }`。所以带 `&<...>` 时要把尖括号对跳过去，
         // 再看后面是不是构造实参表的 '('。
         if (peek(n).kind == TokenKind.AMP) {
             n++
@@ -1063,8 +1063,8 @@ class Parser(
      * 接口声明（阶段 20）：
      * ```
      * public interface Greeter {
-     *     fun greet(name : string) -> string                   // 抽象方法：只写签名
-     *     fun shout(name : string) -> string { rtn ... }        // 默认方法：带方法体
+     *     fun greet(name : String) -> String                   // 抽象方法：只写签名
+     *     fun shout(name : String) -> String { rtn ... }        // 默认方法：带方法体
      * }
      * public interface Loud : Greeter, Speaker { }             // 接口继承接口（D4）
      * ```
@@ -1178,10 +1178,10 @@ class Parser(
     }
 
     /**
-     * 参数表：`(int a, b : string)`。**两种风格都收，同一个表里可以混写**。
+     * 参数表：`(Int a, b : String)`。**两种风格都收，同一个表里可以混写**。
      *
-     * - Java 风格：类型在前 —— `int a`、`Point p`、`Box&<int> b`、`int[] xs`、`?string s`
-     * - Kotlin 风格：名字在前 —— `a : int`、`p : Point`、`b : Box&<int>`、`xs : int[]`
+     * - Java 风格：类型在前 —— `Int a`、`Point p`、`Box&<Int> b`、`Int[] xs`、`?String s`
+     * - Kotlin 风格：名字在前 —— `a : Int`、`p : Point`、`b : Box&<Int>`、`xs : Int[]`
      *
      * 逐个参数靠**记号前瞻**分流，无歧义：
      * 1. `标识符` 后面跟 `:`  → Kotlin 风格；
@@ -1269,15 +1269,15 @@ class Parser(
             }
             throw error(
                 t,
-                "参数 '${t.lexeme}' 缺少类型。两种写法都可以：Java 风格 'int ${t.lexeme}'，" +
-                    "或者 Kotlin 风格 '${t.lexeme} : int'",
+                "参数 '${t.lexeme}' 缺少类型。两种写法都可以：Java 风格 'Int ${t.lexeme}'，" +
+                    "或者 Kotlin 风格 '${t.lexeme} : Int'",
             )
         }
 
         throw error(
             t,
-            "参数要写成「类型 名字」或者「名字 : 类型」：Java 风格 'int ${t.lexeme}'、" +
-                "Kotlin 风格 '${t.lexeme} : int'，" +
+            "参数要写成「类型 名字」或者「名字 : 类型」：Java 风格 'Int ${t.lexeme}'、" +
+                "Kotlin 风格 '${t.lexeme} : Int'，" +
                 "实际读到 ${t.describe()}",
         )
     }
@@ -1291,7 +1291,7 @@ class Parser(
      */
     private fun parseSuffixType(hint: String): TypeRef {
         val t = peek()
-        // 阶段 30：`g : (int) -> int` —— 函数类型以 '(' 开头，这里也要放行
+        // 阶段 30：`g : (Int) -> Int` —— 函数类型以 '(' 开头，这里也要放行
         if (!t.kind.isTypeKeyword && t.kind != TokenKind.IDENT && t.kind != TokenKind.QUESTION &&
             t.kind != TokenKind.LPAREN
         ) {
@@ -1404,7 +1404,7 @@ class Parser(
                 // 数学类的预留关键字：字段名位置也一样要说清
                 "；'mathematic' 是保留关键字（数学类预留），语法还没定，现在还不能当名字用"
             } else if (t.kind.isTypeKeyword) {
-                // 老写法 `var int x = 0`：类型写在名字前面已经废弃。
+                // 老写法 `var Int x = 0`：类型写在名字前面已经废弃。
                 // 名字就在类型后面那个记号上，所以能把改写后的写法直接写出来。
                 val name = if (peek(1).kind == TokenKind.IDENT) peek(1).lexeme else "名字"
                 "；类型现在写在**名字后面**：'${kwTok.lexeme} ${t.lexeme} $name = 初值' " +
@@ -1418,7 +1418,7 @@ class Parser(
             val t = peek()
             throw error(
                 t,
-                "字段必须写类型：'${kwTok.lexeme} ${nameTok.lexeme} : int = 初值'" +
+                "字段必须写类型：'${kwTok.lexeme} ${nameTok.lexeme} : Int = 初值'" +
                     "（字段的类型不能靠推断，不然各个方法里看到的类型可能不一致），" +
                     "实际读到 ${t.describe()}",
             )
@@ -1490,16 +1490,32 @@ class Parser(
             )
         }
 
-        // 点分路径。最后一段可能是类名，也可能是类里的成员——留到解析阶段再判断
-        val first = expect(
-            TokenKind.IDENT,
+        // 点分路径。最后一段可能是类名，也可能是类里的成员——留到解析阶段再判断。
+        // 阶段 55：`Int`/`String`/`Long` 成了关键字，而 JDK 里正好有
+        // `java.lang.Long`/`java.lang.String` 这类同名类，所以路径段按「长得像标识符」
+        // 收（关键字也放行），否则 `import java.lang.Long` 解析不动。
+        val first = expectPathSegment(
             "${kw.lexeme} 后面需要一个类名（点分路径，例如 java.lang.Math）或者一个字符串路径",
         )
         val sb = StringBuilder(first.lexeme)
         while (match(TokenKind.DOT)) {
-            sb.append('.').append(expect(TokenKind.IDENT, "'.' 后面需要标识符").lexeme)
+            sb.append('.').append(expectPathSegment("'.' 后面需要标识符").lexeme)
         }
         return ClassImport(sb.toString(), kw.at)
+    }
+
+    /** import 路径的一段：标识符，或者与内置类型同名的关键字（`java.lang.String`）。 */
+    private fun expectPathSegment(message: String): Token {
+        val t = peek()
+        val word = t.lexeme
+        val looksLikeName = word.isNotEmpty() &&
+            (word[0].isLetter() || word[0] == '_') &&
+            word.all { it.isLetterOrDigit() || it == '_' }
+        if (t.kind == TokenKind.IDENT || (t.kind != TokenKind.EOF && looksLikeName)) {
+            advance()
+            return t
+        }
+        throw error(t, message)
     }
 
     /** import 路径允许跨行写：逐行去空白，把非空行接起来。 */
@@ -1613,7 +1629,7 @@ class Parser(
                         "类型槽紧跟在 fn 后面（缺省 void）"
                 t.lexeme == "[" ->
                     "；『[...]』是 lang/example.rsf 草稿里的占位符写法，不是声明语法" +
-                        "（方括号现在的意思是数组：类型后缀 int[]、下标 a[0]、创建 new int[5]）"
+                        "（方括号现在的意思是数组：类型后缀 Int[]、下标 a[0]、创建 new Int[5]）"
                 t.kind == TokenKind.KW_CONSTRUCTOR ->
                     "；'constructor' 是**次构造**，只能写在类体里：constructor(参数) { ... }。" +
                         "主构造写在类头括号里（class P(参数) { ... }）"
@@ -1669,7 +1685,7 @@ class Parser(
         } else {
             val t = peek()
             if (mainType.name != "void") {
-                // 典型情况：fun double() —— double 被当成了 <MainType>
+                // 典型情况：fun Double() —— Double 被当成了 <MainType>
                 throw error(
                     t,
                     "'${mainType.name}' 是类型关键字，不能当函数名（<MainType> 槽位在 fn 之后、" +
@@ -1717,7 +1733,7 @@ class Parser(
             check(TokenKind.DOUBLE_COLON) -> throw error(
                 peek(),
                 "返回类型子句不再接受 '::'：请用 '->' 或者 ':'，" +
-                    "例如 fn ${nameTok.lexeme}() -> int { ... }。" +
+                    "例如 fn ${nameTok.lexeme}() -> Int { ... }。" +
                     "（'::' 现在留给 xxx::xx 这种嵌套写法，例如 Marker::Impl）",
             )
             else -> ReturnSpec(TypeRef("void", funTok.at), ReturnStyle.OMITTED, false, funTok.at)
@@ -1860,7 +1876,7 @@ class Parser(
             advance()
             return ReturnSpec(TypeRef("void", at), style, mayError, at)
         }
-        // 可空性由 parseTypeRef 处理（`?int`）
+        // 可空性由 parseTypeRef 处理（`?Int`）
         val type = parseTypeRef()
         return ReturnSpec(type, style, mayError, at)
     }
@@ -1876,19 +1892,19 @@ class Parser(
      * `<ControlType>` 那种尖括号是 lang/example.rsf 草稿里的类型槽占位符——
      * 带上 `&` 才能一眼跟它们区分开。
      *
-     * 类型实参是**递归**解析的，所以 `Box&<Box&<int>>` 是嵌套（词法上是 `>` `>`，
+     * 类型实参是**递归**解析的，所以 `Box&<Box&<Int>>` 是嵌套（词法上是 `>` `>`，
      * 不是移位——rsf 里没有移位运算符，两个 `>` 各归各的类型实参表）。
      *
-     * 数组后缀写在**最后**（C 风格）：`Box&<int>[]`、`int[][]`、`Point[]`。
-     * 顺序是「先泛型实参、后 `[]`」——`Box&<int>[]` 意思是「装着 `int` 的 Box 的数组」，
-     * 而不是「装着 `int[]` 的 Box」（那个要写 `Box&<int[]>`）。`[]` 只吃**紧挨着的**
-     * 一对空括号：`new int[5]` 里的 `[5]` 是维度、不是类型后缀，所以这里要求
+     * 数组后缀写在**最后**（C 风格）：`Box&<Int>[]`、`Int[][]`、`Point[]`。
+     * 顺序是「先泛型实参、后 `[]`」——`Box&<Int>[]` 意思是「装着 `Int` 的 Box 的数组」，
+     * 而不是「装着 `Int[]` 的 Box」（那个要写 `Box&<Int[]>`）。`[]` 只吃**紧挨着的**
+     * 一对空括号：`new Int[5]` 里的 `[5]` 是维度、不是类型后缀，所以这里要求
      * `[` 后面紧跟 `]`，`[5]` 会原样留给 `new` 那段去解析。
      */
     private fun parseTypeRef(): TypeRef {
         val nullable = match(TokenKind.QUESTION)
-        // 阶段 30：类型位置遇到 '(' 有两种可能——函数类型 `(int) -> int`，
-        // 或者给函数类型加括号的数组写法 `((int) -> int)[]`。先看配对的 ')' 后面
+        // 阶段 30：类型位置遇到 '(' 有两种可能——函数类型 `(Int) -> Int`，
+        // 或者给函数类型加括号的数组写法 `((Int) -> Int)[]`。先看配对的 ')' 后面
         // 是不是 '->'，两种都交给 [parseParenType]，这里不再往下走老路。
         if (check(TokenKind.LPAREN)) return parseParenType(nullable)
         val t = peek()
@@ -1903,8 +1919,8 @@ class Parser(
             }
             else -> throw error(
                 t,
-                "这里需要一个类型（void / int / long / float / double / string / bool / " +
-                    "byte / char，或者一个类名），" +
+                "这里需要一个类型（void / Int / Long / Float / Double / String / Bool / " +
+                    "Byte / Char，或者一个类名），" +
                     "实际是 ${t.describe()}",
             )
         }
@@ -1942,13 +1958,13 @@ class Parser(
                 throw error(
                     peek(),
                     "'$name' 是内置类型，没有类型参数——'&<实参类型>' 只能跟在一个类名后面" +
-                        "（例如 Box&<int>）",
+                        "（例如 Box&<Int>）",
                 )
             }
             base = base.copy(typeArgs = parseTypeArgs())
         }
 
-        // 数组后缀，可以叠多层：int[] / int[][] / Box&<int>[]
+        // 数组后缀，可以叠多层：Int[] / Int[][] / Box&<Int>[]
         var depth = 0
         while (check(TokenKind.LBRACKET) && peek(1).kind == TokenKind.RBRACKET) {
             advance() // [
@@ -1964,7 +1980,7 @@ class Parser(
             )
         }
         var ref = if (depth == 0) base else base.copy(arrayDepth = depth)
-        // 指针后缀（阶段 53）：`int*` / `Point*`，可以叠（`int**`，语义层按层数算）
+        // 指针后缀（阶段 53）：`Int*` / `Point*`，可以叠（`Int**`，语义层按层数算）
         var ptr = 0
         while (check(TokenKind.STAR)) {
             advance()
@@ -1980,13 +1996,13 @@ class Parser(
      * 两种写法靠**配对的 `)` 后面那个记号**区分，没有歧义：
      *
      * ```
-     * (int, string) -> bool      函数类型：`)` 后面是 `->`
+     * (Int, String) -> Bool      函数类型：`)` 后面是 `->`
      * () -> void                 参数表可以为空
-     * ((int) -> int)[]           分组：`)` 后面是 `[`（整体括号 + 数组后缀）
+     * ((Int) -> Int)[]           分组：`)` 后面是 `[`（整体括号 + 数组后缀）
      * ```
      *
-     * 分组那一层是**必需的**：`int[] -> int` 里 `[]` 属于参数类型，想表达
-     * 「函数类型的数组」只能写 `((int) -> int)[]`（工单 §3 的原文）。
+     * 分组那一层是**必需的**：`Int[] -> Int` 里 `[]` 属于参数类型，想表达
+     * 「函数类型的数组」只能写 `((Int) -> Int)[]`（工单 §3 的原文）。
      */
     private fun parseParenType(nullable: Boolean): TypeRef {
         val at = peek()
@@ -2005,12 +2021,12 @@ class Parser(
         if (peek(closeOffset + 1).kind != TokenKind.LBRACKET) {
             throw error(at, "函数类型要写成 '(参数类型表) -> 返回类型'（DESIGN-30）")
         }
-        // 分组：`((int) -> int)[]`。`?` 只能写在整个函数类型最前面（`?(int) -> int`），
+        // 分组：`((Int) -> Int)[]`。`?` 只能写在整个函数类型最前面（`?(Int) -> Int`），
         // 套在括号外面没有意义，直接说清楚。
         if (nullable) {
             throw error(
                 at,
-                "'?' 要写在函数类型的最前面（?(int) -> int），不要套在括号外面",
+                "'?' 要写在函数类型的最前面（?(Int) -> Int），不要套在括号外面",
             )
         }
         advance() // (
@@ -2019,7 +2035,7 @@ class Parser(
         if (inner.fnRet == null) {
             throw error(
                 at,
-                "类型外面的括号只能用来包函数类型（例如 ((int) -> int)[]）：" +
+                "类型外面的括号只能用来包函数类型（例如 ((Int) -> Int)[]）：" +
                     "'(${inner.display()})' 直接写成 '${inner.display()}'",
             )
         }
@@ -2035,7 +2051,7 @@ class Parser(
     /**
      * 函数类型本体（阶段 30）：`(` 类型列表 `)` `->` 类型。
      *
-     * 返回类型是**必填**的：`(int)` 不是类型，缺 `->` 就把整句写法给出去
+     * 返回类型是**必填**的：`(Int)` 不是类型，缺 `->` 就把整句写法给出去
      * （工单 §3 的逐字文案）。
      */
     private fun parseFunctionType(nullable: Boolean, at: Token): TypeRef {
@@ -2082,7 +2098,7 @@ class Parser(
     }
 
     /**
-     * 类型实参表：`&<int>` / `&<string, int>` / `&<Box&<int>>`。
+     * 类型实参表：`&<Int>` / `&<String, Int>` / `&<Box&<Int>>`。
      *
      * 开头的 `&` 和 `<` 必须挨着——这正是「不会跟比较运算打架」的原因。
      */
@@ -2102,20 +2118,20 @@ class Parser(
      *
      * ```
      * new Point(1, 2)          对象：类名 + 实参表
-     * new Box&<int>(0)        泛型对象
-     * new int[5]               数组：类型 + 每一维的长度（**运行时求值**）
+     * new Box&<Int>(0)        泛型对象
+     * new Int[5]               数组：类型 + 每一维的长度（**运行时求值**）
      * new Point[2]             引用类型数组
-     * new int[3][4]            多维：按「数组的数组」处理
+     * new Int[3][4]            多维：按「数组的数组」处理
      * ```
      *
      * 两条路靠**类型后面跟的是 `(` 还是 `[`** 区分，没有歧义。
-     * 这里直接把类型整段交给 [parseTypeRef]：`new int[5]` 里的 `[5]` 不是 `[]`
+     * 这里直接把类型整段交给 [parseTypeRef]：`new Int[5]` 里的 `[5]` 不是 `[]`
      * 类型后缀（那里要求 `[` 紧跟 `]`），所以会原样留下来，由下面那轮循环吃。
      */
     private fun parseNewExpr(at: SourceLine): Expr {
         val t = peek()
         if (!t.kind.isTypeKeyword && t.kind != TokenKind.IDENT) {
-            throw error(t, "'new' 后面需要类名（new Point(1, 2)）或者数组类型（new int[5]）")
+            throw error(t, "'new' 后面需要类名（new Point(1, 2)）或者数组类型（new Int[5]）")
         }
         val typeRef = parseTypeRef()
         if (typeRef.name.startsWith("?")) {
@@ -2130,19 +2146,22 @@ class Parser(
                     throw error(
                         peek(),
                         "数组创建必须给出每一维的长度：new ${typeRef.display()}[n]" +
-                            "（空的 '[]' 只能写在**类型**里；本阶段不做 new int[3][] 这种锯齿数组）",
+                            "（空的 '[]' 只能写在**类型**里；本阶段不做 new Int[3][] 这种锯齿数组）",
                     )
                 }
                 dims.add(parseExpr())
                 expect(TokenKind.RBRACKET, "'new ${typeRef.display()}[...]' 缺少 ']'")
             }
             if (typeRef.arrayDepth > 0) {
-                throw error(t, "new 后面的数组类型不能再写 '[]'：长度写在方括号里，例如 new int[5]")
+                throw error(t, "new 后面的数组类型不能再写 '[]'：长度写在方括号里，例如 new Int[5]")
             }
             return NewArrayExpr(typeRef, dims, at)
         }
 
-        if (t.kind.isTypeKeyword) {
+        // 阶段 55：内置类型名成了关键字，但 JDK 里有同名类（`java.lang.String` 等）。
+        // 写 `new String(bytes)` 时按「同名外部类」交给语义层解析，只有真的找不到
+        // 才报错；`new Int` 这种仍然落到 Checker 的「没有这个类：'Int'」。
+        if (t.kind.isTypeKeyword && !check(TokenKind.LPAREN)) {
             throw error(
                 t,
                 "'${typeRef.name}' 是内置类型，不能 new（没有构造器）。" +
@@ -2168,14 +2187,14 @@ class Parser(
 
     private fun canonicalTypeName(kind: TokenKind): String = when (kind) {
         TokenKind.KW_VOID -> "void"
-        TokenKind.KW_INT -> "int"
-        TokenKind.KW_LONG -> "long"
-        TokenKind.KW_FLOAT -> "float"
-        TokenKind.KW_DOUBLE -> "double"
-        TokenKind.KW_STRING -> "string"
-        TokenKind.KW_BOOL -> "bool"
-        TokenKind.KW_BYTE -> "byte"
-        TokenKind.KW_CHAR -> "char"
+        TokenKind.KW_INT -> "Int"
+        TokenKind.KW_LONG -> "Long"
+        TokenKind.KW_FLOAT -> "Float"
+        TokenKind.KW_DOUBLE -> "Double"
+        TokenKind.KW_STRING -> "String"
+        TokenKind.KW_BOOL -> "Bool"
+        TokenKind.KW_BYTE -> "Byte"
+        TokenKind.KW_CHAR -> "Char"
         else -> throw IllegalStateException("不是类型关键字: $kind")
     }
 
@@ -2271,8 +2290,8 @@ class Parser(
 
             t.kind == TokenKind.KW_CATCH -> throw error(
                 t,
-                "'catch' 只能跟在 try 块后面，写法是 try { ... } catch (e : string) { ... }" +
-                    "（也接受老写法 catch (e string)）",
+                "'catch' 只能跟在 try 块后面，写法是 try { ... } catch (e : String) { ... }" +
+                    "（也接受老写法 catch (e String)）",
             )
 
             // 局部变量上的注解：v1 只标在声明（类 / 接口 / 注解声明 / 方法 / 字段）前面，
@@ -2725,7 +2744,7 @@ class Parser(
      * 变量声明：`var 名字 : 类型 = 初值`（Kotlin 后缀风格）。
      *
      * 类型可以省（`var x = 0`，靠初值推断）；写了就写在**名字后面**。
-     * 老写法 `var int x = 0` 不再接受，报错里直接给出新写法——
+     * 老写法 `var Int x = 0` 不再接受，报错里直接给出新写法——
      * 这是纯语法迁移里最容易被漏掉的一处。
      */
     private fun parseVarDecl(): Stmt {
@@ -2742,7 +2761,7 @@ class Parser(
                 // 数学类的预留关键字（语法还没定）：这里要说清它不是「少写了名字」
                 "；'mathematic' 是保留关键字（数学类预留），语法还没定，现在还不能当名字用"
             } else if (t.kind.isTypeKeyword) {
-                // 老写法 `var int x = 0`：类型写在名字前面已经废弃
+                // 老写法 `var Int x = 0`：类型写在名字前面已经废弃
                 val name = if (peek(1).kind == TokenKind.IDENT) peek(1).lexeme else "名字"
                 "；类型现在写在**名字后面**：'${kwTok.lexeme} ${t.lexeme} $name = 初值' " +
                     "要写成 '${kwTok.lexeme} $name : ${t.lexeme} = 初值'"
@@ -2751,8 +2770,8 @@ class Parser(
             }
             throw error(t, "'${kwTok.lexeme}' 后面缺少变量名$hint")
         }
-        // 可选的类型标注：`var x : int = 0` / `var s : ?string = null` /
-        // `var b : Box&<int> = ...` / `var a : int[] = new int[3]`
+        // 可选的类型标注：`var x : Int = 0` / `var s : ?String = null` /
+        // `var b : Box&<Int> = ...` / `var a : Int[] = new Int[3]`
         val declaredType = if (match(TokenKind.COLON)) {
             parseSuffixType(
                 hint = "变量 '${nameTok.lexeme}' 的类型要写成 " +
@@ -2770,7 +2789,7 @@ class Parser(
         return VarDeclStmt(nameTok.lexeme, init, mutable, kwTok.at, declaredType)
     }
 
-    /** 报错里给的示例写法：`var x : int = 表达式`（类型省了就写 `var x = 表达式`）。 */
+    /** 报错里给的示例写法：`var x : Int = 表达式`（类型省了就写 `var x = 表达式`）。 */
     private fun varDeclShape(kw: String, name: String, type: TypeRef?): String =
         if (type == null) "$kw $name = 表达式" else "$kw $name : ${type.name} = 表达式"
 
@@ -2801,7 +2820,7 @@ class Parser(
     /**
      * `fail <错误消息>`（阶段 14）。
      *
-     * 消息必须是 `string` 表达式（比如 `fail "空字符串没法转数字"`）；
+     * 消息必须是 `String` 表达式（比如 `fail "空字符串没法转数字"`）；
      * 后面不带东西时给一句清楚的话，而不是把下一行语句当成消息吃掉。
      */
     private fun parseFail(): Stmt {
@@ -2814,7 +2833,7 @@ class Parser(
         ) {
             throw error(
                 next,
-                "'fail' 后面要跟错误消息，写法是 'fail \"出错了\"'（消息必须是 string 表达式）",
+                "'fail' 后面要跟错误消息，写法是 'fail \"出错了\"'（消息必须是 String 表达式）",
             )
         }
         val message = parseExpr()
@@ -2822,16 +2841,16 @@ class Parser(
     }
 
     /**
-     * `try { ... } catch (e : string) { ... }`（阶段 14；阶段 19b 起改用 Kotlin 风格）。
+     * `try { ... } catch (e : String) { ... }`（阶段 14；阶段 19b 起改用 Kotlin 风格）。
      *
      * catch 变量的类型写法**和函数参数一样两种都收**：
      *
-     * - Kotlin 风格（推荐，和 `var x : int` 一致）：`catch (e : string)`
-     * - Java 风格（老写法，不打死）：`catch (e string)`
+     * - Kotlin 风格（推荐，和 `var x : Int` 一致）：`catch (e : String)`
+     * - Java 风格（老写法，不打死）：`catch (e String)`
      *
-     * 三种写坏的方式都要有话说：没有 catch、catch 缺括号、catch 的类型不是 string。
+     * 三种写坏的方式都要有话说：没有 catch、catch 缺括号、catch 的类型不是 String。
      * 「漏了类型」（`catch (e)`）的报错里**两种写法都列出来**。catch 只接一个变量、
-     * 类型固定 string——这一版不做多重 catch / finally。
+     * 类型固定 String——这一版不做多重 catch / finally。
      */
     private fun parseTry(): Stmt {
         val tryTok = advance() // try
@@ -2841,7 +2860,7 @@ class Parser(
             val t = peek()
             throw error(
                 t,
-                "try 块后面必须跟一个 catch，写法是 try { ... } catch (e : string) { ... }" +
+                "try 块后面必须跟一个 catch，写法是 try { ... } catch (e : String) { ... }" +
                     "（实际读到 ${t.describe()}）",
             )
         }
@@ -2849,29 +2868,29 @@ class Parser(
 
         expect(
             TokenKind.LPAREN,
-            "catch 后面需要 '('，写法是 catch (错误变量 : string)，例如 catch (e : string)",
+            "catch 后面需要 '('，写法是 catch (错误变量 : String)，例如 catch (e : String)",
         )
         val nameTok = expect(
             TokenKind.IDENT,
-            "catch 里需要错误变量名，写法是 catch (e : string)（也可以写老写法 catch (e string)）",
+            "catch 里需要错误变量名，写法是 catch (e : String)（也可以写老写法 catch (e String)）",
         )
 
         // 两种风格的分流只看名字后面那个记号，和 parseParam 一样无歧义：
-        //   `:` 开头 → Kotlin 风格；直接就是 `string` → Java 风格。
+        //   `:` 开头 → Kotlin 风格；直接就是 `String` → Java 风格。
         if (match(TokenKind.COLON)) {
             if (!check(TokenKind.KW_STRING)) {
                 throw error(peek(), catchTypeError(nameTok.lexeme))
             }
-            advance() // string
+            advance() // String
         } else if (check(TokenKind.KW_STRING)) {
-            advance() // string（老写法 catch (e string)）
+            advance() // String（老写法 catch (e String)）
         } else {
             throw error(peek(), catchTypeError(nameTok.lexeme))
         }
 
         expect(
             TokenKind.RPAREN,
-            "catch 的参数表没有闭合，缺少 ')'（写法是 catch (e : string)）",
+            "catch 的参数表没有闭合，缺少 ')'（写法是 catch (e : String)）",
         )
         val catchBody = parseBody("catch")
         return TryStmt(body, nameTok.lexeme, catchBody, tryTok.at)
@@ -2884,12 +2903,12 @@ class Parser(
     private fun catchTypeError(name: String): String {
         val t = peek()
         val what = if (t.kind.isTypeKeyword) {
-            "catch 的错误变量类型只能是 string（错误消息本身就是字符串），实际写的是 '${t.lexeme}'"
+            "catch 的错误变量类型只能是 String（错误消息本身就是字符串），实际写的是 '${t.lexeme}'"
         } else {
             "catch 里缺少错误变量的类型（实际读到 ${t.describe()}）"
         }
-        return "$what。两种写法都可以：Kotlin 风格 'catch ($name : string)'，" +
-            "或者 Java 风格 'catch ($name string)'"
+        return "$what。两种写法都可以：Kotlin 风格 'catch ($name : String)'，" +
+            "或者 Java 风格 'catch ($name String)'"
     }
 
     // ------------------------------------------------------------------ 表达式
@@ -2915,7 +2934,7 @@ class Parser(
      * ```
      * 这条链决定了两件必须对的事：
      * - `a == b && c == d` 是 `(a == b) && (c == d)`（`&&` 比 `==` 松，所以先把两个
-     *   比较各自收成一个 bool，再与起来）——这是 C 家族最容易被写错的一处；
+     *   比较各自收成一个 Bool，再与起来）——这是 C 家族最容易被写错的一处；
      * - `x || y && z` 是 `x || (y && z)`（`&&` 比 `||` 紧，`&&` 先结合）。
      *
      * 短路语义在两端后端里实现，语法这边只管结合方式（见
@@ -2989,7 +3008,7 @@ class Parser(
 
     private fun parseUnary(): Expr {
         // 阶段 53：`&x` 取地址、`*p` 解引用（都是前缀）。`&` 在表达式位置没有别的含义
-        // （泛型实参 `Box&<int>` 只在类型位置），`*` 在表达式开头也不可能是乘法。
+        // （泛型实参 `Box&<Int>` 只在类型位置），`*` 在表达式开头也不可能是乘法。
         if (match(TokenKind.AMP, TokenKind.STAR)) {
             val opTok = previous()
             val operand = parseUnary()
@@ -3099,7 +3118,7 @@ class Parser(
     /**
      * `as` / `is` 后面的目标类型（阶段 24）。
      *
-     * 复用 [parseTypeRef]，所以 `A`、`A[]`、`Box&<int>`、`A::Nested` 都能写；
+     * 复用 [parseTypeRef]，所以 `A`、`A[]`、`Box&<Int>`、`A::Nested` 都能写；
      * 只多一条限制：**目标不许可空**。null 的三种行为已经被拍死
      * （`null is A` 恒 false、`null as A` 抛、`null ?as A` 得 null，
      * 见 DESIGN-24 §3 的 Q2），目标再写 `?` 不会带来任何区别，只会让人误会
@@ -3236,21 +3255,21 @@ class Parser(
     /**
      * lambda 字面量（阶段 30）：`lam` `(` 形参表 `)` [`->` 类型] 块。
      *
-     * 形参表与函数 / 方法 / 构造器**共用** [parseParamList]（Kotlin 风格 `x : int` 与
-     * Java 风格 `int x` 都认），只多开一个 [allowUntyped]：`lam(x)` 的类型由期望类型补，
+     * 形参表与函数 / 方法 / 构造器**共用** [parseParamList]（Kotlin 风格 `x : Int` 与
+     * Java 风格 `Int x` 都认），只多开一个 [allowUntyped]：`lam(x)` 的类型由期望类型补，
      * 补不出来由 Checker 报 §5 第 2 条。体和普通块一样，`rtn` / `if` / `for` 全都能照写。
      */
     private fun parseLambda(at: SourceLine): Expr {
         advance() // lam
         val params = parseParamList(
-            missingParen = "'lam' 后面需要一个形参表：写法是 lam(x : int) -> int { … }",
+            missingParen = "'lam' 后面需要一个形参表：写法是 lam(x : Int) -> Int { … }",
             allowUntyped = true,
         )
         val declaredReturn = if (match(TokenKind.ARROW)) parseTypeRef() else null
         if (!check(TokenKind.LBRACE)) {
             throw error(
                 peek(),
-                "lambda 体要写成块：lam(…) -> 类型 { … }（写法是 lam(x : int) -> int { rtn x + 1 }）",
+                "lambda 体要写成块：lam(…) -> 类型 { … }（写法是 lam(x : Int) -> Int { rtn x + 1 }）",
             )
         }
         val block = parseBlock()
@@ -3267,6 +3286,26 @@ class Parser(
 
     private fun parsePrimary(): Expr {
         val t = peek()
+        // 阶段 55：`Long.MAX_VALUE` / `String.valueOf(...)` 这类 Java 静态访问——
+        // 内置类型名现在是关键字，但 JDK 里有同名类，所以「关键字 + '.'」按标识符收，
+        // 由语义层按 import 解析到外部类。
+        if (t.kind.isTypeKeyword && peek(1).kind == TokenKind.DOT) {
+            advance()
+            return VarExpr(t.lexeme, t.at)
+        }
+        // 省掉 new 的构造：`String(raw)`、`ArrayList&<Int>()` 之外的 `String(...)`。
+        if (t.kind.isTypeKeyword && peek(1).kind == TokenKind.LPAREN) {
+            advance()
+            expect(TokenKind.LPAREN, "'${t.lexeme}' 后面缺少 '('")
+            val args = ArrayList<Expr>()
+            if (!check(TokenKind.RPAREN)) {
+                do {
+                    args.add(parseExpr())
+                } while (match(TokenKind.COMMA))
+            }
+            expect(TokenKind.RPAREN, "构造 '${t.lexeme}' 的参数表没有闭合，缺少 ')'")
+            return NewExpr(t.lexeme, args, t.at, emptyList())
+        }
         return when (t.kind) {
             TokenKind.INT_LIT -> { advance(); IntLit(t.literal as Int, t.at) }
             TokenKind.LONG_LIT -> { advance(); LongLit(t.literal as Long, t.at) }
@@ -3297,13 +3336,13 @@ class Parser(
                 parseNewExpr(t.at)
             }
 
-            // 阶段 30：lambda 字面量 `lam(x : int) -> int { rtn x + 1 }`
+            // 阶段 30：lambda 字面量 `lam(x : Int) -> Int { rtn x + 1 }`
             TokenKind.KW_LAM -> parseLambda(t.at)
 
             TokenKind.IDENT -> {
                 advance()
-                // `Box&<int>(0)`：类型实参只可能出现在**类型**上，函数没有类型参数，
-                // 所以「标识符 +&<...> + (」无歧义地是一次构造（等价于 `new Box&<int>(0)`）。
+                // `Box&<Int>(0)`：类型实参只可能出现在**类型**上，函数没有类型参数，
+                // 所以「标识符 +&<...> + (」无歧义地是一次构造（等价于 `new Box&<Int>(0)`）。
                 // 省掉 new 的普通写法 `Point(1, 2)` 解析成 [CallExpr]，由 Checker
                 // 做完名字解析之后决定它是构造还是函数调用。
                 if (check(TokenKind.AMP)) {
@@ -3311,7 +3350,7 @@ class Parser(
                     expect(
                         TokenKind.LPAREN,
                         "'${t.lexeme}&<...>' 后面缺少 '('：构造对象要写实参表，" +
-                            "例如 new ${t.lexeme}&<int>(0)（new 可以省）",
+                            "例如 new ${t.lexeme}&<Int>(0)（new 可以省）",
                     )
                     val args = ArrayList<Expr>()
                     if (!check(TokenKind.RPAREN)) {

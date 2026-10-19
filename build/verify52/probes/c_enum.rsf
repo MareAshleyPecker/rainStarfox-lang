@@ -1,7 +1,7 @@
 // 阶段 52d：C 后端探针 8 —— 枚举、switch 分派、枚举数组
 enum Color { Red, Green, Blue }
 
-fn name(c : Color) -> string {
+fn name(c : Color) -> String {
     switch (c) {
         Color.Red : rtn "red"
         Color.Green : rtn "green"

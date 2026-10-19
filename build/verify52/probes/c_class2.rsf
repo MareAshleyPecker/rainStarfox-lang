@@ -1,23 +1,23 @@
 // 阶段 52c：C 后端探针 7 —— 静态方法、次构造、类字段数组
 class Box {
-    var v : int = 0
+    var v : Int = 0
 
     constructor() { v = 7 }
 
-    constructor(n : int) { v = n }
+    constructor(n : Int) { v = n }
 
-    fn get() -> int { rtn v }
+    fn get() -> Int { rtn v }
 
-    stc fn twice(x : int) -> int { rtn x * 2 }
+    stc fn twice(x : Int) -> Int { rtn x * 2 }
 }
 
 class Bag {
-    var xs : int[] = new int[3]
+    var xs : Int[] = new Int[3]
 
-    fn put(i : int, x : int) -> void { xs[i] = x }
+    fn put(i : Int, x : Int) -> void { xs[i] = x }
 
-    fn total() -> int {
-        var s : int = 0
+    fn total() -> Int {
+        var s : Int = 0
         for (x in xs) { s = s + x }
         rtn s
     }

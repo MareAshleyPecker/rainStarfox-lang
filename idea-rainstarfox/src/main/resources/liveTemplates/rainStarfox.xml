@@ -1,11 +1,11 @@
 <templateSet group="rainStarfox">
     <!-- 样板：输入缩写后按 Tab 展开。占位符全都可以 Tab 跳过去改。 -->
-    <template name="fn" value="pub fn $name$($x$ : int) -&gt; int {&#10;    $END$&#10;}" description="顶层函数" toReformat="true" toShortenFQNames="true">
+    <template name="fn" value="pub fn $name$($x$ : Int) -&gt; Int {&#10;    $END$&#10;}" description="顶层函数" toReformat="true" toShortenFQNames="true">
         <variable name="name" expression="" defaultValue="name" alwaysStopAt="true"/>
         <variable name="x" expression="" defaultValue="x" alwaysStopAt="true"/>
     </template>
 
-    <template name="lam" value="lam($x$ : int) -&gt; int {&#10;    $END$&#10;}" description="lambda 字面量" toReformat="true" toShortenFQNames="true">
+    <template name="lam" value="lam($x$ : Int) -&gt; Int {&#10;    $END$&#10;}" description="lambda 字面量" toReformat="true" toShortenFQNames="true">
         <variable name="x" expression="" defaultValue="x" alwaysStopAt="true"/>
     </template>
 
@@ -37,7 +37,7 @@
         <variable name="CASE" expression="" defaultValue="CASE" alwaysStopAt="true"/>
     </template>
 
-    <template name="try" value="try {&#10;    $END$&#10;} catch ($e$ : string) {&#10;    println($e$)&#10;}" description="错误处理" toReformat="true" toShortenFQNames="true">
+    <template name="try" value="try {&#10;    $END$&#10;} catch ($e$ : String) {&#10;    println($e$)&#10;}" description="错误处理" toReformat="true" toShortenFQNames="true">
         <variable name="e" expression="" defaultValue="e" alwaysStopAt="true"/>
     </template>
 </templateSet>

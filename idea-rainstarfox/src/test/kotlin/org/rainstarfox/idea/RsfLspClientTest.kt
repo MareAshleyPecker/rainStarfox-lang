@@ -93,7 +93,7 @@ class RsfLspClientTest {
             target.mkdirs()
             val file = File(target, "sample.rsf")
             file.deleteOnExit()
-            val text = "fn add(int a, int b) -> int {\n    rtn a + b\n}\n\nfn main() -> void {\n    nope()\n    rtn\n}\n"
+            val text = "fn add(Int a, Int b) -> Int {\n    rtn a + b\n}\n\nfn main() -> void {\n    nope()\n    rtn\n}\n"
             file.writeText(text, Charsets.UTF_8)
             val uri = RsfLspClient.toUri(file.path)
 
@@ -107,9 +107,9 @@ class RsfLspClientTest {
             val completions = client.complete(uri, text, 5, 4)
             val add = completions.firstOrNull { it.label == "add" }
             assertTrue(add != null, "应该补出 add：${completions.map { it.label }}")
-            // 签名形如 `add(a : int, b : int) -> int`：只要名字、参数和返回类型都在
+            // 签名形如 `add(a : Int, b : Int) -> Int`：只要名字、参数和返回类型都在
             assertTrue(add!!.detail.startsWith("add("), add.detail)
-            assertTrue(add.detail.contains("-> int"), add.detail)
+            assertTrue(add.detail.contains("-> Int"), add.detail)
             assertEquals("function", add.kind)
         } finally {
             client?.close()
@@ -136,13 +136,13 @@ class RsfLspClientTest {
             target.mkdirs()
             val file = File(target, "refs.rsf")
             file.deleteOnExit()
-            val text = """fn add(a : int, b : int) -> int {
+            val text = """fn add(a : Int, b : Int) -> Int {
     rtn a + b
 }
 
 fn main() -> void {
-    var x : int = add(1, 2)
-    var y : int = add(x, 3)
+    var x : Int = add(1, 2)
+    var y : Int = add(x, 3)
     rtn
 }
 """

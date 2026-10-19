@@ -1,5 +1,5 @@
 class A {
-    var v : int = 0
+    var v : Int = 0
 }
 fn main() {
     var a : A = new A()

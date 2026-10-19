@@ -5,15 +5,15 @@
 // v1 没有迭代器，遍历用 size() + get(i)；要 O(1) 的字符串键查找请用 HashMap。
 pub class Set&<T> {
     var items : T[] = new T[4]
-    var n : int = 0
+    var n : Int = 0
 
-    pub fn size() -> int { rtn n }
+    pub fn size() -> Int { rtn n }
 
-    pub fn isEmpty() -> bool { rtn n == 0 }
+    pub fn isEmpty() -> Bool { rtn n == 0 }
 
     pub fn clear() -> void { n = 0 }
 
-    pub fn get(i : int) -> T { rtn items[i] }
+    pub fn get(i : Int) -> T { rtn items[i] }
 
     pub fn toArray() -> T[] {
         var out : T[] = new T[n]
@@ -25,9 +25,9 @@ pub class Set&<T> {
         rtn out
     }
 
-    pub fn contains(x : T) -> bool { rtn indexOf(x) >= 0 }
+    pub fn contains(x : T) -> Bool { rtn indexOf(x) >= 0 }
 
-    fn indexOf(x : T) -> int {
+    fn indexOf(x : T) -> Int {
         var i = 0
         while (i < n) {
             if (items[i] == x) { rtn i }
@@ -37,7 +37,7 @@ pub class Set&<T> {
     }
 
     // 新元素返回 true，已存在返回 false
-    pub fn add(x : T) -> bool {
+    pub fn add(x : T) -> Bool {
         if (contains(x)) { rtn false }
         if (n == items.length) { grow() }
         items[n] = x
@@ -45,7 +45,7 @@ pub class Set&<T> {
         rtn true
     }
 
-    pub fn remove(x : T) -> bool {
+    pub fn remove(x : T) -> Bool {
         var i = indexOf(x)
         if (i < 0) { rtn false }
         var k = i

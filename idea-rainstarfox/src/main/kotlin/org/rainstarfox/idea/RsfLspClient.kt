@@ -101,16 +101,16 @@ class RsfLspClient private constructor(
             val end = RsfJson.objectAt(range, "end") ?: emptyMap()
             Diagnostic(
                 uri = uri,
-                line = RsfJson.int(start, "line", 0) + 1,
-                col = RsfJson.int(start, "character", 0) + 1,
-                endCol = RsfJson.int(end, "character", 0) + 1,
-                severity = when (RsfJson.int(d, "severity", 1)) {
+                line = RsfJson.Int(start, "line", 0) + 1,
+                col = RsfJson.Int(start, "character", 0) + 1,
+                endCol = RsfJson.Int(end, "character", 0) + 1,
+                severity = when (RsfJson.Int(d, "severity", 1)) {
                     2 -> "warning"
                     3 -> "info"
                     else -> "error"
                 },
-                phase = RsfJson.string(d, "code", "checker"),
-                message = RsfJson.string(d, "message"),
+                phase = RsfJson.String(d, "code", "checker"),
+                message = RsfJson.String(d, "message"),
             )
         }
     }
@@ -123,9 +123,9 @@ class RsfLspClient private constructor(
         val root = RsfJson.parse(json) ?: return emptyList()
         return RsfJson.objectsAt(root, "items").map { d ->
             Item(
-                label = RsfJson.string(d, "label"),
-                kind = kindName(RsfJson.int(d, "kind", 1)),
-                detail = RsfJson.string(d, "detail"),
+                label = RsfJson.String(d, "label"),
+                kind = kindName(RsfJson.Int(d, "kind", 1)),
+                detail = RsfJson.String(d, "detail"),
             )
         }.filter { it.label.isNotEmpty() }
     }
@@ -143,13 +143,13 @@ class RsfLspClient private constructor(
         val params = "{\"textDocument\":{\"uri\":${quote(uri)}},\"position\":{\"line\":$line,\"character\":$character}}"
         val json = request("textDocument/definition", params) ?: return null
         val root = RsfJson.parse(json) as? Map<String, Any?> ?: return null
-        val targetUri = RsfJson.string(root, "uri")
+        val targetUri = RsfJson.String(root, "uri")
         if (targetUri.isEmpty()) return null
         val start = RsfJson.objectAt(root, "range")?.let { RsfJson.objectAt(it, "start") } ?: return null
         return Location(
             path = fromUri(targetUri),
-            line = RsfJson.int(start, "line", 0),
-            character = RsfJson.int(start, "character", 0),
+            line = RsfJson.Int(start, "line", 0),
+            character = RsfJson.Int(start, "character", 0),
         )
     }
 
@@ -160,7 +160,7 @@ class RsfLspClient private constructor(
         val json = request("textDocument/hover", params) ?: return null
         val root = RsfJson.parse(json) as? Map<String, Any?> ?: return null
         val contents = RsfJson.objectAt(root, "contents") ?: return null
-        val value = RsfJson.string(contents, "value")
+        val value = RsfJson.String(contents, "value")
         return value.ifEmpty { null }
     }
 
@@ -181,10 +181,10 @@ class RsfLspClient private constructor(
         val json = request("textDocument/references", params) ?: return emptyList()
         val root = RsfJson.parse(json) ?: return emptyList()
         return maps(root).mapNotNull { item ->
-            val targetUri = RsfJson.string(item, "uri")
+            val targetUri = RsfJson.String(item, "uri")
             val start = RsfJson.objectAt(item, "range")?.let { RsfJson.objectAt(it, "start") } ?: return@mapNotNull null
             if (targetUri.isEmpty()) return@mapNotNull null
-            Location(fromUri(targetUri), RsfJson.int(start, "line", 0), RsfJson.int(start, "character", 0))
+            Location(fromUri(targetUri), RsfJson.Int(start, "line", 0), RsfJson.Int(start, "character", 0))
         }
     }
 
@@ -209,11 +209,11 @@ class RsfLspClient private constructor(
                 val start = RsfJson.objectAt(range, "start") ?: return@mapNotNull null
                 val end = RsfJson.objectAt(range, "end") ?: return@mapNotNull null
                 TextEdit(
-                    startLine = RsfJson.int(start, "line", 0),
-                    startCharacter = RsfJson.int(start, "character", 0),
-                    endLine = RsfJson.int(end, "line", 0),
-                    endCharacter = RsfJson.int(end, "character", 0),
-                    newText = RsfJson.string(edit, "newText"),
+                    startLine = RsfJson.Int(start, "line", 0),
+                    startCharacter = RsfJson.Int(start, "character", 0),
+                    endLine = RsfJson.Int(end, "line", 0),
+                    endCharacter = RsfJson.Int(end, "character", 0),
+                    newText = RsfJson.String(edit, "newText"),
                 )
             }
         }

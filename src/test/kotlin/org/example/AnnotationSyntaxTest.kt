@@ -66,17 +66,17 @@ class AnnotationSyntaxTest {
         assertEquals(ControlType.PRIVATE, program.annotations[1].control)
     }
 
-    /** 元素可以不带默认值（`value : string`）。 */
+    /** 元素可以不带默认值（`value : String`）。 */
     @Test
     fun `注解元素不带默认值`() {
         val program = parse(
             """
-            annotation M(value : string, count : int) { }
+            annotation M(value : String, count : Int) { }
             """.trimIndent(),
         )
         val elements = program.annotations[0].elements
         assertEquals(listOf("value", "count"), elements.map { it.name })
-        assertEquals(listOf("string", "int"), elements.map { it.type.name })
+        assertEquals(listOf("String", "Int"), elements.map { it.type.name })
         assertNull(elements[0].default, "没写 '= 默认值' 的元素 default 应该是 null")
         assertNull(elements[1].default)
     }
@@ -86,7 +86,7 @@ class AnnotationSyntaxTest {
     fun `注解元素带常量默认值`() {
         val program = parse(
             """
-            pub annotation Marker(value : string = "x", count : int = 0) { }
+            pub annotation Marker(value : String = "x", count : Int = 0) { }
             """.trimIndent(),
         )
         val m = program.annotations[0]
@@ -95,28 +95,28 @@ class AnnotationSyntaxTest {
 
         val value = m.elements[0]
         assertEquals("value", value.name)
-        assertEquals("string", value.type.name)
+        assertEquals("String", value.type.name)
         val valueDefault = value.default
         assertTrue(valueDefault is StringLit, "默认值应该是字符串字面量，实际 $valueDefault")
         assertEquals("x", (valueDefault as StringLit).value)
 
         val count = m.elements[1]
         assertEquals("count", count.name)
-        assertEquals("int", count.type.name)
+        assertEquals("Int", count.type.name)
         assertTrue(count.default is IntLit, "默认值应该是整数字面量，实际 ${count.default}")
         assertEquals(0, (count.default as IntLit).value)
     }
 
-    /** v1 允许的默认值形状：int/long/float/double/string/char/bool/null，数值可以带一个前导 `-`。 */
+    /** v1 允许的默认值形状：Int/Long/Float/Double/String/Char/Bool/null，数值可以带一个前导 `-`。 */
     @Test
     fun `注解默认值支持常量字面量与负数`() {
         val program = parse(
             """
             annotation M(
-                a : float = -1.5,
-                b : int = -3,
-                c : bool = true,
-                d : string = null,
+                a : Float = -1.5,
+                b : Int = -3,
+                c : Bool = true,
+                d : String = null,
             ) { }
             """.trimIndent(),
         )
@@ -126,7 +126,7 @@ class AnnotationSyntaxTest {
         val a = elements[0].default
         assertTrue(a is UnaryExpr, "默认值 '-1.5' 应该是一元负号，实际 $a")
         assertEquals(TokenKind.MINUS, (a as UnaryExpr).op)
-        // `1.5` 是 double 字面量（float 要写 `1.5f`），所以操作数是 DoubleLit
+        // `1.5` 是 Double 字面量（Float 要写 `1.5f`），所以操作数是 DoubleLit
         assertTrue(a.operand is DoubleLit, "负号的操作数应该是浮点字面量，实际 ${a.operand}")
 
         val b = elements[1].default
@@ -208,10 +208,10 @@ class AnnotationSyntaxTest {
             """
             annotation M {
                 companion entity Impl : Runnable {
-                    var hits : int = 0
-                    imutvar name : string = "m"
-                    constructor(tag : string) { }
-                    fn describe() -> string { rtn "Marker" }
+                    var hits : Int = 0
+                    imutvar name : String = "m"
+                    constructor(tag : String) { }
+                    fn describe() -> String { rtn "Marker" }
                     fn run() -> void { rtn }
                 }
             }
@@ -245,7 +245,7 @@ class AnnotationSyntaxTest {
         val program = parse(
             """
             annotation A { }
-            pub annotation B(value : int = 1) { }
+            pub annotation B(value : Int = 1) { }
             fn helper() -> void { rtn }
             annotation C { }
             """.trimIndent(),
@@ -345,7 +345,7 @@ class AnnotationSyntaxTest {
             }
             class C {
                 @OnField
-                var tally : int = 0
+                var tally : Int = 0
             }
             """.trimIndent(),
         )
@@ -455,10 +455,10 @@ class AnnotationSyntaxTest {
     fun `解析证据：一整套注解语法的 AST 形状`() {
         val program = parse(
             """
-            pub annotation Marker(value : string = "x", count : int = 0) {
+            pub annotation Marker(value : String = "x", count : Int = 0) {
                 companion entity Impl : Runnable {
-                    var hits : int = 0
-                    fn describe() -> string { rtn "Marker(" + value + "," + count + ")" }
+                    var hits : Int = 0
+                    fn describe() -> String { rtn "Marker(" + value + "," + count + ")" }
                     fn run() -> void { rtn }
                 }
             }
@@ -540,7 +540,7 @@ class AnnotationSyntaxTest {
             parse(
                 """
                 annotation M {
-                    var hits : int = 0
+                    var hits : Int = 0
                 }
                 """.trimIndent(),
             )
@@ -604,26 +604,26 @@ class AnnotationSyntaxTest {
         val e = assertFailsWith<RsfError> {
             parse(
                 """
-                fn bad() :: int { rtn 0 }
+                fn bad() :: Int { rtn 0 }
                 """.trimIndent(),
             )
         }
         assertEquals("parser", e.phase)
         assertEquals(
-            "返回类型子句不再接受 '::'：请用 '->' 或者 ':'，例如 fn bad() -> int { ... }。" +
+            "返回类型子句不再接受 '::'：请用 '->' 或者 ':'，例如 fn bad() -> Int { ... }。" +
                 "（'::' 现在留给 xxx::xx 这种嵌套写法，例如 Marker::Impl）",
             e.message,
         )
     }
 
-    /** 内置类型不能当嵌套类型的外层（`int::x`）。 */
+    /** 内置类型不能当嵌套类型的外层（`Int::x`）。 */
     @Test
     fun `内置类型没有嵌套类型`() {
         val e = assertFailsWith<RsfError> {
             parse(
                 """
                 class Holder {
-                    var x : int::x = 0
+                    var x : Int::x = 0
                 }
                 """.trimIndent(),
             )
@@ -638,7 +638,7 @@ class AnnotationSyntaxTest {
         val e = assertFailsWith<RsfError> {
             parse(
                 """
-                annotation M(kind : int = RED) { }
+                annotation M(kind : Int = RED) { }
                 """.trimIndent(),
             )
         }
@@ -647,13 +647,13 @@ class AnnotationSyntaxTest {
         assertTrue(e.message!!.contains("数组默认值 v1 都还不支持"), "实际：${e.message}")
     }
 
-    /** 元素默认值不支持数组（`new int[3]`）。 */
+    /** 元素默认值不支持数组（`new Int[3]`）。 */
     @Test
     fun `数组默认值暂不支持`() {
         val e = assertFailsWith<RsfError> {
             parse(
                 """
-                annotation M(xs : int[] = new int[3]) { }
+                annotation M(xs : Int[] = new Int[3]) { }
                 """.trimIndent(),
             )
         }
@@ -667,7 +667,7 @@ class AnnotationSyntaxTest {
         val e = assertFailsWith<RsfError> {
             parse(
                 """
-                annotation M(a : int = 1, a : int = 2) { }
+                annotation M(a : Int = 1, a : Int = 2) { }
                 """.trimIndent(),
             )
         }
@@ -695,7 +695,7 @@ class AnnotationSyntaxTest {
         val e = assertFailsWith<RsfError> {
             parse(
                 """
-                fn f(@M x : int) -> void { rtn }
+                fn f(@M x : Int) -> void { rtn }
                 """.trimIndent(),
             )
         }
@@ -710,7 +710,7 @@ class AnnotationSyntaxTest {
             parse(
                 """
                 fn f() -> void {
-                    @M var x : int = 1
+                    @M var x : Int = 1
                 }
                 """.trimIndent(),
             )

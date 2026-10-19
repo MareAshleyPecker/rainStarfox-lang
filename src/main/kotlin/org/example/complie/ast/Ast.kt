@@ -13,11 +13,11 @@ sealed interface Node {
 /**
  * 源码里写出来的类型名。`null` 作为返回类型时归一化成 `void`。
  *
- * [typeArgs] 是泛型的实参：`Box&<int>` → name = `Box`、typeArgs = [`int`]。
- * 不写 `&<...>` 的类型（`int`、`Point`）typeArgs 为空，所以老代码不用改。
+ * [typeArgs] 是泛型的实参：`Box&<Int>` → name = `Box`、typeArgs = [`Int`]。
+ * 不写 `&<...>` 的类型（`Int`、`Point`）typeArgs 为空，所以老代码不用改。
  *
- * [arrayDepth] 是数组后缀的层数（阶段 13）：`int[]` → 1、`Box&<int>[]` → 1、
- * `int[][]` → 2。**不并进 [name]**：`name` 在几十处被当成「基础类型名 / 类名」直接比对
+ * [arrayDepth] 是数组后缀的层数（阶段 13）：`Int[]` → 1、`Box&<Int>[]` → 1、
+ * `Int[][]` → 2。**不并进 [name]**：`name` 在几十处被当成「基础类型名 / 类名」直接比对
  * （`ret.type.name == "void"`、`fromName(ref.name)`…），把 `[]` 拼进去会让那些地方
  * 全部静默失效；维度单独一个字段，只有真正关心数组的地方才读它。
  */
@@ -25,11 +25,11 @@ data class TypeRef(
     val name: String,
     override val at: SourceLine,
     val typeArgs: List<TypeRef> = emptyList(),
-    /** 数组维度：`int[]` → 1，不是数组 → 0。 */
+    /** 数组维度：`Int[]` → 1，不是数组 → 0。 */
     val arrayDepth: Int = 0,
     /**
      * 嵌套类型写的**内层名字**（阶段 21）：`Marker::Impl` → name = `Marker`、nested = `Impl`；
-     * 普通类型（`int`、`Point`）是 `null`，所以既有代码一行都不用改。
+     * 普通类型（`Int`、`Point`）是 `null`，所以既有代码一行都不用改。
      *
      * **v1 只支持一层**（`A::B::C` 在 Parser 就报错），所以这里是一个名字而不是列表。
      * 内部名（`Marker$Impl`）由语义层自己拼——前端只管把 owner（[name]）与内层名字
@@ -37,8 +37,8 @@ data class TypeRef(
      */
     val nested: String? = null,
     /**
-     * 函数类型的**形参类型表**（阶段 30）：`(int, string) -> bool` →
-     * [`int`, `string`]；`() -> void` → 空表。不是函数类型时是空表。
+     * 函数类型的**形参类型表**（阶段 30）：`(Int, String) -> Bool` →
+     * [`Int`, `String`]；`() -> void` → 空表。不是函数类型时是空表。
      *
      * 类型本身仍留在这个类上（**没有**另立一套 sealed TypeRef 树）：`name` 固定写
      * `"fn"`（可空写 `"?fn"`），函数形状靠 [fnRet] 非 null 判定。理由是 `name` 在几十处
@@ -52,7 +52,7 @@ data class TypeRef(
      */
     val fnRet: TypeRef? = null,
     /**
-     * 指针层数（阶段 53）：`int*` → 1。不是指针是 0（老调用点一个字都不用改）。
+     * 指针层数（阶段 53）：`Int*` → 1。不是指针是 0（老调用点一个字都不用改）。
      *
      * 只在 native / 解释器一侧有语义：JVM 字节码后端遇到 [ptrDepth] > 0 直接报错。
      */
@@ -70,12 +70,12 @@ data class TypeRef(
      */
     val isMissing: Boolean get() = name.isEmpty() && fnRet == null
 
-    /** 写给人看的完整类型名：`Box&<int>`、`int[][]`、`Marker::Impl`、`(int) -> bool`。 */
+    /** 写给人看的完整类型名：`Box&<Int>`、`Int[][]`、`Marker::Impl`、`(Int) -> Bool`。 */
     fun display(): String {
         val ret = fnRet
         if (ret != null) {
             // 函数类型（阶段 30）：`(参数类型表) -> 返回类型`，`?` 在整体最前面，
-            // `[]` 在整体最后面——`[]` 时整体要先加一层括号（`((int) -> int)[]`）。
+            // `[]` 在整体最后面——`[]` 时整体要先加一层括号（`((Int) -> Int)[]`）。
             val sig = "(" + fnParams.joinToString(", ") { it.display() } + ") -> " + ret.display()
             val marked = if (name.startsWith("?")) "?$sig" else sig
             val shaped = if (arrayDepth == 0) marked else "($marked)" + "[]".repeat(arrayDepth)
@@ -92,10 +92,10 @@ data class TypeRef(
 /**
  * 注解声明（阶段 21）：
  * ```
- * public annotation Marker(value : string = "x", count : int = 0) {
+ * public annotation Marker(value : String = "x", count : Int = 0) {
  *     companion entity Impl : Runnable {
- *         var hits : int = 0
- *         fun describe() -> string { rtn "Marker(" + value + "," + count + ")" }
+ *         var hits : Int = 0
+ *         fun describe() -> String { rtn "Marker(" + value + "," + count + ")" }
  *         fun run() -> void { println("run " + value) }
  *     }
  * }
@@ -119,7 +119,7 @@ data class TypeRef(
 data class AnnotationDecl(
     val control: ControlType,
     val name: String,
-    /** 元素表：`(value : string = "x", count : int = 0)`。空表 = 没写括号或括号里空的。 */
+    /** 元素表：`(value : String = "x", count : Int = 0)`。空表 = 没写括号或括号里空的。 */
     val elements: List<AnnotationElement>,
     override val at: SourceLine,
     /**
@@ -133,14 +133,14 @@ data class AnnotationDecl(
 ) : Node
 
 /**
- * 注解元素：`value : string = "x"`（名字 + 类型 + 可选的常量默认值）。
+ * 注解元素：`value : String = "x"`（名字 + 类型 + 可选的常量默认值）。
  *
  * **不复用 [Param]**：那个没有默认值槽，而默认值是注解元素的一半价值
  * （使用点不写实参时取它）。硬塞一个可空字段进去会让所有普通参数都多背一个
  * 「这里不可能是默认值」的状态。
  *
- * 元素类型只写类型，**默认值限定为字面量常量**（int / long / float / double / bool /
- * string / char / 它们的 `-` 前缀 / `null`）——这是 Parser 强制的，见
+ * 元素类型只写类型，**默认值限定为字面量常量**（Int / Long / Float / Double / Bool /
+ * String / Char / 它们的 `-` 前缀 / `null`）——这是 Parser 强制的，见
  * `Parser.parseAnnotationElementDefault`。枚举常量、注解、数组默认值 v1 明确不支持。
  */
 data class AnnotationElement(
@@ -322,7 +322,7 @@ enum class ReturnStyle(val symbol: String) {
 /**
  * 返回类型子句：`-> T` / `: T`，可带 `!`（可能出错）前缀。
  *
- * 可空性写在类型名里（`?int`），不再单列一个字段。
+ * 可空性写在类型名里（`?Int`），不再单列一个字段。
  *
  * `!T`（[mayError]）的意思是「这个函数可能失败」：正常路径上它的返回值就是 `T`，
  * 出错时走**异常**这条路（JVM 上就是 RuntimeException）。调用方必须显式处理，
@@ -336,7 +336,7 @@ data class ReturnSpec(
 ) : Node {
     val nullable: Boolean get() = type.name.startsWith("?")
 
-    /** 写给人看的完整写法，例如 `: ?int`。 */
+    /** 写给人看的完整写法，例如 `: ?Int`。 */
     fun display(): String {
         val mark = if (mayError) "!" else ""
         return "${style.symbol} $mark${type.display()}"
@@ -360,7 +360,7 @@ data class Param(
  * 靠 [isConstructor] / [isPrimary] 区分。这样下游（绑定与槽位分配、降级、
  * 解释器、字节码后端）一行都不用为构造器分家——构造器本来就"长得像"一个返回 void 的方法：
  *
- * - 主构造（[isPrimary]）：`class P(int x0, int y0) { ... }` 里类头那对括号，**解析时合成**，
+ * - 主构造（[isPrimary]）：`class P(Int x0, Int y0) { ... }` 里类头那对括号，**解析时合成**，
  *   [name] 就是类名，[body] 是**空块**（主构造的"体"就是字段初值）。
  * - 次构造：`constructor(参数) { ... }`，[isPrimary] 为 false。
  */
@@ -567,7 +567,7 @@ data class EnumValue(
 // ------------------------------------------------------------------ 类
 
 /**
- * 字段声明：`var 名字 : 类型 = 0` / `imutvar 名字 : string = "?"`。
+ * 字段声明：`var 名字 : 类型 = 0` / `imutvar 名字 : String = "?"`。
  *
  * 类型和初值都必须写：类型用 **Kotlin 后缀风格**（跟局部变量 `var 名字 : 类型 = 初值`
  * 一致，类型写在名字后面），初值必填是为了避开「字段没初始化」这种 JVM 上
@@ -580,7 +580,7 @@ data class FieldDecl(
     val mutable: Boolean,
     override val at: SourceLine,
     /**
-     * 写在字段声明前面的注解（阶段 21）：`@Marker var hits : int = 0`。
+     * 写在字段声明前面的注解（阶段 21）：`@Marker var hits : Int = 0`。
      *
      * 加在**构造参数末尾**并带缺省值：既有构造点（解释器、后端、测试里的手写 AST）
      * 一行都不用改，语义层也照旧忽略它。
@@ -592,10 +592,10 @@ data class FieldDecl(
  * 类声明：`<ControlType> class 类名 <&<T>> (<主构造参数>) { 字段... 方法... 构造器... }`（阶段 18 起）。
  *
  * ```
- * public class Point(int x0, int y0) {      // 主构造：参数写在类头，字段初值里能用
- *     var x : int = x0
- *     var y : int = y0
- *     public fun sum() -> int { rtn x + y }
+ * public class Point(Int x0, Int y0) {      // 主构造：参数写在类头，字段初值里能用
+ *     var x : Int = x0
+ *     var y : Int = y0
+ *     public fun sum() -> Int { rtn x + y }
  * }
  *
  * public class Box&<T> {                   // 泛型：类体里 T 可以当类型用
@@ -604,9 +604,9 @@ data class FieldDecl(
  * }
  *
  * public class Q {                          // 次构造（可以写多个 → 构造器重载）
- *     var v : int = 0
+ *     var v : Int = 0
  *     constructor() { v = 0 }
- *     constructor(n : int) { v = n }
+ *     constructor(n : Int) { v = n }
  * }
  * ```
  *
@@ -625,13 +625,13 @@ data class ClassDecl(
      */
     val typeParams: List<String> = emptyList(),
     /**
-     * 父类型列表（阶段 20）：`class Dog(name : string) : Greeter, Runnable { ... }`。
+     * 父类型列表（阶段 20）：`class Dog(name : String) : Greeter, Runnable { ... }`。
      *
      * 没写 `:` 子句就是空表（**既有代码因此一行都不用改**）。
      *
      * 本批只支持**接口**：Checker 对每一项查表——查到接口就登记为实现，
      * 查到类就报「暂不支持类继承」，查不到就报未知类型（D2：绝不静默忽略）。
-     * 类型实参写在名字后面（`class C : Box&<int>`，擦除后 `LBox;`）。
+     * 类型实参写在名字后面（`class C : Box&<Int>`，擦除后 `LBox;`）。
      */
     val supertypes: List<TypeRef> = emptyList(),
     /**
@@ -642,7 +642,7 @@ data class ClassDecl(
      */
     val annotations: List<AnnotationUse> = emptyList(),
     /**
-     * 类头 `:` 子句里排在**最前面**的父类（阶段 25）：`class D(y : int) : Base(y), Greeter` 里的 `Base`。
+     * 类头 `:` 子句里排在**最前面**的父类（阶段 25）：`class D(y : Int) : Base(y), Greeter` 里的 `Base`。
      *
      * 为什么不塞进 [supertypes]：两者的规矩根本不同——父类**必须带实参表**、只能有一个、
      * 而且必须排在接口前面；接口不许写实参、可以写任意多个。合成一个列表的话，
@@ -655,7 +655,7 @@ data class ClassDecl(
     /**
      * 传给父类构造器的实参（[superClass] == null 时是空表）。
      *
-     * 位置就在类头括号里：`class D(y : int) : Base(y)`。子类构造时先跑
+     * 位置就在类头括号里：`class D(y : Int) : Base(y)`。子类构造时先跑
      * `父 <init>(这些实参)`，再跑自己的字段初值（DESIGN-25 §4 的构造顺序）。
      *
      * 语法上**必须写**（`class D : Base` 报错）：父类可能没有无参构造器，
@@ -669,7 +669,7 @@ data class ClassDecl(
      */
     val isFinal: Boolean = false,
     /**
-     * 抽象类（阶段 25）：`public abstract class Shape(x : int) { public abstract fun area() -> double }`。
+     * 抽象类（阶段 25）：`public abstract class Shape(x : Int) { public abstract fun area() -> Double }`。
      *
      * 两条副作用：**不能 `new`**；允许有抽象成员，而且子类不把抽象成员实现完时自己也得是
      * `abstract`（否则报错）。没写 `abstract` 的类里出现抽象方法一律报错。
@@ -698,14 +698,14 @@ data class ClassDecl(
  * 接口声明（阶段 20）：
  * ```
  * public interface Greeter {
- *     fun greet(name : string) -> string                       // 抽象方法：只写签名
- *     fun shout(name : string) -> string {                     // 默认方法：带体
+ *     fun greet(name : String) -> String                       // 抽象方法：只写签名
+ *     fun shout(name : String) -> String {                     // 默认方法：带体
  *         rtn toUpper(greet(name))
  *     }
  * }
  *
- * class Dog(n : string) : Greeter {                            // 实现：沿用继承的 ':'
- *     public fun greet(name : string) -> string { rtn "woof " + name }
+ * class Dog(n : String) : Greeter {                            // 实现：沿用继承的 ':'
+ *     public fun greet(name : String) -> String { rtn "woof " + name }
  * }
  *
  * interface Loud : Greeter { }                                 // 接口继承接口（D4）
@@ -781,8 +781,8 @@ data class Block(
  * - `var x = 1`   → [mutable] = true，之后可以 `x = 2`
  * - `imutvar x = 1` → [mutable] = false，重新赋值会被 Checker 拦住
  *
- * [declaredType] 是可选的类型标注，**Kotlin 后缀风格**：`var s : ?string = null`、
- * `var b : Box&<int> = ...`、`var a : int[] = new int[3]`。
+ * [declaredType] 是可选的类型标注，**Kotlin 后缀风格**：`var s : ?String = null`、
+ * `var b : Box&<Int> = ...`、`var a : Int[] = new Int[3]`。
  * 不写就从初始化式推断；写 `= null` 时必须写标注，否则没有类型信息可用。
  */
 data class VarDeclStmt(
@@ -1027,16 +1027,16 @@ data class ContinueStmt(override val at: SourceLine) : Stmt
  * JVM 上的表示就是 `throw new RuntimeException(消息)`，所以不需要新造类型。
  */
 data class FailStmt(
-    /** 错误消息，必须是 `string` 表达式。 */
+    /** 错误消息，必须是 `String` 表达式。 */
     val message: Expr,
     override val at: SourceLine,
 ) : Stmt
 
 /**
- * `try { ... } catch (名字 : string) { ... }` —— 接住 `fail` 抛出的错误（阶段 14；
- * 阶段 19b 起推荐 Kotlin 风格，老写法 `catch (名字 string)` 也接受）。
+ * `try { ... } catch (名字 : String) { ... }` —— 接住 `fail` 抛出的错误（阶段 14；
+ * 阶段 19b 起推荐 Kotlin 风格，老写法 `catch (名字 String)` 也接受）。
  *
- * 约定：catch 只接一个变量、类型固定是 `string`（就是错误消息本身），
+ * 约定：catch 只接一个变量、类型固定是 `String`（就是错误消息本身），
  * 没有 finally、没有多重 catch——这一版只要能把错误接住就够了。
  *
  * [body] 里的 `!T` 调用视为**已处理**（异常被这个 try 接走），
@@ -1044,7 +1044,7 @@ data class FailStmt(
  */
 data class TryStmt(
     val body: Block,
-    /** catch 的变量名，类型固定 `string`。 */
+    /** catch 的变量名，类型固定 `String`。 */
     val catchName: String,
     val catchBody: Block,
     override val at: SourceLine,
@@ -1063,8 +1063,8 @@ data class StringLit(val value: String, override val at: SourceLine) : Expr
 /**
  * 字符字面量（阶段 16）：`'a'`、`'\n'`、`'\u0041'`。
  *
- * [value] 就是那个字符本身（转义已经在词法阶段解开了），类型是 `char`。
- * 它和 `IntLit` 是两个不同的类型：`'a'` 不能当 int 用，`97` 也不能当 char 用，
+ * [value] 就是那个字符本身（转义已经在词法阶段解开了），类型是 `Char`。
+ * 它和 `IntLit` 是两个不同的类型：`'a'` 不能当 Int 用，`97` 也不能当 Char 用，
  * 想互相转就用内置函数 `charToInt` / `toChar`（跟 Java 的显式转换一个意思）。
  */
 data class CharLit(val value: Char, override val at: SourceLine) : Expr
@@ -1126,9 +1126,9 @@ data class ForceExpr(
 ) : Expr
 
 /**
- * lambda 字面量（阶段 30）：`lam(x : int) -> int { rtn x + 1 }`。
+ * lambda 字面量（阶段 30）：`lam(x : Int) -> Int { rtn x + 1 }`。
  *
- * 形参表复用既有的 [Param]（所以 `x : int` 与 `int x` 两种写法都跟着白拿）；
+ * 形参表复用既有的 [Param]（所以 `x : Int` 与 `Int x` 两种写法都跟着白拿）；
  * 类型可以**不写**（[TypeRef.isMissing]），由 Checker 拿期望类型补；`-> 类型` 整段
  * 也可以省。体是**块**——`rtn` 只从这个 lambda 返回，不是非局部返回（DESIGN-30 §3）。
  *
@@ -1166,7 +1166,7 @@ data class AsExpr(
 ) : Expr
 
 /**
- * 类型判断（阶段 24）：`操作数 is 目标类型` / `操作数 !is 目标类型`，结果是 `bool`。
+ * 类型判断（阶段 24）：`操作数 is 目标类型` / `操作数 !is 目标类型`，结果是 `Bool`。
  *
  * [negated] 为 true 就是 `!is`。v1 **不做**智能转换（DESIGN-24 §3 的 Q5 拍板）：
  * `if (x is A)` 之后 `x` 的静态类型仍然是原来的那个，用户要自己 `as` 一次。
@@ -1194,7 +1194,7 @@ data class MemberExpr(
     override val at: SourceLine,
 ) : Expr
 
-/** `new 类名(实参)` —— 分配一个对象并跑它的构造器。泛型类写成 `new Box&<int>(0)`。 */
+/** `new 类名(实参)` —— 分配一个对象并跑它的构造器。泛型类写成 `new Box&<Int>(0)`。 */
 data class NewExpr(
     val className: String,
     val arguments: List<Expr>,
@@ -1211,14 +1211,14 @@ data class NewExpr(
  * vs `ANEWARRAY`/`NEWARRAY`/`MULTIANEWARRAY`），语义上一个跑代码、一个只填默认值。
  * 混在一个节点里，两处后端都得靠 `arguments.isEmpty()` 猜，迟早猜错。
  *
- * [elementType] 是**元素**的类型（`new int[5]` → `int`、`new int[3][4]` → `int`），
- * [dimensions] 是每一维的长度表达式（**运行时求值**，可以任意 int 表达式）。
+ * [elementType] 是**元素**的类型（`new Int[5]` → `Int`、`new Int[3][4]` → `Int`），
+ * [dimensions] 是每一维的长度表达式（**运行时求值**，可以任意 Int 表达式）。
  * 整个表达式的类型 = 元素类型 + `dimensions.size` 层 `[]`：
- * `new int[3][4]` 是 `int[][]`、`new Point[2]` 是 `Point[]`。
+ * `new Int[3][4]` 是 `Int[][]`、`new Point[2]` 是 `Point[]`。
  *
- * 多维按「数组的数组」处理：`new int[3][4]` 在 JVM 上就是 `[[I`
- * （字节码 `MULTIANEWARRAY`），r0[i] 的类型是 `int[]`——不做「二维一块内存」的特殊语义。
- * **每一维都要写长度**：`new int[3][]`（锯齿数组）本阶段不做，parser 直接报错。
+ * 多维按「数组的数组」处理：`new Int[3][4]` 在 JVM 上就是 `[[I`
+ * （字节码 `MULTIANEWARRAY`），r0[i] 的类型是 `Int[]`——不做「二维一块内存」的特殊语义。
+ * **每一维都要写长度**：`new Int[3][]`（锯齿数组）本阶段不做，parser 直接报错。
  */
 data class NewArrayExpr(
     val elementType: TypeRef,
@@ -1235,7 +1235,7 @@ data class NewArrayExpr(
 data class IndexExpr(
     /** 数组表达式；类型必须是数组。 */
     val receiver: Expr,
-    /** 下标；类型必须是 `int`（不做 byte/char 的隐式提升）。 */
+    /** 下标；类型必须是 `Int`（不做 Byte/Char 的隐式提升）。 */
     val index: Expr,
     override val at: SourceLine,
 ) : Expr

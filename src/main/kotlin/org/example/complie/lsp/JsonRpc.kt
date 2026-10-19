@@ -125,7 +125,7 @@ object JsonParser {
             return when (val c = s[pos]) {
                 '{' -> obj()
                 '[' -> arr()
-                '"' -> JsonValue.Str(string())
+                '"' -> JsonValue.Str(String())
                 't' -> literal("true", JsonValue.Bool(true))
                 'f' -> literal("false", JsonValue.Bool(false))
                 'n' -> literal("null", JsonValue.Null)
@@ -169,7 +169,7 @@ object JsonParser {
             while (true) {
                 skipWs()
                 if (atEnd() || s[pos] != '"') fail("对象的键必须是字符串")
-                val key = string()
+                val key = String()
                 skipWs()
                 if (atEnd() || s[pos] != ':') fail("键 '$key' 后面缺冒号")
                 pos++
@@ -212,7 +212,7 @@ object JsonParser {
             }
         }
 
-        private fun string(): String {
+        private fun String(): String {
             pos++ // 开引号
             val sb = StringBuilder()
             while (pos < s.length) {

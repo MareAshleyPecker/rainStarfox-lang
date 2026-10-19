@@ -28,7 +28,7 @@ class RsfColorSettingsPage : ColorSettingsPage {
         private val DESCRIPTORS = arrayOf(
             AttributesDescriptor("关键字", RsfTextAttributes.KEYWORD),
             AttributesDescriptor("权限修饰词（pub/prv）", RsfTextAttributes.MODIFIER),
-            AttributesDescriptor("类型名（int/string/byte… 黄灰）", RsfTextAttributes.TYPE),
+            AttributesDescriptor("类型名（Int/String/Byte… 黄灰）", RsfTextAttributes.TYPE),
             AttributesDescriptor("void（淡灰）", RsfTextAttributes.VOID_TYPE),
             AttributesDescriptor("函数定义名", RsfTextAttributes.FUNCTION_DECLARATION),
             AttributesDescriptor("函数调用", RsfTextAttributes.FUNCTION_CALL),
@@ -54,28 +54,28 @@ class RsfColorSettingsPage : ColorSettingsPage {
 
             import java.lang.Math
 
-            pub class Point(x0 : int, y0 : int) {
-                var x : int = x0
-                var y : int = y0
+            pub class Point(x0 : Int, y0 : Int) {
+                var x : Int = x0
+                var y : Int = y0
 
                 constructor() { this(0, 0) }
 
-                pub fn sum() :: int { rtn x + y }
+                pub fn sum() :: Int { rtn x + y }
             }
 
             fn main() -> void {
-                var who : string = "rainStarfox"   // 可变；类型写在名字后面
-                imutvar pi : double = Math.PI        // 不可变
+                var who : String = "rainStarfox"   // 可变；类型写在名字后面
+                imutvar pi : Double = Math.PI        // 不可变
                 var p : Point = Point(3, 4)        // 构造对象时 new 可以省
                 println("hi " + who + "，sum = " + p.sum())
 
-                var xs : int[] = new int[3]
+                var xs : Int[] = new Int[3]
                 for (i in 0..2 step 1) { xs[i] = i * i }
 
-                var c : char = 'r'                 // 单引号是字符字面量
+                var c : Char = 'r'                 // 单引号是字符字面量
                 try {
                     fail "有 " + xs.length + " 个元素"
-                } catch (e : string) {               // catch 变量也是冒号写法
+                } catch (e : String) {               // catch 变量也是冒号写法
                     println(c + e)
                 }
                 rtn

@@ -1,4 +1,4 @@
-fn f(x : int) -> int {
+fn f(x : Int) -> Int {
     if (x > 0) {
         rtn 1
     }

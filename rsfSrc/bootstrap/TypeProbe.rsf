@@ -8,7 +8,7 @@ import "Types.rsf"
 
 import java.lang.System
 
-fn flag(b : bool) -> string {
+fn flag(b : Bool) -> String {
     if (b) { rtn "1" }
     rtn "0"
 }
@@ -24,34 +24,34 @@ fn noArgs() -> RType[] {
 }
 
 fn main() -> void {
-    var labels : string[] = new string[16]
+    var labels : String[] = new String[16]
     var types : RType[] = new RType[16]
 
-    labels[0] = "int"
+    labels[0] = "Int"
     types[0] = rtInt()
-    labels[1] = "?int"
+    labels[1] = "?Int"
     types[1] = rtInt().asNullable()
-    labels[2] = "long"
+    labels[2] = "Long"
     types[2] = rtLong()
-    labels[3] = "byte"
+    labels[3] = "Byte"
     types[3] = rtByte()
-    labels[4] = "char"
+    labels[4] = "Char"
     types[4] = rtChar()
     labels[5] = "void"
     types[5] = rtVoid()
     labels[6] = "null"
     types[6] = rtNull()
-    labels[7] = "string"
+    labels[7] = "String"
     types[7] = rtString()
-    labels[8] = "?string"
+    labels[8] = "?String"
     types[8] = rtString().asNullable()
-    labels[9] = "int[]"
+    labels[9] = "Int[]"
     types[9] = rtInt().arrayOf(1)
-    labels[10] = "int[][]"
+    labels[10] = "Int[][]"
     types[10] = rtInt().arrayOf(2)
-    labels[11] = "Box&<int>"
+    labels[11] = "Box&<Int>"
     types[11] = new RType("EXTERNAL", false, "demo/Box", boxArgs(rtInt()), 0)
-    labels[12] = "?Box&<string>"
+    labels[12] = "?Box&<String>"
     types[12] = new RType("EXTERNAL", true, "demo/Box", boxArgs(rtString()), 0)
     labels[13] = "T"
     types[13] = rtParam("T")
@@ -83,7 +83,7 @@ fn main() -> void {
         i = i + 1
     }
 
-    println("--- substitute T -> int ---")
+    println("--- substitute T -> Int ---")
     i = 0
     while (i < types.length) {
         var r = types[i].substitute("T", rtInt())

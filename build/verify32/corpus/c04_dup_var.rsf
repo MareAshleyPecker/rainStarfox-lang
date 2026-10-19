@@ -1,5 +1,5 @@
 fn main() {
-    var x : int = 1
-    var x : int = 2
+    var x : Int = 1
+    var x : Int = 2
     println("" + x)
 }

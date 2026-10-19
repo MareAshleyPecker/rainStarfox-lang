@@ -1,56 +1,56 @@
-class Animal(name : string) {
-    var name : string = name
+class Animal(name : String) {
+    var name : String = name
 
-    pub fn speak() -> string {
+    pub fn speak() -> String {
         rtn "..."
     }
 
-    pub fn describe() -> string {
+    pub fn describe() -> String {
         rtn name + " says " + this.speak()
     }
 }
 
-class Dog(name : string) : Animal(name) {
-    pub override fn speak() -> string {
+class Dog(name : String) : Animal(name) {
+    pub override fn speak() -> String {
         rtn "woof"
     }
 }
 
-class Puppy(name : string) : Dog(name) {
-    pub override fn speak() -> string {
+class Puppy(name : String) : Dog(name) {
+    pub override fn speak() -> String {
         rtn "yip"
     }
 }
 
-class Base(x : int) {
-    var x : int = x
+class Base(x : Int) {
+    var x : Int = x
 
-    pub fn value() -> int {
+    pub fn value() -> Int {
         rtn x
     }
 
-    pub fn label() -> string {
+    pub fn label() -> String {
         rtn "base"
     }
 }
 
-class Derived(x : int, y : int) : Base(x) {
-    var y : int = y
+class Derived(x : Int, y : Int) : Base(x) {
+    var y : Int = y
 
-    pub override fn value() -> int {
+    pub override fn value() -> Int {
         rtn super.value() + y
     }
 
-    pub override fn label() -> string {
+    pub override fn label() -> String {
         rtn "derived"
     }
 
-    pub fn sum() -> int {
+    pub fn sum() -> Int {
         rtn x + y
     }
 }
 
-fn twice(n : int) -> int {
+fn twice(n : Int) -> Int {
     rtn n * 2
 }
 

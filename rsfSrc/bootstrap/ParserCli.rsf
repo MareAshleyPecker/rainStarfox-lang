@@ -27,11 +27,11 @@ import java.lang.System
 // 挑输入：-Drsf.ast.file 给了就用它，没给就 dump 仓库里的一个示例
 // （相对路径，不写死绝对路径）。
 //
-// `System.getProperty` 在 rsf 里的声明类型是 `string`，但属性不存在时实际返回 null ——
+// `System.getProperty` 在 rsf 里的声明类型是 `String`，但属性不存在时实际返回 null ——
 // 直接 `.length()` 会在**编译产物**上抛 NullPointerException（17a 踩过一次），
-// 所以要用 `?string` 接住再兜底。
-fn pickPath() -> string {
-    var given : ?string = System.getProperty("rsf.ast.file")
+// 所以要用 `?String` 接住再兜底。
+fn pickPath() -> String {
+    var given : ?String = System.getProperty("rsf.ast.file")
     var path = given ?: "rsfSrc/lang/enums.rsf"
     rtn path
 }
@@ -47,7 +47,7 @@ fn main() -> void {
     var readOk = true
     try {
         text = readText(path)!!
-    } catch (readError : string) {
+    } catch (readError : String) {
         readOk = false
     }
     if (!readOk) {

@@ -1,5 +1,5 @@
 class C {
-    fn f(x : string) -> void { println(x) }
+    fn f(x : String) -> void { println(x) }
     fn f&<T>(x : T) -> void { println("g") }
 }
 fn main() {

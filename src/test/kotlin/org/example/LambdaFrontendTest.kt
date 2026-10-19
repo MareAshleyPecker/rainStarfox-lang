@@ -24,7 +24,7 @@ class LambdaFrontendTest {
 
     @Test
     fun `lam 是关键字`() {
-        val tokens = Rsf.tokens(source("lam(x : int) -> int { rtn x }"))
+        val tokens = Rsf.tokens(source("lam(x : Int) -> Int { rtn x }"))
         assertEquals(TokenKind.KW_LAM, tokens.first().kind)
         // 它进的是普通关键字集合，不是修饰词
         assertTrue(!TokenKind.KW_LAM.isModifierKeyword, "lam 不该被当成修饰词")
@@ -36,11 +36,11 @@ class LambdaFrontendTest {
     @Test
     fun `函数类型的 display 形式`() {
         val cases = listOf(
-            "(int) -> int" to "(int) -> int",
-            "(int, string) -> bool" to "(int, string) -> bool",
+            "(Int) -> Int" to "(Int) -> Int",
+            "(Int, String) -> Bool" to "(Int, String) -> Bool",
             "() -> void" to "() -> void",
-            "?(int) -> int" to "?(int) -> int",
-            "((int) -> int)[]" to "((int) -> int)[]",
+            "?(Int) -> Int" to "?(Int) -> Int",
+            "((Int) -> Int)[]" to "((Int) -> Int)[]",
         )
         for ((text, want) in cases) {
             val program = Rsf.parse(source("fn main() -> void {\n    var f : $text = null\n}\n"))
@@ -51,22 +51,22 @@ class LambdaFrontendTest {
 
     @Test
     fun `函数类型的结构化字段`() {
-        val program = Rsf.parse(source("fn main() -> void {\n    var f : (int, string) -> bool = null\n}\n"))
+        val program = Rsf.parse(source("fn main() -> void {\n    var f : (Int, String) -> Bool = null\n}\n"))
         val decl = program.functions.single().body!!.statements.first() as VarDeclStmt
         val ref = decl.declaredType!!
         assertEquals("fn", ref.name)
         assertTrue(ref.isFunctionType)
         assertEquals(2, ref.fnParams.size)
-        assertEquals("int", ref.fnParams[0].display())
-        assertEquals("string", ref.fnParams[1].display())
-        assertEquals("bool", ref.fnRet?.display())
+        assertEquals("Int", ref.fnParams[0].display())
+        assertEquals("String", ref.fnParams[1].display())
+        assertEquals("Bool", ref.fnRet?.display())
 
-        val nullable = Rsf.parse(source("fn main() -> void {\n    var f : ?(int) -> int = null\n}\n"))
+        val nullable = Rsf.parse(source("fn main() -> void {\n    var f : ?(Int) -> Int = null\n}\n"))
             .functions.single().body!!.statements.first() as VarDeclStmt
         assertEquals("?fn", nullable.declaredType!!.name)
         assertTrue(nullable.declaredType!!.isFunctionType)
 
-        val array = Rsf.parse(source("fn main() -> void {\n    var fs : ((int) -> int)[] = null\n}\n"))
+        val array = Rsf.parse(source("fn main() -> void {\n    var fs : ((Int) -> Int)[] = null\n}\n"))
             .functions.single().body!!.statements.first() as VarDeclStmt
         assertEquals(1, array.declaredType!!.arrayDepth)
         assertEquals("fn", array.declaredType!!.name)
@@ -76,20 +76,20 @@ class LambdaFrontendTest {
     fun `函数类型可以出现在形参和返回位置`() {
         val program = Rsf.parse(
             source(
-                "fn apply(x : int, g : (int) -> int) -> (int) -> int {\n" +
+                "fn apply(x : Int, g : (Int) -> Int) -> (Int) -> Int {\n" +
                     "    rtn g\n" +
                     "}\n",
             ),
         )
         val fn = program.functions.single()
-        assertEquals("(int) -> int", fn.params[1].type.display())
-        assertEquals("(int) -> int", fn.ret.type.display())
+        assertEquals("(Int) -> Int", fn.params[1].type.display())
+        assertEquals("(Int) -> Int", fn.ret.type.display())
     }
 
     @Test
     fun `函数类型缺箭头时报专门的语法错误`() {
         val e = assertFailsWith<RsfError> {
-            Rsf.parse(source("fn main() -> void {\n    var f : (int) = null\n}\n"))
+            Rsf.parse(source("fn main() -> void {\n    var f : (Int) = null\n}\n"))
         }
         assertEquals("parser", e.phase)
         assertTrue(e.detail.contains("函数类型要写成 '(参数类型表) -> 返回类型'（DESIGN-30）"), e.detail)
@@ -102,7 +102,7 @@ class LambdaFrontendTest {
         val program = Rsf.parse(
             source(
                 "fn main() -> void {\n" +
-                    "    var f : (int) -> int = lam(x) { rtn x + 1 }\n" +
+                    "    var f : (Int) -> Int = lam(x) { rtn x + 1 }\n" +
                     "}\n",
             ),
         )
@@ -117,11 +117,11 @@ class LambdaFrontendTest {
     fun `lam 可以带完整标注并出现在实参位置`() {
         val program = Rsf.parse(
             source(
-                "fn each(f : (int) -> void) -> void {\n" +
+                "fn each(f : (Int) -> void) -> void {\n" +
                     "    rtn\n" +
                     "}\n" +
                     "fn main() -> void {\n" +
-                    "    each(lam(n : int) -> void { rtn })\n" +
+                    "    each(lam(n : Int) -> void { rtn })\n" +
                     "}\n",
             ),
         )
@@ -136,8 +136,8 @@ class LambdaFrontendTest {
     fun `可空函数值用 !! 断言之后可以调用`() {
         val src = source(
             "fn main() -> void {\n" +
-                "    var f : ?(int) -> int = null\n" +
-                "    f = lam(x : int) -> int { rtn x * 2 }\n" +
+                "    var f : ?(Int) -> Int = null\n" +
+                "    f = lam(x : Int) -> Int { rtn x * 2 }\n" +
                 "    println(\"\" + f!!(21))\n" +
                 "}\n",
         )
@@ -145,7 +145,7 @@ class LambdaFrontendTest {
         val model = Rsf.analyze(program, src)
         val lambda = program.functions.single().body!!.statements[1]
         val assigned = (lambda as org.example.complie.ast.AssignStmt).value
-        assertEquals("(int) -> int", model.typeOf(assigned as LambdaExpr).rsfName)
+        assertEquals("(Int) -> Int", model.typeOf(assigned as LambdaExpr).rsfName)
     }
 
     // ------------------------------------------------------------ 期望类型传播
@@ -153,18 +153,18 @@ class LambdaFrontendTest {
     @Test
     fun `期望类型能补上形参类型与返回类型`() {
         val src = source(
-            "fn apply(x : int, g : (int) -> int) -> int {\n" +
+            "fn apply(x : Int, g : (Int) -> Int) -> Int {\n" +
                 "    rtn g(x)\n" +
                 "}\n" +
                 "fn main() -> void {\n" +
-                "    var r : int = apply(10, lam(v) { rtn v + 1 })\n" +
+                "    var r : Int = apply(10, lam(v) { rtn v + 1 })\n" +
                 "}\n",
         )
         val program = Rsf.parse(src)
         val model = Rsf.analyze(program, src)
         val decl = program.functions.last().body!!.statements.single() as VarDeclStmt
         val lambda = (decl.initializer as org.example.complie.ast.CallExpr).arguments[1] as LambdaExpr
-        assertEquals("(int) -> int", model.typeOf(lambda).rsfName)
+        assertEquals("(Int) -> Int", model.typeOf(lambda).rsfName)
     }
 
     @Test
@@ -172,8 +172,8 @@ class LambdaFrontendTest {
         Rsf.analyze(
             source(
                 "fn main() -> void {\n" +
-                    "    imutvar base : int = 10\n" +
-                    "    var add : (int) -> int = lam(x : int) -> int { rtn x + base }\n" +
+                    "    imutvar base : Int = 10\n" +
+                    "    var add : (Int) -> Int = lam(x : Int) -> Int { rtn x + base }\n" +
                     "    println(\"\" + add(5))\n" +
                     "}\n",
             ),
@@ -188,8 +188,8 @@ class LambdaFrontendTest {
             Rsf.analyze(
                 source(
                     "fn main() -> void {\n" +
-                        "    var count : int = 0\n" +
-                        "    var f : (int) -> int = lam(x : int) -> int { rtn x + count }\n" +
+                        "    var count : Int = 0\n" +
+                        "    var f : (Int) -> Int = lam(x : Int) -> Int { rtn x + count }\n" +
                         "}\n",
                 ),
             )
@@ -204,7 +204,7 @@ class LambdaFrontendTest {
     @Test
     fun `推不出形参类型时报文案`() {
         val e = assertFailsWith<RsfError> {
-            Rsf.analyze(source("fn main() -> void {\n    var f = lam(x) -> int { rtn x + 1 }\n}\n"))
+            Rsf.analyze(source("fn main() -> void {\n    var f = lam(x) -> Int { rtn x + 1 }\n}\n"))
         }
         assertEquals("checker", e.phase)
         assertEquals(
@@ -219,7 +219,7 @@ class LambdaFrontendTest {
             Rsf.analyze(
                 source(
                     "fn main() -> void {\n" +
-                        "    var f : ?(int) -> int = null\n" +
+                        "    var f : ?(Int) -> Int = null\n" +
                         "    println(\"\" + f(1))\n" +
                         "}\n",
                 ),
@@ -235,8 +235,8 @@ class LambdaFrontendTest {
             Rsf.analyze(
                 source(
                     "fn main() -> void {\n" +
-                        "    var f : (int) -> int = lam(x : int) -> int { rtn x }\n" +
-                        "    if (f is (int) -> int) { println(\"yes\") }\n" +
+                        "    var f : (Int) -> Int = lam(x : Int) -> Int { rtn x }\n" +
+                        "    if (f is (Int) -> Int) { println(\"yes\") }\n" +
                         "}\n",
                 ),
             )
@@ -251,8 +251,8 @@ class LambdaFrontendTest {
             Rsf.analyze(
                 source(
                     "fn main() -> void {\n" +
-                        "    var f : (int) -> int = lam(x : int) -> int { rtn x }\n" +
-                        "    var g : (int) -> int = f as (int) -> int\n" +
+                        "    var f : (Int) -> Int = lam(x : Int) -> Int { rtn x }\n" +
+                        "    var g : (Int) -> Int = f as (Int) -> Int\n" +
                         "}\n",
                 ),
             )
@@ -267,7 +267,7 @@ class LambdaFrontendTest {
             Rsf.analyze(
                 source(
                     "fn main() -> void {\n" +
-                        "    var g : (int) -> string = lam(x : int) -> int { rtn x }\n" +
+                        "    var g : (Int) -> String = lam(x : Int) -> Int { rtn x }\n" +
                         "}\n",
                 ),
             )

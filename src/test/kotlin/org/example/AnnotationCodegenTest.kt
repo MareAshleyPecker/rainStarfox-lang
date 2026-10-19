@@ -56,9 +56,9 @@ class AnnotationCodegenTest {
             """
             enum Level { LOW, HIGH }
 
-            annotation Marker(value : string = "x", count : int = 0, level : Level) {
+            annotation Marker(value : String = "x", count : Int = 0, level : Level) {
                 companion entity Impl {
-                    var hits : int = 0
+                    var hits : Int = 0
                 }
             }
 
@@ -88,9 +88,9 @@ class AnnotationCodegenTest {
     fun `有默认值的元素写 AnnotationDefault`() {
         val c = compile(
             """
-            annotation Marker(value : string = "x", count : int = 0, level : Level, ok : bool = true) {
+            annotation Marker(value : String = "x", count : Int = 0, level : Level, ok : Bool = true) {
                 companion entity Impl {
-                    var hits : int = 0
+                    var hits : Int = 0
                 }
             }
 
@@ -119,9 +119,9 @@ class AnnotationCodegenTest {
     fun `注解接口带 Retention RUNTIME 元注解`() {
         val c = compile(
             """
-            annotation Marker(value : string = "x") {
+            annotation Marker(value : String = "x") {
                 companion entity Impl {
-                    var hits : int = 0
+                    var hits : Int = 0
                 }
             }
 
@@ -157,13 +157,13 @@ class AnnotationCodegenTest {
         val c = compile(
             """
             annotation Marker(
-                name : string = "x",
-                n : int = 0,
-                flag : bool = false,
-                ratio : double = 0.0,
-                letter : char = 'a',
-                small : byte = 0,
-                big : long = 0,
+                name : String = "x",
+                n : Int = 0,
+                flag : Bool = false,
+                ratio : Double = 0.0,
+                letter : Char = 'a',
+                small : Byte = 0,
+                big : Long = 0,
             )
 
             @Marker(name = "cls", n = 7, flag = true, ratio = 1.5, letter = 'z', small = 3, big = 9)
@@ -184,7 +184,7 @@ class AnnotationCodegenTest {
         assertEquals(true, member(onClass, "flag"))
         assertEquals(1.5, member(onClass, "ratio"))
         assertEquals('z', member(onClass, "letter"))
-        assertEquals(3.toByte(), member(onClass, "small"), "byte 元素必须装成 Byte（装成 Integer 会 AnnotationTypeMismatchException）")
+        assertEquals(3.toByte(), member(onClass, "small"), "Byte 元素必须装成 Byte（装成 Integer 会 AnnotationTypeMismatchException）")
         assertEquals(9L, member(onClass, "big"))
     }
 
@@ -193,15 +193,15 @@ class AnnotationCodegenTest {
     fun `方法级使用点写在 RuntimeVisibleAnnotations 上`() {
         val c = compile(
             """
-            annotation Marker(value : string = "x") {
+            annotation Marker(value : String = "x") {
                 companion entity Impl {
-                    var hits : int = 0
+                    var hits : Int = 0
                 }
             }
 
             class Demo {
                 @Marker("method")
-                fn greet() -> string { rtn "hi" }
+                fn greet() -> String { rtn "hi" }
             }
 
             fn main() -> void { println("ok") }
@@ -225,15 +225,15 @@ class AnnotationCodegenTest {
     fun `字段级使用点写在 RuntimeVisibleAnnotations 上`() {
         val c = compile(
             """
-            annotation Marker(value : string = "x", n : int = 0) {
+            annotation Marker(value : String = "x", n : Int = 0) {
                 companion entity Impl {
-                    var hits : int = 0
+                    var hits : Int = 0
                 }
             }
 
             class Demo {
                 @Marker("field", 2)
-                var tag : string = "t"
+                var tag : String = "t"
             }
 
             fn main() -> void { println("ok") }
@@ -258,11 +258,11 @@ class AnnotationCodegenTest {
     fun `接口级使用点运行期读得到`() {
         val c = compile(
             """
-            annotation Marker(value : string = "x")
+            annotation Marker(value : String = "x")
 
             @Marker("iface")
             interface Named {
-                fn name() -> string
+                fn name() -> String
             }
 
             fn main() -> void { println("ok") }
@@ -282,10 +282,10 @@ class AnnotationCodegenTest {
     fun `注解声明自己能标别的注解`() {
         val c = compile(
             """
-            annotation Marker(value : string = "x")
+            annotation Marker(value : String = "x")
 
             @Marker("meta")
-            annotation Other(text : string = "o")
+            annotation Other(text : String = "o")
 
             fn main() -> void { println("ok") }
             """,
@@ -304,7 +304,7 @@ class AnnotationCodegenTest {
         assertEquals("meta", member(onOther, "value"))
     }
 
-    /** (3) 枚举元素写成 `e` 标签（枚举常量值），不是字符串也不是 int。 */
+    /** (3) 枚举元素写成 `e` 标签（枚举常量值），不是字符串也不是 Int。 */
     @Test
     fun `枚举元素写成 e 标签`() {
         val c = compile(
@@ -313,7 +313,7 @@ class AnnotationCodegenTest {
 
             annotation Marker(level : Level) {
                 companion entity Impl {
-                    var hits : int = 0
+                    var hits : Int = 0
                 }
             }
 
@@ -358,11 +358,11 @@ class AnnotationCodegenTest {
     fun `伴生类是普通类并且实现注解接口`() {
         val c = compile(
             """
-            annotation Marker(value : string = "x") {
+            annotation Marker(value : String = "x") {
                 companion entity Impl : Runnable {
-                    var hits : int = 0
+                    var hits : Int = 0
                     fn run() -> void { hits = hits + 1 }
-                    fn describe() -> string { rtn value }
+                    fn describe() -> String { rtn value }
                 }
             }
 
@@ -408,10 +408,10 @@ class AnnotationCodegenTest {
             """
             enum Level { LOW, HIGH }
 
-            annotation Marker(value : string = "x", count : int = 0, level : Level, ratio : double = 0.0) {
+            annotation Marker(value : String = "x", count : Int = 0, level : Level, ratio : Double = 0.0) {
                 companion entity Impl {
-                    var hits : int = 0
-                    fn describe() -> string { rtn value + "/" + count }
+                    var hits : Int = 0
+                    fn describe() -> String { rtn value + "/" + count }
                 }
             }
 
@@ -439,9 +439,9 @@ class AnnotationCodegenTest {
     fun `伴生类的 annotationType 返回注解接口的 class`() {
         val c = compile(
             """
-            annotation Marker(value : string = "x") {
+            annotation Marker(value : String = "x") {
                 companion entity Impl {
-                    var hits : int = 0
+                    var hits : Int = 0
                 }
             }
 
@@ -466,9 +466,9 @@ class AnnotationCodegenTest {
     fun `类型级访问器是静态同步方法并且缓存实例`() {
         val c = compile(
             """
-            annotation Marker(value : string = "x", count : int = 0) {
+            annotation Marker(value : String = "x", count : Int = 0) {
                 companion entity Impl {
-                    var hits : int = 0
+                    var hits : Int = 0
                 }
             }
 
@@ -500,23 +500,23 @@ class AnnotationCodegenTest {
         assertEquals("cls", member(first as Annotation, "value"), "访问器实例要能当注解实例读")
     }
 
-    /** (4) 成员级访问器：`Marker(string member)` 按成员分派，取不到返回 null。 */
+    /** (4) 成员级访问器：`Marker(String member)` 按成员分派，取不到返回 null。 */
     @Test
     fun `成员级访问器按成员名分派且取不到返回 null`() {
         val c = compile(
             """
-            annotation Marker(value : string = "x") {
+            annotation Marker(value : String = "x") {
                 companion entity Impl {
-                    var hits : int = 0
+                    var hits : Int = 0
                 }
             }
 
             class Demo {
                 @Marker("field")
-                var tag : string = "t"
+                var tag : String = "t"
 
                 @Marker("method")
-                fn greet() -> string { rtn "hi" }
+                fn greet() -> String { rtn "hi" }
             }
 
             fn main() -> void { println("ok") }
@@ -554,22 +554,22 @@ class AnnotationCodegenTest {
     fun `接口与注解声明上的访问器不带同步位`() {
         val c = compile(
             """
-            annotation Marker(value : string = "x") {
+            annotation Marker(value : String = "x") {
                 companion entity Impl {
-                    var hits : int = 0
+                    var hits : Int = 0
                 }
             }
 
             @Marker("iface")
             interface Named {
-                fn name() -> string
+                fn name() -> String
             }
 
             @Marker("meta")
-            annotation Doc(note : string = "n")
+            annotation Doc(note : String = "n")
 
             class N : Named {
-                fn name() -> string { rtn "n" }
+                fn name() -> String { rtn "n" }
             }
 
             fn main() -> void { println(new N().name()) }
@@ -602,9 +602,9 @@ class AnnotationCodegenTest {
     fun `访问器给缺省的实参补元素默认值`() {
         val c = compile(
             """
-            annotation Marker(value : string = "x", count : int = 0) {
+            annotation Marker(value : String = "x", count : Int = 0) {
                 companion entity Impl {
-                    var hits : int = 0
+                    var hits : Int = 0
                 }
             }
 
@@ -629,15 +629,15 @@ class AnnotationCodegenTest {
     fun `多个注解的访问器互不干扰`() {
         val c = compile(
             """
-            annotation Aaa(value : string = "a") {
+            annotation Aaa(value : String = "a") {
                 companion entity Impl {
-                    var hits : int = 0
+                    var hits : Int = 0
                 }
             }
 
-            annotation Bbb(value : string = "b") {
+            annotation Bbb(value : String = "b") {
                 companion entity Impl {
-                    var hits : int = 0
+                    var hits : Int = 0
                 }
             }
 
@@ -666,9 +666,9 @@ class AnnotationCodegenTest {
     fun `元素访问器调用发的是 INVOKEINTERFACE`() {
         val c = compile(
             """
-            annotation Marker(value : string = "x") {
+            annotation Marker(value : String = "x") {
                 companion entity Impl {
-                    var hits : int = 0
+                    var hits : Int = 0
                 }
             }
 
@@ -704,13 +704,13 @@ class AnnotationCodegenTest {
         val error = assertFailsWith<RsfError> {
             compile(
                 """
-                annotation Marker(xs : int[]) {
+                annotation Marker(xs : Int[]) {
                     companion entity Impl {
-                        var hits : int = 0
+                        var hits : Int = 0
                     }
                 }
 
-                @Marker(xs = new int[3])
+                @Marker(xs = new Int[3])
                 class Demo { }
 
                 fn main() -> void { println("ok") }
@@ -728,9 +728,9 @@ class AnnotationCodegenTest {
         val error = assertFailsWith<RsfError> {
             compile(
                 """
-                annotation Marker(value : string = "x") {
+                annotation Marker(value : String = "x") {
                     companion entity Impl {
-                        var hits : int = 0
+                        var hits : Int = 0
                     }
                 }
 
@@ -754,12 +754,12 @@ class AnnotationCodegenTest {
         val c = compile(
             """
             interface Greeter {
-                fn greet(n : string) -> string
+                fn greet(n : String) -> String
             }
 
             class Dog : Greeter {
-                var name : string = "d"
-                fn greet(n : string) -> string { rtn "woof" }
+                var name : String = "d"
+                fn greet(n : String) -> String { rtn "woof" }
             }
 
             fn main() -> void {
@@ -795,7 +795,7 @@ class AnnotationCodegenTest {
     fun `没有伴生实体的注解只写使用点`() {
         val c = compile(
             """
-            annotation Marker(value : string = "x", n : int = 1)
+            annotation Marker(value : String = "x", n : Int = 1)
 
             @Marker("cls", 2)
             class Demo { }
@@ -818,9 +818,9 @@ class AnnotationCodegenTest {
     fun `new 伴生实例时少给的实参补默认值`() {
         val c = compile(
             """
-            annotation Plain(v : string = "d", n : int = 1) {
+            annotation Plain(v : String = "d", n : Int = 1) {
                 companion entity Impl {
-                    fn describe() -> string { rtn v + "/" + n }
+                    fn describe() -> String { rtn v + "/" + n }
                 }
             }
 
@@ -844,9 +844,9 @@ class AnnotationCodegenTest {
             """
             pkg app.meta
 
-            annotation Marker(value : string = "x") {
+            annotation Marker(value : String = "x") {
                 companion entity Impl {
-                    var hits : int = 0
+                    var hits : Int = 0
                 }
             }
 

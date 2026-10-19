@@ -36,7 +36,7 @@ class Builtin(
     val helperName: String? = null,
     val helperDesc: String? = null,
 ) {
-    /** `charAt(int) -> char` 这种可读签名（可能失败的带 `!`）。补全列表也用它。 */
+    /** `charAt(Int) -> Char` 这种可读签名（可能失败的带 `!`）。补全列表也用它。 */
     fun display(): String {
         val mark = if (mayError) "!" else ""
         return "$name(${params.joinToString(", ") { it.rsfName }}) -> $mark${ret.rsfName}"
@@ -44,7 +44,7 @@ class Builtin(
 }
 
 /**
- * 阶段 16 的标准库切片：`byte` / `char` 相关的内置函数，加上阶段 16b 的文件读写。
+ * 阶段 16 的标准库切片：`Byte` / `Char` 相关的内置函数，加上阶段 16b 的文件读写。
  *
  * 这里放的是**写词法器与自举最少要用的那一套**。
  * 选内置函数而不是 rsf 写的标准库，理由很直接：rsf 写的库要 `import`，
@@ -55,17 +55,17 @@ class Builtin(
  *
  * | 函数 | 作用 | 编译产物里是什么 |
  * | --- | --- | --- |
- * | `toByte(int) -> byte` | 显式窄化（Java 的 `(byte)`） | `I2B` |
- * | `toChar(int) -> char` | 显式转换（Java 的 `(char)`） | `I2C` |
- * | `charToInt(char) -> int` | 取码点 | 什么都不用发（char 在栈上就是 int） |
- * | `intToString(int) -> string` | 整数转字符串 | `String.valueOf(int)` |
- * | `parseInt(string) -> !int` | 字符串转整数，失败 `fail` | `Integer.parseInt` + 失败改抛 RuntimeException |
- * | `isDigit / isLetter / isWhitespace(char) -> bool` | 字符分类 | `Character.isXxx(char)` |
- * | `toUpper / toLower(char) -> char` | 大小写转换 | `Character.toUpperCase / toLowerCase` |
- * | `readText(string) -> !string` | 读整个文本文件（UTF-8） | `Files.readString` + 失败改抛 RuntimeException |
- * | `writeText(string, string) -> !void` | 写文本（覆盖） | `Files.write` + 同上 |
- * | `readBytes(string) -> !byte[]` | 读二进制 | `Files.readAllBytes` + 同上 |
- * | `writeBytes(string, byte[]) -> !void` | 写二进制（自举落盘 `.class` 用它） | `Files.write` + 同上 |
+ * | `toByte(Int) -> Byte` | 显式窄化（Java 的 `(Byte)`） | `I2B` |
+ * | `toChar(Int) -> Char` | 显式转换（Java 的 `(Char)`） | `I2C` |
+ * | `charToInt(Char) -> Int` | 取码点 | 什么都不用发（Char 在栈上就是 Int） |
+ * | `intToString(Int) -> String` | 整数转字符串 | `String.valueOf(Int)` |
+ * | `parseInt(String) -> !Int` | 字符串转整数，失败 `fail` | `Integer.parseInt` + 失败改抛 RuntimeException |
+ * | `isDigit / isLetter / isWhitespace(Char) -> Bool` | 字符分类 | `Character.isXxx(Char)` |
+ * | `toUpper / toLower(Char) -> Char` | 大小写转换 | `Character.toUpperCase / toLowerCase` |
+ * | `readText(String) -> !String` | 读整个文本文件（UTF-8） | `Files.readString` + 失败改抛 RuntimeException |
+ * | `writeText(String, String) -> !void` | 写文本（覆盖） | `Files.write` + 同上 |
+ * | `readBytes(String) -> !Byte[]` | 读二进制 | `Files.readAllBytes` + 同上 |
+ * | `writeBytes(String, Byte[]) -> !void` | 写二进制（自举落盘 `.class` 用它） | `Files.write` + 同上 |
  *
  * 分类与大小写这三对**直接调 `java.lang.Character` 的对应方法**（解释器也是），
  * 这样 Unicode 边界情况（比如 `isWhitespace` 不认不间断空格、`toUpper` 对非字母原样返回）
@@ -73,20 +73,20 @@ class Builtin(
  * 四个文件函数同理：**两端调的是同一组 `java.nio.file` 方法**，
  * 失败消息也就天然一字不差（见 [FileRuntime]）。
  *
- * `string` 那三个常用成员（`length()` / `charAt(int) -> char` / `substring(int, int)`）
+ * `String` 那三个常用成员（`length()` / `charAt(Int) -> Char` / `substring(Int, Int)`）
  * **不在这里**：它们是 `java.lang.String` 的真方法，走既有的 JVM 互操作那条路就够了
- * （`charAt` 的描述符是 `(I)C`，ClassPath 会把它解析成 `char`）。
+ * （`charAt` 的描述符是 `(I)C`，ClassPath 会把它解析成 `Char`）。
  */
 object Builtins {
 
     val TO_BYTE = Builtin(
         "toByte", listOf(RsfType.INT), RsfType.BYTE,
-        doc = "把 int 截断成 byte（Java 的 (byte) x）",
+        doc = "把 Int 截断成 Byte（Java 的 (Byte) x）",
     )
 
     val TO_CHAR = Builtin(
         "toChar", listOf(RsfType.INT), RsfType.CHAR,
-        doc = "把码点当 char（Java 的 (char) x）",
+        doc = "把码点当 Char（Java 的 (Char) x）",
     )
 
     val CHAR_TO_INT = Builtin(
@@ -101,7 +101,7 @@ object Builtins {
 
     val PARSE_INT = Builtin(
         "parseInt", listOf(RsfType.STRING), RsfType.INT, mayError = true,
-        doc = "字符串转整数，失败就 fail（!int）；要兜底值写 parseInt(s) ?: 0",
+        doc = "字符串转整数，失败就 fail（!Int）；要兜底值写 parseInt(s) ?: 0",
         helperName = PARSE_INT_HELPER,
         helperDesc = PARSE_INT_HELPER_DESC,
     )
@@ -117,12 +117,12 @@ object Builtins {
 
     // ------------------------------------------------------------------ 文件读写（阶段 16b）
 
-    /** `byte[]` 的 rsf 类型：`readBytes` 的返回、`writeBytes` 的参数都用它。 */
+    /** `Byte[]` 的 rsf 类型：`readBytes` 的返回、`writeBytes` 的参数都用它。 */
     private val BYTE_ARRAY: RsfType = RsfType.BYTE.arrayOf(1)
 
     val READ_TEXT = Builtin(
         "readText", listOf(RsfType.STRING), RsfType.STRING, mayError = true,
-        doc = "读整个文本文件（UTF-8），失败就 fail（!string）",
+        doc = "读整个文本文件（UTF-8），失败就 fail（!String）",
         helperName = FileRuntime.READ_TEXT_HELPER,
         helperDesc = FileRuntime.READ_TEXT_HELPER_DESC,
     )
@@ -136,14 +136,14 @@ object Builtins {
 
     val READ_BYTES = Builtin(
         "readBytes", listOf(RsfType.STRING), BYTE_ARRAY, mayError = true,
-        doc = "读整个二进制文件（!byte[]），失败就 fail",
+        doc = "读整个二进制文件（!Byte[]），失败就 fail",
         helperName = FileRuntime.READ_BYTES_HELPER,
         helperDesc = FileRuntime.READ_BYTES_HELPER_DESC,
     )
 
     val WRITE_BYTES = Builtin(
         "writeBytes", listOf(RsfType.STRING, BYTE_ARRAY), RsfType.VOID, mayError = true,
-        doc = "把 byte[] 原样写进文件（覆盖），失败就 fail（!void）",
+        doc = "把 Byte[] 原样写进文件（覆盖），失败就 fail（!void）",
         helperName = FileRuntime.WRITE_BYTES_HELPER,
         helperDesc = FileRuntime.WRITE_BYTES_HELPER_DESC,
     )
@@ -185,7 +185,7 @@ object Builtins {
     /** 编译产物里生成的辅助方法名（带 `$`，rsf 源码写不出这个名字，不会撞车）。 */
     const val PARSE_INT_HELPER = "__rsf_parseInt\$rt"
 
-    /** 辅助方法的描述符：`String -> int`。 */
+    /** 辅助方法的描述符：`String -> Int`。 */
     const val PARSE_INT_HELPER_DESC = "(Ljava/lang/String;)I"
 }
 
@@ -193,7 +193,7 @@ object Builtins {
  * 枚举分派的运行期错误（阶段 19c）。
  *
  * 和 [ArrayRuntime] 同一个理由：**消息必须集中在这里**，因为两端各抛各的异常类型
- * （解释器抛 `RsfFailure`，编译产物抛 `RuntimeException`，都能被 `catch (e : string)`
+ * （解释器抛 `RsfFailure`，编译产物抛 `RuntimeException`，都能被 `catch (e : String)`
  * 接住），只有消息文本统一，两端输出才可能逐字节一致。
  *
  * 什么时候会用到它：`switch` 没写 `else` 时，Checker 已经保证 case 覆盖了枚举的
@@ -220,11 +220,11 @@ object EnumRuntime {
  *
  * **为什么这些消息必须集中在这里**：越界是 JVM 自己也会抛的（`ArrayIndexOutOfBoundsException`），
  * 但它的消息是 `Index 5 out of bounds for length 3`，而解释器抛的是自己那套——
- * 两边一旦分叉，「两端输出逐字节一致」这条硬承诺就破了（`try { ... } catch (e : string) { println(e) }`
+ * 两边一旦分叉，「两端输出逐字节一致」这条硬承诺就破了（`try { ... } catch (e : String) { println(e) }`
  * 打出来的东西会不一样）。所以**两端都做显式边界检查**，都抛同一套 rsf 运行期错误：
  * 解释器抛 `RsfFailure`，编译产物抛 `RuntimeException`，消息都是下面这个格式。
  *
- * 负数长度同理：`new int[-1]` 在 JVM 上是 `NegativeArraySizeException`，
+ * 负数长度同理：`new Int[-1]` 在 JVM 上是 `NegativeArraySizeException`，
  * 那个异常解释器接不住（它只接 rsf 自己的错误），所以这里也自己检查一遍。
  */
 object ArrayRuntime {
@@ -245,7 +245,7 @@ object ArrayRuntime {
     /**
      * 编译产物里生成的边界检查辅助方法（带 `$`，rsf 源码写不出这个名字）。
      *
-     * `(int length, int index) -> int`：不越界就**把下标原样返回**，
+     * `(Int length, Int index) -> Int`：不越界就**把下标原样返回**，
      * 于是调用点可以写成「求长度 → 求下标 → 检查 → 直接用这个下标取元素」，
      * 数组引用与下标都不需要额外的局部变量。
      */
@@ -253,7 +253,7 @@ object ArrayRuntime {
 
     const val INDEX_HELPER_DESC = "(II)I"
 
-    /** `(int length) -> int`：负数就抛错，否则原样返回（`new int[n]` 用）。 */
+    /** `(Int length) -> Int`：负数就抛错，否则原样返回（`new Int[n]` 用）。 */
     const val LENGTH_HELPER = "__rsf_arrayLength\$rt"
 
     const val LENGTH_HELPER_DESC = "(I)I"
@@ -306,12 +306,12 @@ object FileRuntime {
 
     const val WRITE_TEXT_HELPER_DESC = "(Ljava/lang/String;Ljava/lang/String;)V"
 
-    /** `(String path) -> byte[]`：读二进制，`Files.readAllBytes(Paths.get(path))`。 */
+    /** `(String path) -> Byte[]`：读二进制，`Files.readAllBytes(Paths.get(path))`。 */
     const val READ_BYTES_HELPER = "__rsf_readBytes\$rt"
 
     const val READ_BYTES_HELPER_DESC = "(Ljava/lang/String;)[B"
 
-    /** `(String path, byte[] data) -> void`：写二进制，`Files.write(Paths.get(path), data, new OpenOption[0])`。 */
+    /** `(String path, Byte[] data) -> void`：写二进制，`Files.write(Paths.get(path), data, new OpenOption[0])`。 */
     const val WRITE_BYTES_HELPER = "__rsf_writeBytes\$rt"
 
     const val WRITE_BYTES_HELPER_DESC = "(Ljava/lang/String;[B)V"
@@ -329,7 +329,7 @@ object FileRuntime {
  * 2. 给每个用户类生成一个**确定的** `toString()`，解释器在 [org.example.complie.interp.Interpreter.RsfObject]
  *    上按**同一段规则**渲染——规则就写在这个对象里，两头都读它，不可能各写一套。
  *
- * 格式：`类名(字段=值, 字段=值)`；字段按**声明顺序**，只列「基础类型 / string / char / bool」
+ * 格式：`类名(字段=值, 字段=值)`；字段按**声明顺序**，只列「基础类型 / String / Char / Bool」
  * 的字段，**数组与对象字段不递归展开**，统一写 [SKIPPED]（写 `...` 而不是整个跳过：
  * 少一个字段会让人以为类里没有它）。不递归是为了让格式在自引用结构上也能停下来。
  *
@@ -361,7 +361,7 @@ object ObjectFormat {
      * 这个字段的值要不要真的打印。**两端共用这一条判断**（字节码端据此决定发
      * `StringBuilder.append` 还是压一个 [SKIPPED] 字面量）。
      *
-     * 可空的基本类型（`?int`）也算：它在 JVM 上是包装类，`append(Object)` 打出来
+     * 可空的基本类型（`?Int`）也算：它在 JVM 上是包装类，`append(Object)` 打出来
      * 就是 `5` 或者 `null`，解释器那边是同一个包装类，结果一致。
      *
      * [isEnum]（阶段 19c）：枚举字段**是可打印的**——它的 `toString()` 就是值名，
@@ -377,10 +377,10 @@ object ObjectFormat {
      * 字节码端这个字段该发哪个 `StringBuilder.append` 重载；**null = 不打印**（写 [SKIPPED]）。
      *
      * 几个容易踩的点：
-     * - `byte` 的字段描述符是 `B`，但它在操作数栈上就是 int，所以发 `append(I)`
-     *   （JDK 根本没有 `append(byte)`）；解释器那边存的是 `Byte`，`toString()` 同样是数字。
-     * - `char` 必须发 `append(C)`：发 `append(I)` 会把字符打成码点（`'A'` → `65`）。
-     * - `bool` 必须发 `append(Z)`：发 `append(I)` 会打成 `1` / `0`。
+     * - `Byte` 的字段描述符是 `B`，但它在操作数栈上就是 Int，所以发 `append(I)`
+     *   （JDK 根本没有 `append(Byte)`）；解释器那边存的是 `Byte`，`toString()` 同样是数字。
+     * - `Char` 必须发 `append(C)`：发 `append(I)` 会把字符打成码点（`'A'` → `65`）。
+     * - `Bool` 必须发 `append(Z)`：发 `append(I)` 会打成 `1` / `0`。
      * - 可空的基本类型在栈上是包装类，只能按 `Object` 走。
      * - 枚举（[isEnum]）也按 `Object` 走：`append(Object)` 会调到生成的 `toString()`
      *   （返回值名），和解释器那条 `RsfEnumValue.toString()` 得到同一个字符串。

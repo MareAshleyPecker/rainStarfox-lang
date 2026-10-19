@@ -335,7 +335,7 @@ class Completer(
         }
     }
 
-    /** 补全条目里显示的签名，参数渲染成 Kotlin 后缀风格：`add(a : int, b : int) -> int`。 */
+    /** 补全条目里显示的签名，参数渲染成 Kotlin 后缀风格：`add(a : Int, b : Int) -> Int`。 */
     private fun signature(fn: FuncDecl): String {
         val ps = fn.params.joinToString(", ") { "${it.name} : ${it.type.name}" }
         val mark = if (fn.ret.mayError) "!" else ""
@@ -371,19 +371,19 @@ class Completer(
             // 阶段 24 的转换/判断（`x as Foo` / `x is Foo`）——两个都是硬关键字，
             // 补全表一直漏着，写的时候只能靠记忆
             "as", "is",
-            // 阶段 30 的 lambda 字面量：`lam(x : int) -> int { … }`
+            // 阶段 30 的 lambda 字面量：`lam(x : Int) -> Int { … }`
             "lam",
             // `let` 在词法器里仍然是保留字（写了会得到「let 已经换成 var 与 imutvar」
             // 的提示），所以补全表也留着它，但 detail 会标成已废弃
             "let",
         )
-        // 阶段 16：byte / char 也要在候选里（类型关键字表两处同步：这里、
+        // 阶段 16：Byte / Char 也要在候选里（类型关键字表两处同步：这里、
         // idea 插件的 RsfKeywords.TYPES）。
-        // `str` / `boolean` 是 `string` / `bool` 的别名（Lexer.KEYWORDS 里也认），
+        // `Str` / `Boolean` 是 `String` / `Bool` 的别名（Lexer.KEYWORDS 里也认），
         // 一并列出来，免得两张表对不上。
         val TYPES = listOf(
-            "void", "int", "long", "float", "double", "string", "str",
-            "bool", "boolean", "byte", "char",
+            "void", "Int", "Long", "Float", "Double", "String", "Str",
+            "Bool", "Boolean", "Byte", "Char",
         )
 
         /** 光标前是不是 `名字.` 或 `名字.部分`。 */

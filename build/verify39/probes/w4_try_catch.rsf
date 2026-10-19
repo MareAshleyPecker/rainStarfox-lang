@@ -1,7 +1,7 @@
 fn main() -> void {
     try {
         println("try")
-    } catch (e : string) {
+    } catch (e : String) {
         println("catch")
         println("catch2")
     }

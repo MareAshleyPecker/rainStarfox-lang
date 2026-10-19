@@ -1,5 +1,5 @@
 class A {
-    prv fn secret() -> int { rtn 1 }
+    prv fn secret() -> Int { rtn 1 }
 }
 fn main() {
     var a : A = new A()

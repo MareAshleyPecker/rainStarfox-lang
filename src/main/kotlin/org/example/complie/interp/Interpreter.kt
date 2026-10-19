@@ -90,7 +90,7 @@ import java.util.IdentityHashMap
  * 阶段 53 的「指针值」：指向某个栈帧的某个槽。
  *
  * 为什么不包成一个可写单元：解释器的变量就住在 `slots` 数组里，指针直接记
- * 「哪个数组 + 哪个下标」就能读到、也能写回——和 C 里 `int*` 的可观察行为一致
+ * 「哪个数组 + 哪个下标」就能读到、也能写回——和 C 里 `Int*` 的可观察行为一致
  * （`*p = 5` 之后 `x` 也变），而不用给每个变量额外装箱。
  *
  * 生命周期：槽数组随栈帧存活；把指针带到帧外（返回出去）会读到已失效的槽——
@@ -166,7 +166,7 @@ class Interpreter(
      * 那个问题就答不了「`as1 is B[]`」。所以在这里记下 `new` 那一刻的声明类型，
      * `is` / `as` 判数组时按它算（协变规则和 JVM 一样：`B[]` 是 `A[]`）。
      *
-     * 原始类型的数组（`[I`）和 `string[]` 的载体类就够用了，但也都登记：
+     * 原始类型的数组（`[I`）和 `String[]` 的载体类就够用了，但也都登记：
      * 统一从这张表取，省得两套判据。
      */
     private val arrayTypes = java.util.IdentityHashMap<Any, RsfType>()
@@ -198,7 +198,7 @@ class Interpreter(
         // 阶段 25 K3 起类继承在解释器里**跑得动了**，K1 那道解释器守卫就撤了。
         // 注意另一道守卫还在（`codegen/BytecodeCompiler.kt`，K2 的活）：`rsf build`
         // 遇到带父类的程序仍然显式报「字节码后端还没实现」，那条由 K2 拆。
-        // 阶段 19d：`main(a : int)` 是合法重载但不是入口——「有 main 却带参数」要说清
+        // 阶段 19d：`main(a : Int)` 是合法重载但不是入口——「有 main 却带参数」要说清
         // 是参数的问题，而不是「没有 main」（见 SemanticModel.entryProblem）。
         val problem = model.entryProblem
         if (problem != null) {
@@ -210,7 +210,7 @@ class Interpreter(
 
     /**
      * 调用一个函数。[args] 按签名顺序给出；个数与类型已经由 Checker 保证，
-     * 这里只负责按参数类型做一次收敛（比如 int 实参传给 long 形参）。
+     * 这里只负责按参数类型做一次收敛（比如 Int 实参传给 Long 形参）。
      */
     fun call(fn: FuncDecl, args: List<Any?>): Any? {
         enter(fn.at, fn.name)
@@ -557,7 +557,7 @@ class Interpreter(
      * 求值一个表达式。
      *
      * [discard] = 这个值马上就被丢掉（表达式语句），调用方**不要**做泛型互操作的
-     * 结果收敛：`m.put(k, v)` 的返回值（旧值）可能是 null，收敛时会当成 int 拆箱炸掉，
+     * 结果收敛：`m.put(k, v)` 的返回值（旧值）可能是 null，收敛时会当成 Int 拆箱炸掉，
      * 而 Java 里把它当语句写根本不看那个值。字节码后端的 `emitExpr(discard = true)`
      * 是同一件事的另一半。
      */
@@ -573,7 +573,7 @@ class Interpreter(
             is FloatLit -> expr.value
             is DoubleLit -> expr.value
             is StringLit -> expr.value
-            // 字符字面量：解释器里 char 就用 Kotlin 的 Char（JVM 上就是 java.lang.Character）
+            // 字符字面量：解释器里 Char 就用 Kotlin 的 Char（JVM 上就是 java.lang.Character）
             is CharLit -> expr.value
             is BoolLit -> expr.value
             is NullLit -> null
@@ -629,7 +629,7 @@ class Interpreter(
             is IfExpr -> {
                 val taken = eval(expr.condition, slots, body) as Boolean
                 val branch = if (taken) expr.whenTrue else expr.whenFalse
-                // 两个分支可能宽度不同（int vs long），按表达式的静态类型收敛
+                // 两个分支可能宽度不同（Int vs Long），按表达式的静态类型收敛
                 coerce(eval(branch, slots, body), model.typeOf(expr))
             }
 
@@ -849,7 +849,7 @@ class Interpreter(
                     adaptJdkArg(v, target.method.paramTypes.getOrNull(i))
                 }.toTypedArray()
                 val result = method.invoke(jdkReceiver(receiver), *args)
-                // 泛型互操作：JVM 给回来的是擦除后的 Object，按静态类型还原成 int/string/…
+                // 泛型互操作：JVM 给回来的是擦除后的 Object，按静态类型还原成 Int/String/…
                 // 结果被丢弃时（表达式语句）不还原——`m.put(k, v)` 的旧值可能是 null
                 if (discard || model.typeOf(expr) == target.method.returnType) result
                 else coerceGenericResult(result, model.typeOf(expr))
@@ -859,7 +859,7 @@ class Interpreter(
 
     /**
      * 泛型互操作的结果收敛：`xs.get(0)` 反射回来的是 `Integer`/`Object`，
-     * 静态类型却是 `int`，这里按静态类型收一次。
+     * 静态类型却是 `Int`，这里按静态类型收一次。
      *
      * 引用类型不用做任何事——JVM 上的对象本来就是对的类型，字节码那边插的
      * CHECKCAST 在解释器里是恒等操作。
@@ -902,7 +902,7 @@ class Interpreter(
         private val isEnum: (RsfType) -> Boolean = { false },
     ) {
         /**
-         * 阶段 25 K3：这个 rsf 对象的 **JDK 父类实例**（`class MyError(m : string) : Exception(m)`）。
+         * 阶段 25 K3：这个 rsf 对象的 **JDK 父类实例**（`class MyError(m : String) : Exception(m)`）。
          *
          * rsf 的类在解释器里没有真实 `.class`（一个字节码都不落地），所以「父类是 JDK 类」
          * 这一跳只能靠**配一个真的 JDK 实例**：跑 `super(实参)` 时反射造一个父类实例挂在这里，
@@ -1022,7 +1022,7 @@ class Interpreter(
     /**
      * 反射要作用在**哪个真身**上（阶段 25 K3）。
      *
-     * 成员是从 **JDK 父类**继承来的时候（`class MyError(m : string) : Exception(m)` 的
+     * 成员是从 **JDK 父类**继承来的时候（`class MyError(m : String) : Exception(m)` 的
      * `getMessage()`），能在 JVM 上被反射调用的不是这个 rsf 对象，而是它配对出来的
      * JDK 父类实例（见 [RsfObject.jdkParent]）。其余情况原样返回，一刀不改。
      */
@@ -1304,7 +1304,7 @@ class Interpreter(
     /**
      * 交给 JDK 反射调用的实参：**必须真的是那个 JDK 类型**。
      *
-     * `Collections.sort(xs, new ByValue())` 里 `ByValue` 是按 `Comparator&<string>` 检查通过的
+     * `Collections.sort(xs, new ByValue())` 里 `ByValue` 是按 `Comparator&<String>` 检查通过的
      * rsf 类，可它在解释器里只是个 [RsfObject]——反射 `invoke` 会抛
      * `IllegalArgumentException: argument type mismatch`。这里按形参类型补一层
      * [java.lang.reflect.Proxy]（见 [javaProxyOf]），让 JDK 的回调能进 rsf 实现。
@@ -1427,7 +1427,7 @@ class Interpreter(
      * 没有构造器体，只有字段初值。
      */
     private fun construct(expr: Expr, slots: Array<Any?>, body: LoweredFunction): Any? {
-        // 导入的 JVM 类：`new ArrayList&<int>()`（或者 `ArrayList&<int>()`）走反射
+        // 导入的 JVM 类：`new ArrayList&<Int>()`（或者 `ArrayList&<Int>()`）走反射
         model.externalNewTargets[expr]?.let { return constructExternal(expr, it.method, slots, body) }
 
         val decl = model.classModel.newTargets[expr]
@@ -1509,7 +1509,7 @@ class Interpreter(
     }
 
     /**
-     * 字段初值。跑在**链的根构造器的帧**里：`class P(x0 : int) { var x : int = x0 }`
+     * 字段初值。跑在**链的根构造器的帧**里：`class P(x0 : Int) { var x : Int = x0 }`
      * 的 `x0` 就在这个帧的参数槽上（字节码那边也是同一个槽位，见 emitUserConstructor）。
      */
     private fun runFieldInitializers(
@@ -1550,7 +1550,7 @@ class Interpreter(
      * 字段类型表（`toString()` 用）都从这一份推出来，三张表不可能对不齐。顺序与语义层的
      * [SemanticModel.fieldChainOf] 完全一致（那边多带一个声明类，这里只要渲染要的两样）。
      *
-     * 泛型写法（`class Wrap(v : string) : Holder&<string>(v)`）下父类字段的类型取的是
+     * 泛型写法（`class Wrap(v : String) : Holder&<String>(v)`）下父类字段的类型取的是
      * **声明处那一份**（`T` 本身），不做实参代换——与 `toString()` 对泛型字段的现有处理
      * 一致；字段的**读取**走的是 `UserMember.Field.type`（Checker 已经代换过），不受影响。
      */
@@ -1604,7 +1604,7 @@ class Interpreter(
     }
 
     /**
-     * 造一个 **JDK 父类实例**（阶段 25 K3）：`class MyError(m : string) : Exception(m)` 的那个
+     * 造一个 **JDK 父类实例**（阶段 25 K3）：`class MyError(m : String) : Exception(m)` 的那个
      * `java.lang.Exception`。
      *
      * 构造器**不再在这里挑**（阶段 25 K4，缺口 D）：Checker 已经按同一套打分选好了一条并挂在
@@ -1723,8 +1723,8 @@ class Interpreter(
     }
 
     /**
-     * 构造**导入的 JVM 类**（`new ArrayList&<int>()`，或者省掉 `new` 的
-     * `ArrayList&<int>()`）。[expr] 是构造点（[NewExpr] 或 [CallExpr]）。
+     * 构造**导入的 JVM 类**（`new ArrayList&<Int>()`，或者省掉 `new` 的
+     * `ArrayList&<Int>()`）。[expr] 是构造点（[NewExpr] 或 [CallExpr]）。
      *
      * 走反射 `newInstance`。实参的装箱/拆箱由 JVM 自己按构造器签名处理——
      * 解释器里基本类型本来就是装箱的，所以和字节码那边发的
@@ -1819,8 +1819,8 @@ class Interpreter(
         //
         // 这里有个坑：`Array.newInstance` 的规则是「componentType 是数组类时，
         // 新数组的总维数 = componentType 的维数 + dimensions.length」。
-        // 传 `int[].class` 配 (2, 3) 建出来的是 `[[[I`（三维！），
-        // 而 `new int[2][3]` 要的 `[[I` 必须用 `int.class` + (2, 3)。
+        // 传 `Int[].class` 配 (2, 3) 建出来的是 `[[[I`（三维！），
+        // 而 `new Int[2][3]` 要的 `[[I` 必须用 `Int.class` + (2, 3)。
         val array = java.lang.reflect.Array.newInstance(
             toJavaClass(resultType.copy(arrayDepth = 0)),
             *dims,
@@ -1848,8 +1848,8 @@ class Interpreter(
     /**
      * 数组元素的收敛：**null 要原样放行**。
      *
-     * 引用类型数组的元素默认值就是 null（`var names : string[] = new string[3]` 里
-     * 每个元素都是 null），而 [coerce] 对非空 `string` 会做 `v as String` ——
+     * 引用类型数组的元素默认值就是 null（`var names : String[] = new String[3]` 里
+     * 每个元素都是 null），而 [coerce] 对非空 `String` 会做 `v as String` ——
      * 一个默认值就把解释器炸了，编译产物却好好地打印 "null"。所以读元素走这一条。
      */
     private fun coerceElement(v: Any?, element: RsfType): Any? =
@@ -1866,7 +1866,7 @@ class Interpreter(
      * - 数组按协变算（`B[]` 是 `A[]`），但**用户类的数组都同一个载体类**，
      *   所以真正的答案要看 [arrayTypes] 里记下的声明类型；
      * - rsf 对象沿类链 + 接口表（+ 挂在对象上的 JDK 父类实例）判；
-     * - 其余（`string`、JDK 对象）直接问 `Class.isInstance`，和 `INSTANCEOF` 同义。
+     * - 其余（`String`、JDK 对象）直接问 `Class.isInstance`，和 `INSTANCEOF` 同义。
      */
     private fun runtimeIs(value: Any?, target: RsfType): Boolean {
         if (value == null) return false
@@ -1896,11 +1896,11 @@ class Interpreter(
     /** 数组元素层的赋值兼容：`new C[1]` 的 `C` 能不能当成目标元素类型。 */
     private fun elementIsInstance(actual: RsfType, target: RsfType): Boolean = when {
         actual == target -> true
-        // 多维（`int[][]`）逐层拆
+        // 多维（`Int[][]`）逐层拆
         actual.isArray && target.isArray ->
             actual.arrayDepth == target.arrayDepth &&
                 elementIsInstance(actual.elementType, target.elementType)
-        // 基本类型数组不协变：`int[]` 不是 `long[]`
+        // 基本类型数组不协变：`Int[]` 不是 `Long[]`
         actual.isPrimitive || target.isPrimitive -> false
         target.isTypeParam -> true
         actual.base == RsfBase.STRING -> target.base == RsfBase.STRING
@@ -1981,13 +1981,13 @@ class Interpreter(
 
     /** rsf 类型 → 反射要用的 Class。 */
     private fun toJavaClass(type: RsfType): Class<*> = when {
-        // 阶段 13：数组类型 → JVM 的数组 Class（`int[]` → `[I`、`Point[]` → `[LPoint;`）。
+        // 阶段 13：数组类型 → JVM 的数组 Class（`Int[]` → `[I`、`Point[]` → `[LPoint;`）。
         // 用「造一个长度为 0 的数组再问它是什么类」拿到，是因为组件类型本身可能是
-        // 数组（`int[][]` 的组件是 `int[]`）——递归下去自然就对了。
+        // 数组（`Int[][]` 的组件是 `Int[]`）——递归下去自然就对了。
         type.isArray -> java.lang.reflect.Array.newInstance(toJavaClass(type.elementType), 0).javaClass
         // 用户自定义类在解释器里就是 RsfObject（它没有对应的 .class 可以去加载，
         // Class.forName("Point") 会直接 ClassNotFoundException）。所以 `Point[]` /
-        // `Box&<int>[]` 的元素类型按 RsfObject 建数组——这是解释器**内部**的载体，
+        // `Box&<Int>[]` 的元素类型按 RsfObject 建数组——这是解释器**内部**的载体，
         // 对 rsf 语义没有影响（元素读写仍然只经 rsf 的类型检查）。
         type.isExternal && model.classModel.classes.containsKey(type.externalName) ->
             RsfObject::class.java
@@ -2013,7 +2013,7 @@ class Interpreter(
         }
         else -> when (type.base) {
             RsfBase.BOOL -> Boolean::class.javaPrimitiveType!!
-            // byte.class / char.class：反射找 `String.charAt(int) -> char` 这类方法要用
+            // Byte.class / Char.class：反射找 `String.charAt(Int) -> Char` 这类方法要用
             RsfBase.BYTE -> Byte::class.javaPrimitiveType!!
             RsfBase.CHAR -> Character::class.javaPrimitiveType!!
             RsfBase.INT -> Int::class.javaPrimitiveType!!
@@ -2080,7 +2080,7 @@ class Interpreter(
             return invokeUserMethod(member.className, method, self, args)
         }
 
-        // 阶段 25 K3：隐式 this 调**从 JDK 父类继承来的方法**——`class MyError(m : string) :
+        // 阶段 25 K3：隐式 this 调**从 JDK 父类继承来的方法**——`class MyError(m : String) :
         // Exception(m)` 里的 `getMessage()`。它在 rsf 侧没有任何声明，Checker 把选中的那个
         // `java.lang.Throwable.getMessage` 记在 implicitJvmCalls 里，反射作用在对象配对出来的
         // JDK 父类实例上（和显式 `e.getMessage()` 走同一条路）。
@@ -2107,7 +2107,7 @@ class Interpreter(
      *   免得自己写一套判断在偏僻字符上跟 JVM 分家；
      * - `parseInt` 失败时抛 [RsfFailure]，消息用 [Builtins.parseIntFailure] 拼
      *   ——编译产物里生成的 `__rsf_parseInt$rt` 用的是同一个格式，两端
-     *   `catch (e : string) { println(e) }` 打出来的东西逐字节相同；
+     *   `catch (e : String) { println(e) }` 打出来的东西逐字节相同；
      * - `toByte` / `toChar` 在这里就截断（`Byte` / `Char` 存的就是截断后的值），
      *   编译产物那边对应 `I2B` / `I2C`；
      * - 四个文件函数（阶段 16b）调的是和编译产物**完全相同**的 `java.nio.file` 方法，
@@ -2195,8 +2195,8 @@ class Interpreter(
         }
         val v = eval(expr.operand, slots, body)
         return when (expr.op) {
-            // 结果类型由 Checker 定好了：byte / char 取负之后是 int，所以这里按**结果**分派
-            // （编译产物也是这个思路：栈上的 byte/char 就是 int，直接 INEG）
+            // 结果类型由 Checker 定好了：Byte / Char 取负之后是 Int，所以这里按**结果**分派
+            // （编译产物也是这个思路：栈上的 Byte/Char 就是 Int，直接 INEG）
             TokenKind.MINUS -> when (model.typeOf(expr)) {
                 RsfType.INT -> -asNumber(v).toInt()
                 RsfType.LONG -> -asNumber(v).toLong()
@@ -2248,7 +2248,7 @@ class Interpreter(
         //
         // 形状刻意写得和字节码那三条指令一一对应：
         //   算左 → 能定结果就不算右 → 否则结果就是右
-        // 注意右边在**两个运算符下都原样返回**（bool 已经在 Checker 里查过），
+        // 注意右边在**两个运算符下都原样返回**（Bool 已经在 Checker 里查过），
         // 不需要再收敛：`&&` 的右值就是结果本身。
         if (op == TokenKind.ANDAND) {
             val left = eval(expr.left, slots, body) as Boolean
@@ -2271,7 +2271,7 @@ class Interpreter(
         if (op in COMPARISONS) {
             // 非数值一律走「引用语义」：字符串按内容、可空装箱值按 equals、null 按引用。
             // 这和编译产物里统一调 Objects.equals 是一回事。
-            // byte / char 也算「数值」——它们先提升成 int 再比（见 RsfType.promote）
+            // Byte / Char 也算「数值」——它们先提升成 Int 再比（见 RsfType.promote）
             if (!(leftType.isArithmetic && rightType.isArithmetic)) {
                 if (op != TokenKind.EQ && op != TokenKind.NE) {
                     throw IllegalStateException("'${op.text}' 不能用在非数值上")
@@ -2281,7 +2281,7 @@ class Interpreter(
             }
             val common = RsfType.promote(leftType, rightType)
                 ?: throw IllegalStateException("比较运算的类型不对: $leftType / $rightType")
-            // byte / char 先提升成 int 再比：栈上的表示和编译产物那条 IF_ICMPxx 一致
+            // Byte / Char 先提升成 Int 再比：栈上的表示和编译产物那条 IF_ICMPxx 一致
             val cmpType = RsfType(common.base.promoted())
             val cmp = compare(coerce(a, cmpType), coerce(b, cmpType), cmpType)
             return when (op) {
@@ -2348,8 +2348,8 @@ class Interpreter(
      * 解释器里的值收敛到静态类型。
      *
      * 各类型的**运行时载体**（两端必须一致，所以这里写清楚）：
-     * `byte` 是 `kotlin.Byte`（= java.lang.Byte）、`char` 是 `kotlin.Char`
-     * （= java.lang.Character），int/long/float/double 是各自的包装类，
+     * `Byte` 是 `kotlin.Byte`（= java.lang.Byte）、`Char` 是 `kotlin.Char`
+     * （= java.lang.Character），Int/Long/Float/Double 是各自的包装类，
      * 可空类型就是「同一个值或者 null」（不额外装箱）。
      */
     private fun coerce(v: Any?, t: RsfType): Any? {
@@ -2363,15 +2363,15 @@ class Interpreter(
         if (t.nullable) return if (v == null) null else coerce(v, t.asNonNull())
         return when (t.base) {
             RsfBase.BOOL -> v as Boolean
-            // byte 存成 Byte：toByte(300) 这种要在这里就截断成 44，
+            // Byte 存成 Byte：toByte(300) 这种要在这里就截断成 44，
             // 否则解释器留着 300、编译产物是 44，两端就不一致了
             RsfBase.BYTE -> asNumber(v).toByte()
-            // char 不是 Number（Kotlin 的 Char 不继承 Number），所以单独来一支：
+            // Char 不是 Number（Kotlin 的 Char 不继承 Number），所以单独来一支：
             // 反射回来的是 java.lang.Character、算术提升过来的是 Int，两种都要收
             RsfBase.CHAR -> when (v) {
                 is Char -> v
                 is Number -> v.toInt().toChar()
-                else -> throw IllegalStateException("不能把 $v 当 char 用")
+                else -> throw IllegalStateException("不能把 $v 当 Char 用")
             }
             RsfBase.INT -> asNumber(v).toInt()
             RsfBase.LONG -> asNumber(v).toLong()
@@ -2387,9 +2387,9 @@ class Interpreter(
     /**
      * 把解释器里的值看成 JVM 意义上的整数。
      *
-     * `char` 在 JVM 栈上就是 int（`charToInt` 在字节码里一条指令都不用发），
-     * 所以 `'a' + 1` 在编译产物里是 int 加法；解释器这边就得自己把 Char 翻译成码点，
-     * 否则 `coerce('a', int)` 会直接 ClassCastException。
+     * `Char` 在 JVM 栈上就是 Int（`charToInt` 在字节码里一条指令都不用发），
+     * 所以 `'a' + 1` 在编译产物里是 Int 加法；解释器这边就得自己把 Char 翻译成码点，
+     * 否则 `coerce('a', Int)` 会直接 ClassCastException。
      */
     private fun asNumber(v: Any?): Number = when (v) {
         is Char -> v.code

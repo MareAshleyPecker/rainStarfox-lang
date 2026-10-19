@@ -384,14 +384,14 @@ class Cli {
             """
             |函数
             |  fn main() -> void { ... }             入口（ControlType 可省；省了就是 pub；main 不能带参数）
-            |  pub fn add(a : int, b : int) : int { rtn a + b }
-            |  pub fn parse(s : string) -> !int { ... }   可能失败：出错走异常，调用方要 try / ?: / !!
+            |  pub fn add(a : Int, b : Int) : Int { rtn a + b }
+            |  pub fn parse(s : String) -> !Int { ... }   可能失败：出错走异常，调用方要 try / ?: / !!
             |      访问控制写在最左，省略就是 pub；-> : 两种返回写法等价（'::' 不再接受）
-            |      参数两种风格都能写、可以混：int a / a : int；参数按 C 惯例默认可变
+            |      参数两种风格都能写、可以混：Int a / a : Int；参数按 C 惯例默认可变
             |
             |语句
             |  var x = 1                             声明可变变量（块作用域，出了块就不可见）
-            |  var n : int = 0                       带类型标注（类型写在名字后面）
+            |  var n : Int = 0                       带类型标注（类型写在名字后面）
             |  imutvar y = 2                           声明不可变变量（重新赋值会报错）
             |  x = x * 3                               赋值（只能给 var 声明的变量赋）
             |  println("x = " + x)                     输出（内置 print / println）
@@ -403,11 +403,11 @@ class Cli {
             |  for (var i = 0; i < 9; i = i + 1) { } 经典三段式
             |  break   /  continue                     跳出 / 直接下一轮（含步进）
             |  fail "消息"                            抛出一个错误（只能在 !T 函数里，或者 try 里）
-            |  try { ... } catch (e : string) { ... } 接住 fail 抛出来的错误（也接受 catch (e string)）
+            |  try { ... } catch (e : String) { ... } 接住 fail 抛出来的错误（也接受 catch (e String)）
             |  loop:   /  goto loop                    C 风格跳转（标签是函数作用域）
             |  { ... }                                 块，引入新作用域
             |
-            |类型: void int long float double string bool byte char
+            |类型: void Int Long Float Double String Bool Byte Char
             |访问控制: pub prot prv（都不写 = pub）
             |REPL 命令: :funcs :reset :quit
             """.trimMargin(),
@@ -419,8 +419,8 @@ class Cli {
     /** `<ControlType> <static> fun <MainType> 名字(参数表) <返回子句>` 的可读形式。 */
     private fun signatureOf(fn: org.example.complie.ast.FuncDecl): String {
         val mainType = if (fn.mainType.name == "void") "" else " ${fn.mainType.name}"
-        // 用 display()：TypeRef 的数组维度单独放在 arrayDepth 里，光取 name 会把 `int[]` 印成 `int`
-        // （自举侧一直印的是 `int[]`，这里不对齐就会被 verify36 的 check 对拍抓到）
+        // 用 display()：TypeRef 的数组维度单独放在 arrayDepth 里，光取 name 会把 `Int[]` 印成 `Int`
+        // （自举侧一直印的是 `Int[]`，这里不对齐就会被 verify36 的 check 对拍抓到）
         val params = fn.params.joinToString(", ") { "${it.name} : ${it.type.display()}" }
         // 缺省就是 public：清单里**显示成 public**，空着会让人以为「没有权限」
         val control = fn.control.label.padEnd(10)

@@ -37,7 +37,7 @@ class LocalVariableTest {
         val dir = compile(
             """
             class Calc {
-                fn sum(a : int, b : int, c : int) -> int {
+                fn sum(a : Int, b : Int, c : Int) -> Int {
                     rtn a + b + c
                 }
             }
@@ -62,8 +62,8 @@ class LocalVariableTest {
         val dir = compile(
             """
             fn main() -> void {
-                var a : int = 1
-                var b : string = "s"
+                var a : Int = 1
+                var b : String = "s"
                 println(b + a)
                 rtn
             }
@@ -85,9 +85,9 @@ class LocalVariableTest {
     fun `构造器的 slot 0 是 this 其后是形参`() {
         val dir = compile(
             """
-            class Point(x : int, y : int) {
-                var x : int = x
-                var y : int = y
+            class Point(x : Int, y : Int) {
+                var x : Int = x
+                var y : Int = y
             }
 
             fn main() -> void { println("ok") }
@@ -108,7 +108,7 @@ class LocalVariableTest {
         val dir = compile(
             """
             pub interface Greeter {
-                fn greet(name : string) -> string
+                fn greet(name : String) -> String
             }
 
             fn main() -> void { println("ok") }
@@ -128,9 +128,9 @@ class LocalVariableTest {
         val dir = compile(
             """
             fn main() -> void {
-                var x : int = 1
+                var x : Int = 1
                 {
-                    var x : int = 99
+                    var x : Int = 99
                     println("inner = " + x)
                 }
                 println("outer = " + x)
@@ -154,7 +154,7 @@ class LocalVariableTest {
     fun `catch 绑定算局部变量且槽位取自异常表`() {
         val dir = compile(
             """
-            pub fn parse(text : string) -> !int {
+            pub fn parse(text : String) -> !Int {
                 if (text.length() == 0) {
                     fail "空字符串没法转数字"
                 }
@@ -162,11 +162,11 @@ class LocalVariableTest {
             }
 
             fn main() -> void {
-                var before : int = 7
+                var before : Int = 7
                 try {
-                    var n : int = parse("")!!
+                    var n : Int = parse("")!!
                     println("n = " + n)
-                } catch (e : string) {
+                } catch (e : String) {
                     println("接住了：" + e)
                 }
                 println(before)

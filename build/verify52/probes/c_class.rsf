@@ -1,27 +1,27 @@
 // 阶段 52c：C 后端探针 6 —— 类、字段、方法、主构造
-class Point(x0 : int, y0 : int) {
-    var x : int = x0
-    var y : int = y0
+class Point(x0 : Int, y0 : Int) {
+    var x : Int = x0
+    var y : Int = y0
 
-    fn sum() -> int { rtn x + y }
+    fn sum() -> Int { rtn x + y }
 
-    fn scale(k : int) -> void {
+    fn scale(k : Int) -> void {
         x = x * k
         y = y * k
     }
 
-    fn sumTimes(k : int) -> int { rtn this.sum() * k }
+    fn sumTimes(k : Int) -> Int { rtn this.sum() * k }
 }
 
 class Counter {
-    var n : int = 0
+    var n : Int = 0
 
     fn bump() -> void { n = n + 1 }
 
-    fn get() -> int { rtn n }
+    fn get() -> Int { rtn n }
 }
 
-fn distance1(p : Point) -> int {
+fn distance1(p : Point) -> Int {
     rtn p.x + p.y
 }
 

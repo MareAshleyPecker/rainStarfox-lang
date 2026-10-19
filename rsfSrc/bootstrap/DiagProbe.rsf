@@ -7,13 +7,13 @@
 import "Diag.rsf"
 
 fn main() -> void {
-    var lf = "fn main() {\n    var x : int = \n}\n"
+    var lf = "fn main() {\n    var x : Int = \n}\n"
     var crlf = "a\r\nb\r\nc"
     var noTail = "one line no trailing newline"
     var tab = "tab\there\nx"
 
     println("### case 1")
-    println(diagAt("demo.rsf", "checker", "不能把 string 赋给 int 变量 'x'", 2, 9).render(lf))
+    println(diagAt("demo.rsf", "checker", "不能把 String 赋给 Int 变量 'x'", 2, 9).render(lf))
     println("### case 2")
     println(diagAt("demo.rsf", "parser", "这里需要一个表达式", 3, 1).render(lf))
     println("### case 3")

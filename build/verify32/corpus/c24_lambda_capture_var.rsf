@@ -1,5 +1,5 @@
 fn main() {
-    var n : int = 1
-    var f : () -> int = lam() -> int { rtn n }
+    var n : Int = 1
+    var f : () -> Int = lam() -> Int { rtn n }
     println("" + f())
 }

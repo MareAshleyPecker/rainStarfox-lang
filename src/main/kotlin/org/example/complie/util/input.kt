@@ -11,7 +11,7 @@ fun input(prompt: String = ""): String {
 }
 
 /**
- * 带类型转换的 input,等价于 Python 的 int(input()), float(input()) 等
+ * 带类型转换的 input,等价于 Python 的 Int(input()), Float(input()) 等
  */
 inline fun <reified T> input(prompt: String = ""): T {
     val line = input(prompt)

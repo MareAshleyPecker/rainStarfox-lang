@@ -2,12 +2,12 @@
 //
 // Lehmer（乘同余）发生器：state = state * 16807 mod 2147483647。
 // 用 Schrage 拆成 16807 * (state % 127773) - 2836 * (state / 127773)，
-// 中间结果最大约 2.147e9，正好压在 int 范围内——没有 long、没有位运算也能算。
+// 中间结果最大约 2.147e9，正好压在 Int 范围内——没有 Long、没有位运算也能算。
 // 同一个种子序列固定，所以探针可以拿它当金标。
 pub class Random {
-    var state : int = 1
+    var state : Int = 1
 
-    pub fn seed(s : int) -> void {
+    pub fn seed(s : Int) -> void {
         var v = s % 2147483647
         if (v < 0) { v = -v }
         if (v == 0) { v = 1 }
@@ -15,7 +15,7 @@ pub class Random {
     }
 
     // 1 .. 2147483646
-    pub fn nextInt() -> int {
+    pub fn nextInt() -> Int {
         var hi = state / 127773
         var lo = state % 127773
         var t = 16807 * lo - 2836 * hi
@@ -25,21 +25,21 @@ pub class Random {
     }
 
     // [0, bound)；bound <= 0 时给 0
-    pub fn nextBelow(bound : int) -> int {
+    pub fn nextBelow(bound : Int) -> Int {
         if (bound <= 0) { rtn 0 }
         rtn nextInt() % bound
     }
 
     // [lo, hi] 闭区间
-    pub fn nextRange(lo : int, hi : int) -> int {
+    pub fn nextRange(lo : Int, hi : Int) -> Int {
         if (hi <= lo) { rtn lo }
         rtn lo + nextBelow(hi - lo + 1)
     }
 
-    pub fn nextBool() -> bool { rtn nextInt() % 2 == 0 }
+    pub fn nextBool() -> Bool { rtn nextInt() % 2 == 0 }
 
     // 原地洗牌（Fisher-Yates，从后往前）
-    pub fn shuffle(a : int[]) -> void {
+    pub fn shuffle(a : Int[]) -> void {
         var i = a.length - 1
         while (i > 0) {
             var j = nextBelow(i + 1)

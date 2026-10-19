@@ -1,7 +1,7 @@
 import "../../../rsfSrc/core/Queue.rsf"
 
 fn main() -> void {
-    var q : Queue&<string> = new Queue&<string>()
+    var q : Queue&<String> = new Queue&<String>()
     q.push("a")
     q.push("b")
     q.push("c")
@@ -14,7 +14,7 @@ fn main() -> void {
     println(out + " " + q.size() + " " + q.pop())
 
     // 撑过初始容量 4，验证环形缓冲的扩容与回绕
-    var n : Queue&<int> = new Queue&<int>()
+    var n : Queue&<Int> = new Queue&<Int>()
     var i = 0
     while (i < 10) {
         n.push(i)
@@ -30,7 +30,7 @@ fn main() -> void {
     println("" + sum + " " + n.size() + " " + n.peek())
     n.push(100)
     n.push(101)
-    var arr : int[] = n.toArray()
+    var arr : Int[] = n.toArray()
     println("" + arr.length + " " + arr[0] + " " + arr[arr.length - 1])
 
     n.clear()
