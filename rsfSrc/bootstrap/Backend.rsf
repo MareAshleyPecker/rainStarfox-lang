@@ -2564,6 +2564,41 @@ fn eRuntimeExceptionThrow(mv : MethodVisitor) -> void {
     mv.visitInsn(191)
 }
 
+
+// switch 字符串标签：Parser 存的是 escapeValue 之后的文本，发 LDC 前要还原
+// （与 Interp.rsf 的 unescapeValue 同一套转义；Backend 的编译单元不含 Interp.rsf，
+// 所以这里留一份最小实现）。
+fn hexValOf(c : Char) -> Int {
+    if (c >= '0' && c <= '9') { rtn charToInt(c) - 48 }
+    if (c >= 'a' && c <= 'f') { rtn charToInt(c) - 87 }
+    if (c >= 'A' && c <= 'F') { rtn charToInt(c) - 55 }
+    rtn 0
+}
+
+fn unescapeSwText(s : String) -> String {
+    var out = ""
+    var i = 0
+    var len = s.length()
+    while (i < len) {
+        var c = s.charAt(i)
+        if (c == '\\' && i + 1 < len) {
+            var d = s.charAt(i + 1)
+            if (d == 'n') { out = out + '\n'; i = i + 2 }
+            else if (d == 'r') { out = out + '\r'; i = i + 2 }
+            else if (d == 't') { out = out + '\t'; i = i + 2 }
+            else if (d == 's') { out = out + ' '; i = i + 2 }
+            else if (d == 'x' && i + 3 < len) {
+                out = out + toChar(hexValOf(s.charAt(i + 2)) * 16 + hexValOf(s.charAt(i + 3)))
+                i = i + 4
+            } else { out = out + d; i = i + 2 }
+        } else {
+            out = out + c
+            i = i + 1
+        }
+    }
+    rtn out
+}
+
 fn pushInt(mv : MethodVisitor, v : Int) -> void {
     if (v >= -1 && v <= 5) {
         mv.visitInsn(3 + v)
@@ -2804,16 +2839,20 @@ pub class FieldRef(owner : String, name : String, desc : String, type : BType, i
 // 用户类方法里 `裸字段名` 读出来时也走 FieldRef（thisRecv = true）
 
 // switch 的一支
-pub class SwCase(enumName : String, valueName : String, padIdx : Int, body : Label) {
+pub class SwCase(enumName : String, valueName : String, padIdx : Int, body : Label, kind : String, text : String) {
     var enumName : String = enumName
     var valueName : String = valueName
     var padIdx : Int = padIdx
     var body : Label = body
+    // 阶段 56：标签种类（enum / int / long / str）与字面量原文
+    var kind : String = kind
+    var text : String = text
 }
 
 // 一个 switch 的发射信息（阶段 56：一个分支可以有多个标签，共用同一个跳板 `pads[padIdx]`）
-pub class SwInfo(subjectType : String, cases : SwCase[], caseCount : Int, hasDef : Bool, def : Label, pads : Label[], padCount : Int, bodies : Label[]) {
+pub class SwInfo(subjectType : String, subjectName : String, cases : SwCase[], caseCount : Int, hasDef : Bool, def : Label, pads : Label[], padCount : Int, bodies : Label[], end : Label) {
     var subjectType : String = subjectType
+    var subjectName : String = subjectName
     var cases : SwCase[] = cases
     var caseCount : Int = caseCount
     var hasDef : Bool = hasDef
@@ -2821,6 +2860,7 @@ pub class SwInfo(subjectType : String, cases : SwCase[], caseCount : Int, hasDef
     var pads : Label[] = pads
     var padCount : Int = padCount
     var bodies : Label[] = bodies
+    var end : Label = end
 }
 
 // ============================================================ 用户类 / 枚举模型
@@ -4047,11 +4087,8 @@ pub class Walker(g : Gen) {
         if (k == NodeKind.SWITCH) {
             var subject = st.children[0]
             var stype = walkExpr(subject, sc)
-            if (stype.base == "Int" || stype.base == "Long" || stype.base == "String") {
-                g.bad("JVM 字节码后端还不支持对 Int / String 的 switch：只有枚举分派能编成字节码。用 'rsf run' 跑，或者 'rsf build x.rsf --c' 出 C，也可以先写成 if / else if 链")
-                rtn
-            }
-            if (stype.base != "external" || g.findEnum(stype.name) == null) {
+            var nonEnumSw = stype.base == "Int" || stype.base == "Long" || stype.base == "String"
+            if (!nonEnumSw && (stype.base != "external" || g.findEnum(stype.name) == null)) {
                 g.bad("switch 的表达式不是枚举（" + stype.desc() + "）")
                 rtn
             }
@@ -4083,22 +4120,27 @@ pub class Walker(g : Gen) {
                     var vn = cs.children[j]
                     var en = prop(vn, "enum")
                     var vl = prop(vn, "value")
-                    var ei = g.findEnum(en)
-                    if (ei == null || !ei!!.has(vl)) {
-                        g.bad("switch 分支的枚举常量 " + en + "." + vl)
-                        rtn
+                    var vk = prop(vn, "kind")
+                    if (vk == "enum") {
+                        var ei = g.findEnum(en)
+                        if (ei == null || !ei!!.has(vl)) {
+                            g.bad("switch 分支的枚举常量 " + en + "." + vl)
+                            rtn
+                        }
+                        if (en != stype.name) {
+                            g.bad("switch 分支枚举类型不一致（" + en + " / " + stype.name + "）")
+                            rtn
+                        }
+                        cls[ci0] = new SwCase(en, vl, i, bodies[i], vk, vl)
+                    } else {
+                        cls[ci0] = new SwCase("", "", i, bodies[i], vk, vl)
                     }
-                    if (en != stype.name) {
-                        g.bad("switch 分支枚举类型不一致（" + en + " / " + stype.name + "）")
-                        rtn
-                    }
-                    cls[ci0] = new SwCase(en, vl, i, bodies[i])
                     ci0 = ci0 + 1
                     j = j + 1
                 }
                 i = i + 1
             }
-            g.putSw(st, new SwInfo(stype.name, cls, total, hasElse, lDef, pads, cases.childCount, bodies))
+            g.putSw(st, new SwInfo(stype.base, stype.name, cls, total, hasElse, lDef, pads, cases.childCount, bodies, lEnd))
             var si = new Ins("switch")
             si.node = st
             si.expr = subject
@@ -5321,6 +5363,17 @@ fn computeReach(w : Walker) -> Bool[] {
                             var didx = labelIndexOf(w, si!!.def)
                             if (didx >= 0 && top < cap) {
                                 stack[top] = didx
+                                top = top + 1
+                            }
+                        } else if (si!!.subjectType == "Int" || si!!.subjectType == "Long" || si!!.subjectType == "String") {
+                            // 阶段 56b：Int/Long/String 主体没写 else 时，落空点就是 switch 之后；
+                            // 这条边必须算进可达性，否则 lEnd 标签会被当成不可达而不发，跳转目标落空。
+                            // 枚举主体没写 else 是**穷尽**的（值只可能是 null，末尾自行 fail），
+                            // 不能加这条边，否则 switch 后面的语句会被当成可达、与 Kotlin 的
+                            // CFG 分叉（末尾会多出 nop/athrow，verify37 逐字节对拍就红）。
+                            var eidx = labelIndexOf(w, si!!.end)
+                            if (eidx >= 0 && top < cap) {
+                                stack[top] = eidx
                                 top = top + 1
                             }
                         }
@@ -6725,22 +6778,49 @@ fn emitIns(g : Gen, w : Walker, mv : MethodVisitor, i : Int, off : Int) -> void 
             rtn
         }
         var si = sw!!
+        var stName = si.subjectType
+        var nonEnum = stName == "Int" || stName == "Long" || stName == "String"
+        var longSub = stName == "Long"
         emitExpr(g, mv, ins.expr, off)
         var ci2 = 0
         while (ci2 < si.caseCount) {
             var c = si.cases[ci2]
-            mv.visitInsn(89)
-            mv.visitFieldInsn(178, c.enumName, c.valueName, "L" + c.enumName + ";")
-            mv.visitJumpInsn(165, si.pads[c.padIdx])
+            if (c.kind == "enum") {
+                mv.visitInsn(89)
+                mv.visitFieldInsn(178, c.enumName, c.valueName, "L" + c.enumName + ";")
+                mv.visitJumpInsn(165, si.pads[c.padIdx])
+            } else if (c.kind == "int") {
+                if (longSub) {
+                    mv.visitInsn(92)
+                    mv.visitLdcInsn(Long.valueOf(Long.parseLong(c.text)))
+                    mv.visitInsn(148)
+                    mv.visitJumpInsn(153, si.pads[c.padIdx])
+                } else {
+                    mv.visitInsn(89)
+                    pushInt(mv, Integer.parseInt(c.text))
+                    mv.visitJumpInsn(159, si.pads[c.padIdx])
+                }
+            } else {
+                mv.visitInsn(89)
+                mv.visitLdcInsn(unescapeSwText(c.text))
+                mv.visitMethodInsn(182, "java/lang/String", "equals", "(Ljava/lang/Object;)Z", false)
+                mv.visitJumpInsn(154, si.pads[c.padIdx])
+            }
             ci2 = ci2 + 1
         }
-        mv.visitInsn(87)
+        if (longSub && nonEnum) {
+            mv.visitInsn(88)
+        } else {
+            mv.visitInsn(87)
+        }
         if (si.hasDef) {
             mv.visitJumpInsn(167, si.def)
+        } else if (nonEnum) {
+            mv.visitJumpInsn(167, si.end)
         } else {
             mv.visitTypeInsn(187, "java/lang/RuntimeException")
             mv.visitInsn(89)
-            mv.visitLdcInsn(switchNoMatchMessage(si.subjectType))
+            mv.visitLdcInsn(switchNoMatchMessage(si.subjectName))
             mv.visitMethodInsn(183, "java/lang/RuntimeException", "<init>", "(Ljava/lang/String;)V", false)
             mv.visitInsn(191)
         }
@@ -6749,7 +6829,7 @@ fn emitIns(g : Gen, w : Walker, mv : MethodVisitor, i : Int, off : Int) -> void 
             var bi2 = 0
             while (bi2 < si.caseCount && si.cases[bi2].padIdx != ci2) { bi2 = bi2 + 1 }
             mv.visitLabel(si.pads[ci2])
-            mv.visitInsn(87)
+            if (!nonEnum) { mv.visitInsn(87) }
             if (bi2 < si.caseCount) { mv.visitJumpInsn(167, si.cases[bi2].body) }
             ci2 = ci2 + 1
         }

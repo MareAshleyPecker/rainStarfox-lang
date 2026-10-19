@@ -34,6 +34,7 @@ import org.example.complie.ast.Node
 import org.example.complie.ast.NullLit
 import org.example.complie.ast.PositionalAnnotationArg
 import org.example.complie.ast.StringLit
+import org.example.complie.ast.SwitchLabel
 import org.example.complie.ast.Stmt
 import org.example.complie.ast.SuperExpr
 import org.example.complie.ast.SwitchStmt
@@ -2580,16 +2581,17 @@ class BytecodeCompiler(
                 //   校验器当场拒绝（VerifyError: Instruction type does not match stack map）。
                 //   跳板只有两条指令（POP; GOTO），但它是让栈在分支入口处干净的关键。
                 is ISwitch -> {
-                    // 阶段 56：Int / String 主体的 switch 还没在字节码后端接（前端、解释器、
-                    // C 后端都已支持）。像指针一样**显式拒绝**，而不是悄悄编错。
-                    val firstLabel = instr.stmt.cases.firstOrNull()?.labels?.firstOrNull()
-                    if (firstLabel != null && firstLabel !is org.example.complie.ast.SwitchLabel.EnumConst) {
-                        throw org.example.complie.diag.RsfError(
-                            "codegen",
-                            "JVM 字节码后端还不支持对 Int / String 的 switch：只有枚举分派能编成字节码。" +
-                                "用 'rsf run' 跑，或者 'rsf build x.rsf --c' 出 C，也可以先写成 if / else if 链",
-                        )
-                    }
+                    // 阶段 56b：主体是 Int / Long / String 时走「值只求一次 + 逐常量比较」：
+                    //   <值>; DUP; <常量>; IF_ICMPEQ pad（Long 用 DUP2 + LCMP + IFEQ，
+                    //   String 用 DUP + LDC + String.equals + IFNE）；落空时 POP/POP2 再跳。
+                    // 比较自己吃掉了栈上的值，所以跳板不再需要 POP。
+                    val subjectType = model.typeOf(instr.stmt.subject)
+                    val nonEnum = subjectType.base == RsfBase.INT ||
+                        subjectType.base == RsfBase.LONG ||
+                        subjectType.base == RsfBase.STRING
+                    if (nonEnum) {
+                        emitNumericOrStringSwitch(ctx, instr, subjectType, labels)
+                    } else {
                     val pads = instr.stmt.cases.map { Label() }
                     emitExpr(ctx, instr.stmt.subject)
                     for ((i, c) in instr.stmt.cases.withIndex()) {
@@ -2624,6 +2626,7 @@ class BytecodeCompiler(
                         mv.visitLabel(pad)
                         mv.visitInsn(POP)
                         mv.visitJumpInsn(GOTO, labels[instr.targets[i]]!!)
+                    }
                     }
                 }
             }
@@ -2672,6 +2675,62 @@ class BytecodeCompiler(
      *
      * 没有标签的方法**一个字节都不发**（连注解都不出现）⇒ 旧语料的产出逐字节不变。
      */
+
+    /**
+     * Int / Long / String 主体的 `switch`（阶段 56b）。
+     *
+     * 比较会自己吃掉栈上的值（IF_ICMPEQ / LCMP / String.equals），所以跳板不再需要 POP；
+     * 落空时补一条 POP（Long 是 POP2）再跳到落空点（没写 else 时就是 switch 之后）。
+     */
+    private fun emitNumericOrStringSwitch(
+        ctx: ExprCtx,
+        instr: ISwitch,
+        subjectType: RsfType,
+        labels: Map<String, Label>,
+    ) {
+        val mv = ctx.mv
+        val isLong = subjectType.base == RsfBase.LONG
+        val pads = instr.stmt.cases.map { Label() }
+        emitExpr(ctx, instr.stmt.subject)
+        for ((i, c) in instr.stmt.cases.withIndex()) {
+            for (raw in c.labels) {
+                when (raw) {
+                    is SwitchLabel.IntConst -> {
+                        if (isLong) {
+                            mv.visitInsn(Opcodes.DUP2)
+                            mv.visitLdcInsn(raw.value)
+                            mv.visitInsn(LCMP)
+                            mv.visitJumpInsn(IFEQ, pads[i])
+                        } else {
+                            mv.visitInsn(DUP)
+                            pushInt(mv, raw.value.toInt())
+                            mv.visitJumpInsn(IF_ICMPEQ, pads[i])
+                        }
+                    }
+                    is SwitchLabel.StringConst -> {
+                        mv.visitInsn(DUP)
+                        mv.visitLdcInsn(raw.value)
+                        mv.visitMethodInsn(
+                            INVOKEVIRTUAL, "java/lang/String", "equals", "(Ljava/lang/Object;)Z", false,
+                        )
+                        mv.visitJumpInsn(IFNE, pads[i])
+                    }
+                    is SwitchLabel.EnumConst -> throw RsfError(
+                        "codegen", "switch 的标签与主体类型不匹配（${raw.enumName}.${raw.valueName}）",
+                    )
+                }
+            }
+        }
+        mv.visitInsn(if (isLong) POP2 else POP)
+        val fallback = instr.defaultTarget
+            ?: throw RsfError("codegen", "Int/String 的 switch 没有落空点（应当指向 switch 之后）")
+        mv.visitJumpInsn(GOTO, labels[fallback]!!)
+        for ((i, pad) in pads.withIndex()) {
+            mv.visitLabel(pad)
+            mv.visitJumpInsn(GOTO, labels[instr.targets[i]]!!)
+        }
+    }
+
     private fun emitLabelMetadata(mv: MethodVisitor, fn: FuncDecl) {
         val names = ArrayList<String>()
         for (instr in model.loweredOf(fn).instructions) {

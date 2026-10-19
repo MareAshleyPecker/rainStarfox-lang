@@ -1,0 +1,36 @@
+fn name(n : Int) -> String {
+    switch (n) {
+        1, 2, 3 : { rtn "small" }
+        -7 : { rtn "neg" }
+        else : { rtn "big" }
+    }
+}
+
+fn wide(n : Long) -> String {
+    switch (n) {
+        10000000000L : { rtn "huge" }
+        -2L, 3L : { rtn "small" }
+        else : { rtn "other" }
+    }
+}
+
+fn tag(s : String) -> Int {
+    switch (s) {
+        "ok" : { rtn 0 }
+        "bad", "worse" : { rtn 1 }
+    }
+    rtn 9
+}
+
+fn main() {
+    println(name(2))
+    println(name(-7))
+    println(name(42))
+    println(wide(10000000000L))
+    println(wide(-2L))
+    println(wide(3L))
+    println(wide(5L))
+    println(tag("ok"))
+    println(tag("worse"))
+    println(tag("zzz"))
+}

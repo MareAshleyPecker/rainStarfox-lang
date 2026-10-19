@@ -6523,28 +6523,49 @@ class RsfTest {
     }
 
     @Test
-    fun `switch 的 Int 与 String 分支在字节码后端显式报错`() {
-        // 字节码只对枚举分派（IF_ACMPEQ），Int/String 分支会编成「比较 + 跳转」——
-        // 那是另一套跳板代码，暂时不做，宁可报错也不要悄悄编错。
+    fun `switch 的 Int Long String 分支在字节码后端也能跑`() {
+        // 原先是「显式报错」的靶子；阶段 56b 起字节码后端支持了 Int/Long/String 分派
+        // （值只求一次 + 逐常量比较），这条改成两端对拍。
         val text = """
-        fn main() {
-            var n = 1
+        fn pick(n : Int) -> String {
             switch (n) {
-                1 : { println("一") }
-                else : { println("其它") }
+                1, 2, 3 : { rtn "small" }
+                -7 : { rtn "neg" }
+                else : { rtn "big" }
             }
         }
+
+        fn wide(n : Long) -> String {
+            switch (n) {
+                10000000000L : { rtn "huge" }
+                -2L, 3L : { rtn "small" }
+                else : { rtn "other" }
+            }
+        }
+
+        fn tag(s : String) -> Int {
+            switch (s) {
+                "ok" : { rtn 0 }
+                "bad", "worse" : { rtn 1 }
+            }
+            rtn 9
+        }
+
+        fn main() {
+            println(pick(2))
+            println(pick(-7))
+            println(pick(42))
+            println(wide(10000000000L))
+            println(wide(3L))
+            println(wide(9L))
+            println(tag("ok"))
+            println(tag("worse"))
+            println(tag("zzz"))
+        }
         """.trimIndent() + "\n"
-        val model = Rsf.analyze(source(text))
-        val dir = File.createTempFile("rsf-test", "").let {
-            it.delete()
-            it.mkdirs()
-            it
-        }
-        val error = assertFailsWith<RsfError> {
-            Rsf.build(model, source(text), "RsfSwitchIntJvm", dir)
-        }
-        assertTrue(error.message!!.contains("还不支持对 Int / String 的 switch"), error.message)
+        val want = listOf("small", "neg", "big", "huge", "small", "other", "0", "1", "9")
+        assertEquals(want, lines(runInterpreted(text)))
+        assertEquals(want, lines(runCompiled(text)))
     }
 
     @Test

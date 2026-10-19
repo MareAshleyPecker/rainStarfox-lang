@@ -217,6 +217,37 @@ pub class Checker(failure : ?CheckFailure) {
 
     // ---------------------------------------------------------------- 遍历
 
+
+    // 一条语句是不是「一定以 rtn 结束」。比 Kotlin 的 CFG 窄，但只用来判「函数体末尾
+    // 有没有可能落空」这一件事：RETURN 自身、块的最后一个语句、带 else 且每支都返回的
+    // switch / if。阶段 56b 起 switch 可以是 Int/Long/String + else，函数体以它收尾
+    // 很常见，光认「最后一条是 RETURN」会误报。
+    fn stmtAlwaysReturns(st : Node) -> Bool {
+        if (st.kind == NodeKind.RETURN) { rtn true }
+        if (st.kind == NodeKind.BLOCK) {
+            if (st.childCount == 0) { rtn false }
+            rtn stmtAlwaysReturns(st.children[st.childCount - 1])
+        }
+        if (st.kind == NodeKind.SWITCH) {
+            if (nodeProp(st, "hasElse") != "true") { rtn false }
+            var cases = childNodeOf(st, NodeKind.CASES)
+            if (cases == null) { rtn false }
+            var i = 0
+            while (i < cases!!.childCount) {
+                var cb = cases!!.children[i]
+                if (cb.childCount == 0) { rtn false }
+                if (!stmtAlwaysReturns(cb.children[cb.childCount - 1])) { rtn false }
+                i = i + 1
+            }
+            rtn cases!!.childCount > 0
+        }
+        if (st.kind == NodeKind.IF) {
+            if (nodeProp(st, "hasElse") != "true") { rtn false }
+            rtn stmtAlwaysReturns(st.children[1]) && stmtAlwaysReturns(st.children[2])
+        }
+        rtn false
+    }
+
     pub fn check(program : Node) -> void {
         declareFunctions(program)
         gatherClasses(program)
@@ -249,7 +280,7 @@ pub class Checker(failure : ?CheckFailure) {
                 if (failure == null && !curVoid) {
                     var last = body!!.childCount
                     var endsWithReturn = false
-                    if (last > 0 && body!!.children[last - 1].kind == NodeKind.RETURN) { endsWithReturn = true }
+                    if (last > 0 && stmtAlwaysReturns(body!!.children[last - 1])) { endsWithReturn = true }
                     if (!endsWithReturn) {
                         failAt("函数 '" + curFnName + "' 声明返回 " + curRetText + "）但存在一条没写 rtn 就走到函数末尾的路径", fnode)
                     }
@@ -910,6 +941,13 @@ pub class Checker(failure : ?CheckFailure) {
         if (e.kind == NodeKind.STRING_LIT) { rtn "String" }
         if (e.kind == NodeKind.CHAR_LIT) { rtn "Char" }
         if (e.kind == NodeKind.BOOL_LIT) { rtn "Bool" }
+        if (e.kind == NodeKind.UNARY && e.childCount == 1) {
+            // 阶段 56b：`f(-7)` / `!ok` 这类实参以前落到末尾回 void，于是「参数类型不匹配」。
+            var ut = checkExpr(e.children[0])
+            if (e.text == "op=MINUS") { rtn ut }
+            if (e.text == "op=BANG") { rtn "Bool" }
+            rtn ut
+        }
         if (e.kind == NodeKind.VAR) {
             var nm = nodeProp(e, "name")
             var sym = scopes.lookup(nm)
