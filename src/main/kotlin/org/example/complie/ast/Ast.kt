@@ -955,11 +955,31 @@ data class SwitchStmt(
  * [body] 是一个 [Block]：单条语句的写法（`case X : rtn 1`）在 parser 里也被
  * 包成只含一条语句的块，于是「分支体」在两端只有一种形状（和 `if c : 语句` 同一套做法）。
  */
+/**
+ * `switch` 分支的一个标签。
+ *
+ * 三种形状（阶段 56 起支持后两种）：
+ * - [EnumConst]：`枚举名.值名`（老口径，唯一支持穷尽检查的形状）；
+ * - [IntConst]：整数字面量（`1` / `-2`），主体是 Int / Long 时可用；
+ * - [StringConst]：字符串字面量（`"ok"`），主体是 String 时可用。
+ */
+sealed interface SwitchLabel {
+    /** `枚举名.值名`。 */
+    data class EnumConst(val enumName: String, val valueName: String) : SwitchLabel
+
+    /** 整数字面量；`Long` 主体时也用它装（值已按主体类型校验过范围）。 */
+    data class IntConst(val value: Long) : SwitchLabel
+
+    /** 字符串字面量。 */
+    data class StringConst(val value: String) : SwitchLabel
+}
+
 data class SwitchCase(
-    /** `TokenKind`——写出来的枚举名；Checker 会核对它是不是 `switch` 主体的那个枚举。 */
-    val enumName: String,
-    /** `IDENT`——值名；Checker 会核对它在这个枚举里存在。 */
-    val valueName: String,
+    /**
+     * 一个分支的**全部标签**（`Color.Red, Color.Green :`）。多个标签共用同一个
+     * [body]，语义与 Kotlin `when` 的多值分支一致。
+     */
+    val labels: List<SwitchLabel>,
     val body: Block,
     override val at: SourceLine,
     /**

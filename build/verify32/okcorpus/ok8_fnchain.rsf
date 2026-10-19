@@ -1,0 +1,12 @@
+fn applyTwice(f : () -> (Int) -> Int, v : Int) -> Int {
+    var g : (Int) -> Int = f()
+    rtn g(g(v))
+}
+
+fn main() -> void {
+    var make : () -> (Int) -> Int = lam() -> (Int) -> Int {
+        rtn lam(x : Int) -> Int { rtn x + 1 }
+    }
+    println(applyTwice(make, 5))
+    rtn
+}

@@ -2494,37 +2494,14 @@ class Parser(
             // 阶段 21：`case` 弃用——分支直接写「枚举名.值名 : 语句」，省掉一个关键字。
             // 旧写法先照收（位置记进 AST），由 Checker 统一发一条弃用警告。
             val caseTok = if (check(TokenKind.KW_CASE)) advance() else null
-            if (!check(TokenKind.IDENT)) {
-                throw error(
-                    peek(),
-                    if (caseTok != null) {
-                        "'case' 后面需要一个枚举名（现在可以不写 'case'，直接写「枚举名.值名 : 语句」）"
-                    } else {
-                        "switch 的块里只能写 '枚举名.值名 : 语句' 或者 'else : 语句'，" +
-                            "实际读到 ${peek().describe()}"
-                    },
-                )
+            val labels = ArrayList<SwitchLabel>()
+            val at0 = (caseTok ?: peek()).at
+            while (true) {
+                labels.add(parseSwitchLabel(if (caseTok != null && labels.isEmpty()) caseTok else null))
+                if (!match(TokenKind.COMMA)) break
             }
-            val enumTok = advance()
-            expect(
-                TokenKind.DOT,
-                "'${enumTok.lexeme}' 后面需要 '.'——分支只接受枚举常量，" +
-                    "写法是 ${enumTok.lexeme}.值名（不支持区间、比较、字面量）",
-            )
-            val valueTok = expect(
-                TokenKind.IDENT,
-                "'${enumTok.lexeme}.' 后面需要一个值名（写法是 ${enumTok.lexeme}.值名）",
-            )
             val body = parseBody("case")
-            cases.add(
-                SwitchCase(
-                    enumTok.lexeme,
-                    valueTok.lexeme,
-                    body,
-                    (caseTok ?: enumTok).at,
-                    caseTok?.at,
-                ),
-            )
+            cases.add(SwitchCase(labels, body, at0, caseTok?.at))
         }
         expect(TokenKind.RBRACE, "switch 没有闭合，缺少 '}'")
 
@@ -2536,6 +2513,61 @@ class Parser(
             )
         }
         return SwitchStmt(subject, cases, elseBody, switchTok.at)
+    }
+
+
+    /**
+     * 一个 `switch` 标签（阶段 56）：`枚举名.值名`、整数字面量（可带负号）、字符串字面量。
+     *
+     * 标签的**类型合法性**留给 Checker（它知道主体类型），这里只认形状：看到 `名字.` 就是
+     * 枚举常量，看到数字/字符串就是字面量。`case` 关键字只允许出现在第一个标签前面。
+     */
+    private fun parseSwitchLabel(caseTok: Token?): SwitchLabel {
+        if (check(TokenKind.STRING_LIT)) {
+            val t = advance()
+            return SwitchLabel.StringConst(t.literal as String)
+        }
+        if (check(TokenKind.INT_LIT) || check(TokenKind.LONG_LIT)) {
+            return SwitchLabel.IntConst(readIntLiteral())
+        }
+        if (check(TokenKind.MINUS)) {
+            advance()
+            if (!check(TokenKind.INT_LIT) && !check(TokenKind.LONG_LIT)) {
+                throw error(peek(), "switch 分支的负号后面需要一个整数字面量（不支持表达式）")
+            }
+            return SwitchLabel.IntConst(-readIntLiteral())
+        }
+        if (!check(TokenKind.IDENT)) {
+            throw error(
+                peek(),
+                if (caseTok != null) {
+                    "'case' 后面需要一个枚举名（现在可以不写 'case'，直接写「枚举名.值名 : 语句」）"
+                } else {
+                    "switch 的块里只能写 '枚举名.值名 : 语句'、整数字面量、字符串字面量或者 'else : 语句'，" +
+                        "实际读到 ${peek().describe()}"
+                },
+            )
+        }
+        val enumTok = advance()
+        if (!check(TokenKind.DOT)) {
+            throw error(
+                peek(),
+                "'${enumTok.lexeme}' 后面需要 '.'——枚举分支写成 枚举名.值名；" +
+                    "字面量分支直接写 1 或 \"ok\"",
+            )
+        }
+        advance() // .
+        val valueTok = expect(
+            TokenKind.IDENT,
+            "'${enumTok.lexeme}.' 后面需要一个值名（写法是 ${enumTok.lexeme}.值名）",
+        )
+        return SwitchLabel.EnumConst(enumTok.lexeme, valueTok.lexeme)
+    }
+
+    /** 读一个整数/长整数字面量的值（`Int` 与 `Long` 都升成 Long，范围留给 Checker 核对）。 */
+    private fun readIntLiteral(): Long {
+        val t = advance()
+        return if (t.kind == TokenKind.LONG_LIT) t.literal as Long else (t.literal as Int).toLong()
     }
 
     /** 三目的后半截：`? 值1 : 值2`。 */

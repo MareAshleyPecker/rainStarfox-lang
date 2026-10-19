@@ -24,6 +24,7 @@ import org.example.complie.ast.NewArrayExpr
 import org.example.complie.ast.NewExpr
 import org.example.complie.ast.NullLit
 import org.example.complie.ast.StringLit
+import org.example.complie.ast.SwitchLabel
 import org.example.complie.ast.SuperExpr
 import org.example.complie.ast.ThisExpr
 import org.example.complie.ast.UnaryExpr
@@ -475,22 +476,24 @@ class Interpreter(
                         val subject = eval(instr.stmt.subject, slots, body)
                         var chosen: String? = null
                         for ((i, c) in instr.stmt.cases.withIndex()) {
-                            if (subject === enumValue(c.enumName, c.valueName)) {
+                            if (c.labels.any { labelMatches(it, subject) }) {
                                 chosen = instr.targets[i]
                                 break
                             }
                         }
                         val fallback = instr.defaultTarget
+                        val enumSubject = instr.stmt.cases.firstOrNull()?.labels?.firstOrNull() is SwitchLabel.EnumConst
                         pc = when {
                             chosen != null -> target(body, chosen)
                             fallback != null -> target(body, fallback)
-                            // 没写 else 且 case 穷尽：到这里说明值是 null（枚举常量都不是 null）。
-                            // 抛的消息和编译产物那条 `throw new RuntimeException(...)` 一字不差。
-                            else -> throw RsfFailure(
+                            enumSubject -> throw RsfFailure(
                                 EnumRuntime.noMatchFailure(
                                     model.typeOf(instr.stmt.subject).simpleExternalName,
                                 ),
                             )
+                            // Int / String 主体没写 else：一个都没命中就什么都不做，
+                            // 和 Kotlin 的 when 一样（这里的落点是 switch 之后的标签）。
+                            else -> instr.endTarget?.let { target(body, it) } ?: (pc + 1)
                         }
                     }
 
@@ -943,6 +946,20 @@ class Interpreter(
      * `TokenKind.IDENT == TokenKind.IDENT` 就会是假——而编译产物那边
      * `GETSTATIC` 拿到的是同一个实例、比较恒为真。两端立刻分叉。
      */
+    /**
+     * 一个 `switch` 标签是否命中（阶段 56）：枚举走引用相等，Int / Long 走数值相等，
+     * String 走内容相等——与三个后端各自的比较口径一致。
+     */
+    private fun labelMatches(label: SwitchLabel, subject: Any?): Boolean = when (label) {
+        is SwitchLabel.EnumConst -> subject === enumValue(label.enumName, label.valueName)
+        is SwitchLabel.IntConst -> when (subject) {
+            is Int -> subject.toLong() == label.value
+            is Long -> subject == label.value
+            else -> false
+        }
+        is SwitchLabel.StringConst -> subject == label.value
+    }
+
     private fun enumValue(enumName: String, valueName: String): RsfEnumValue =
         enumCache.getOrPut("$enumName.$valueName") { RsfEnumValue(enumName, valueName) }
 

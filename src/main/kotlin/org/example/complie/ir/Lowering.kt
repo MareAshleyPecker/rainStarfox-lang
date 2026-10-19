@@ -212,6 +212,11 @@ class ISwitch(
      *    是最难查的那种行为。
      */
     val defaultTarget: String?,
+    /**
+     * `switch` 之后的标签（阶段 56）：Int / String 主体没写 `else` 时，
+     * 「一个都没命中」的落点就是它（枚举主体仍然抛运行期错误）。
+     */
+    val endTarget: String? = null,
 ) : Instr {
     override val at get() = stmt.at
 }
@@ -475,18 +480,27 @@ class Lowering(
              */
             is SwitchStmt -> {
                 val lEnd = fresh("switch.end")
-                val lDefault = if (stmt.elseBody == null) null else fresh("switch.else")
+                val enumSwitch =
+                    stmt.cases.firstOrNull()?.labels?.firstOrNull() is org.example.complie.ast.SwitchLabel.EnumConst
+                // 枚举穷尽又没写 else 时**没有**落空这条边（值只可能是 null，走的是
+                // switch 末尾的 fail）；Int/Long/String 没写 else 时没命中就落到
+                // switch 之后——那条边必须进 CFG，否则 switch 后面的代码会被误报不可达。
+                val lDefault = when {
+                    stmt.elseBody != null -> fresh("switch.else")
+                    enumSwitch -> null
+                    else -> lEnd
+                }
                 val targets = stmt.cases.map { fresh("switch.case") }
 
-                out.add(ISwitch(stmt, targets, lDefault))
+                out.add(ISwitch(stmt, targets, lDefault, lEnd))
                 for ((i, c) in stmt.cases.withIndex()) {
                     out.add(ILabel(targets[i], c.at))
                     lowerBlock(c.body)
                     out.add(IGoto(lEnd, c.at))
                 }
-                if (lDefault != null) {
-                    out.add(ILabel(lDefault, stmt.at))
-                    lowerBlock(stmt.elseBody!!)
+                if (stmt.elseBody != null) {
+                    out.add(ILabel(lDefault!!, stmt.at))
+                    lowerBlock(stmt.elseBody)
                 }
                 out.add(ILabel(lEnd, stmt.at))
             }

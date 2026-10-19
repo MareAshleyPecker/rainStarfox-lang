@@ -161,4 +161,32 @@ class CBackendTest {
         assertTrue(c.contains("(*v_p)"), c)
     }
 
+
+    @Test
+    fun `switch 摊成先存临时值的 if 链`() {
+        val c = emit(
+            """
+            fn pick(n : Int, s : String) -> Int {
+                switch (n) {
+                    1, 2 : { rtn 10 }
+                    else : { }
+                }
+                switch (s) {
+                    "ok" : { rtn 1 }
+                }
+                rtn 0
+            }
+
+            fn main() -> void {
+                println(pick(2, "ok"))
+                rtn
+            }
+            """.trimIndent(),
+        )
+        // 主体只求值一次：先落临时变量，再逐标签比较
+        assertTrue(c.contains("int32_t sw_0 = v_n;"), c)
+        assertTrue(c.contains("if ((sw_0 == 1) || (sw_0 == 2)) {"), c)
+        assertTrue(c.contains("rsf_str_eq(sw_1, rsf_str_lit(\"ok\", 2LL))"), c)
+    }
+
 }

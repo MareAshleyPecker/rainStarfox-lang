@@ -837,7 +837,10 @@ pub class Checker(failure : ?CheckFailure) {
             }
             rtn
         }
+        var savedExpect = curExpect
+        curExpect = curRetText
         var got = checkExpr(stmt.children[0])
+        curExpect = savedExpect
         if (failure != null) { rtn }
         if (curVoid) {
             failAt("函数 '" + curFnName + "' 是 void 函数，不能 rtn 一个 " + got + " 值（写成 'rtn' 或 'rtn null'）", stmt)
@@ -992,10 +995,29 @@ pub class Checker(failure : ?CheckFailure) {
             }
             var fsym = scopes.lookup(name)
             if (fsym != null && containsSub(fsym!!.typeText, "->")) {
-                if (argc != 0) {
-                    failAt("函数值 '" + name + "' 一个参数都不收", e)
+                var ft = fsym!!.typeText
+                if (ft.length() > 0 && ft.charAt(0) == '?') {
+                    failAt("'" + name + "' 是可空的函数值，先断言非空（f!!）再调用（DESIGN-30）", e)
+                    rtn retPartOf(ft)
                 }
-                rtn retPartOf(fsym!!.typeText)
+                var ps = paramPartsOf(ft)
+                if (argc != ps.length) {
+                    failAt("调用 '" + name + "' 的参数个数不对：实际给了 " + ("" + argc) + " 个，函数类型 " + ft + " 要 " + ("" + ps.length) + " 个", e)
+                    rtn retPartOf(ft)
+                }
+                var pi = 0
+                while (pi < argc) {
+                    var want = ps[pi]
+                    if (types[pi] == "void") {
+                        failAt("第 " + ("" + (pi + 1)) + " 个实参是 void 表达式，不能当参数传", args!!.children[pi])
+                    } else {
+                        if (!acceptsText(types[pi], want)) {
+                            failAt("第 " + ("" + (pi + 1)) + " 个实参类型不匹配：'" + name + "' 的第 " + ("" + (pi + 1)) + " 个参数要 " + want + "，实际给了 " + types[pi], args!!.children[pi])
+                        }
+                    }
+                    pi = pi + 1
+                }
+                rtn retPartOf(ft)
             }
             failAt("未定义的函数 '" + name + "'", e)
             rtn "void"
@@ -1571,6 +1593,63 @@ pub fn printWarnings(c : Checker, file : String) -> void {
         System.err.println("[rsf] 警告: " + file + ":" + ("" + c.warnLine(i)) + ": " + c.warnText(i))
         i = i + 1
     }
+}
+
+// 函数类型文本 `(Int, String) -> Bool` 的形参段，按**深度 0** 的逗号切开。
+// `?` 前缀与数组后缀不影响：只取最外层括号里的内容。泛型实参里的逗号（`&<String,Int>`）
+// 也不算分隔符。
+pub fn paramPartsOf(fnType : String) -> String[] {
+    var open = 0
+    if (fnType.length() > 0 && fnType.charAt(0) == '?') { open = 1 }
+    while (open < fnType.length() && fnType.charAt(open) != '(') { open = open + 1 }
+    if (open >= fnType.length()) { rtn new String[0] }
+    var close = open + 1
+    var depth = 0
+    while (close < fnType.length()) {
+        var c = fnType.charAt(close)
+        if (c == '(') { depth = depth + 1 }
+        if (c == ')') {
+            if (depth == 0) { rtn splitTopLevel(fnType.substring(open + 1, close)) }
+            depth = depth - 1
+        }
+        close = close + 1
+    }
+    rtn new String[0]
+}
+
+fn splitTopLevel(s : String) -> String[] {
+    if (s.length() == 0) { rtn new String[0] }
+    var parts = 1
+    var depth = 0
+    var i = 0
+    while (i < s.length()) {
+        var c = s.charAt(i)
+        if (c == '(' || c == '&' || c == '<') { depth = depth + 1 }
+        if (c == ')' || c == '>') { depth = depth - 1 }
+        if (c == ',' && depth == 0) { parts = parts + 1 }
+        i = i + 1
+    }
+    var out : String[] = new String[parts]
+    var idx = 0
+    var start = 0
+    depth = 0
+    i = 0
+    while (i <= s.length()) {
+        if (i == s.length()) {
+            if (idx < parts) { out[idx] = s.substring(start, i) }
+        } else {
+            var c = s.charAt(i)
+            if (c == '(' || c == '&' || c == '<') { depth = depth + 1 }
+            if (c == ')' || c == '>') { depth = depth - 1 }
+            if (c == ',' && depth == 0) {
+                if (idx < parts) { out[idx] = s.substring(start, i) }
+                idx = idx + 1
+                start = i + 1
+            }
+        }
+        i = i + 1
+    }
+    rtn out
 }
 
 // ---------------------------------------------------------------- 阶段 33d：纯字符串/类型名工具

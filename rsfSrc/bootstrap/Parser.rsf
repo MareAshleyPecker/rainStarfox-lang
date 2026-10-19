@@ -94,7 +94,7 @@ pub enum NodeKind {
     // 阶段 20：接口声明与 `:` 父类型子句（自举同步第 1 刀）
     INTERFACES, INTERFACE, SUPERS, SUPER,
     BLOCK, VAR_DECL, ASSIGN, MEMBER_ASSIGN, INDEX_ASSIGN, RETURN, EXPR_STMT,
-    LABEL, THIS_CALL, SWITCH, CASES, CASE, GOTO, IF, WHILE, FOR, BREAK, CONTINUE,
+    LABEL, THIS_CALL, SWITCH, CASES, CASE, VALUE, GOTO, IF, WHILE, FOR, BREAK, CONTINUE,
     FAIL, TRY,
     ARGS, DIMS,
     INT_LIT, LONG_LIT, FLOAT_LIT, DOUBLE_LIT, STRING_LIT, CHAR_LIT, BOOL_LIT, NULL_LIT,
@@ -170,6 +170,7 @@ pub fn kindName(k : NodeKind) -> String {
         NodeKind.SWITCH : rtn "SWITCH"
         NodeKind.CASES : rtn "CASES"
         NodeKind.CASE : rtn "CASE"
+        NodeKind.VALUE : rtn "VALUE"
         NodeKind.GOTO : rtn "GOTO"
         NodeKind.IF : rtn "IF"
         NodeKind.WHILE : rtn "WHILE"
@@ -2510,6 +2511,52 @@ pub class Parser(tokens : Token[]) {
         rtn n
     }
 
+
+    // 阶段 56：一个 switch 标签的值节点（`VALUE kind=enum enum=Color value=Red` /
+    // `VALUE kind=int value=1` / `VALUE kind=str value=ok`）。形状不对就报错，类型是否
+    // 合法留给 Checker（它知道主体类型）。
+    fn parseSwitchLabelValue() -> Node {
+        if (check("STRING_LIT")) {
+            var st = advance()
+            rtn new Node(NodeKind.VALUE).put("kind", "str").put("value", escapeValue(st.text))
+        }
+        if (check("INT_LIT")) {
+            var it = advance()
+            rtn new Node(NodeKind.VALUE).put("kind", "int").put("value", intLiteralText(it))
+        }
+        if (check("LONG_LIT")) {
+            var itl = advance()
+            rtn new Node(NodeKind.VALUE).put("kind", "int").put("value", longLiteralText(itl))
+        }
+        if (check("MINUS")) {
+            advance()
+            if (!check("INT_LIT") && !check("LONG_LIT")) {
+                failAt(peek(), "switch 分支的负号后面需要一个整数字面量（不支持表达式）")
+                rtn new Node(NodeKind.VALUE).put("kind", "int").put("value", "0")
+            }
+            var it2 = advance()
+            var txt2 = "0"
+            if (it2.kind == "LONG_LIT") {
+                txt2 = Long.toString(-Long.parseLong(dropLast(it2.text)))
+            } else {
+                txt2 = Integer.toString(-Integer.parseInt(it2.text))
+            }
+            rtn new Node(NodeKind.VALUE).put("kind", "int").put("value", txt2)
+        }
+        if (!check("IDENT")) {
+            failAt(peek(), "switch 的块里只能写 '枚举名.值名 : 语句'、整数字面量、字符串字面量或者 'else : 语句'，实际读到 " + peek().text)
+            rtn new Node(NodeKind.VALUE).put("kind", "")
+        }
+        var enumTok = advance()
+        if (!check("DOT")) {
+            failAt(peek(), "'" + enumTok.text + "' 后面需要 '.'——枚举分支写成 枚举名.值名；字面量分支直接写 1 或 \"ok\"")
+            rtn new Node(NodeKind.VALUE).put("kind", "enum").put("enum", escapeValue(enumTok.text))
+        }
+        advance()   // .
+        var valueTok = expect("IDENT", "'" + enumTok.text + ".' 后面需要一个值名（写法是 " + enumTok.text + ".值名）")
+        rtn new Node(NodeKind.VALUE).put("kind", "enum").put("enum", escapeValue(enumTok.text)).put("value", escapeValue(valueTok.text))
+    }
+
     // 枚举分派（阶段 19c；阶段 21 起分支不写 `case`）：`switch (值) { 枚举名.值名 : 语句 / else : 语句 }`
     fn parseSwitch() -> Node {
         var switchTok = advance()   // switch
@@ -2535,7 +2582,7 @@ pub class Parser(tokens : Token[]) {
                     elseBody = parseBody("else")
                 } else {
                     if (check("IDENT") && peek().text == "default") {
-                        failAt(peek(), "rsf 的默认分支写成 'else :'（不是 Java 的 'default :'）")
+                        failAt(peek(), "rsf 的默认分支写成 'else :'（不是 Java 的 'default :'）——语言里已经有一个「都不是就走这里」的关键字了，不用再记一个 'default'")
                     }
                     // 阶段 21：`case` 弃用——分支直接写「枚举名.值名 : 语句」，旧写法照收（提醒一次）
                     var oldCase = false
@@ -2544,22 +2591,23 @@ pub class Parser(tokens : Token[]) {
                         caseTok = advance()
                         oldCase = true
                     }
-                    if (!check("IDENT")) {
-                        if (oldCase) {
-                            failAt(peek(), "'case' 后面需要一个枚举名（现在可以不写 'case'，直接写「枚举名.值名 : 语句」）")
-                        } else {
-                            failAt(peek(), "switch 的块里只能写 '枚举名.值名 : 语句' 或者 'else : 语句'，实际读到 " + peek().text)
-                        }
+                    var cnode = new Node(NodeKind.CASE)
+                    var vcount = 0
+                    var kind = "enum"
+                    if (check("STRING_LIT")) { kind = "str" }
+                    else if (check("INT_LIT") || check("LONG_LIT") || check("MINUS")) { kind = "int" }
+                    var more = true
+                    while (more && !failed) {
+                        var v = parseSwitchLabelValue()
+                        cnode.add(v)
+                        vcount = vcount + 1
+                        if (!matchOne("COMMA")) { more = false }
                     }
-                    var enumTok = expect("IDENT", "分支需要一个枚举名（写法是 枚举名.值名 : 语句）")
-                    expect("DOT", "'" + enumTok.text + "' 后面需要 '.'——分支只接受枚举常量")
-                    var valueTok = expect("IDENT", "'" + enumTok.text + ".' 后面需要一个值名")
+                    cnode.put("kind", kind)
+                    cnode.put("count", intToString(vcount))
                     var caseBody = parseBody("case")
-                    var c = new Node(NodeKind.CASE)
-                        .put("enum", escapeValue(enumTok.text))
-                        .put("value", escapeValue(valueTok.text))
-                    c.add(caseBody)
-                    cases.add(c)
+                    cnode.add(caseBody)
+                    cases.add(cnode)
                     if (oldCase) {
                         System.err.println("[rsf] 警告: 第 " + intToString(caseTok.line) + " 行: 'case' 已弃用（is deprecated since 0.9.0）：switch 的分支直接写 '枚举名.值名 : 语句'，不用再写 'case'")
                     }

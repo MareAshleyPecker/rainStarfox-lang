@@ -57,6 +57,7 @@ import org.example.complie.ast.Stmt
 import org.example.complie.ast.StringLit
 import org.example.complie.ast.SuperCallStmt
 import org.example.complie.ast.SuperExpr
+import org.example.complie.ast.SwitchLabel
 import org.example.complie.ast.SwitchStmt
 import org.example.complie.ast.ThisCallStmt
 import org.example.complie.ast.ThisExpr
@@ -5258,34 +5259,35 @@ class Checker(
      */
     private fun checkSwitch(stmt: SwitchStmt) {
         val subjectType = type(stmt.subject)
-        if (!isEnumType(subjectType)) {
-            throw err(
-                "switch 只能对枚举做（实际是 ${subjectType.rsfName}）：case 只接受枚举常量，" +
-                    "所以被分派的值也必须是一个枚举。" +
-                    if (subjectType.isArithmetic || subjectType.base == RsfBase.STRING ||
-                        subjectType.base == RsfBase.BOOL
-                    ) {
-                        "要按${if (subjectType.base == RsfBase.STRING) "字符串" else "值"}分派就写 if / else if 链"
-                    } else {
-                        "要按对象的性质分派就先把它取成枚举字段再 switch"
-                    },
-                stmt.subject.at,
-            )
-        }
         if (subjectType.nullable) {
             throw err(
-                "switch 的值不能是可空枚举（${subjectType.rsfName}）：枚举常量都不是 null，" +
-                    "而 case 表达不出「null 走哪一支」。先用 '?:' 给个兜底值，或者用 '!!' 解包",
+                "switch 的值不能是可空值（${subjectType.rsfName}）：标签都是常量，" +
+                    "表达不出「null 走哪一支」。先用 '?:' 给个兜底值，或者用 '!!' 解包",
                 stmt.subject.at,
             )
         }
-        val enumName = subjectType.externalName
-            ?: throw err("内部错误：枚举类型没有名字（${subjectType.rsfName}）", stmt.at)
-        val allValues = enumValuesOf(enumName)
+        val isEnum = isEnumType(subjectType)
+        val isInt = subjectType.base == RsfBase.INT && subjectType.arrayDepth == 0 && !subjectType.isPointer
+        val isLong = subjectType.base == RsfBase.LONG && subjectType.arrayDepth == 0 && !subjectType.isPointer
+        val isString = subjectType.base == RsfBase.STRING && subjectType.arrayDepth == 0 && !subjectType.isPointer
+        if (!isEnum && !isInt && !isLong && !isString) {
+            throw err(
+                "switch 只能对枚举、Int、Long、String 做（实际是 ${subjectType.rsfName}）：" +
+                    "标签只接受常量——枚举常量、整数字面量、字符串字面量。" +
+                    "要按其它方式分派就写 if / else if 链",
+                stmt.subject.at,
+            )
+        }
+        val enumName = if (isEnum) {
+            subjectType.externalName
+                ?: throw err("内部错误：枚举类型没有名字（${subjectType.rsfName}）", stmt.at)
+        } else {
+            ""
+        }
+        val allValues = if (isEnum) enumValuesOf(enumName) else emptyList()
 
         val seen = LinkedHashMap<String, SourceLine>()
         for (c in stmt.cases) {
-            // 阶段 21：`case` 弃用——旧写法照收，但每个分支提醒一次（位置在 AST 里记着）
             val deprecatedCaseAt = c.deprecatedCaseAt
             if (deprecatedCaseAt != null) {
                 diagnostics.add(
@@ -5300,38 +5302,86 @@ class Checker(
                     ),
                 )
             }
-            if (c.enumName != enumName) {
-                throw err(
-                    if (enumTable.containsKey(c.enumName)) {
-                        "case 写的是 ${c.enumName} 的常量，但 switch 的值是 ${enumName}——" +
-                            "case 只能匹配同一个枚举的常量（跨枚举的值永远不相等，" +
-                            "编译器直接拦住比运行期悄悄不命中好）"
-                    } else {
-                        "case 里的 '${c.enumName}' 不是一个枚举类型" +
-                            "（switch 的值是 ${enumName}）" + enumValueList(enumName)
-                    },
-                    c.at,
-                )
-            }
-            if (allValues.none { it.name == c.valueName }) {
-                throw err(
-                    "枚举 '${enumName}' 里没有值 '${c.valueName}'" + enumValueList(enumName),
-                    c.at,
-                )
-            }
-            val prev = seen.put(c.valueName, c.at)
-            if (prev != null) {
-                throw err(
-                    "case ${enumName}.${c.valueName} 重复了（第 ${prev.line} 行已经匹配过这个值）。" +
-                        "同一个值有两个分支时该走哪个没有定义——合并成一支，" +
-                        "或者把两个值的处理放进同一个分支的 if 里",
-                    c.at,
-                )
+            for (label in c.labels) {
+                val key = when {
+                    label is SwitchLabel.EnumConst -> {
+                        if (!isEnum) {
+                            throw err(
+                                "这个 switch 的值是 ${subjectType.rsfName}，标签不能写枚举常量 " +
+                                    "'${label.enumName}.${label.valueName}'：它只接受" +
+                                    if (isString) "字符串字面量" else "整数字面量",
+                                c.at,
+                            )
+                        }
+                        if (label.enumName != enumName) {
+                            throw err(
+                                if (enumTable.containsKey(label.enumName)) {
+                                    "case 写的是 ${label.enumName} 的常量，但 switch 的值是 ${enumName}——" +
+                                        "case 只能匹配同一个枚举的常量（跨枚举的值永远不相等，" +
+                                        "编译器直接拦住比运行期悄悄不命中好）"
+                                } else {
+                                    "case 里的 '${label.enumName}' 不是一个枚举类型" +
+                                        "（switch 的值是 ${enumName}）" + enumValueList(enumName)
+                                },
+                                c.at,
+                            )
+                        }
+                        if (allValues.none { it.name == label.valueName }) {
+                            throw err(
+                                "枚举 '${enumName}' 里没有值 '${label.valueName}'" + enumValueList(enumName),
+                                c.at,
+                            )
+                        }
+                        "e:" + label.valueName
+                    }
+
+                    label is SwitchLabel.IntConst -> {
+                        if (!isInt && !isLong) {
+                            throw err(
+                                "这个 switch 的值是 ${subjectType.rsfName}，标签不能写整数字面量 " +
+                                    "${label.value}：它只接受" +
+                                    if (isEnum) "枚举常量（${enumName}.值名）" else "字符串字面量",
+                                c.at,
+                            )
+                        }
+                        if (isInt && (label.value < Int.MIN_VALUE || label.value > Int.MAX_VALUE)) {
+                            throw err(
+                                "标签 ${label.value} 超出 Int 范围：" +
+                                    "switch 的值是 Int，标签也得是 Int（要更大的值就把 switch 的值改成 Long）",
+                                c.at,
+                            )
+                        }
+                        "i:" + label.value
+                    }
+
+                    label is SwitchLabel.StringConst -> {
+                        if (!isString) {
+                            throw err(
+                                "这个 switch 的值是 ${subjectType.rsfName}，标签不能写字符串字面量 " +
+                                    "\"${label.value}\"：它只接受" +
+                                    if (isEnum) "枚举常量（${enumName}.值名）" else "整数字面量",
+                                c.at,
+                            )
+                        }
+                        "s:" + label.value
+                    }
+
+                    else -> throw err("内部错误：不认识的 switch 标签", c.at)
+                }
+                val prev = seen.put(key, c.at)
+                if (prev != null) {
+                    throw err(
+                        "switch 的标签 ${labelText(label)} 重复了（第 ${prev.line} 行已经匹配过这个值）。" +
+                            "同一个值有两个分支时该走哪个没有定义——合并成一支，" +
+                            "或者把两个值的处理放进同一个分支的 if 里",
+                        c.at,
+                    )
+                }
             }
         }
 
-        if (stmt.elseBody == null) {
-            val missing = allValues.filter { v -> !seen.containsKey(v.name) }
+        if (isEnum && stmt.elseBody == null) {
+            val missing = allValues.filter { v -> !seen.containsKey("e:" + v.name) }
             if (missing.isNotEmpty()) {
                 throw err(
                     "switch 没有 else 分支，就必须覆盖 ${enumName} 的每一个值，缺了：" +
@@ -5344,6 +5394,13 @@ class Checker(
 
         for (c in stmt.cases) checkBlock(c.body, pushScope = true)
         stmt.elseBody?.let { checkBlock(it, pushScope = true) }
+    }
+
+    /** 报错里用的标签写法（`Color.Red` / `1` / `"ok"`）。 */
+    private fun labelText(label: SwitchLabel): String = when (label) {
+        is SwitchLabel.EnumConst -> "${label.enumName}.${label.valueName}"
+        is SwitchLabel.IntConst -> label.value.toString()
+        is SwitchLabel.StringConst -> "\"" + label.value + "\""
     }
 
     // ------------------------------------------------------------------ 数组（阶段 13）

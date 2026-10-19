@@ -2804,20 +2804,23 @@ pub class FieldRef(owner : String, name : String, desc : String, type : BType, i
 // 用户类方法里 `裸字段名` 读出来时也走 FieldRef（thisRecv = true）
 
 // switch 的一支
-pub class SwCase(enumName : String, valueName : String, pad : Label, body : Label) {
+pub class SwCase(enumName : String, valueName : String, padIdx : Int, body : Label) {
     var enumName : String = enumName
     var valueName : String = valueName
-    var pad : Label = pad
+    var padIdx : Int = padIdx
     var body : Label = body
 }
 
-// 一个 switch 的发射信息
-pub class SwInfo(subjectType : String, cases : SwCase[], caseCount : Int, hasDef : Bool, def : Label) {
+// 一个 switch 的发射信息（阶段 56：一个分支可以有多个标签，共用同一个跳板 `pads[padIdx]`）
+pub class SwInfo(subjectType : String, cases : SwCase[], caseCount : Int, hasDef : Bool, def : Label, pads : Label[], padCount : Int, bodies : Label[]) {
     var subjectType : String = subjectType
     var cases : SwCase[] = cases
     var caseCount : Int = caseCount
     var hasDef : Bool = hasDef
     var def : Label = def
+    var pads : Label[] = pads
+    var padCount : Int = padCount
+    var bodies : Label[] = bodies
 }
 
 // ============================================================ 用户类 / 枚举模型
@@ -4044,6 +4047,10 @@ pub class Walker(g : Gen) {
         if (k == NodeKind.SWITCH) {
             var subject = st.children[0]
             var stype = walkExpr(subject, sc)
+            if (stype.base == "Int" || stype.base == "Long" || stype.base == "String") {
+                g.bad("JVM 字节码后端还不支持对 Int / String 的 switch：只有枚举分派能编成字节码。用 'rsf run' 跑，或者 'rsf build x.rsf --c' 出 C，也可以先写成 if / else if 链")
+                rtn
+            }
             if (stype.base != "external" || g.findEnum(stype.name) == null) {
                 g.bad("switch 的表达式不是枚举（" + stype.desc() + "）")
                 rtn
@@ -4052,36 +4059,58 @@ pub class Walker(g : Gen) {
             var hasElse = propBool(st, "hasElse")
             var lEnd = new Label()
             var lDef = new Label()
-            var cls : SwCase[] = new SwCase[cases.childCount]
+            var total = 0
+            var pi = 0
+            while (pi < cases.childCount) {
+                var pc = propInt(cases.children[pi], "count")
+                if (pc < 1) { pc = 1 }
+                total = total + pc
+                pi = pi + 1
+            }
+            var cls : SwCase[] = new SwCase[total]
+            var pads : Label[] = new Label[cases.childCount]
+            var bodies : Label[] = new Label[cases.childCount]
             var i = 0
+            var ci0 = 0
             while (i < cases.childCount) {
                 var cs = cases.children[i]
-                var en = prop(cs, "enum")
-                var vl = prop(cs, "value")
-                var ei = g.findEnum(en)
-                if (ei == null || !ei!!.has(vl)) {
-                    g.bad("switch 分支的枚举常量 " + en + "." + vl)
-                    rtn
+                var cnt = propInt(cs, "count")
+                if (cnt < 1) { cnt = 1 }
+                pads[i] = new Label()
+                bodies[i] = new Label()
+                var j = 0
+                while (j < cnt) {
+                    var vn = cs.children[j]
+                    var en = prop(vn, "enum")
+                    var vl = prop(vn, "value")
+                    var ei = g.findEnum(en)
+                    if (ei == null || !ei!!.has(vl)) {
+                        g.bad("switch 分支的枚举常量 " + en + "." + vl)
+                        rtn
+                    }
+                    if (en != stype.name) {
+                        g.bad("switch 分支枚举类型不一致（" + en + " / " + stype.name + "）")
+                        rtn
+                    }
+                    cls[ci0] = new SwCase(en, vl, i, bodies[i])
+                    ci0 = ci0 + 1
+                    j = j + 1
                 }
-                if (en != stype.name) {
-                    g.bad("switch 分支枚举类型不一致（" + en + " / " + stype.name + "）")
-                    rtn
-                }
-                cls[i] = new SwCase(en, vl, new Label(), new Label())
                 i = i + 1
             }
-            g.putSw(st, new SwInfo(stype.name, cls, cases.childCount, hasElse, lDef))
+            g.putSw(st, new SwInfo(stype.name, cls, total, hasElse, lDef, pads, cases.childCount, bodies))
             var si = new Ins("switch")
             si.node = st
             si.expr = subject
             emit(si)
             var ci = 0
             while (ci < cases.childCount) {
-                var cbody = cases.children[ci].children[0]
+                var cnode = cases.children[ci]
+                var cbody = cnode.children[cnode.childCount - 1]
                 // 分支体标签的行号属于**分支体**（Kotlin 那边 ILabel.at 就是它），不是 switch 那一行
                 if (cbody.line > 0) { curLine = cbody.line }
                 var lb = new Ins("label")
-                lb.lbl = cls[ci].body
+                lb.lbl = bodies[ci]
                 emit(lb)
                 walkStmt(cbody, sc)
                 var gt = new Ins("goto")
@@ -6702,7 +6731,7 @@ fn emitIns(g : Gen, w : Walker, mv : MethodVisitor, i : Int, off : Int) -> void 
             var c = si.cases[ci2]
             mv.visitInsn(89)
             mv.visitFieldInsn(178, c.enumName, c.valueName, "L" + c.enumName + ";")
-            mv.visitJumpInsn(165, c.pad)
+            mv.visitJumpInsn(165, si.pads[c.padIdx])
             ci2 = ci2 + 1
         }
         mv.visitInsn(87)
@@ -6716,10 +6745,12 @@ fn emitIns(g : Gen, w : Walker, mv : MethodVisitor, i : Int, off : Int) -> void 
             mv.visitInsn(191)
         }
         ci2 = 0
-        while (ci2 < si.caseCount) {
-            mv.visitLabel(si.cases[ci2].pad)
+        while (ci2 < si.padCount) {
+            var bi2 = 0
+            while (bi2 < si.caseCount && si.cases[bi2].padIdx != ci2) { bi2 = bi2 + 1 }
+            mv.visitLabel(si.pads[ci2])
             mv.visitInsn(87)
-            mv.visitJumpInsn(167, si.cases[ci2].body)
+            if (bi2 < si.caseCount) { mv.visitJumpInsn(167, si.cases[bi2].body) }
             ci2 = ci2 + 1
         }
         rtn

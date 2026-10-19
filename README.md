@@ -88,7 +88,7 @@ rsf build hello.rsf --c -o out
 gcc out\hello.c -o out\hello.exe
 ```
 
-- 已支持：Int / Long / Bool / String、一维数组、类（字段 / 实例方法 / `stc` 静态方法 / 主次构造 / 单继承与覆盖，虚表分派）、枚举与 `switch`、指针（`T*` / `&x` / `*p` / `*p = v`）、顶层函数、`if` / `while` / `for` / 递归。
+- 已支持：Int / Long / Bool / String、一维数组、类（字段 / 实例方法 / `stc` 静态方法 / 主次构造 / 单继承与覆盖，虚表分派）、枚举与 `switch`（Int/Long/String 字面量、一个分支可写多个值；字节码后端只编枚举分派）、指针（`T*` / `&x` / `*p` / `*p = v`）、顶层函数、`if` / `while` / `for` / 递归。
 - 还没接：接口、JDK 父类、泛型、多维数组、浮点、错误返回——遇到会报 `error[native]`。
 - 判据：解释器 stdout vs 原生 exe stdout 逐字节相同（`bash build/verify52/run-probes.sh all`，10 份语料）。
 

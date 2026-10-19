@@ -31,6 +31,7 @@ import org.example.complie.ast.Stmt
 import org.example.complie.ast.StringLit
 import org.example.complie.ast.SuperCallStmt
 import org.example.complie.ast.SuperExpr
+import org.example.complie.ast.SwitchLabel
 import org.example.complie.ast.SwitchStmt
 import org.example.complie.ast.ThisCallStmt
 import org.example.complie.ast.ThisExpr
@@ -78,6 +79,9 @@ class CBackend(private val model: SemanticModel) {
 
     /** 虚方法槽位：`名字/参数个数` → 下标。整份程序只有这一张表，类与父类共用。 */
     private val slots = LinkedHashMap<String, Int>()
+
+    /** `switch` 的被分派值落在临时变量里，编号保证同一函数内不重名。 */
+    private var switchSeq = 0
 
     fun emit(): String {
         checkProgram()
@@ -534,24 +538,41 @@ class CBackend(private val model: SemanticModel) {
 
     // ------------------------------------------------------------------ 表达式
 
-    /** `switch` 只认枚举分派、没有 fallthrough ⇒ 摊成 if / else if 链。 */
+    /**
+     * `switch` 没有 fallthrough ⇒ 摊成 if / else if 链（阶段 56 起支持枚举、Int/Long、
+     * String 三种主体）。被分派的值先落进一个临时变量，保证 `switch (f())` 只求值一次。
+     */
     private fun switchStmt(s: SwitchStmt, indent: Int): String {
         val sb = StringBuilder()
+        val subjectType = model.typeOf(s.subject)
+        val tmp = "sw_" + (switchSeq++)
+        val isLong = subjectType.base == RsfBase.LONG
+        sb.append(pad(indent)).append("{\n")
+        sb.append(pad(indent + 1)).append(cType(subjectType)).append(' ').append(tmp)
+            .append(" = ").append(expr(s.subject)).append(";\n")
         s.cases.forEachIndexed { i, c ->
-            sb.append(pad(indent)).append(if (i == 0) "if" else "else if").append(" (")
-                .append(expr(s.subject)).append(" == rsf_val_").append(c.enumName).append('_').append(c.valueName)
-                .append(") {\n")
-            for (inner in c.body.statements) sb.append(stmt(inner, indent + 1))
-            sb.append(pad(indent)).append("}\n")
+            val cond = c.labels.joinToString(" || ") { labelCond(it, tmp, isLong) }
+            sb.append(pad(indent + 1)).append(if (i == 0) "if" else "else if").append(" (").append(cond).append(") {\n")
+            for (inner in c.body.statements) sb.append(stmt(inner, indent + 2))
+            sb.append(pad(indent + 1)).append("}\n")
         }
         val elseBody = s.elseBody
         if (elseBody != null) {
-            sb.append(pad(indent)).append("else {\n")
-            for (inner in elseBody.statements) sb.append(stmt(inner, indent + 1))
-            sb.append(pad(indent)).append("}\n")
+            sb.append(pad(indent + 1)).append(if (s.cases.isEmpty()) "{" else "else {").append("\n")
+            for (inner in elseBody.statements) sb.append(stmt(inner, indent + 2))
+            sb.append(pad(indent + 1)).append("}\n")
         }
+        sb.append(pad(indent)).append("}\n")
         return sb.toString()
     }
+
+    /** 一个 `switch` 标签的比较表达式（`tmp` 是保存被分派值的临时变量）。 */
+    private fun labelCond(label: SwitchLabel, tmp: String, isLong: Boolean): String =
+        when (label) {
+            is SwitchLabel.EnumConst -> "$tmp == rsf_val_${label.enumName}_${label.valueName}"
+            is SwitchLabel.IntConst -> if (isLong) "($tmp == ${label.value}LL)" else "($tmp == ${label.value})"
+            is SwitchLabel.StringConst -> "rsf_str_eq($tmp, ${stringLit(label.value)})"
+        }
 
     private fun expr(e: Expr): String = when (e) {
         is IntLit -> e.value.toString()

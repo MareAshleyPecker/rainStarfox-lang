@@ -53,6 +53,7 @@ import org.example.complie.ast.StringLit
 import org.example.complie.ast.SuperCallStmt
 import org.example.complie.ast.SuperExpr
 import org.example.complie.ast.SwitchCase
+import org.example.complie.ast.SwitchLabel
 import org.example.complie.ast.SwitchStmt
 import org.example.complie.ast.ThisCallStmt
 import org.example.complie.ast.ThisExpr
@@ -463,7 +464,29 @@ object AstDump {
     }
 
     private fun switchCase(out: StringBuilder, depth: Int, c: SwitchCase) {
-        line(out, depth, "CASE", "enum" to esc(c.enumName), "value" to esc(c.valueName))
+        val kind = when (c.labels.firstOrNull()) {
+            is SwitchLabel.EnumConst -> "enum"
+            is SwitchLabel.IntConst -> "int"
+            is SwitchLabel.StringConst -> "str"
+            null -> ""
+        }
+        line(out, depth, "CASE", "kind" to kind, "count" to c.labels.size.toString())
+        for (label in c.labels) {
+            when (label) {
+                is SwitchLabel.EnumConst -> line(
+                    out, depth + 1, "VALUE",
+                    "kind" to "enum", "enum" to esc(label.enumName), "value" to esc(label.valueName),
+                )
+                is SwitchLabel.IntConst -> line(
+                    out, depth + 1, "VALUE",
+                    "kind" to "int", "value" to label.value.toString(),
+                )
+                is SwitchLabel.StringConst -> line(
+                    out, depth + 1, "VALUE",
+                    "kind" to "str", "value" to esc(label.value),
+                )
+            }
+        }
         block(out, depth + 1, c.body)
     }
 

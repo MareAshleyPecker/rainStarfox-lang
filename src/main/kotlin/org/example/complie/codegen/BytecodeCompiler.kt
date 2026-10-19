@@ -2580,16 +2580,28 @@ class BytecodeCompiler(
                 //   校验器当场拒绝（VerifyError: Instruction type does not match stack map）。
                 //   跳板只有两条指令（POP; GOTO），但它是让栈在分支入口处干净的关键。
                 is ISwitch -> {
-                    val enumName = model.typeOf(instr.stmt.subject).simpleExternalName
+                    // 阶段 56：Int / String 主体的 switch 还没在字节码后端接（前端、解释器、
+                    // C 后端都已支持）。像指针一样**显式拒绝**，而不是悄悄编错。
+                    val firstLabel = instr.stmt.cases.firstOrNull()?.labels?.firstOrNull()
+                    if (firstLabel != null && firstLabel !is org.example.complie.ast.SwitchLabel.EnumConst) {
+                        throw org.example.complie.diag.RsfError(
+                            "codegen",
+                            "JVM 字节码后端还不支持对 Int / String 的 switch：只有枚举分派能编成字节码。" +
+                                "用 'rsf run' 跑，或者 'rsf build x.rsf --c' 出 C，也可以先写成 if / else if 链",
+                        )
+                    }
                     val pads = instr.stmt.cases.map { Label() }
                     emitExpr(ctx, instr.stmt.subject)
                     for ((i, c) in instr.stmt.cases.withIndex()) {
-                        mv.visitInsn(DUP)
-                        mv.visitFieldInsn(
-                            GETSTATIC, classInternalName(c.enumName), c.valueName,
-                            enumDescriptorOf(c.enumName),
-                        )
-                        mv.visitJumpInsn(IF_ACMPEQ, pads[i])
+                        for (raw in c.labels) {
+                            val label = raw as org.example.complie.ast.SwitchLabel.EnumConst
+                            mv.visitInsn(DUP)
+                            mv.visitFieldInsn(
+                                GETSTATIC, classInternalName(label.enumName), label.valueName,
+                                enumDescriptorOf(label.enumName),
+                            )
+                            mv.visitJumpInsn(IF_ACMPEQ, pads[i])
+                        }
                     }
                     mv.visitInsn(POP)
                     val fallback = instr.defaultTarget
@@ -2601,7 +2613,7 @@ class BytecodeCompiler(
                         // 解释器那边抛的是同一个消息的 RsfFailure——两端的 catch 与输出因此一致。
                         mv.visitTypeInsn(NEW, "java/lang/RuntimeException")
                         mv.visitInsn(DUP)
-                        mv.visitLdcInsn(EnumRuntime.noMatchFailure(enumName))
+                        mv.visitLdcInsn(EnumRuntime.noMatchFailure(model.typeOf(instr.stmt.subject).simpleExternalName))
                         mv.visitMethodInsn(
                             INVOKESPECIAL, "java/lang/RuntimeException", "<init>",
                             "(Ljava/lang/String;)V", false,

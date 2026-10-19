@@ -1,0 +1,32 @@
+fn pick(n : Int) -> String {
+    switch (n) {
+        1, 2, 3 : { rtn "small" }
+        -7 : { rtn "neg" }
+        else : rtn "big"
+    }
+}
+
+fn tag(s : String) -> Int {
+    switch (s) {
+        "ok" : rtn 0
+        "bad", "worse" : {
+            var t = 1
+            rtn t
+        }
+    }
+    rtn 9
+}
+
+fn wide(v : Long) -> Int {
+    switch (v) {
+        1L : { rtn 1 }
+        -2L, 3L : { rtn 2 }
+        else : rtn 3
+    }
+}
+
+fn main() {
+    println(pick(2))
+    println(tag("zzz"))
+    println(wide(-2L))
+}

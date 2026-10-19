@@ -3420,20 +3420,55 @@ pub class Interp(prog : Node) {
         var i = 0
         while (i < cases.childCount) {
             var cnode = cases.children[i]
-            var en = findEnum(attr(cnode, "enum"))
-            if (en != null) {
-                var want = en!!.valueOf(attr(cnode, "value"))
-                if (want != null) {
-                    if (subject == want!!) { rtn blk(kid(cnode, 0), new Env(env))!! }
-                }
+            var cnt = 0
+            if (attr(cnode, "count").length() > 0) { cnt = parseInt(attr(cnode, "count")) ?: 0 }
+            var j = 0
+            var hit = false
+            while (j < cnt) {
+                if (switchLabelHits(cnode.children[j], subject)) { hit = true }
+                j = j + 1
             }
+            if (hit) { rtn blk(cnode.children[cnt], new Env(env))!! }
             i = i + 1
         }
         if (attrBool(n, "hasElse")) { rtn blk(kid(n, 2), new Env(env))!! }
+        var isEnum = false
         var enumName = ""
-        if (cases.childCount > 0) { enumName = attr(cases.children[0], "enum") }
+        if (cases.childCount > 0) {
+            var c0 = cases.children[0]
+            if (attr(c0, "kind") == "enum") {
+                isEnum = true
+                if (c0.childCount > 0) { enumName = attr(c0.children[0], "enum") }
+            }
+        }
+        // Int / String 主体没写 else：一个都没命中就什么都不做（Kotlin 的 when 同义）
+        if (!isEnum) { rtn 0 }
         fail switchNoMatchFailure(enumName)
         rtn 0
+    }
+
+    // 阶段 56：一个 switch 标签是否命中。枚举比引用（同 Kotlin 解释器的 `===`），
+    // Int/Long 比十进制文本（两边都是规范化过的），String 比内容。
+    fn switchLabelHits(v : Node, subject : Val) -> Bool {
+        var kind = attr(v, "kind")
+        if (kind == "enum") {
+            var en = findEnum(attr(v, "enum"))
+            if (en == null) { rtn false }
+            var want = en!!.valueOf(attr(v, "value"))
+            if (want == null) { rtn false }
+            rtn subject == want!!
+        }
+        if (kind == "int") {
+            if (subject.k == Kind.INTV || subject.k == Kind.LONGV) {
+                rtn (render(subject) ?: "") == attr(v, "value")
+            }
+            rtn false
+        }
+        if (kind == "str") {
+            if (subject.k != Kind.STRV) { rtn false }
+            rtn subject.sv == unescapeValue(attr(v, "value"))
+        }
+        rtn false
     }
 
     // `try` / `catch`：接住的**只有真错误**，控制流信号一律原样往上传

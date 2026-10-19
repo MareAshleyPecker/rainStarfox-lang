@@ -6223,74 +6223,81 @@ class RsfTest {
 
     @Test
     fun `对非枚举做 switch 报错`() {
-        // 主体不是枚举：case 写得合法（枚举常量），错在**被分派的值**上，
-        // 所以报错必须落在 checker 的「只能对枚举做」上，而且要说清实际是什么类型。
-        val intSubject = assertFailsWith<RsfError> {
+        // 主体只能是枚举 / Int / Long / String：双精度与布尔要被拦住，并说清实际类型。
+        val doubleSubject = assertFailsWith<RsfError> {
             Rsf.analyze(
                 source(
-                    switchPrelude +
-                        "fn main() -> void {\n" +
-                        "    var n = 1\n" +
-                        "    switch (n) {\n" +
-                        "        TokenKind.IDENT : println(\"i\")\n" +
-                        "        else : println(\"其他\")\n" +
-                        "    }\n" +
-                        "    rtn\n}\n",
+                    switchPrelude + """
+                    fn main() -> void {
+                        var n = 1.5
+                        switch (n) {
+                            1 : println("一")
+                            else : println("其他")
+                        }
+                        rtn
+                    }
+                    """.trimIndent() + "\n",
                 ),
             )
         }
-        assertTrue(intSubject.detail.contains("只能对枚举做"), intSubject.detail)
-        assertTrue(intSubject.detail.contains("Int"), intSubject.detail)
+        assertTrue(doubleSubject.detail.contains("只能对枚举"), doubleSubject.detail)
+        assertTrue(doubleSubject.detail.contains("Double"), doubleSubject.detail)
 
-        val stringSubject = assertFailsWith<RsfError> {
+        val boolSubject = assertFailsWith<RsfError> {
             Rsf.analyze(
                 source(
-                    switchPrelude +
-                        "fn main() -> void {\n" +
-                        "    var s = \"a\"\n" +
-                        "    switch (s) {\n" +
-                        "        TokenKind.IDENT : println(\"i\")\n" +
-                        "        else : println(\"其他\")\n" +
-                        "    }\n" +
-                        "    rtn\n}\n",
+                    switchPrelude + """
+                    fn main() -> void {
+                        var b = true
+                        switch (b) {
+                            1 : println("一")
+                            else : println("其他")
+                        }
+                        rtn
+                    }
+                    """.trimIndent() + "\n",
                 ),
             )
         }
-        assertTrue(stringSubject.detail.contains("只能对枚举做"), stringSubject.detail)
-        assertTrue(stringSubject.detail.contains("String"), stringSubject.detail)
+        assertTrue(boolSubject.detail.contains("只能对枚举"), boolSubject.detail)
+        assertTrue(boolSubject.detail.contains("Bool"), boolSubject.detail)
 
-        // case 后面只收枚举常量：写表达式要给出「不支持」的提示（这里是语法层拦住）
-        val notConstant = assertFailsWith<RsfError> {
-            Rsf.parse(
+        // 枚举主体写整数字面量：检查层拦住并提示只收枚举常量
+        val enumWithInt = assertFailsWith<RsfError> {
+            Rsf.analyze(
                 source(
-                    switchPrelude +
-                        "fn main() -> void {\n" +
-                        "    var k = TokenKind.IDENT\n" +
-                        "    switch (k) {\n" +
-                        "        case 1 : println(\"一\")\n" +
-                        "    }\n" +
-                        "    rtn\n}\n",
+                    switchPrelude + """
+                    fn main() -> void {
+                        var k = TokenKind.IDENT
+                        switch (k) {
+                            1 : println("一")
+                        }
+                        rtn
+                    }
+                    """.trimIndent() + "\n",
                 ),
             )
         }
-        assertTrue(notConstant.detail.contains("枚举名"), notConstant.detail)
+        assertTrue(enumWithInt.detail.contains("枚举常量"), enumWithInt.detail)
 
-        // 可空枚举也不行：case 表达不出 null 走哪一支
+        // 可空枚举也不行：标签表达不出 null 走哪一支
         val nullable = assertFailsWith<RsfError> {
             Rsf.analyze(
                 source(
-                    switchPrelude +
-                        "fn main() -> void {\n" +
-                        "    var k : ?TokenKind = null\n" +
-                        "    switch (k) {\n" +
-                        "        TokenKind.IDENT : println(\"i\")\n" +
-                        "        else : println(\"其他\")\n" +
-                        "    }\n" +
-                        "    rtn\n}\n",
+                    switchPrelude + """
+                    fn main() -> void {
+                        var k : ?TokenKind = null
+                        switch (k) {
+                            TokenKind.IDENT : println("i")
+                            else : println("其他")
+                        }
+                        rtn
+                    }
+                    """.trimIndent() + "\n",
                 ),
             )
         }
-        assertTrue(nullable.detail.contains("不能是可空枚举"), nullable.detail)
+        assertTrue(nullable.detail.contains("不能是可空值"), nullable.detail)
     }
 
     @Test
@@ -6463,6 +6470,81 @@ class RsfTest {
             normalize(runCompiledClasses(program, "RsfSwitchDispatch")),
             "自举风格的 10 路分派必须两端逐字节一致",
         )
+    }
+
+    @Test
+    fun `switch 支持整数字面量与多值分支`() {
+        // 多值分支、负数标签、Long 主体、没写 else 的 String 主体（落空就走到 switch 之后）
+        val program = """
+        fn pick(n : Int) -> String {
+            switch (n) {
+                1, 2, 3 : { rtn "small" }
+                -7 : { rtn "neg" }
+                else : { rtn "big" }
+            }
+        }
+
+        fn wide(v : Long) -> Int {
+            switch (v) {
+                1L : { rtn 1 }
+                -2L, 3L : { rtn 2 }
+                else : { rtn 3 }
+            }
+        }
+
+        fn tag(s : String) -> Int {
+            switch (s) {
+                "ok" : { rtn 0 }
+                "bad", "worse" : {
+                    var t = 1
+                    rtn t
+                }
+            }
+            rtn 9
+        }
+
+        fn main() {
+            println(pick(1))
+            println(pick(3))
+            println(pick(-7))
+            println(pick(42))
+            println(wide(-2L))
+            println(wide(3L))
+            println(wide(9L))
+            println(tag("ok"))
+            println(tag("worse"))
+            println(tag("zzz"))
+        }
+        """.trimIndent() + "\n"
+        assertEquals(
+            listOf("small", "small", "neg", "big", "2", "2", "3", "0", "1", "9"),
+            lines(runInterpreted(program)),
+        )
+    }
+
+    @Test
+    fun `switch 的 Int 与 String 分支在字节码后端显式报错`() {
+        // 字节码只对枚举分派（IF_ACMPEQ），Int/String 分支会编成「比较 + 跳转」——
+        // 那是另一套跳板代码，暂时不做，宁可报错也不要悄悄编错。
+        val text = """
+        fn main() {
+            var n = 1
+            switch (n) {
+                1 : { println("一") }
+                else : { println("其它") }
+            }
+        }
+        """.trimIndent() + "\n"
+        val model = Rsf.analyze(source(text))
+        val dir = File.createTempFile("rsf-test", "").let {
+            it.delete()
+            it.mkdirs()
+            it
+        }
+        val error = assertFailsWith<RsfError> {
+            Rsf.build(model, source(text), "RsfSwitchIntJvm", dir)
+        }
+        assertTrue(error.message!!.contains("还不支持对 Int / String 的 switch"), error.message)
     }
 
     @Test
@@ -7130,6 +7212,35 @@ class RsfTest {
                     switch (c) { Color.RED : rtn }
                     switch (c) { ; ; Color.RED : rtn ; }
                     rtn
+                }
+            """.trimIndent() + "\n",
+
+            "switch 字面量标签" to """
+                fn pick(n : Int) -> String {
+                    switch (n) {
+                        1, 2, 3 : { rtn "small" }
+                        -7 : { rtn "neg" }
+                        else : rtn "big"
+                    }
+                }
+
+                fn tag(s : String) -> Int {
+                    switch (s) {
+                        "ok" : rtn 0
+                        "bad", "worse" : {
+                            var t = 1
+                            rtn t
+                        }
+                    }
+                    rtn 9
+                }
+
+                fn wide(v : Long) -> Int {
+                    switch (v) {
+                        1L : { rtn 1 }
+                        -2L, 3L : { rtn 2 }
+                        else : rtn 3
+                    }
                 }
             """.trimIndent() + "\n",
 
