@@ -13,6 +13,7 @@ import org.example.complie.ast.DerefAssignStmt
 import org.example.complie.ast.EnumDecl
 import org.example.complie.ast.Expr
 import org.example.complie.ast.ExprStmt
+import org.example.complie.ast.FieldDecl
 import org.example.complie.ast.ForStmt
 import org.example.complie.ast.FuncDecl
 import org.example.complie.ast.IfExpr
@@ -28,7 +29,10 @@ import org.example.complie.ast.NewExpr
 import org.example.complie.ast.ReturnStmt
 import org.example.complie.ast.Stmt
 import org.example.complie.ast.StringLit
+import org.example.complie.ast.SuperCallStmt
+import org.example.complie.ast.SuperExpr
 import org.example.complie.ast.SwitchStmt
+import org.example.complie.ast.ThisCallStmt
 import org.example.complie.ast.ThisExpr
 import org.example.complie.ast.TypeRef
 import org.example.complie.ast.UnaryExpr
@@ -40,6 +44,8 @@ import org.example.complie.lexing.TokenKind
 import org.example.complie.sema.RsfBase
 import org.example.complie.sema.RsfType
 import org.example.complie.sema.SemanticModel
+import org.example.complie.sema.SuperCall
+import org.example.complie.sema.SuperDelegation
 import org.example.complie.sema.UserMember
 
 /**
@@ -64,9 +70,14 @@ class CBackend(private val model: SemanticModel) {
 
     private val classes: Map<String, ClassDecl> = model.classModel.classes
     private val ctorNames = HashMap<FuncDecl, String>()
+    private val ctorInitNames = HashMap<FuncDecl, String>()
     private val methodNames = HashMap<FuncDecl, String>()
     private val defaultCtorNames = HashMap<ClassDecl, String>()
+    private val defaultInitNames = HashMap<ClassDecl, String>()
     private var currentClass: ClassDecl? = null
+
+    /** 虚方法槽位：`名字/参数个数` → 下标。整份程序只有这一张表，类与父类共用。 */
+    private val slots = LinkedHashMap<String, Int>()
 
     fun emit(): String {
         checkProgram()
@@ -77,9 +88,20 @@ class CBackend(private val model: SemanticModel) {
         for (cls in classes.values) sb.append(struct(cls))
         for (fn in model.functions.sortedBy { it.name }) sb.append(protoTop(fn)).append(";\n")
         for (cls in classes.values) {
-            for (fn in cls.methods) sb.append(protoMember(cls, fn)).append(";\n")
+            for (fn in cls.methods) {
+                sb.append(protoMember(cls, fn)).append(";\n")
+                if (fn.isConstructor) sb.append(protoConstructor(cls, fn)).append(";\n")
+            }
             val defaultCtor = defaultCtorNames[cls]
-            if (defaultCtor != null) sb.append("rsf_cls_${cls.name}* $defaultCtor(void);"); sb.append(10.toChar())
+            if (defaultCtor != null) {
+                sb.append("void ${defaultInitNames[cls]}(void* self);").append(NL)
+                sb.append("void* $defaultCtor(void);").append(NL)
+            }
+        }
+        sb.append('\n')
+        for (cls in classes.values) {
+            val table = vtable(cls)
+            if (table != null) sb.append(table)
         }
         sb.append('\n')
         for (fn in model.functions.sortedBy { it.name }) sb.append(definition(fn, null))
@@ -104,6 +126,7 @@ class CBackend(private val model: SemanticModel) {
             var ctorIndex = 0
             for (fn in cls.methods) {
                 if (fn.isConstructor) {
+                    ctorInitNames[fn] = "rsf_init_${cls.name}_$ctorIndex"
                     ctorNames[fn] = "rsf_new_${cls.name}_$ctorIndex"
                     ctorIndex++
                 } else if (fn.isStatic) {
@@ -112,8 +135,22 @@ class CBackend(private val model: SemanticModel) {
                     methodNames[fn] = "rsf_m_${cls.name}_${fn.name}"
                 }
             }
-            if (ctorIndex == 0) defaultCtorNames[cls] = "rsf_new_${cls.name}_0"
+            if (ctorIndex == 0) {
+                defaultInitNames[cls] = "rsf_init_${cls.name}_def"
+                defaultCtorNames[cls] = "rsf_new_${cls.name}_0"
+            }
         }
+        // 虚方法槽位按名字 + 参数个数排序后编号：不依赖 Map 的迭代顺序，产物可复现
+        val signatures = ArrayList<String>()
+        for (cls in classes.values) {
+            for (fn in cls.methods) {
+                if (fn.isConstructor || fn.isStatic) continue
+                val key = fn.name + "/" + fn.params.size
+                if (key !in signatures) signatures.add(key)
+            }
+        }
+        signatures.sort()
+        for ((index, key) in signatures.withIndex()) slots[key] = index
     }
 
     // ------------------------------------------------------------------ 前置检查
@@ -121,8 +158,10 @@ class CBackend(private val model: SemanticModel) {
     private fun checkProgram() {
         if (model.interfaces.isNotEmpty()) fail("接口")
         if (model.annotations.isNotEmpty()) fail("注解")
-        if (model.superClasses.isNotEmpty()) fail("类继承")
         if (model.superInterfaces.isNotEmpty()) fail("接口实现")
+        for (sup in model.superClasses.values) {
+            if (sup.fromClassPath) fail("继承 JDK 类（${sup.name}）")
+        }
         for (fn in model.functions) {
             if (model.functionTable[fn.name]?.size ?: 0 > 1) fail("重载函数（${fn.name}）")
         }
@@ -167,9 +206,14 @@ class CBackend(private val model: SemanticModel) {
         }
     }
 
+    /**
+     * 类引用一律摊成 `void*`：继承下子类对象要能直接传给「父类参数」，
+     * 用 `rsf_cls_父*` 会触发不兼容指针告警；字段访问时再按**声明类**转回去
+     * （`((rsf_cls_Owner*)p)->f_Owner_x`，父类字段在子类结构里是同一段前缀）。
+     */
     private fun classPointer(type: RsfType): String {
         val name = type.externalName ?: fail("外部类型")
-        if (classes.containsKey(name)) return "rsf_cls_$name*"
+        if (classes.containsKey(name)) return "void*"
         if (model.enums.containsKey(name)) return "rsf_enum_$name"
         fail("JVM 类型（$name）")
     }
@@ -195,18 +239,68 @@ class CBackend(private val model: SemanticModel) {
 
     // ------------------------------------------------------------------ 类
 
-    private fun fieldTypes(cls: ClassDecl): List<RsfType> =
-        model.classModel.fieldTypes[cls] ?: cls.fields.map { fail("字段类型（${it.name}）") }
+    private fun fieldTypeOf(decl: ClassDecl, f: FieldDecl): RsfType {
+        val types = model.classModel.fieldTypes[decl] ?: return fail("字段类型（${f.name}）")
+        val index = decl.fields.indexOf(f)
+        return types.getOrNull(index) ?: fail("字段类型（${f.name}）")
+    }
 
+    private fun fieldName(decl: ClassDecl, f: FieldDecl): String = "f_${decl.name}_${f.name}"
+
+    /** 字段访问：按**声明类**转回结构体指针，再用限定名取（父类字段在子类结构里是同一段前缀）。 */
+    private fun fieldAccess(receiver: String, decl: ClassDecl, f: FieldDecl): String =
+        "((rsf_cls_${decl.name}*)$receiver)->${fieldName(decl, f)}"
+
+    private fun fieldRef(receiver: String, className: String, name: String): String =
+        "((rsf_cls_$className*)$receiver)->f_${className}_$name"
+
+    /**
+     * 结构体 = 虚表指针 + **整条父链的字段**（父类在前、本类在后，与解释器的扁平字段数组同序）。
+     *
+     * 子类结构的前缀因此与父类结构逐字节一致：父类方法拿到 `void*` 转成
+     * `rsf_cls_父*` 后读到的就是同一批字段。
+     */
     private fun struct(cls: ClassDecl): String {
         val sb = StringBuilder()
-        sb.append("typedef struct rsf_cls_${cls.name} {\n")
-        val types = fieldTypes(cls)
-        cls.fields.forEachIndexed { i, f ->
-            sb.append("    ").append(cType(types[i])).append(' ').append(f.name).append(";\n")
+        sb.append("typedef struct rsf_cls_${cls.name} {").append(NL)
+        sb.append("    void** rsf_vtbl;").append(NL)
+        for ((decl, f) in model.fieldChainOf(cls.name)) {
+            sb.append("    ").append(cType(fieldTypeOf(decl, f))).append(' ')
+                .append(fieldName(decl, f)).append(';').append(NL)
         }
-        sb.append("} rsf_cls_${cls.name};\n\n")
+        sb.append("} rsf_cls_${cls.name};").append(NL).append(NL)
         return sb.toString()
+    }
+
+    /**
+     * 每个类一张虚表：槽位下标与 [slots] 对齐，内容是这个类（沿父链往上找）最靠前的实现。
+     *
+     * 覆盖方法因此自动生效：子类虚表里同一个槽位填的是自己那份，父类指针调用也走虚表。
+     * 没有实现（理论上 Checker 已挡住）填空指针。
+     */
+    private fun vtable(cls: ClassDecl): String {
+        if (slots.isEmpty()) return "static void* rsf_vtbl_${cls.name}[1] = { 0 };$NL$NL"
+        val chain = ArrayList<ClassDecl>()
+        chain.add(cls)
+        chain.addAll(model.classAncestorsOf(cls.name).reversed())
+        val entries = ArrayList<String>()
+        for (key in slots.keys) {
+            val parts = key.split("/")
+            val name = parts[0]
+            val arity = parts[1].toInt()
+            var found: String? = null
+            for (c in chain) {
+                val fn = c.methods.firstOrNull {
+                    !it.isConstructor && !it.isStatic && it.name == name && it.params.size == arity
+                }
+                if (fn != null) {
+                    found = methodNames[fn]
+                    break
+                }
+            }
+            entries.add(if (found != null) "(void*)$found" else "0")
+        }
+        return "static void* rsf_vtbl_${cls.name}[${slots.size}] = { ${entries.joinToString(", ")} };$NL$NL"
     }
 
     private fun protoTop(fn: FuncDecl): String {
@@ -219,12 +313,22 @@ class CBackend(private val model: SemanticModel) {
         val params = paramTypesOf(fn)
         val list = fn.params.mapIndexed { i, p -> "${cType(params[i])} ${paramName(p.name)}" }.toMutableList()
         if (fn.isConstructor) {
-            val name = ctorNames[fn] ?: fail("构造器命名")
-            return "rsf_cls_${cls.name}* $name(${list.joinToString(", ").ifEmpty { "void" }})"
+            // 构造器拆成两半：`rsf_init_*` 在**已有对象**上跑（父类构造器要复用它），
+            // `rsf_new_*` 分配 + 装虚表 + 调 init。
+            val name = ctorInitNames[fn] ?: fail("构造器命名")
+            list.add(0, "void* self")
+            return "void $name(${list.joinToString(", ")})"
         }
         val name = methodNames[fn] ?: fail("方法命名")
-        if (!fn.isStatic) list.add(0, "rsf_cls_${cls.name}* self")
+        if (!fn.isStatic) list.add(0, "void* self")
         return "${cType(returnType(fn))} $name(${list.joinToString(", ").ifEmpty { "void" }})"
+    }
+
+    private fun protoConstructor(cls: ClassDecl, fn: FuncDecl): String {
+        val name = ctorNames[fn] ?: fail("构造器命名")
+        val params = paramTypesOf(fn)
+        val list = fn.params.mapIndexed { i, p -> "${cType(params[i])} ${paramName(p.name)}" }
+        return "void* $name(${list.joinToString(", ").ifEmpty { "void" }})"
     }
 
     private fun definition(fn: FuncDecl, cls: ClassDecl?): String {
@@ -238,17 +342,8 @@ class CBackend(private val model: SemanticModel) {
             return sb.toString()
         }
         if (fn.isConstructor) {
-            val name = ctorNames[fn] ?: fail("构造器命名")
-            val params = paramTypesOf(fn)
-            val list = fn.params.mapIndexed { i, p -> "${cType(params[i])} ${paramName(p.name)}" }
-            sb.append("rsf_cls_${cls.name}* $name(${list.joinToString(", ").ifEmpty { "void" }}) {\n")
-            sb.append("    rsf_cls_${cls.name}* self = (rsf_cls_${cls.name}*)calloc(1, sizeof(rsf_cls_${cls.name}));\n")
-            cls.fields.forEach { f ->
-                sb.append("    self->").append(f.name).append(" = ").append(expr(f.initializer)).append(";\n")
-            }
-            fn.body?.statements?.forEach { sb.append(stmt(it, 1)) }
-            sb.append("    return self;\n")
-            sb.append("}\n\n")
+            sb.append(ctorInitDefinition(cls, fn))
+            sb.append(ctorNewDefinition(cls, fn))
             currentClass = null
             return sb.toString()
         }
@@ -259,17 +354,85 @@ class CBackend(private val model: SemanticModel) {
         return sb.toString()
     }
 
-    /** 类没写构造器时，`new C()` 仍要能跑：补一个只填字段初值的默认构造器。 */
+    /** 构造器的「在已有对象上跑」那一半：先父类那一跳（或 `this(...)`），再字段初值，最后体。 */
+    private fun ctorInitDefinition(cls: ClassDecl, fn: FuncDecl): String {
+        val name = ctorInitNames[fn] ?: fail("构造器命名")
+        val params = paramTypesOf(fn)
+        val list = listOf("void* self") +
+            fn.params.mapIndexed { i, p -> "${cType(params[i])} ${paramName(p.name)}" }
+        val sb = StringBuilder()
+        sb.append("void $name(${list.joinToString(", ")}) {").append(NL)
+        val thisCall = model.classModel.delegationOf(fn)
+        if (thisCall != null) {
+            // this(...)：转给同类另一个构造器；字段初值只在那条链的根跑
+            val target = ctorInitNames[thisCall.target] ?: fail("构造器命名")
+            sb.append("    ").append(target).append("(self")
+            thisCall.stmt.arguments.forEach { sb.append(", ").append(expr(it)) }
+            sb.append(");").append(NL)
+        } else {
+            appendSuperInit(sb, cls, model.classModel.superDelegationOf(fn) ?: model.classModel.implicitSuperDelegationOf(cls))
+            for (f in cls.fields) {
+                sb.append("    ").append(fieldAccess("self", cls, f)).append(" = ")
+                    .append(expr(f.initializer)).append(';').append(NL)
+            }
+        }
+        fn.body?.statements?.forEach {
+            if (it !is SuperCallStmt && it !is ThisCallStmt) sb.append(stmt(it, 1))
+        }
+        sb.append("}").append(NL).append(NL)
+        return sb.toString()
+    }
+
+    /** 父类构造委托：`super(实参)` 或隐式 `super()`；目标可能是父类的某个构造器或它的默认 init。 */
+    private fun appendSuperInit(sb: StringBuilder, cls: ClassDecl, delegation: SuperDelegation?) {
+        if (delegation == null) return
+        val target = delegation.target
+        val call = if (target != null) {
+            ctorInitNames[target] ?: fail("父类构造器命名")
+        } else {
+            val parent = delegation.superClass.declaration?.name?.let { classes[it] }
+                ?: fail("父类构造器（父类是 JDK 类）")
+            defaultInitNames[parent] ?: fail("父类默认构造器")
+        }
+        sb.append("    ").append(call).append("(self")
+        delegation.arguments.forEach { sb.append(", ").append(expr(it)) }
+        sb.append(");").append(NL)
+    }
+
+    /** 构造器的「分配 + 装虚表 + 调 init」那一半。 */
+    private fun ctorNewDefinition(cls: ClassDecl, fn: FuncDecl): String {
+        val name = ctorNames[fn] ?: fail("构造器命名")
+        val init = ctorInitNames[fn] ?: fail("构造器命名")
+        val params = paramTypesOf(fn)
+        val list = fn.params.mapIndexed { i, p -> "${cType(params[i])} ${paramName(p.name)}" }
+        val args = fn.params.joinToString(", ") { paramName(it.name) }
+        val sb = StringBuilder()
+        sb.append("void* $name(${list.joinToString(", ").ifEmpty { "void" }}) {").append(NL)
+        sb.append("    void* self = calloc(1, sizeof(rsf_cls_${cls.name}));").append(NL)
+        sb.append("    *(void***)self = rsf_vtbl_${cls.name};").append(NL)
+        sb.append("    $init(self").append(if (args.isEmpty()) "" else ", $args").append(");").append(NL)
+        sb.append("    return self;").append(NL).append("}").append(NL).append(NL)
+        return sb.toString()
+    }
+
+    /** 类没写构造器时，`new C()` 仍要能跑：补一个只跑父类那一跳与字段初值的默认 init。 */
     private fun defaultConstructor(cls: ClassDecl): String {
         val name = defaultCtorNames[cls] ?: fail("默认构造器命名")
+        val init = defaultInitNames[cls] ?: fail("默认构造器命名")
         currentClass = cls
         val sb = StringBuilder()
-        sb.append("rsf_cls_${cls.name}* $name(void) {\n")
-        sb.append("    rsf_cls_${cls.name}* self = (rsf_cls_${cls.name}*)calloc(1, sizeof(rsf_cls_${cls.name}));\n")
-        cls.fields.forEach { f ->
-            sb.append("    self->").append(f.name).append(" = ").append(expr(f.initializer)).append(";\n")
+        sb.append("void $init(void* self) {").append(NL)
+        appendSuperInit(sb, cls, model.classModel.implicitSuperDelegationOf(cls))
+        for (f in cls.fields) {
+            sb.append("    ").append(fieldAccess("self", cls, f)).append(" = ")
+                .append(expr(f.initializer)).append(';').append(NL)
         }
-        sb.append("    return self;\n}\n\n")
+        sb.append("}").append(NL).append(NL)
+        sb.append("void* $name(void) {").append(NL)
+        sb.append("    void* self = calloc(1, sizeof(rsf_cls_${cls.name}));").append(NL)
+        sb.append("    *(void***)self = rsf_vtbl_${cls.name};").append(NL)
+        sb.append("    $init(self);").append(NL)
+        sb.append("    return self;").append(NL).append("}").append(NL).append(NL)
         currentClass = null
         return sb.toString()
     }
@@ -290,7 +453,7 @@ class CBackend(private val model: SemanticModel) {
         is AssignStmt -> {
             val field = model.classModel.bareFieldWrites[s]
             if (field != null) {
-                pad(indent) + "self->" + s.name + " = " + expr(s.value) + ";\n"
+                pad(indent) + fieldRef("self", field.className, s.name) + " = " + expr(s.value) + ";\n"
             } else {
                 pad(indent) + "${paramName(s.name)} = ${expr(s.value)};\n"
             }
@@ -301,9 +464,11 @@ class CBackend(private val model: SemanticModel) {
         }
 
         is MemberAssignStmt -> {
-            if (model.classModel.fieldWrites[s] == null) fail("成员赋值")
-            pad(indent) + expr(s.target.receiver) + "->" + s.target.name + " = " + expr(s.value) + ";\n"
+            val field = model.classModel.fieldWrites[s] ?: fail("成员赋值")
+            pad(indent) + fieldRef(expr(s.target.receiver), field.className, s.target.name) +
+                " = " + expr(s.value) + ";\n"
         }
+        is SuperCallStmt, is ThisCallStmt -> ""
         is IndexAssignStmt -> {
             val target = s.target
             val elem = elemCType(elementOf(model.typeOf(target.receiver)))
@@ -396,7 +561,7 @@ class CBackend(private val model: SemanticModel) {
         is BoolLit -> if (e.value) "true" else "false"
         is VarExpr -> {
             val field = model.classModel.fieldReads[e]
-            if (field != null) "self->${e.name}" else paramName(e.name)
+            if (field != null) fieldRef("self", field.className, e.name) else paramName(e.name)
         }
         is ThisExpr -> "self"
         is UnaryExpr -> unary(e)
@@ -425,24 +590,48 @@ class CBackend(private val model: SemanticModel) {
     }
 
     private fun member(e: MemberExpr): String {
+        // super.f(...)：**非虚**调用，直接打声明类那一份实现
+        if (e.receiver is SuperExpr) {
+            return when (val call = model.classModel.superCalls[e]) {
+                is SuperCall.Rsf -> {
+                    val name = methodNames[call.decl] ?: fail("方法命名")
+                    val args = (e.arguments ?: emptyList()).joinToString(", ") { expr(it) }
+                    "$name(self${if (args.isEmpty()) "" else ", $args"})"
+                }
+                is SuperCall.Jvm -> fail("super 调 JDK 方法")
+                null -> fail("super 成员访问 '${e.name}'")
+            }
+        }
         if (e.name == "length" && e.arguments == null) return "(${expr(e.receiver)}.len)"
         val enumValue = model.enumValues[e]
         if (enumValue != null) return "rsf_val_${enumValue.enumName}_${enumValue.valueName}"
         val receiver = expr(e.receiver)
         return when (val resolved = model.classModel.members[e]) {
-            is UserMember.Field -> "$receiver->${e.name}"
+            is UserMember.Field -> fieldRef(receiver, resolved.className, e.name)
             is UserMember.Method -> {
                 val name = methodNames[resolved.decl] ?: fail("方法命名")
                 val args = e.arguments ?: emptyList()
                 if (resolved.decl.isStatic) {
                     "$name(${args.joinToString(", ") { expr(it) }})"
                 } else {
-                    (listOf(receiver) + args.map { expr(it) }).joinToString(", ").let { "$name($it)" }
+                    dispatchCall(receiver, resolved.decl, args.map { expr(it) })
                 }
             }
             else -> fail("成员访问 '${e.name}'")
         }
     }
+
+    /** 虚分派：按「名字 + 参数个数」查槽位，从对象的虚表里取实现再调。 */
+    private fun dispatchCall(receiver: String, decl: FuncDecl, args: List<String>): String {
+        val slot = slotOf(decl.name, args.size)
+        val params = (listOf("void*") + paramTypesOf(decl).map { cType(it) }).joinToString(", ")
+        val ret = cType(returnType(decl))
+        val call = (listOf(receiver) + args).joinToString(", ")
+        return "(($ret (*)($params))(*(void***)($receiver))[$slot])($call)"
+    }
+
+    private fun slotOf(name: String, arity: Int): Int =
+        slots[name + "/" + arity] ?: fail("虚方法槽位（$name/$arity）")
 
     private fun newArray(e: NewArrayExpr): String {
         if (e.dimensions.size != 1) fail("多维数组")
@@ -511,11 +700,10 @@ class CBackend(private val model: SemanticModel) {
         val implicit = model.classModel.implicitCalls[e]
         if (implicit != null) {
             val name = methodNames[implicit.decl] ?: fail("方法命名")
-            val args = e.arguments.joinToString(", ") { expr(it) }
             return if (implicit.decl.isStatic) {
-                "$name($args)"
+                "$name(${e.arguments.joinToString(", ") { expr(it) }})"
             } else {
-                "$name(self${if (args.isEmpty()) "" else ", $args"})"
+                dispatchCall("self", implicit.decl, e.arguments.map { expr(it) })
             }
         }
         when (e.name) {

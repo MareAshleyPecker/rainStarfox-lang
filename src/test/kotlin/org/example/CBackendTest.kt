@@ -111,11 +111,12 @@ class CBackendTest {
             """.trimIndent(),
         )
         assertTrue(c.contains("typedef struct rsf_cls_Point {"), c)
-        assertTrue(c.contains("int32_t x;"), c)
-        assertTrue(c.contains("int32_t rsf_m_Point_get(rsf_cls_Point* self)"), c)
+        assertTrue(c.contains("void** rsf_vtbl;"), c)
+        assertTrue(c.contains("int32_t f_Point_x;"), c)
+        assertTrue(c.contains("int32_t rsf_m_Point_get(void* self)"), c)
         assertTrue(c.contains("int32_t rsf_st_Point_zero(void)"), c)
         assertTrue(c.contains("rsf_new_Point_0(3)"), c)
-        assertTrue(c.contains("self->x"), c)
+        assertTrue(c.contains("((rsf_cls_Point*)self)->f_Point_x"), c)
     }
 
     @Test
@@ -135,9 +136,9 @@ class CBackendTest {
             }
             """.trimIndent(),
         )
-        val body = c.substringAfter("rsf_cls_Q* rsf_new_Q_0(int32_t v_n) {")
-        assertTrue(body.contains("self->v = 1;"), body.take(200))
-        assertTrue(body.contains("self->v = v_n;"), body.take(200))
+        val body = c.substringAfter("void rsf_init_Q_0(void* self, int32_t v_n) {")
+        assertTrue(body.contains("((rsf_cls_Q*)self)->f_Q_v = 1;"), body.take(200))
+        assertTrue(body.contains("((rsf_cls_Q*)self)->f_Q_v = v_n;"), body.take(200))
     }
 
 

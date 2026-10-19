@@ -88,9 +88,9 @@ rsf build hello.rsf --c -o out
 gcc out\hello.c -o out\hello.exe
 ```
 
-- 已支持：int / long / bool / string、一维数组、类（字段 / 实例方法 / `stc` 静态方法 / 主次构造）、枚举与 `switch`、指针（`T*` / `&x` / `*p` / `*p = v`）、顶层函数、`if` / `while` / `for` / 递归。
-- 还没接：接口、类继承、泛型、多维数组、浮点、错误返回——遇到会报 `error[native]`。
-- 判据：解释器 stdout vs 原生 exe stdout 逐字节相同（`bash build/verify52/run-probes.sh all`，9 份语料）。
+- 已支持：int / long / bool / string、一维数组、类（字段 / 实例方法 / `stc` 静态方法 / 主次构造 / 单继承与覆盖，虚表分派）、枚举与 `switch`、指针（`T*` / `&x` / `*p` / `*p = v`）、顶层函数、`if` / `while` / `for` / 递归。
+- 还没接：接口、JDK 父类、泛型、多维数组、浮点、错误返回——遇到会报 `error[native]`。
+- 判据：解释器 stdout vs 原生 exe stdout 逐字节相同（`bash build/verify52/run-probes.sh all`，10 份语料）。
 
 ### Termux / aarch64
 
@@ -139,7 +139,7 @@ BOOTSTRAP.md                          自举链的设计与现状
 | --- | --- |
 | JVM 字节码 + 解释器双后端逐字节一致 | ✅ |
 | 自举链（rsf 写前端/后端，与 Kotlin 版对拍） | ✅ 词法/语法/解释器/字节码后端 |
-| C 后端（native 线） | 🚧 类/枚举/指针已接；接口/继承/泛型/浮点待接 |
+| C 后端（native 线） | 🚧 类/继承（虚表）/枚举/指针已接；接口/泛型/浮点待接 |
 | LSP + IDEA 插件 | ✅ 诊断/补全/跳转/悬停/引用/重命名 |
 | 原生编译器（aarch64 二进制） | ⏳ 依赖 C 后端补全后再自举 |
 | 指针 L3（字段/元素取址、指针算术） | ⏳ |

@@ -1,0 +1,19 @@
+fn main() -> void {
+
+}
+
+class vec(){
+    pub fn vec3(){}
+}
+
+class vecf() : vec() {
+    override pub fn vec3() -> void {
+
+    }
+}
+
+annotation output(x : str){
+    companion entity input {
+        imutvar s : str = x
+    }
+}

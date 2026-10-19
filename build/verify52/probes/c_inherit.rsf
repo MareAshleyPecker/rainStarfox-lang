@@ -1,0 +1,72 @@
+class Animal(name : string) {
+    var name : string = name
+
+    pub fn speak() -> string {
+        rtn "..."
+    }
+
+    pub fn describe() -> string {
+        rtn name + " says " + this.speak()
+    }
+}
+
+class Dog(name : string) : Animal(name) {
+    pub override fn speak() -> string {
+        rtn "woof"
+    }
+}
+
+class Puppy(name : string) : Dog(name) {
+    pub override fn speak() -> string {
+        rtn "yip"
+    }
+}
+
+class Base(x : int) {
+    var x : int = x
+
+    pub fn value() -> int {
+        rtn x
+    }
+
+    pub fn label() -> string {
+        rtn "base"
+    }
+}
+
+class Derived(x : int, y : int) : Base(x) {
+    var y : int = y
+
+    pub override fn value() -> int {
+        rtn super.value() + y
+    }
+
+    pub override fn label() -> string {
+        rtn "derived"
+    }
+
+    pub fn sum() -> int {
+        rtn x + y
+    }
+}
+
+fn twice(n : int) -> int {
+    rtn n * 2
+}
+
+fn main() {
+    var a : Animal = new Animal("cat")
+    var d : Animal = new Dog("rex")
+    var p : Animal = new Puppy("bit")
+    println(a.describe())
+    println(d.describe())
+    println(p.describe())
+
+    var b : Base = new Derived(3, 4)
+    println(b.value())
+    println(b.label())
+
+    var dd : Derived = new Derived(10, 20)
+    println(dd.sum())
+    println(twice(dd.value()))
+}

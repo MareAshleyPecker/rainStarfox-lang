@@ -1,0 +1,7 @@
+cat says ...
+rex says woof
+bit says yip
+7
+derived
+30
+60
