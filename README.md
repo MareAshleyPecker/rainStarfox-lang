@@ -81,7 +81,7 @@ rsf help | version
 
 ## UI 库（`rsfSrc/ui/`）
 
-声明式：`fn view(app) -> Widget` 每帧写一棵树，`Renderer.frame` 画面、判命中、返回动作 id；输入框文字按 `key` 跨帧复用。纯 rsf，解释器与 C 后端都能跑。
+声明式：`fn view(app) -> Widget` 每帧写一棵树，`Renderer.frame` 画面、判命中、返回动作 id；输入框文字按 `key` 跨帧复用。块套块的盒模型（`padding`/`margin`/`border`/`width`/`height`/`flex`/`align`），`showRegions(true)` 给每块描边、`startTrace()` 打印每块矩形。纯 rsf，解释器与 C 后端都能跑。
 
 `rsf build app.rsf --c --lib -o out` 只出 C 函数、不出 `main`，交给宿主窗口调用。
 

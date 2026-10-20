@@ -1,32 +1,57 @@
-// 阶段 58b：声明式 UI —— 建树、命中、动作 id、输入框状态按 key 跨帧复用
+// 阶段 58c：声明式 UI —— 块套块盒模型（padding/margin/border/flex）、命中、动作 id、
+// 输入框文字按 key 跨帧复用、布局 trace 与区域描边。
 import "../../../rsfSrc/ui/Renderer.rsf"
 
-fn view(app : Int) -> Widget {
-    var root = column()
-    root.withKey("root")
-    if (app > 0) { root.add(label("EXTRA")) }
-    root.add(label("NAME").withColors(0, 15658734))
-    root.add(field("type here").withKey("name"))
-    root.add(button("OK", 1))
-    root.add(toggle("REMEMBER", 2, true))
+fn view(extra : Int) -> Widget {
+    var root = box()
+    root.withKey("root").pad(2)
+    if (extra > 0) { root.add(title("EXTRA LINE")) }
+    var card = box()
+    card.pad(3).frame(1)
+    card.add(field("name").withKey("name"))
+    var bar = row()
+    bar.pad(2)
+    bar.add(button("OK", 1).flex(1))
+    bar.add(button("CANCEL", 2).flex(1))
+    card.add(bar)
+    root.add(card)
+    root.add(toggle("REMEMBER", 3, true))
     rtn root
 }
 
 fn main() {
-    var cv = Canvas(100, 80)
+    var cv = Canvas(90, 110)
     var r = Renderer(cv)
-    var n = r.frame(view(0), 0, 0, 100, 80)
-    println("frame " + intToString(n))
-    r.click(10, 45)
-    n = r.frame(view(0), 0, 0, 100, 80)
-    println("button " + intToString(n) + " " + intToString(r.actionAt(0)))
-    r.click(10, 26)
-    r.frame(view(0), 0, 0, 100, 80)
-    r.typeText("hello")
+    r.showRegions(true)
+    r.startTrace()
+    var n = r.frame(view(0), 0, 0, 90, 110)
+    println("actions " + intToString(n))
+    var i = 0
+    while (i < r.traceLines()) {
+        println(r.traceLine(i))
+        i = i + 1
+    }
+    // 点 OK
+    r.click(10, 25)
+    n = r.frame(view(0), 0, 0, 90, 110)
+    println("ok " + intToString(n) + " " + intToString(r.actionAt(0)))
+    // 点输入框并输入
+    r.click(10, 10)
+    r.frame(view(0), 0, 0, 90, 110)
+    r.typeText("ann")
     println("typed " + r.textOf("name", "?"))
-    println("shifted " + intToString(r.frame(view(1), 0, 0, 100, 80)))
-    println("kept " + r.textOf("name", "?"))
-    r.click(10, 80)
-    n = r.frame(view(1), 0, 0, 100, 80)
-    println("toggle " + intToString(n) + " " + intToString(r.actionAt(0)))
+    // 在顶部插一行，位置全变，输入框文字按 key 保留
+    n = r.frame(view(1), 0, 0, 90, 110)
+    println("shifted " + intToString(n) + " " + r.textOf("name", "?"))
+    // 退格
+    r.backspace()
+    println("back " + r.textOf("name", "?"))
+    // 点 CANCEL（插入后按钮下移到 y=43..57）
+    r.click(50, 38)
+    n = r.frame(view(1), 0, 0, 90, 110)
+    println("cancel " + intToString(n) + " " + intToString(r.actionAt(0)))
+    // 点复选框（插入后下移到 y=68..82）
+    r.click(10, 55)
+    n = r.frame(view(1), 0, 0, 90, 110)
+    println("check " + intToString(n) + " " + intToString(r.actionAt(0)))
 }

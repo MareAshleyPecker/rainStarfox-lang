@@ -1,15 +1,15 @@
-// 阶段 58b：声明式树的渲染器
+// 阶段 58c：渲染器（measure → place → draw，带区域调试）
 //
-// 一次 `frame` 做三件事：按布局算矩形、画、把被点中的控件的 action id 收集起来。
-// 树每帧重建（声明式的写法），但**跨帧状态按 key 复用**：
-//   - 输入框里的文字存在 [typed]（key -> 文本）
-//   - 焦点是一个 key
-// 这就是「按 key diff」的最小实现；控件位置可以任意变，只要 key 不变状态就跟着走。
+// 一次 `frame`：
+//   1. measure：自底向上算每块内容要多宽多高
+//   2. place：自顶向下按 padding/margin/width/height/flex 摆矩形
+//   3. draw：画底、边框、文字，并按 depth 描出每块区域（`showRegions` 打开时）
+//
+// 跨帧状态按 key 复用：输入框文字存在 [typed]，焦点是 [focus]。
 import "Canvas.rsf"
 import "Geometry.rsf"
 import "Node.rsf"
 
-/// 极简字符串表（key -> 文本）；用线性查找，UI 里几十个 key 足够。
 pub class StrMap {
     var keys : String[] = new String[8]
     var vals : String[] = new String[8]
@@ -66,8 +66,13 @@ pub class Renderer(cv : Canvas) {
     var mouseY : Int = 0
     var clickX : Int = -1
     var clickY : Int = -1
-    /// 这一帧有没有需要重绘的变化（输入/点击/动画）。调用方可以据此跳过重绘。
     var dirty : Bool = false
+    /// 打开后每块区域按嵌套深度描边（调试布局用）。
+    var regions : Bool = false
+    /// 打开后把每块最终矩形记进 [trace]，用于「把布局打印出来看」。
+    var tracing : Bool = false
+    var trace : String[] = new String[16]
+    var traceCount : Int = 0
 
     pub fn moveTo(x : Int, y : Int) -> void {
         mouseX = x
@@ -81,8 +86,20 @@ pub class Renderer(cv : Canvas) {
         dirty = true
     }
 
-    /// 键盘输入：把一段文字追加到当前焦点输入框。焦点之外忽略。
-    /// 键盘输入：把一段文字追加到当前焦点输入框（宿主把输入法/按键文本原样传进来）。
+    pub fn showRegions(on : Bool) -> void {
+        regions = on
+        dirty = true
+    }
+
+    pub fn startTrace() -> void {
+        tracing = true
+        traceCount = 0
+    }
+
+    pub fn traceLine(i : Int) -> String { rtn trace[i] }
+
+    pub fn traceLines() -> Int { rtn traceCount }
+
     pub fn typeText(s : String) -> void {
         if (s == "") { rtn }
         dirty = true
@@ -90,7 +107,6 @@ pub class Renderer(cv : Canvas) {
         typed.put(focus, typed.getOr(focus, "") + s)
     }
 
-    /// 退格：删掉焦点输入框的最后一个字符。
     pub fn backspace() -> void {
         dirty = true
         if (focus == "") { rtn }
@@ -100,98 +116,258 @@ pub class Renderer(cv : Canvas) {
         }
     }
 
-    pub fn resetActions() -> void {
-        actionCount = 0
-    }
+    pub fn resetActions() -> void { actionCount = 0 }
 
     pub fn actionAt(i : Int) -> Int { rtn actions[i] }
 
-    /// 某个 key 的输入框当前文字。
     pub fn textOf(key : String, fallback : String) -> String { rtn typed.getOr(key, fallback) }
 
-    /// 渲染一帧；返回这一帧触发的动作个数。
+    // --------------------------------------------------- 入口：先量再摆再画
+
     pub fn frame(root : Widget, x : Int, y : Int, w : Int, h : Int) -> Int {
         resetActions()
-        layout(root, Rect(x, y, w, h))
+        var size = measure(root, w - root.marginL - root.marginR)
+        var outerW = pick(size.w, root.fixedW)
+        var outerH = pick(size.h, root.fixedH)
+        if (outerW > w) { outerW = w }
+        if (outerH > h) { outerH = h }
+        var rect = Rect(x + root.marginL, y + root.marginT, outerW, outerH)
+        place(root, rect, 0, size)
         rtn actionCount
     }
 
-    // -------------------------------------------------------------- 布局 + 画
+    /// 固定尺寸优先，否则用测量值。
+    prv fn pick(measured : Int, fixed : Int) -> Int {
+        if (fixed >= 0) { rtn fixed }
+        rtn measured
+    }
 
-    prv fn layout(w : Widget, r : Rect) -> void {
-        if (w.kind == "column") {
-            var inner = Rect(r.x + w.pad, r.y + w.pad, r.w - w.pad * 2, r.h - w.pad * 2)
-            var cursor = inner.y
+    // ---------------------------------------------------------------- measure
+
+    /// 量一块：返回**含 padding** 的内容盒尺寸（不含 margin）。
+    prv fn measure(w : Widget, availW : Int) -> Size {
+        if (w.kind == "box") {
+            var innerW = 0
+            var totalH = w.padT + w.padB
             var i = 0
             while (i < w.kids.length) {
                 var kid = w.kids[i]
-                var kh = heightOf(kid)
-                layout(kid, Rect(inner.x, cursor, inner.w, kh))
-                cursor = cursor + kh + w.gap
+                var kidAvail = availW - w.padL - w.padR - kid.marginL - kid.marginR
+                var s = measure(kid, kidAvail)
+                var kidW = pick(s.w, kid.fixedW) + kid.marginL + kid.marginR
+                if (kidW > innerW) { innerW = kidW }
+                if (kid.weight > 0) {
+                    totalH = totalH + kid.marginT + kid.marginB
+                } else {
+                    totalH = totalH + pick(s.h, kid.fixedH) + kid.marginT + kid.marginB
+                }
                 i = i + 1
             }
+            rtn Size(w.padL + innerW + w.padR, totalH)
+        }
+        if (w.kind == "row") {
+            var totalW = w.padL + w.padR
+            var maxH = 0
+            var i = 0
+            while (i < w.kids.length) {
+                var kid = w.kids[i]
+                var s = measure(kid, availW)
+                totalW = totalW + pick(s.w, kid.fixedW) + kid.marginL + kid.marginR
+                var kidH = pick(s.h, kid.fixedH) + kid.marginT + kid.marginB
+                if (kidH > maxH) { maxH = kidH }
+                i = i + 1
+            }
+            rtn Size(totalW, w.padT + maxH + w.padB)
+        }
+        var tw = textWidthOf(w)
+        rtn Size(w.contentW(tw), leafH(w))
+    }
+
+    prv fn leafH(w : Widget) -> Int {
+        if (w.kind == "spacer") { rtn w.padT + w.padB }
+        if (w.kind == "label") { rtn 7 + w.padT + w.padB }
+        rtn 14 + w.padT + w.padB
+    }
+
+    prv fn textWidthOf(w : Widget) -> Int {
+        if (w.kind == "field") {
+            var shown = typed.getOr(w.key, w.text)
+            rtn cv.textWidth(shown) + 8
+        }
+        rtn cv.textWidth(w.text)
+    }
+
+    // ------------------------------------------------------------------ place
+
+    prv fn place(w : Widget, r : Rect, depth : Int, size : Size) -> void {
+        if (tracing) {
+            var line = ""
+            var i = 0
+            while (i < depth) { line = line + "  "; i = i + 1 }
+            line = line + w.kind
+            if (w.key != "") { line = line + "[" + w.key + "]" }
+            line = line + " " + intToString(r.x) + "," + intToString(r.y) + " " + intToString(r.w) + "x" + intToString(r.h)
+            if (traceCount == trace.length) {
+                var bigger = new String[trace.length * 2]
+                var j = 0
+                while (j < traceCount) { bigger[j] = trace[j]; j = j + 1 }
+                trace = bigger
+            }
+            trace[traceCount] = line
+            traceCount = traceCount + 1
+        }
+        var content = Rect(r.x + w.padL, r.y + w.padT, r.w - w.padL - w.padR, r.h - w.padT - w.padB)
+        if (w.kind == "box") {
+            placeColumn(w, content, depth, size)
             rtn
         }
         if (w.kind == "row") {
-            var inner = Rect(r.x + w.pad, r.y + w.pad, r.w - w.pad * 2, r.h - w.pad * 2)
-            var count = w.kids.length
-            if (count == 0) { rtn }
-            var used = w.gap * (count - 1)
-            var each = (inner.w - used) / count
-            var cursor = inner.x
-            var i = 0
-            while (i < count) {
-                layout(w.kids[i], Rect(cursor, inner.y, each, inner.h))
-                cursor = cursor + each + w.gap
-                i = i + 1
-            }
+            placeRow(w, content, depth, size)
             rtn
         }
-        leaf(w, r)
+        leaf(w, r, content, depth)
     }
 
-    prv fn leaf(w : Widget, r : Rect) -> void {
-        if (w.kind == "spacer") { rtn }
-        if (w.kind == "label") {
-            cv.text(w.text, r.x, r.y + 2, w.fg)
-            rtn
+    prv fn placeColumn(w : Widget, content : Rect, depth : Int, size : Size) -> void {
+        var fixedSum = 0
+        var flexCount = 0
+        var i = 0
+        while (i < w.kids.length) {
+            var kid = w.kids[i]
+            var s = measure(kid, content.w)
+            if (kid.weight > 0) {
+                flexCount = flexCount + 1
+            } else {
+                fixedSum = fixedSum + pick(s.h, kid.fixedH) + kid.marginT + kid.marginB
+            }
+            i = i + 1
         }
-        if (w.kind == "panel") {
-            cv.fill(r, w.bg)
-            cv.stroke(r, w.accent, 1)
+        var remaining = content.h - fixedSum
+        if (remaining < 0) { remaining = 0 }
+        var share = 0
+        if (flexCount > 0) { share = remaining / flexCount }
+        var cursor = content.y
+        i = 0
+        while (i < w.kids.length) {
+            var kid = w.kids[i]
+            var s = measure(kid, content.w - kid.marginL - kid.marginR)
+            var kidW = pick(s.w, kid.fixedW)
+            var limit = content.w - kid.marginL - kid.marginR
+            if (kidW > limit) { kidW = limit }
+            var kidH = pick(s.h, kid.fixedH)
+            if (kid.weight > 0) { kidH = share }
+            var kidX = content.x + kid.marginL
+            if (kid.align == 1) { kidX = content.x + (content.w - kidW) / 2 }
+            if (kid.align == 2) { kidX = content.x + content.w - kidW - kid.marginR }
+            place(kid, Rect(kidX, cursor + kid.marginT, kidW, kidH), depth + 1, s)
+            cursor = cursor + kidH + kid.marginT + kid.marginB
+            i = i + 1
+        }
+        outline(w, content, depth)
+    }
+
+    prv fn placeRow(w : Widget, content : Rect, depth : Int, size : Size) -> void {
+        var fixedSum = 0
+        var flexCount = 0
+        var i = 0
+        while (i < w.kids.length) {
+            var kid = w.kids[i]
+            var s = measure(kid, content.w)
+            if (kid.weight > 0) {
+                flexCount = flexCount + 1
+            } else {
+                fixedSum = fixedSum + pick(s.w, kid.fixedW) + kid.marginL + kid.marginR
+            }
+            i = i + 1
+        }
+        var remaining = content.w - fixedSum
+        if (remaining < 0) { remaining = 0 }
+        var share = 0
+        if (flexCount > 0) { share = remaining / flexCount }
+        var cursor = content.x
+        i = 0
+        while (i < w.kids.length) {
+            var kid = w.kids[i]
+            var s = measure(kid, content.w)
+            var kidW = pick(s.w, kid.fixedW)
+            if (kid.weight > 0) { kidW = share }
+            var kidH = pick(s.h, kid.fixedH)
+            var limitH = content.h - kid.marginT - kid.marginB
+            if (kidH > limitH) { kidH = limitH }
+            place(kid, Rect(cursor + kid.marginL, content.y + kid.marginT, kidW, kidH), depth + 1, s)
+            cursor = cursor + kidW + kid.marginL + kid.marginR
+            i = i + 1
+        }
+        outline(w, content, depth)
+    }
+
+    // ------------------------------------------------------------------- draw
+
+    prv fn leaf(w : Widget, r : Rect, content : Rect, depth : Int) -> void {
+        if (w.kind == "spacer") { rtn }
+        if (w.bg >= 0) { cv.fill(r, w.bg) }
+        if (w.border >= 0) { cv.stroke(r, w.border, 1) }
+        if (w.kind == "label") {
+            var tx = alignX(w, content, cv.textWidth(w.text))
+            cv.text(w.text, tx, content.y, w.fg)
+            outline(w, r, depth)
             rtn
         }
         if (w.kind == "button") {
             var bg = w.bg
             if (r.contains(mouseX, mouseY)) { bg = w.accent }
-            cv.fill(r, bg)
-            cv.stroke(r, w.accent, 1)
-            var tx = r.x + (r.w - cv.textWidth(w.text)) / 2
-            cv.text(w.text, tx, r.y + (r.h - 7) / 2, w.fg)
+            if (bg >= 0) { cv.fill(r, bg) }
+            if (w.border >= 0) { cv.stroke(r, w.border, 1) }
+            var tx = alignX(w, content, cv.textWidth(w.text))
+            cv.text(w.text, tx, content.y + (content.h - 7) / 2, w.fg)
             if (hit(r)) { push(w.action) }
+            outline(w, r, depth)
             rtn
         }
         if (w.kind == "check") {
-            var box = Rect(r.x, r.y + (r.h - 10) / 2, 10, 10)
-            cv.stroke(box, w.fg, 1)
-            if (w.checked) { cv.fill(Rect(box.x + 2, box.y + 2, 6, 6), w.accent) }
-            cv.text(w.text, r.x + 16, r.y + (r.h - 7) / 2, w.fg)
+            var side = 10
+            var by = content.y + (content.h - side) / 2
+            var bx = content.x
+            if (w.align == 1) { bx = content.x + (content.w - side - 6 - cv.textWidth(w.text)) / 2 }
+            cv.stroke(Rect(bx, by, side, side), w.fg, 1)
+            if (w.checked) { cv.fill(Rect(bx + 2, by + 2, side - 4, side - 4), w.accent) }
+            cv.text(w.text, bx + side + 6, content.y + (content.h - 7) / 2, w.fg)
             if (hit(r)) { push(w.action) }
+            outline(w, r, depth)
             rtn
         }
         if (w.kind == "field") {
             var focused = focus == w.key
-            cv.fill(r, w.bg)
+            if (w.bg >= 0) { cv.fill(r, w.bg) }
             cv.stroke(r, w.fg, 1)
             var shown = typed.getOr(w.key, w.text)
-            cv.text(shown, r.x + 4, r.y + (r.h - 7) / 2, w.fg)
+            cv.text(shown, content.x, content.y + (content.h - 7) / 2, w.fg)
             if (focused) {
-                var cx = r.x + 4 + cv.textWidth(shown)
-                cv.fill(Rect(cx, r.y + 3, 1, r.h - 6), w.accent)
+                var cx = content.x + cv.textWidth(shown)
+                cv.fill(Rect(cx, content.y + 2, 1, content.h - 4), w.accent)
             }
             if (hit(r)) { focus = w.key }
+            outline(w, r, depth)
             rtn
         }
+    }
+
+    prv fn alignX(w : Widget, content : Rect, textW : Int) -> Int {
+        if (w.align == 1) { rtn content.x + (content.w - textW) / 2 }
+        if (w.align == 2) { rtn content.x + content.w - textW }
+        rtn content.x
+    }
+
+    /// 区域描边：按嵌套深度轮换颜色，让「块套块」一眼能看出来。
+    prv fn outline(w : Widget, r : Rect, depth : Int) {
+        if (!regions) { rtn }
+        if (w.kind == "label" || w.kind == "spacer") { rtn }
+        var idx = depth % 3
+        var c = 4473924
+        if (idx == 0) { c = 8934468 }
+        if (idx == 1) { c = 4491332 }
+        if (idx == 2) { c = 4473992 }
+        cv.stroke(r, c, 1)
     }
 
     prv fn hit(r : Rect) -> Bool {

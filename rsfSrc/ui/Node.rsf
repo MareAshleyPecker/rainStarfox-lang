@@ -1,11 +1,13 @@
-// 阶段 58b：声明式 UI 的第一层——控件节点
+// 阶段 58c：块套块的盒模型（HTML 那套：padding / margin / border / 宽度 / 高度 / 权重）
 //
-// 调用方每帧写一棵树（`view(app)`），渲染器遍历它、画、判命中、把被点的
-// 动作 id 收进一个数组。没有回调、没有函数类型：事件用 **action id** 回传，
-// 调用方拿 id 做 if/else 分发（Elm 风格）。这样 C 后端也能原样编。
-//
-// 控件的「身份」是 `key`：输入框的文字、焦点这类**跨帧状态**按 key 记住，
-// 这就是 diff 的全部入口（树按位置重建，状态按 key 复用）。
+// 调用方每帧写一棵树：`box()` 是块容器（默认竖排），`row()` 是横排容器，
+// `label/button/toggle/field/spacer` 是叶子。每个控件都有：
+//   padding  —— 内容与边框之间
+//   margin   —— 与兄弟/父边界之间
+//   width/height —— 固定尺寸（-1 = 自动）
+//   flex     —— 在容器里分剩余空间的权重（0 = 按内容大小）
+//   align    —— 内容水平对齐：0 左、1 中、2 右
+// 渲染器先 measure（算内容尺寸）再 place（按约束摆放），最后按 depth 画区域。
 
 pub class Kids {
     var items : Widget[] = new Widget[4]
@@ -41,18 +43,37 @@ pub class Kids {
     }
 }
 
+/// 测量结果：内容需要的宽高（含 padding，不含 margin）。
+pub class Size(w0 : Int, h0 : Int) {
+    var w : Int = w0
+    var h : Int = h0
+}
+
 pub class Widget {
     var kind : String = "label"
     var key : String = ""
     var text : String = ""
     var action : Int = 0
-    var pad : Int = 4
-    var gap : Int = 3
-    var bg : Int = 0
-    var fg : Int = 0
-    var accent : Int = 0
     var checked : Bool = false
+    var padL : Int = 0
+    var padT : Int = 0
+    var padR : Int = 0
+    var padB : Int = 0
+    var marginL : Int = 0
+    var marginT : Int = 0
+    var marginR : Int = 0
+    var marginB : Int = 0
+    var border : Int = -1
+    var bg : Int = -1
+    var fg : Int = 15658734
+    var accent : Int = 4621004
+    var fixedW : Int = -1
+    var fixedH : Int = -1
+    var weight : Int = 0
+    var align : Int = 0
     var kids : Widget[] = new Widget[0]
+
+    // ---------------------------------------------------------------- 盒子样式
 
     pub fn withKey(k : String) -> Widget {
         key = k
@@ -70,8 +91,76 @@ pub class Widget {
         rtn this
     }
 
-    pub fn withPad(p : Int) -> Widget {
-        pad = p
+    pub fn pad(p : Int) -> Widget {
+        padL = p
+        padT = p
+        padR = p
+        padB = p
+        rtn this
+    }
+
+    pub fn padX(x : Int) -> Widget {
+        padL = x
+        padR = x
+        rtn this
+    }
+
+    pub fn padY(y : Int) -> Widget {
+        padT = y
+        padB = y
+        rtn this
+    }
+
+    pub fn padding(l : Int, t : Int, r : Int, b : Int) -> Widget {
+        padL = l
+        padT = t
+        padR = r
+        padB = b
+        rtn this
+    }
+
+    pub fn margin(m : Int) -> Widget {
+        marginL = m
+        marginT = m
+        marginR = m
+        marginB = m
+        rtn this
+    }
+
+    pub fn marginX(x : Int) -> Widget {
+        marginL = x
+        marginR = x
+        rtn this
+    }
+
+    pub fn marginY(y : Int) -> Widget {
+        marginT = y
+        marginB = y
+        rtn this
+    }
+
+    pub fn width(w : Int) -> Widget {
+        fixedW = w
+        rtn this
+    }
+
+    pub fn height(h : Int) -> Widget {
+        fixedH = h
+        rtn this
+    }
+
+    pub fn flex(weight0 : Int) -> Widget {
+        weight = weight0
+        rtn this
+    }
+
+    pub fn align(a : Int) -> Widget {
+        align = a
+        rtn this
+    }
+
+    pub fn frame(c : Int) -> Widget {
+        border = c
         rtn this
     }
 
@@ -88,6 +177,16 @@ pub class Widget {
     }
 
     pub fn hasKids() -> Bool { rtn kids.length > 0 }
+
+    /// 这块区域的内容宽高（含 padding）；叶子按文字长度估。
+    pub fn contentW(textWidth : Int) -> Int {
+        if (kind == "label") { rtn textWidth + padL + padR }
+        if (kind == "button") { rtn textWidth + 10 + padL + padR }
+        if (kind == "check") { rtn 16 + textWidth + padL + padR }
+        if (kind == "field") { rtn 60 + padL + padR }
+        if (kind == "spacer") { rtn padL + padR }
+        rtn padL + padR
+    }
 }
 
 // ------------------------------------------------------------------ 构造器
@@ -96,6 +195,15 @@ pub fn label(text0 : String) -> Widget {
     var w = Widget()
     w.kind = "label"
     w.text = text0
+    w.padL = 2
+    w.padR = 2
+    rtn w
+}
+
+pub fn title(text0 : String) -> Widget {
+    var w = label(text0)
+    w.padT = 2
+    w.padB = 2
     rtn w
 }
 
@@ -104,6 +212,8 @@ pub fn button(text0 : String, actionId : Int) -> Widget {
     w.kind = "button"
     w.text = text0
     w.action = actionId
+    w.padL = 6
+    w.padR = 6
     rtn w
 }
 
@@ -112,7 +222,9 @@ pub fn toggle(text0 : String, actionId : Int, checked : Bool) -> Widget {
     w.kind = "check"
     w.text = text0
     w.action = actionId
-    if (checked) { w.text = text0 + "\u0001" }
+    w.checked = checked
+    w.padL = 2
+    w.padR = 2
     rtn w
 }
 
@@ -120,72 +232,37 @@ pub fn field(text0 : String) -> Widget {
     var w = Widget()
     w.kind = "field"
     w.text = text0
+    w.padL = 4
+    w.padR = 4
     rtn w
 }
 
 pub fn spacer(h : Int) -> Widget {
     var w = Widget()
     w.kind = "spacer"
-    w.pad = h
+    w.padT = h
     rtn w
 }
 
-pub fn panel() -> Widget {
+/// 块容器：默认竖排，可以画底/边框（HTML 的 `<div>`）。
+pub fn box() -> Widget {
     var w = Widget()
-    w.kind = "panel"
+    w.kind = "box"
     rtn w
 }
 
-pub fn column() -> Widget {
-    var w = Widget()
-    w.kind = "column"
-    rtn w
-}
-
+/// 横排容器（HTML 的 flex row）。
 pub fn row() -> Widget {
     var w = Widget()
     w.kind = "row"
     rtn w
 }
 
-/// 控件在垂直方向占多高（容器递归求和）。
-pub fn heightOf(w : Widget) -> Int {
-    if (w.kind == "column") {
-        var total = w.pad * 2
-        var i = 0
-        while (i < w.kids.length) {
-            total = total + heightOf(w.kids[i])
-            if (i > 0) { total = total + w.gap }
-            i = i + 1
-        }
-        rtn total
-    }
-    if (w.kind == "row") {
-        var tallest = 0
-        var i = 0
-        while (i < w.kids.length) {
-            var h = heightOf(w.kids[i])
-            if (h > tallest) { tallest = h }
-            i = i + 1
-        }
-        rtn tallest + w.pad * 2
-    }
-    if (w.kind == "spacer") { rtn w.pad }
-    if (w.kind == "label") { rtn 7 + w.pad * 2 }
-    rtn 14
-}
+/// 兼容旧名：`column()` == `box()`、`panel()` == 带边框的 `box()`。
+pub fn column() -> Widget { rtn box() }
 
-/// 控件在水平方向占多宽（`row` 用它求子宽度，其余按 stretch 处理）。
-pub fn widthOf(w : Widget, avail : Int) -> Int {
-    if (w.kind == "row") {
-        var total = w.pad * 2
-        var i = 0
-        while (i < w.kids.length) {
-            total = total + widthOf(w.kids[i], avail)
-            if (i > 0) { total = total + w.gap }
-            i = i + 1
-        }
-        rtn total
-    }
-    rtn avail
+pub fn panel() -> Widget {
+    var w = box()
+    w.border = 15658734
+    rtn w
 }

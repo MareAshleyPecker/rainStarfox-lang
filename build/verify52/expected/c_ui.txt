@@ -1,6 +1,14 @@
-frame 0
-button 1 1
-typed hello
-shifted 0
-kept hello
-toggle 1 2
+actions 0
+box[root] 0,0 90x56
+  box 2,2 86x38
+    field[name] 5,5 68x14
+    row 5,19 80x18
+      button 7,21 38x14
+      button 45,21 38x14
+  check 2,40 68x14
+ok 1 1
+typed ann
+shifted 0 ann
+back an
+cancel 1 2
+check 1 3
