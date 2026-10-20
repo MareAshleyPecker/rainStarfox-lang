@@ -85,11 +85,15 @@ class CBackend(private val model: SemanticModel, private val withEntry: Boolean 
     /** `switch` 的被分派值落在临时变量里，编号保证同一函数内不重名。 */
     private var switchSeq = 0
 
+    /** 用到 `jvmCall` 才把「起 JVM」那段运行时编进来（不用的人不背 windows.h/jni.h）。 */
+    private var usesJvmCall = false
+
     fun emit(): String {
         checkProgram()
         nameEverything()
         val sb = StringBuilder()
         sb.append(RUNTIME)
+        val runtimeEnd = sb.length
         for (e in model.enums.values) sb.append(enumBlock(e))
         for (cls in classes.values) sb.append(struct(cls))
         for (fn in model.functions.sortedBy { it.name }) sb.append(protoTop(fn)).append(";\n")
@@ -127,6 +131,7 @@ class CBackend(private val model: SemanticModel, private val withEntry: Boolean 
                 sb.append(definition(fn, null, iface)).append(NL)
             }
         }
+        if (usesJvmCall) sb.insert(runtimeEnd, JVM_RUNTIME)
         if (!withEntry) {
             // --c --lib：不发 main，宿主自己声明/调用导出的 rsf_fn_* 函数
             return sb.toString()
@@ -857,6 +862,11 @@ class CBackend(private val model: SemanticModel, private val withEntry: Boolean 
             "charToInt" -> return "((int32_t)${expr(e.arguments[0])})"
             "toChar" -> return "((uint16_t)${expr(e.arguments[0])})"
             "toByte" -> return "((int8_t)${expr(e.arguments[0])})"
+            "jvmCall" -> {
+                usesJvmCall = true
+                val a = e.arguments.map { expr(it) }
+                return "rsf_jvm_call(${a[0]}, ${a[1]}, ${a[2]})"
+            }
         }
         // 省掉 `new` 的构造（`Point(1, 2)`）在语义模型里和 NewExpr 是同一件事，
         // 这里按 newTargets 走构造器命名，否则会掉到「调用 'Point'」去报错。
@@ -1020,6 +1030,106 @@ class CBackend(private val model: SemanticModel, private val withEntry: Boolean 
     }
 
     companion object {
+        /**
+         * `jvmCall` 的运行时（阶段 62）：native 程序自己起一个 JVM 再回头调 Java。
+         *
+         * 为什么用 `LoadLibrary("jvm.dll")` 而不是链接 `-ljvm`：MinGW 没有 jvm.lib，
+         * 直接按导出名取函数地址最省事，也只有真正用了 `jvmCall` 的程序才编这段。
+         * 类路径从环境变量 `RSF_JVM_CP` 读（缺省 `.`）。
+         */
+        private val JVM_RUNTIME = """
+            /* ---- native -> JVM（jvmCall）：只在用到时编进来 ---- */
+            #include <windows.h>
+            #include <jni.h>
+            typedef jint (JNICALL *rsf_create_vm_t)(JavaVM**, void**, void*);
+            static JavaVM* rsf_jvm = 0;
+            static JNIEnv* rsf_env = 0;
+
+            static char* rsf_cstr(rsf_str s) {
+                char* p = (char*)malloc((size_t)s.len + 1);
+                if (s.len > 0) memcpy(p, s.data, (size_t)s.len);
+                p[s.len] = 0;
+                return p;
+            }
+
+            static void rsf_jvm_ensure(void) {
+                if (rsf_jvm != 0) return;
+                const char* dll = getenv("RSF_JVM_DLL");
+                char dllPath[4096];
+                if (dll == 0) {
+                    const char* jh = getenv("JAVA_HOME");
+                    if (jh != 0) {
+                        snprintf(dllPath, sizeof(dllPath), "%s/bin/server/jvm.dll", jh);
+                        dll = dllPath;
+                    }
+                }
+                HMODULE lib = LoadLibraryA(dll == 0 ? "jvm.dll" : dll);
+                if (lib == 0) {
+                    fprintf(stderr, "rsf: cannot find jvm.dll (set JAVA_HOME or RSF_JVM_DLL)\n");
+                    exit(1);
+                }
+                rsf_create_vm_t create = (rsf_create_vm_t)(void*)GetProcAddress(lib, "JNI_CreateJavaVM");
+                if (create == 0) {
+                    fprintf(stderr, "rsf: jvm.dll 里没有 JNI_CreateJavaVM\n");
+                    exit(1);
+                }
+                const char* cp = getenv("RSF_JVM_CP");
+                static char cpopt[4096];
+                if (cp == 0) cp = ".";
+                snprintf(cpopt, sizeof(cpopt), "-Djava.class.path=%s", cp);
+                JavaVMOption opts[2];
+                opts[0].optionString = cpopt;
+                opts[1].optionString = (char*)"-Dfile.encoding=UTF-8";
+                JavaVMInitArgs args;
+                args.version = JNI_VERSION_1_8;
+                args.nOptions = 2;
+                args.options = opts;
+                args.ignoreUnrecognized = JNI_FALSE;
+                if (create(&rsf_jvm, (void**)&rsf_env, &args) != JNI_OK) {
+                    fprintf(stderr, "rsf: 启动 JVM 失败\n");
+                    exit(1);
+                }
+            }
+
+            static rsf_str rsf_jvm_call(rsf_str cls, rsf_str method, rsf_str arg) {
+                rsf_jvm_ensure();
+                char* rawName = rsf_cstr(cls);
+                for (char* q = rawName; *q != 0; q++) if (*q == '.') *q = '/';
+                char* methodName = rsf_cstr(method);
+                char* argText = rsf_cstr(arg);
+                jclass c = (*rsf_env)->FindClass(rsf_env, rawName);
+                if (c == 0) {
+                    (*rsf_env)->ExceptionDescribe(rsf_env);
+                    fprintf(stderr, "rsf: jvmCall 找不到类 %s\n", rawName);
+                    exit(1);
+                }
+                jmethodID m = (*rsf_env)->GetStaticMethodID(
+                    rsf_env, c, methodName, "(Ljava/lang/String;)Ljava/lang/String;");
+                if (m == 0) {
+                    (*rsf_env)->ExceptionDescribe(rsf_env);
+                    fprintf(stderr, "rsf: jvmCall 在类 %s 里找不到 public static String %s(String)\n",
+                            rawName, methodName);
+                    exit(1);
+                }
+                jstring ja = (*rsf_env)->NewStringUTF(rsf_env, argText);
+                jstring jr = (jstring)(*rsf_env)->CallStaticObjectMethod(rsf_env, c, m, ja);
+                if ((*rsf_env)->ExceptionCheck(rsf_env)) {
+                    (*rsf_env)->ExceptionDescribe(rsf_env);
+                    exit(1);
+                }
+                free(rawName); free(methodName); free(argText);
+                rsf_str out;
+                if (jr == 0) { out.len = 0; out.data = ""; return out; }
+                const char* utf = (*rsf_env)->GetStringUTFChars(rsf_env, jr, 0);
+                size_t n = strlen(utf);
+                char* copy = (char*)malloc(n + 1);
+                memcpy(copy, utf, n + 1);
+                (*rsf_env)->ReleaseStringUTFChars(rsf_env, jr, utf);
+                out.len = (int64_t)n; out.data = copy;
+                return out;
+            }
+
+        """.trimIndent() + '\n'
         /** 单文件运行时：程序与这些辅助函数编在一起，不依赖任何 rsf 运行时库。 */
         private val RUNTIME = """
             /* 由 rsf build --c 生成（阶段 52 的 C 后端，native 线第一刀） */

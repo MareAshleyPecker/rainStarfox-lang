@@ -2187,6 +2187,15 @@ class Interpreter(
             "toChar" -> asNumber(arg).toInt().toChar()
             "charToInt" -> (arg as Char).code
             "intToString" -> asNumber(arg).toString()
+            // native → JVM：解释器这边直接把 JVM 起在同一个进程里（反射调静态方法），
+            // 语义与 C 侧 jvmCall 一致：只认 public static String m(String)。
+            "jvmCall" -> {
+                val cls = args[0] as String
+                val method = args[1] as String
+                val arg = args[2] as String
+                jvmCall(cls, method, arg)
+            }
+
             "parseInt" -> {
                 val text = arg as String
                 text.toIntOrNull() ?: throw RsfFailure(Builtins.parseIntFailure(text))
@@ -2490,6 +2499,29 @@ class Interpreter(
      * 所以 `'a' + 1` 在编译产物里是 Int 加法；解释器这边就得自己把 Char 翻译成码点，
      * 否则 `coerce('a', Int)` 会直接 ClassCastException。
      */
+    /** `jvmCall` 的解释器实现：与 C 侧 `rsf_jvm_call` 同样的查找规则。 */
+    private fun jvmCall(cls: String, method: String, arg: String): String {
+        val type = try {
+            Class.forName(cls)
+        } catch (e: Throwable) {
+            throw RsfFailure("jvmCall 失败：找不到类 '$cls'")
+        }
+        val target = type.methods.firstOrNull {
+            it.name == method && java.lang.reflect.Modifier.isStatic(it.modifiers) &&
+                it.parameterCount == 1 && it.parameterTypes[0] == String::class.java &&
+                it.returnType == String::class.java
+        } ?: throw RsfFailure(
+            "jvmCall 失败：类 '$cls' 里没有 public static String $method(String)",
+        )
+        return try {
+            target.invoke(null, arg) as String
+        } catch (e: java.lang.reflect.InvocationTargetException) {
+            throw RsfFailure("jvmCall 失败：$method 抛了 ${e.targetException}")
+        } catch (e: Throwable) {
+            throw RsfFailure("jvmCall 失败：$method 调不动（${e.message}）")
+        }
+    }
+
     private fun asNumber(v: Any?): Number = when (v) {
         is Char -> v.code
         is Number -> v

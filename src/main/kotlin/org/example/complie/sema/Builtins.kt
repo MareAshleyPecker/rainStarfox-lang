@@ -148,11 +148,22 @@ object Builtins {
         helperDesc = FileRuntime.WRITE_BYTES_HELPER_DESC,
     )
 
+    // ------------------------------------------------------------------ native → JVM（阶段 62）
+
+    /** `jvmCall(类名, 方法名, 参数) -> String`：native 侧起 JVM 调 `public static String m(String)`。 */
+    val JVM_CALL = Builtin(
+        "jvmCall", listOf(RsfType.STRING, RsfType.STRING, RsfType.STRING), RsfType.STRING,
+        // C 后端没有错误返回，找不到类/方法一律直接中止（stderr 说清楚），
+        // 所以这里不标 mayError：调用方不用写 catch，`rsf run` 与 `--c` 写法一致。
+        doc = "调 Java 的 public static String 方法：jvmCall(\"类\", \"方法\", \"参数\")（只在 --c 构建可用）",
+    )
+
     /** 带签名的内置函数（`print` / `println` 是单参数特例，签名不在这里表达）。 */
     val ALL: List<Builtin> = listOf(
         TO_BYTE, TO_CHAR, CHAR_TO_INT, INT_TO_STRING, PARSE_INT,
         IS_DIGIT, IS_LETTER, IS_WHITESPACE, TO_UPPER, TO_LOWER,
         READ_TEXT, WRITE_TEXT, READ_BYTES, WRITE_BYTES,
+        JVM_CALL,
     )
 
     private val BY_NAME: Map<String, Builtin> = ALL.associateBy { it.name }

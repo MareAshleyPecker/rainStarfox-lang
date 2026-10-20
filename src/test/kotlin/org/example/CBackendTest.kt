@@ -321,4 +321,22 @@ class CBackendTest {
         assertTrue(e.message!!.contains("JNI 桥只支持"), e.message!!)
     }
 
+
+    @Test
+    fun `jvmCall 才把 JVM 运行时编进来`() {
+        val withCall = emit(
+            """
+                fn main() -> void {
+                    println(jvmCall("Echo", "hi", "bob"))
+                }
+            """.trimIndent(),
+        )
+        assertTrue(withCall.contains("static rsf_str rsf_jvm_call("))
+        assertTrue(withCall.contains("rsf_jvm_call("))
+        assertTrue(withCall.contains("JNI_CreateJavaVM"))
+
+        val without = emit("fn main() -> void { println(intToString(1)) }")
+        assertTrue(!without.contains("JNI_CreateJavaVM"))
+    }
+
 }

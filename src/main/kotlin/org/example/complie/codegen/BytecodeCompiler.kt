@@ -3975,6 +3975,13 @@ class BytecodeCompiler(
 
             // 失败的语义要自己给：辅助方法体里把 NumberFormatException 换成
             // 带 rsf 消息的 RuntimeException（和解释器的 RsfFailure 一字不差）
+            // jvmCall 是 native → JVM 的方向：JVM 侧本来就在 JVM 里，直接调 Java 即可，
+            // 不走桥（那条路只在 --c 出来的原生程序里才有意义）。
+            "jvmCall" -> throw RsfError(
+                "codegen",
+                "jvmCall 只在 native 构建（--c）里可用：JVM 侧直接 import/java 调就行，不用过桥",
+            )
+
             "parseInt" -> mv.visitMethodInsn(
                 INVOKESTATIC, programInternalName,
                 Builtins.PARSE_INT_HELPER, Builtins.PARSE_INT_HELPER_DESC, false,

@@ -204,3 +204,12 @@ DESIGN-*.md
 !/build/verify60/
 /build/verify60/**
 !/build/verify60/run.sh
+
+### 阶段 62 判据台（只留脚本、语料与 Java 辅助类）###
+!/build/verify62/
+/build/verify62/*
+!/build/verify62/probes/
+!/build/verify62/probes/**
+!/build/verify62/java/
+!/build/verify62/java/**
+!/build/verify62/run-probes.sh

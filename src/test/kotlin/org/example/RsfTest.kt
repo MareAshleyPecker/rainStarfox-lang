@@ -8953,4 +8953,28 @@ class RsfTest {
         assertEquals(listOf("Slow"), Rsf.load(file, target = BuildTarget.JVM).classes.map { it.name })
     }
 
+
+    @Test
+    fun `jvmCall 在解释器里调 Java 静态方法`() {
+        val text = """
+            fn main() -> void {
+                println(jvmCall("java.util.regex.Pattern", "quote", "a.b"))
+            }
+        """.trimIndent()
+        // Pattern.quote 回的是 \Q...\E，两个反斜杠用码点拼，避免转义层数不清
+        val quote = 92.toChar().toString()
+        assertEquals(listOf(quote + "Qa.b" + quote + "E"), lines(runInterpreted(text)))
+    }
+
+    @Test
+    fun `jvmCall 在字节码后端显式报错`() {
+        val text = """
+            fn main() -> void {
+                println(jvmCall("java.util.regex.Pattern", "quote", "a.b"))
+            }
+        """.trimIndent()
+        val e = assertFailsWith<RsfError> { runCompiled(text) }
+        assertTrue(e.message!!.contains("只在 native 构建"))
+    }
+
 }

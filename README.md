@@ -107,6 +107,22 @@ build/ui_app.exe --text hello --frames 2 --shot typed.bmp
 
 判据台：`bash build/verify60/run.sh`（生成 C → gcc → 截图 → 点击命中 → 输入后截图，5 项全过）。
 
+### native 调 JVM（`jvmCall`）
+
+`--c` 出来的程序可以起 JVM 再调 Java 的 `public static String m(String)`：
+
+```rsf
+fn main() -> void { println(jvmCall("Echo", "hi", "bob")) }
+```
+
+```bash
+rsf build x.rsf --c -o out
+gcc out/x.c -I"$JAVA_HOME/include" -I"$JAVA_HOME/include/win32" -o out/x.exe
+RSF_JVM_CP=out out/x.exe      # → java:bob
+```
+
+类路径用 `RSF_JVM_CP`（缺省 `.`）；`jvm.dll` 从 `RSF_JVM_DLL` / `$JAVA_HOME/bin/server/jvm.dll` / PATH 找。JVM 构建里 `jvmCall` 会报错（那边直接调 Java 就行）。细节见 `DESIGN-62.md`。
+
 ## C 后端（native 线）
 
 `rsf build x.rsf --c -o out` 把整份程序摊成**一个 C99 文件**，自带运行时（字符串拼接、`print`/`println`、`intToString`），不依赖任何 rsf 库：
