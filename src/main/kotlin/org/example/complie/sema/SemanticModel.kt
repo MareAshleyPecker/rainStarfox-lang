@@ -11,6 +11,7 @@ import org.example.complie.ast.ClassDecl
 import org.example.complie.ast.EnumDecl
 import org.example.complie.ast.Expr
 import org.example.complie.ast.FieldDecl
+import org.example.complie.ast.BuildTarget
 import org.example.complie.ast.FuncDecl
 import org.example.complie.ast.InterfaceDecl
 import org.example.complie.ast.MemberAssignStmt
@@ -672,6 +673,14 @@ data class GenericCallSite(
  */
 class SemanticModel(
     val functions: List<FuncDecl>,
+
+    /**
+     * 阶段 60：被构建目标过滤掉的名字 → 它属于哪一侧。
+     *
+     * Checker 调不到某个名字时先查这张表：如果是「对面才有」，报「只写在 native 侧」，
+     * 而不是「未定义的函数」。
+     */
+    val otherSide: Map<String, BuildTarget> = emptyMap(),
 
     /**
      * 顶层函数按**名字**索引 → 这个名字下的全部重载（声明顺序）。

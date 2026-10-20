@@ -8810,4 +8810,85 @@ class RsfTest {
         assertTrue(error.message!!.contains("不支持指针"), error.message)
     }
 
+    // ---------------------------------------------------------------- 阶段 60：构建目标
+
+    @Test
+    fun `native 与 jvm 标记按构建目标过滤`() {
+        val dir = File.createTempFile("rsf-target", "").let {
+            it.delete()
+            it.mkdirs()
+            it
+        }
+        val lib = File(dir, "lib.rsf")
+        lib.writeText(
+            """
+            target native
+
+            pub fn helper(x : Int) -> Int { rtn x * 3 }
+            """.trimIndent(),
+        )
+        val app = File(dir, "app.rsf")
+        app.writeText(
+            """
+            import "lib.rsf"
+
+            native fn fast(x : Int) -> Int { rtn x + 1 }
+
+            jvm fn slow(x : Int) -> Int { rtn x + 2 }
+
+            fn both(x : Int) -> Int { rtn x }
+            """.trimIndent(),
+        )
+
+        val jvm = Rsf.load(app, target = org.example.complie.ast.BuildTarget.JVM)
+        assertEquals(listOf("both", "slow"), jvm.functions.map { it.name }.sorted())
+        assertEquals(setOf("helper", "fast"), jvm.otherSide.keys)
+
+        val nat = Rsf.load(app, target = org.example.complie.ast.BuildTarget.NATIVE)
+        assertEquals(listOf("both", "fast", "helper"), nat.functions.map { it.name }.sorted())
+        assertEquals(setOf("slow"), nat.otherSide.keys)
+    }
+
+    @Test
+    fun `调到对面才有的函数会报清楚`() {
+        val dir = File.createTempFile("rsf-target2", "").let {
+            it.delete()
+            it.mkdirs()
+            it
+        }
+        val app = File(dir, "app.rsf")
+        app.writeText(
+            """
+            native fn fast(x : Int) -> Int { rtn x + 1 }
+
+            fn main() { println(intToString(fast(1))) }
+            """.trimIndent(),
+        )
+        val loaded = Rsf.load(app, target = org.example.complie.ast.BuildTarget.JVM)
+        val error = assertFailsWith<RsfError> { Rsf.analyze(loaded) }
+        assertTrue(error.message!!.contains("只写在 native 侧"), error.message)
+    }
+
+    @Test
+    fun `target native 的文件在 native 构建里能编`() {
+        val dir = File.createTempFile("rsf-target3", "").let {
+            it.delete()
+            it.mkdirs()
+            it
+        }
+        val file = File(dir, "n.rsf")
+        file.writeText(
+            """
+            target native
+
+            fn main() { println(intToString(21 * 2)) }
+            """.trimIndent(),
+        )
+        val loaded = Rsf.load(file, target = org.example.complie.ast.BuildTarget.NATIVE)
+        val model = Rsf.analyze(loaded)
+        val out = java.io.ByteArrayOutputStream()
+        Rsf.interpret(model, java.io.PrintStream(out, true, "UTF-8"))
+        assertEquals(listOf("42"), lines(out.toString(Charsets.UTF_8)))
+    }
+
 }

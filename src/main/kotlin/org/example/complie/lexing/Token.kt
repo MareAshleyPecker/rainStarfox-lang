@@ -116,7 +116,15 @@ enum class TokenKind(val text: String) {
      * 而不是被当成普通名字悄悄用掉，也不会被误当修饰词。
      */
     KW_MATHEMATIC("mathematic"),
-    /** `new 类名(实参)`。 */
+
+    /** 阶段 60：只在 native（C）侧编译的函数修饰词。 */
+    KW_NATIVE("native"),
+
+    /** 阶段 60：只在 JVM（class）侧编译的函数修饰词。 */
+    KW_JVM("jvm"),
+
+    /** 阶段 60：文件级构建目标指令 `target native` / `target jvm`。 */
+    KW_TARGET("target"),    /** `new 类名(实参)`。 */
     KW_NEW("new"),
     /** 当前对象：只在类的方法里有效。 */
     KW_THIS("this"),
@@ -312,7 +320,8 @@ enum class TokenKind(val text: String) {
      * `override public fn` 和 `public override fn` 两种写法上看到同一个 `fn`。
      */
     val isModifierKeyword: Boolean
-        get() = isControlKeyword || isStaticKeyword || isInheritKeyword || this == KW_OVERRIDE
+        get() = isControlKeyword || isStaticKeyword || isInheritKeyword ||
+            this == KW_OVERRIDE || this == KW_NATIVE || this == KW_JVM
 }
 
 data class Token(

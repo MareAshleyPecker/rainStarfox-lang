@@ -1,0 +1,49 @@
+// 阶段 59 示例：一个能跑的窗口应用（宿主见 host/win32_main.c）
+//
+//   rsf build examples/ui_app.rsf --c --lib -o build/host
+//   gcc host/win32_main.c build/host/ui_app.c -o build/ui_app.exe
+//   build/ui_app.exe
+import "../rsfSrc/ui/Host.rsf"
+
+fn view() -> Widget {
+    var root = box()
+    root.pad(12).width(320).height(178)
+    root.withColors(1053978, 15262199)
+
+    var header = box()
+    header.pad(6).marginY(2).withColors(2240580, 15262199)
+    header.add(title("RAINSTARFOX UI").withFg(15262199))
+    root.add(header)
+
+    var body = row()
+    body.pad(2)
+
+    var side = box()
+    side.pad(6).width(96).withColors(1585200, 11776947).frame(3362389)
+    side.add(label("NAV").withFg(4621004))
+    side.add(label("OVERVIEW").marginY(2))
+    side.add(label("SETTINGS").marginY(2))
+    side.add(label("ABOUT").marginY(2))
+    body.add(side)
+
+    var main = box()
+    main.pad(8).flex(1).marginX(4).withColors(1317408, 15262199).frame(3362389)
+    main.add(label("PROFILE").withFg(15658734))
+    main.add(label("NAME").marginY(3).withFg(10395294))
+    var nameField = field("type here")
+    nameField.withKey("name").width(180).marginY(2)
+    main.add(nameField)
+    var buttons = row()
+    buttons.marginY(4)
+    buttons.add(button("OK", 1).flex(1).withColors(4621004, 16777215).withAccent(6528269))
+    buttons.add(button("QUIT", 2).flex(1).marginX(3).withColors(2960685, 13619151))
+    main.add(buttons)
+    main.add(toggle("REMEMBER", 3, true).withAccent(4621004))
+    body.add(main)
+
+    root.add(body)
+    rtn root
+}
+
+/// 动作回调（宿主在每帧后调用，可选）：1 = OK，2 = QUIT，3 = 复选框。
+fn onAction(id : Int) -> void { }

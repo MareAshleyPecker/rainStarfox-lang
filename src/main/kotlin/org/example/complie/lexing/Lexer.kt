@@ -100,6 +100,12 @@ private val KEYWORDS: Map<String, TokenKind> = buildMap {
     put("Byte", TokenKind.KW_BYTE)
     put("Char", TokenKind.KW_CHAR)
     // 阶段 24：类型转换 / 类型判断的操作符关键字（`x as A` / `x is A`）
+    // 阶段 60：构建目标（native / jvm）。`target` **故意不做关键字**——
+    // 它只在文件最前面当指令用（`target native`），老代码里 `var target : Int`
+    // 这种写法必须继续能编，所以由 Parser 按「文件首部的标识符 target」识别。
+    put("native", TokenKind.KW_NATIVE)
+    put("jvm", TokenKind.KW_JVM)
+
     put("as", TokenKind.KW_AS)
     put("is", TokenKind.KW_IS)
 }

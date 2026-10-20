@@ -1,6 +1,7 @@
 package org.example.complie.loading
 
 import org.example.complie.ast.AnnotationDecl
+import org.example.complie.ast.BuildTarget
 import org.example.complie.ast.ClassDecl
 import org.example.complie.ast.ClassImport
 import org.example.complie.ast.EnumDecl
@@ -52,10 +53,24 @@ class LoadedProgram(
     val sourceOfAnnotation: IdentityHashMap<AnnotationDecl, SourceFile> = IdentityHashMap(),
     /** 根文件的包名（`pkg a.b`）；没写就是 null。生成 .class 时它就是 JVM 的包。 */
     val packageName: String? = null,
+    /** 阶段 60：本次构建目标。 */
+    val target: BuildTarget = BuildTarget.JVM,
+    /** 阶段 60：被过滤掉的名字 → 它属于哪一侧。 */
+    val otherSide: Map<String, BuildTarget> = emptyMap(),
 ) {
     /** 合成一个 Program 交给 Checker。 */
     fun toProgram(): Program =
-        Program(importDecls, functions, classes, packageName, enums, interfaces, annotations)
+        Program(
+            imports = importDecls,
+            functions = functions,
+            classes = classes,
+            packageName = packageName,
+            target = target,
+            otherSide = otherSide,
+            enums = enums,
+            interfaces = interfaces,
+            annotations = annotations,
+        )
 }
 
 /**
@@ -87,12 +102,24 @@ class SourceLoader {
     /** 根文件的包名（没写 pkg 就是 null）。 */
     private var rootPackage: String? = null
 
+    /** 阶段 60：这一趟构建的目标侧；文件级 / 声明级标记与它不符的就丢。 */
+    private var target: BuildTarget = BuildTarget.JVM
+
+    /** 阶段 60：被过滤掉的名字 → 它属于哪一侧（给 Checker 报错用）。 */
+    private val otherSide = LinkedHashMap<String, BuildTarget>()
+
     /**
      * [baseDir] 给根文件用：编辑器会把「未保存的缓冲区」写成临时文件再拿来分析，
      * 此时它真实的 import 相对目录得从外面指定（临时文件所在目录没有意义）。
      * 被导入的文件仍然按各自的目录解析。
      */
-    fun load(rootFile: File, baseDir: File? = null, text: String? = null): LoadedProgram {
+    fun load(
+        rootFile: File,
+        baseDir: File? = null,
+        text: String? = null,
+        target: BuildTarget = BuildTarget.JVM,
+    ): LoadedProgram {
+        this.target = target
         // text 不为空 = 「盘上那份不是正文」：编辑器里有未保存的缓冲区。
         // 路径必须用**真实文件**的（包声明校验、import 相对路径都按它算），
         // 否则 `pkg testbag` 会因为临时目录在 Temp 下而误报。
@@ -119,6 +146,8 @@ class SourceLoader {
             annotations = annotations.toList(),
             sourceOfAnnotation = sourceOfAnnotation,
             packageName = rootPackage,
+            target = target,
+            otherSide = otherSide.toMap(),
         )
     }
 
@@ -134,6 +163,17 @@ class SourceLoader {
         val tokens = Lexer(source).tokenize()
         val program = Parser(tokens, source).parseProgram()
 
+        // 阶段 60：文件级 target 与本次构建目标不符 → 整份文件不进编译，
+        // 但名字要记下来，调用点才能报「只写在 native 侧」。
+        if (program.target != BuildTarget.BOTH && program.target != target) {
+            val other = program.target
+            for (fn in program.functions) otherSide[fn.name] = other
+            for (cls in program.classes) otherSide[cls.name] = other
+            for (en in program.enums) otherSide[en.name] = other
+            for (iface in program.interfaces) otherSide[iface.name] = other
+            return
+        }
+
         // 包声明：校验「文件真的在那个目录下」，根文件的包名留给生成 .class 用
         program.packageName?.let { pkg ->
             checkPackage(pkg, file, source)
@@ -141,6 +181,10 @@ class SourceLoader {
         }
 
         for (fn in program.functions) {
+            if (fn.target != BuildTarget.BOTH && fn.target != target) {
+                otherSide[fn.name] = fn.target
+                continue
+            }
             functions.add(fn)
             sourceOfFunction[fn] = source
         }

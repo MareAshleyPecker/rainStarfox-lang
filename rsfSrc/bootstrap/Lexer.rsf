@@ -232,7 +232,7 @@ fn isNumberSuffix(c : Char) -> Bool {
 
 // ---------------------------------------------------------------- 关键字表
 //
-// 与 Kotlin 版 Lexer.kt 的 KEYWORDS **逐条对应**（那条 Map 有 57 个键；
+// 与 Kotlin 版 Lexer.kt 的 KEYWORDS **逐条对应**（那条 Map 有 59 个键；
 // Str / Boolean 是 String / Bool 的别名，也各占一个键）。
 // 顺序无关紧要，只做查表。
 //
@@ -338,6 +338,10 @@ fn keywordKind(word : String) -> String {
     // 阶段 24（自举同步 24b）：类型转换 / 类型判断的操作符关键字
     // （`x as A` / `x ?as A` / `x is A` / `x !is A`）。位置与 Kotlin 版 Lexer.kt:89-90
     // 的两个 put 一一对应：两者都是**硬关键字**，从此不能再当标识符用。
+    // 阶段 60：构建目标两词（与 Kotlin 版 Lexer.kt 的 put("native") / put("jvm") 对齐；
+    // `target` 是软关键字，不进这张表）
+    if (word == "native") { rtn "KW_NATIVE" }
+    if (word == "jvm") { rtn "KW_JVM" }
     if (word == "as") { rtn "KW_AS" }
     if (word == "is") { rtn "KW_IS" }
     rtn ""

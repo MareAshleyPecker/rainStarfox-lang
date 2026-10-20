@@ -1,6 +1,7 @@
 package org.example
 
 import org.example.complie.Rsf
+import org.example.complie.ast.BuildTarget
 import org.example.complie.codegen.disassemble
 import org.example.complie.diag.RsfError
 import org.example.complie.diag.SourceFile
@@ -95,7 +96,8 @@ class Cli {
             positional.firstOrNull(),
             "build <file.rsf> [-o <dir>] [-n <类名>] [--dump] [--c [--lib]]",
         )
-        val loaded = Rsf.load(file)
+        // 阶段 60：`--c` 是 native 构建，只收 target native / 两侧都写的声明
+        val loaded = Rsf.load(file, target = if (cMode) BuildTarget.NATIVE else BuildTarget.JVM)
         val source = loaded.root
         val model = Rsf.analyze(loaded)
         val name = className ?: Rsf.deriveClassName(source)

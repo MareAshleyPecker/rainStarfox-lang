@@ -88,11 +88,14 @@ object RsfKeywords {
     val MODIFIERS = setOf(
         "pub", "prot", "prv", "stc", "override",
         "final", "abstract",
+        // 阶段 60：构建目标（target 是软关键字，文件首部才是指令，普通位置当标识符）
+        "native", "jvm",
     )
 
     val CONTROL = setOf(
         "fn", "rtn", "return", "if", "else", "while", "for", "in",
         "break", "continue", "goto", "import", "module",
+        "native", "jvm",
         // 阶段 6a 的 pkg —— 这张表一直漏着它，于是 `pkg demo.util` 里的 pkg
         // 在编辑器里跟普通名字一个颜色。和 Lexer.KEYWORDS 对齐时补上
         "pkg",

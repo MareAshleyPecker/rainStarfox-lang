@@ -1,5 +1,6 @@
 package org.example.complie
 
+import org.example.complie.ast.BuildTarget
 import org.example.complie.ast.Program
 import org.example.complie.codegen.BytecodeCompiler
 import org.example.complie.diag.RsfError
@@ -52,8 +53,12 @@ object Rsf {
     // ------------------------------------------------------------------ 多文件
 
     /** 从文件加载，展开 import / module。[baseDir] 见 [SourceLoader.load]。 */
-    fun load(file: File, baseDir: File? = null, text: String? = null): LoadedProgram =
-        SourceLoader().load(file, baseDir, text)
+    fun load(
+        file: File,
+        baseDir: File? = null,
+        text: String? = null,
+        target: BuildTarget = BuildTarget.JVM,
+    ): LoadedProgram = SourceLoader().load(file, baseDir, text, target)
 
     /** 检查一个已经展开好的多文件程序。 */
     fun analyze(loaded: LoadedProgram): SemanticModel =

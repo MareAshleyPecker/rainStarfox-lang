@@ -96,9 +96,23 @@ rsf build hello.rsf --c -o out
 gcc out\hello.c -o out\hello.exe
 ```
 
-- 已支持：Int / Long / Bool / String、一维数组、类（字段 / 实例方法 / `stc` 静态方法 / 主次构造 / 单继承与覆盖，虚表分派）、枚举与 `switch`（Int/Long/String 字面量、一个分支可写多个值；字节码后端全部编（枚举用 `tableswitch`，Int/Long/String 用比较链））、指针（`T*` / `&x` / `&o.f` / `&a[i]` / `*p` / `*p = v` / `p + n`）、顶层函数、`if` / `while` / `for` / 递归。
-- 还没接：接口、JDK 父类、泛型、多维数组、浮点、错误返回——遇到会报 `error[native]`。
-- 判据：解释器 stdout vs 原生 exe stdout 逐字节相同（`bash build/verify52/run-probes.sh all`，10 份语料）。
+- 已支持：Int / Long / Bool / String、一维数组、类（字段 / 实例方法 / `stc` 静态方法 / 主次构造 / 单继承与覆盖，虚表分派）、接口（默认方法与虚表回落）、枚举与 `switch`（Int/Long/String 字面量、一个分支可写多个值）、指针（`T*` / `&x` / `&o.f` / `&a[i]` / `*p` / `*p = v` / `p + n`）、顶层函数、`if` / `while` / `for` / 递归。
+- 还没接：JDK 接口 / JDK 父类、泛型、多维数组、浮点、错误返回——遇到会报 `error[native]`。
+- 判据：解释器 stdout vs 原生 exe stdout 逐字节相同（`bash build/verify52/run-probes.sh all`，16 份语料）。
+
+### 构建目标：native / jvm
+
+同一份源码可以只用一侧的声明——`rsf build x.rsf --c` 是 native 构建，`rsf build x.rsf` 是 JVM 构建：
+
+```rsf
+target native            // 文件级：整份只进 native（JVM 构建里整份跳过）
+
+native fn fast(x : Int) -> Int { rtn x + 1 }   // 只写在 native 侧
+jvm fn slow(x : Int) -> Int { rtn x + 2 }      // 只写在 JVM 侧
+fn both(x : Int) -> Int { rtn x }              // 两侧都有
+```
+
+调到「对面才有」的函数会报清楚（「函数 'fast' 只写在 native 侧」），而不是「未定义的函数」。两边互调（JNI 桥）还没接，见 `DESIGN-60.md`。
 
 ### Termux / aarch64
 

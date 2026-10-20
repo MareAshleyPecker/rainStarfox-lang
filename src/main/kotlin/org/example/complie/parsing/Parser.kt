@@ -117,8 +117,16 @@ class Parser(
 
         // pkg 只能出现在最前面（在 import 之前），和 Java 的 package 一样
         var packageName: String? = null
+        // 阶段 60：文件级构建目标，写在最前面（pkg 前后都可以）
+        var fileTarget = BuildTarget.BOTH
+        if (check(TokenKind.IDENT) && peek().lexeme == "target") {
+            fileTarget = parseTargetDirective()
+        }
         if (check(TokenKind.KW_PKG)) {
             packageName = parsePackageDecl()
+        }
+        if (fileTarget == BuildTarget.BOTH && check(TokenKind.IDENT) && peek().lexeme == "target") {
+            fileTarget = parseTargetDirective()
         }
 
         while (!check(TokenKind.EOF)) {
@@ -174,7 +182,16 @@ class Parser(
                 functions.add(parseFuncDecl(annotations = declAnnotations, allowLeadingAnnotations = true))
             }
         }
-        return Program(imports, functions, classes, packageName, enums, interfaces, annotations)
+        return Program(
+            imports = imports,
+            functions = functions,
+            classes = classes,
+            packageName = packageName,
+            target = fileTarget,
+            enums = enums,
+            interfaces = interfaces,
+            annotations = annotations,
+        )
     }
 
     /**
@@ -184,6 +201,29 @@ class Parser(
      * `pkg util`、`pkg a.b`、`pkg a\b`、`pkg a/b` 说的是同一个包。
      * 包本身是个**目录**，以当前目录为准（`pkg a.b` → `./a/b/`）。
      */
+    /**
+     * 阶段 60：文件级构建目标 `target native` / `target jvm` / `target both`。
+     *
+     * 只允许写在文件最前面（import 之前）；整份文件按它过滤——`target native`
+     * 的文件在 JVM 构建里整份不进（它的声明会记进 otherSide，调用点能报清楚）。
+     */
+    private fun parseTargetDirective(): BuildTarget {
+        val kw = advance() // target（标识符形态的软关键字）
+        val next = peek()
+        return when {
+            next.kind == TokenKind.KW_NATIVE -> { advance(); BuildTarget.NATIVE }
+            next.kind == TokenKind.KW_JVM -> { advance(); BuildTarget.JVM }
+            next.kind == TokenKind.IDENT && next.lexeme == "both" -> { advance(); BuildTarget.BOTH }
+            next.kind == TokenKind.IDENT && next.lexeme == "native" -> { advance(); BuildTarget.NATIVE }
+            next.kind == TokenKind.IDENT && next.lexeme == "jvm" -> { advance(); BuildTarget.JVM }
+            else -> throw error(
+                next,
+                "'target' 后面要写 native / jvm / both（例：target native），" +
+                    "实际读到 ${next.describe()}（'target' 只在这里当指令，其它位置仍是普通标识符）",
+            )
+        }
+    }
+
     private fun parsePackageDecl(): String {
         val kw = advance() // pkg
         val parts = ArrayList<String>()
@@ -1563,10 +1603,21 @@ class Parser(
         var control = ControlType.DEFAULT
         var isOverride = false
         var inherit: InheritModifiers? = null
+        var declTarget = BuildTarget.BOTH
+        var targetTok: Token? = null
         while (true) {
             val m = peek()
             if (m.kind.isControlKeyword) {
                 control = ControlType.of(advance().kind)
+                continue
+            }
+            if (m.kind == TokenKind.KW_NATIVE || m.kind == TokenKind.KW_JVM) {
+                val side = if (m.kind == TokenKind.KW_NATIVE) BuildTarget.NATIVE else BuildTarget.JVM
+                if (declTarget != BuildTarget.BOTH && declTarget != side) {
+                    throw error(m, "'native' 与 'jvm' 只能写一个：函数不能同时只属于两侧")
+                }
+                declTarget = side
+                targetTok = advance()
                 continue
             }
             if (consumeOverride(allowOverride)) {
@@ -1782,6 +1833,7 @@ class Parser(
             isFinal = inherit?.isFinal == true,
             annotations = leading,
             typeParams = typeParams,
+            target = declTarget,
         )
     }
 

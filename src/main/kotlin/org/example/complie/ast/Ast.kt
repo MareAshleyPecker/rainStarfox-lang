@@ -364,6 +364,23 @@ data class Param(
  *   [name] 就是类名，[body] 是**空块**（主构造的"体"就是字段初值）。
  * - 次构造：`constructor(参数) { ... }`，[isPrimary] 为 false。
  */
+/**
+ * 阶段 60：构建目标。
+ *
+ * 文件级 `target native` / `target jvm` 与声明级 `native fn` / `jvm fn` 都用它。
+ * 两个构建入口分别传 JVM 与 NATIVE；`BOTH` 表示不参与过滤（分析用的中立模式）。
+ */
+enum class BuildTarget {
+    BOTH, JVM, NATIVE;
+
+    /** 给报错用的中文名。 */
+    fun label(): String = when (this) {
+        BOTH -> "两侧"
+        JVM -> "JVM"
+        NATIVE -> "native"
+    }
+}
+
 data class FuncDecl(
     val control: ControlType,
     val mainType: TypeRef,
@@ -420,6 +437,17 @@ data class FuncDecl(
      * `fn id&<T>(x : T)`：函数体里的 `T` 是函数自己的那个）。
      */
     val typeParams: List<String> = emptyList(),
+    /**
+     * 阶段 60：这一刀只编进哪一侧。
+     *
+     * - [BuildTarget.BOTH]（缺省）：解释器 / 字节码 / C 都编；
+     * - [BuildTarget.NATIVE]：写成 `native fn f(...)`，只有 C 侧有实体，JVM 构建里不存在；
+     * - [BuildTarget.JVM]：写成 `jvm fn f(...)`，只有 class 侧有实体，`--c` 构建里不存在。
+     *
+     * 过滤在 [org.example.complie.loading.SourceLoader] 里做（按构建目标丢声明），
+     * 所以 Checker 与两个后端看到的永远是「本侧该有的那部分」。
+     */
+    val target: BuildTarget = BuildTarget.BOTH,
 ) : Node {
     /**
      * 抽象方法：只有签名没有体（[body] == null）。
@@ -482,6 +510,15 @@ data class Program(
      * 生成 .class 时它同时是 JVM 的包名。
      */
     val packageName: String? = null,
+    /** 阶段 60：文件级 `target native|jvm`；缺省两边都编。 */
+    val target: BuildTarget = BuildTarget.BOTH,
+    /**
+     * 阶段 60：被构建目标过滤掉的名字 → 它属于哪一侧。
+     *
+     * 只在 Checker 里用：调到一个「对面才有」的函数时，报「只写在 native 侧」，
+     * 而不是含糊的「未定义的函数」。
+     */
+    val otherSide: Map<String, BuildTarget> = emptyMap(),
     /**
      * 枚举声明（阶段 19c）。
      *

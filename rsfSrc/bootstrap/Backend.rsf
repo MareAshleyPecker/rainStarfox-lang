@@ -2150,13 +2150,13 @@ fn typeOfText(g : Gen, text : String) -> ?BType {
         rtn new BType("external", ifc0!!.internal, nullable, depth)
     }
     // 已知的 JVM 引用类型（互操作要用的那几个）
-    var jvm = jvmInternalName(rest)
-    if (jvm.length() > 0) {
+    var jvmName = jvmInternalName(rest)
+    if (jvmName.length() > 0) {
         if (ta.length > 0) {
             g.bad("非泛型类型 " + text)
             rtn null
         }
-        rtn new BType("external", jvm, nullable, depth)
+        rtn new BType("external", jvmName, nullable, depth)
     }
     // 类导入：`import java.io.File` 之后 `File` 就是 `java/io/File`。
     // 允许带类型实参（`ArrayList&<Int>`）：JDK 泛型类的形参名这里拿不到，
@@ -5884,9 +5884,9 @@ fn emitBuiltin(g : Gen, mv : MethodVisitor, b : Builtin2) -> void {
         rtn
     }
     if (n == "toUpper" || n == "toLower") {
-        var jvm = "toUpperCase"
-        if (n == "toLower") { jvm = "toLowerCase" }
-        mv.visitMethodInsn(184, "java/lang/Character", jvm, "(C)C", false)
+        var jvmName = "toUpperCase"
+        if (n == "toLower") { jvmName = "toLowerCase" }
+        mv.visitMethodInsn(184, "java/lang/Character", jvmName, "(C)C", false)
         rtn
     }
     mv.visitMethodInsn(184, g.owner, b.helper, b.helperDesc, false)

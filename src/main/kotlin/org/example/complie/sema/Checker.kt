@@ -13,6 +13,7 @@ import org.example.complie.ast.BreakStmt
 import org.example.complie.ast.DerefAssignStmt
 import org.example.complie.ast.CallExpr
 import org.example.complie.ast.CharLit
+import org.example.complie.ast.BuildTarget
 import org.example.complie.ast.ClassDecl
 import org.example.complie.ast.ClassImport
 import org.example.complie.ast.CompanionEntityDecl
@@ -276,6 +277,7 @@ class Checker(
         // 类的 .class 用 BytecodeCompiler 按类逐个生成）。
         return SemanticModel(
             functions = program.functions.toList(),
+            otherSide = program.otherSide,
             functionTable = functionTable,
             exprTypes = exprTypes,
             castTargets = castTargets,
@@ -6787,7 +6789,7 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
             if (iface != null && !interfaceMethodsByName(iface)[expr.name].isNullOrEmpty()) {
                 return checkImplicitInterfaceCall(iface, expr)
             }
-            throw err("未定义的函数 '${expr.name}'", expr.at)
+            throw err(unknownFunctionMessage(expr.name), expr.at)
         }
 
         // 候选先按**可见性**过滤：private 顶层函数只有它自己那个文件能调。
@@ -6853,6 +6855,19 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
      * 结果记进 [implicitCalls]，解释器才知道要不要塞 this。
      * 类体内部 private 一律可见，static / 实例两种都能这么调，所以这里不做这两项过滤。
      */
+    /**
+     * 阶段 60：名字不存在时，先看它是不是被构建目标过滤掉了。
+     */
+    private fun unknownFunctionMessage(name: String): String {
+        val side = program.otherSide[name]
+        if (side != null) {
+            val word = if (side == BuildTarget.NATIVE) "native fn" else "jvm fn"
+            return "函数 '$name' 只写在 ${side.label()} 侧（写成 '$word $name …'），" +
+                "当前构建是另一侧：换个构建目标，或者给它补一份这一侧的实现"
+        }
+        return "未定义的函数 '$name'"
+    }
+
     private fun checkImplicitCall(info: ClassInfo, expr: CallExpr): RsfType {
         // 阶段 25 K1（G2）：候选要沿**父类链**收集，父类那一层滤掉 static / private
         // （它们不继承，DESIGN-25 §3）；同一个签名「近的类优先」——那就是虚分派的结果。
@@ -6983,7 +6998,7 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
         val calleeType = when {
             callee != null -> type(callee)
             binding != null -> binding.type
-            else -> throw err("未定义的函数 '${expr.name}'", expr.at)
+            else -> throw err(unknownFunctionMessage(expr.name), expr.at)
         }
         val label = expr.name.ifEmpty { calleeType.rsfName }
 

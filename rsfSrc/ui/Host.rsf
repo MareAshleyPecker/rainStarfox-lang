@@ -1,0 +1,82 @@
+// 阶段 59：宿主接口（给 C 宿主窗口用）
+//
+// rsf 侧只维护像素、布局、命中；窗口、消息循环、输入法都在宿主（`host/win32_main.c`）。
+// 编译方式：
+//   rsf build examples/ui_app.rsf --c --lib -o build/host
+//   gcc host/win32_main.c build/host/ui_app.c -o build/ui_app.exe
+//
+// 宿主看到的 ABI（`--c --lib` 出的 C）：
+//   void*   rsf_fn_app_new(int32_t w, int32_t h)
+//   int32_t rsf_fn_app_frame(void* app)              // 返回这一帧的动作个数
+//   int32_t rsf_fn_app_action(void* app, int32_t i)  // 第 i 个动作 id
+//   rsf_arr rsf_fn_app_pixels(void* app)             // int32_t[]，0xRRGGBB
+//   void    rsf_fn_app_move/down/up(void*, ...)
+//   void    rsf_fn_app_text(void*, rsf_str)
+//   void    rsf_fn_app_backspace(void*)
+//
+// 应用侧只需提供两个函数：`fn view() -> Widget` 与可选的 `fn onAction(id : Int)`。
+import "Renderer.rsf"
+
+pub class App(w0 : Int, h0 : Int) {
+    var cv : Canvas = Canvas(w0, h0)
+    var r : Renderer = Renderer(cv)
+    var lastAction : Int = 0
+
+    pub fn width() -> Int { rtn cv.width }
+
+    pub fn height() -> Int { rtn cv.height }
+
+    pub fn pixels() -> Int[] { rtn cv.pixels }
+
+    pub fn move(x : Int, y : Int) -> void { r.moveTo(x, y) }
+
+    pub fn down(x : Int, y : Int) -> void { r.click(x, y) }
+
+    pub fn up() -> void { }
+
+    pub fn text(s : String) -> void { r.typeText(s) }
+
+    pub fn backspace() -> void { r.backspace() }
+
+    /// 画一帧，返回动作个数；动作 id 用 [action] 取。
+    pub fn frame() -> Int {
+        rtn r.frame(view(), 0, 0, cv.width, cv.height)
+    }
+
+    pub fn action(i : Int) -> Int { rtn r.actionAt(i) }
+
+    pub fn focusKey() -> String { rtn r.focus }
+}
+
+// 下面是宿主 ABI 的薄包装：C 侧只看 `rsf_fn_app_*` 这些函数，不碰类名。
+pub fn app_new(w : Int, h : Int) -> App { rtn App(w, h) }
+
+pub fn app_frame(a : App) -> Int { rtn a.frame() }
+
+pub fn app_action(a : App, i : Int) -> Int { rtn a.action(i) }
+
+pub fn app_width(a : App) -> Int { rtn a.width() }
+
+pub fn app_height(a : App) -> Int { rtn a.height() }
+
+pub fn app_pixels(a : App) -> Int[] { rtn a.pixels() }
+
+pub fn app_move(a : App, x : Int, y : Int) -> void { a.move(x, y) }
+
+pub fn app_down(a : App, x : Int, y : Int) -> void { a.down(x, y) }
+
+pub fn app_up(a : App) -> void { a.up() }
+
+pub fn app_text(a : App, s : String) -> void { a.text(s) }
+
+pub fn app_backspace(a : App) -> void { a.backspace() }
+
+pub fn app_trace_on(a : App) -> void { a.r.startTrace() }
+
+pub fn app_trace_at(a : App, i : Int) -> String { rtn a.r.traceLine(i) }
+
+pub fn app_trace_count(a : App) -> Int { rtn a.r.traceLines() }
+
+pub fn app_click(a : App, x : Int, y : Int) -> void { a.r.click(x, y) }
+
+pub fn app_action_at(a : App, i : Int) -> Int { rtn a.r.actionAt(i) }
