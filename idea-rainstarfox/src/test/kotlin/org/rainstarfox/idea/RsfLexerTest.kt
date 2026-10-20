@@ -198,6 +198,8 @@ class RsfLexerTest {
         "as", "is",
         // 阶段 30：`lam` 字面量（写在表达式位置，和 this/as 一样是硬关键字）
         "lam",
+        // 阶段 60：构建目标两词（`target` 是软关键字，不进这张表）
+        "native", "jvm",
         "if", "else", "while", "for", "in", "break", "continue", "goto",
         "fail", "try", "catch", "true", "false", "null",
         "void", "Int", "Long", "Float", "Double", "String", "Str", "Bool", "Boolean", "Byte", "Char",
