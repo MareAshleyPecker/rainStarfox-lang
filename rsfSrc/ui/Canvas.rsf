@@ -111,10 +111,15 @@ pub class Canvas(w : Int, h : Int) {
         var row = 0
         while (row < 7) {
             var bits = glyphRow(code, row)
+            // 字形码第 4 位是最左列（MSB 优先），别按低位先画，否则整行镜像
+            var mask = 16
             var col = 0
             while (col < 5) {
-                if (bits % 2 == 1) { set(x + col, y + row, c) }
-                bits = bits / 2
+                if (bits >= mask) {
+                    set(x + col, y + row, c)
+                    bits = bits - mask
+                }
+                mask = mask / 2
                 col = col + 1
             }
             row = row + 1

@@ -217,6 +217,10 @@ pub class Renderer(cv : Canvas) {
             traceCount = traceCount + 1
         }
         var content = Rect(r.x + w.padL, r.y + w.padT, r.w - w.padL - w.padR, r.h - w.padT - w.padB)
+        if (w.kind == "box" || w.kind == "row") {
+            if (w.bg >= 0) { cv.fill(r, w.bg) }
+            if (w.border >= 0) { cv.stroke(r, w.border, 1) }
+        }
         if (w.kind == "box") {
             placeColumn(w, content, depth, size)
             rtn

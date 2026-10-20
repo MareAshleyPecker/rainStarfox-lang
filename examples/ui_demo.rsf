@@ -1,0 +1,78 @@
+// 演示：块套块盒模型 + 区域描边，导出两张 PPM（宿主窗口之前先看静态效果）
+import "../rsfSrc/ui/Renderer.rsf"
+
+fn view() -> Widget {
+    var root = box()
+    root.pad(10).width(240)
+    root.withColors(1053978, 15262199)
+
+    var header = box()
+    header.pad(6).marginY(2).withColors(2240580, 15262199)
+    header.add(title("RAINSTARFOX UI").withFg(15262199))
+    root.add(header)
+
+    var body = row()
+    body.pad(2)
+
+    var side = box()
+    side.pad(6).width(84).withColors(1585200, 11776947).frame(3362389)
+    side.add(label("NAV").withFg(4621004))
+    side.add(label("OVERVIEW").marginY(2))
+    side.add(label("SETTINGS").marginY(2))
+    side.add(label("ABOUT").marginY(2))
+    body.add(side)
+
+    var main = box()
+    main.pad(8).flex(1).marginX(4).withColors(1317408, 15262199).frame(3362389)
+    main.add(label("PROFILE").withFg(15658734))
+    main.add(label("NAME").marginY(3).withFg(10395294))
+    var nameField = field("type here")
+    nameField.withKey("name").width(130).marginY(2)
+    main.add(nameField)
+    var buttons = row()
+    buttons.marginY(4)
+    buttons.add(button("OK", 1).flex(1).withColors(4621004, 0).withAccent(6528269))
+    buttons.add(button("CANCEL", 2).flex(1).marginX(3).withColors(2960685, 13619151))
+    main.add(buttons)
+    main.add(toggle("REMEMBER", 3, true).withAccent(4621004))
+    body.add(main)
+
+    root.add(body)
+    rtn root
+}
+
+fn shot(r : Renderer, cv : Canvas, path : String) -> void {
+    r.frame(view(), 0, 0, cv.width, cv.height)
+    var head = "P6\n240 140\n255\n"
+    var total = head.length() + cv.width * cv.height * 3
+    var bytes = new Byte[total]
+    var i = 0
+    while (i < head.length()) {
+        bytes[i] = toByte(charToInt(head.charAt(i)))
+        i = i + 1
+    }
+    var p = 0
+    while (p < cv.width * cv.height) {
+        var c = cv.get(p % cv.width, p / cv.width)
+        bytes[i] = toByte(redOf(c))
+        bytes[i + 1] = toByte(greenOf(c))
+        bytes[i + 2] = toByte(blueOf(c))
+        i = i + 3
+        p = p + 1
+    }
+    try {
+        writeBytes(path, bytes)
+        println("wrote " + path)
+    } catch (e : String) {
+        println("fail " + e)
+    }
+}
+
+fn main() {
+    var cv = Canvas(240, 140)
+    var r = Renderer(cv)
+    cv.clear(0)
+    shot(r, cv, "build/ui_demo_plain.ppm")
+    r.showRegions(true)
+    shot(r, cv, "build/ui_demo_regions.ppm")
+}

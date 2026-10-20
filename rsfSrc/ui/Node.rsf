@@ -86,6 +86,11 @@ pub class Widget {
         rtn this
     }
 
+    pub fn withFg(c : Int) -> Widget {
+        fg = c
+        rtn this
+    }
+
     pub fn withAccent(c : Int) -> Widget {
         accent = c
         rtn this

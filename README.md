@@ -85,6 +85,8 @@ rsf help | version
 
 `rsf build app.rsf --c --lib -o out` 只出 C 函数、不出 `main`，交给宿主窗口调用。
 
+跑 `rsf run examples/ui_demo.rsf` 会导出 `build/ui_demo_plain.ppm` 与 `build/ui_demo_regions.ppm`（后者带块区域描边）。
+
 ## C 后端（native 线）
 
 `rsf build x.rsf --c -o out` 把整份程序摊成**一个 C99 文件**，自带运行时（字符串拼接、`print`/`println`、`intToString`），不依赖任何 rsf 库：
