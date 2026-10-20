@@ -92,6 +92,50 @@ class CBackendTest {
     }
 
     @Test
+    fun `String 成员方法摊成 rsf_str_ 系列`() {
+        val c = emit(
+            """
+            fn main() -> void {
+                var s = "abc"
+                println(intToString(s.length()))
+                println(s.substring(1))
+                println(s.toUpperCase())
+                println(s.startsWith("ab") + " " + s.contains("b"))
+            }
+            """.trimIndent(),
+        )
+        assertTrue(c.contains("rsf_str_len(v_s)"), c)
+        assertTrue(c.contains("rsf_str_substr(v_s, 1, rsf_str_len(v_s))"), c)
+        assertTrue(c.contains("rsf_str_upper(v_s)"), c)
+        assertTrue(c.contains("rsf_str_starts(v_s, rsf_str_lit(\"ab\", 2LL))"), c)
+        assertTrue(c.contains("rsf_str_contains(v_s, rsf_str_lit(\"b\", 1LL))"), c)
+    }
+
+    @Test
+    fun `接口数组摊成 void* 数组`() {
+        val c = emit(
+            """
+            interface Shape {
+                fn area() -> Int
+            }
+
+            class Sq(s : Int) : Shape {
+                var side : Int = s
+                fn area() -> Int { rtn side * side }
+            }
+
+            fn main() -> void {
+                var xs : Shape[] = new Shape[2]
+                xs[0] = Sq(3)
+                xs[1] = Sq(4)
+                println(intToString(xs[0].area()))
+            }
+            """.trimIndent(),
+        )
+        assertTrue(c.contains("sizeof(void*)"), c)
+    }
+
+    @Test
     fun `接口摊成 void 指针、默认方法走虚表`() {
         val c = emit(
             """

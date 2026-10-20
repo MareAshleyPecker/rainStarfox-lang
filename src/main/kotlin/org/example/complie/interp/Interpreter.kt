@@ -2042,6 +2042,9 @@ class Interpreter(
         // 对 rsf 语义没有影响（元素读写仍然只经 rsf 的类型检查）。
         type.isExternal && model.classModel.classes.containsKey(type.externalName) ->
             RsfObject::class.java
+        // 阶段 58a：**接口**数组同理——接口不是类，Class.forName 会 CNFE；元素载体仍是 RsfObject。
+        type.isExternal && model.interfaces.containsKey(type.externalName) ->
+            RsfObject::class.java
         // 阶段 19c：枚举同理——枚举的「类」是编译期才生成出来的（解释器根本不生成 .class），
         // `Class.forName("TokenKind")` 必然 ClassNotFoundException。解释器里枚举值的载体
         // 是 [RsfEnumValue] 单例，所以 `TokenKind[]` 按它建数组。

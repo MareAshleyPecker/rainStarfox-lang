@@ -1,0 +1,14 @@
+// 阶段 58a：C 后端的 String 成员方法（UI 量文字宽度要用）
+fn main() -> void {
+    var s = "RainStarFox"
+    println(intToString(s.length()))
+    println(s.substring(0, 4))
+    println(s.substring(4))
+    println(intToString(charToInt(s.charAt(4))))
+    println(s.toUpperCase())
+    println(s.toLowerCase())
+    println("rain")
+    var t = "rain"
+    println(t.equals("rain") + " " + t.startsWith("ra") + " " + t.endsWith("in") + " " + t.contains("ai"))
+    println(t.isEmpty() + " " + "".isEmpty())
+}

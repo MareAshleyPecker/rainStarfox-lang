@@ -1,0 +1,24 @@
+interface Shape {
+    fn area() -> Int
+}
+
+class Sq(s : Int) : Shape {
+    var side : Int = s
+    fn area() -> Int { rtn side * side }
+}
+
+class Rect2(w : Int, h : Int) : Shape {
+    var ww : Int = w
+    var hh : Int = h
+    fn area() -> Int { rtn ww * hh }
+}
+
+fn main() -> void {
+    var xs : Shape[] = new Shape[3]
+    xs[0] = Sq(3)
+    xs[1] = Rect2(2, 5)
+    xs[2] = Sq(4)
+    var total = 0
+    for (s in xs) { total = total + s.area() }
+    println(intToString(total))
+}

@@ -703,6 +703,30 @@ class CBackend(private val model: SemanticModel) {
             }
         }
         if (e.name == "length" && e.arguments == null) return "(${expr(e.receiver)}.len)"
+        // 阶段 58a：String 的成员方法（UI 的每个 label 都要量宽度）
+        // 枚举常量/类型名一类的接收者没有类型标注（`Color.Green` 的 `Color`），
+        // 所以这里只做「能问出类型才问」的探测。
+        val recvType = runCatching { model.typeOf(e.receiver) }.getOrNull()
+        if (recvType != null && recvType.base == RsfBase.STRING && e.arguments != null) {
+            val recv = expr(e.receiver)
+            val args = e.arguments!!.map { expr(it) }
+            when (e.name) {
+                "length" -> return "rsf_str_len($recv)"
+                "isEmpty" -> return "rsf_str_empty($recv)"
+                "charAt" -> return "rsf_str_char_at($recv, ${args[0]})"
+                "substring" -> return if (args.size == 1) {
+                    "rsf_str_substr($recv, ${args[0]}, rsf_str_len($recv))"
+                } else {
+                    "rsf_str_substr($recv, ${args[0]}, ${args[1]})"
+                }
+                "equals" -> return "rsf_str_eq($recv, ${args[0]})"
+                "startsWith" -> return "rsf_str_starts($recv, ${args[0]})"
+                "endsWith" -> return "rsf_str_ends($recv, ${args[0]})"
+                "contains" -> return "rsf_str_contains($recv, ${args[0]})"
+                "toUpperCase" -> return "rsf_str_upper($recv)"
+                "toLowerCase" -> return "rsf_str_lower($recv)"
+            }
+        }
         val enumValue = model.enumValues[e]
         if (enumValue != null) return "rsf_val_${enumValue.enumName}_${enumValue.valueName}"
         val receiver = expr(e.receiver)
@@ -753,7 +777,9 @@ class CBackend(private val model: SemanticModel) {
         "Char" -> RsfBase.CHAR
         "Byte" -> RsfBase.BYTE
         else -> {
-            if (classes.containsKey(ref.name) || model.enums.containsKey(ref.name)) RsfBase.EXTERNAL
+            if (classes.containsKey(ref.name) || model.enums.containsKey(ref.name) ||
+                model.interfaces.containsKey(ref.name)
+            ) RsfBase.EXTERNAL
             else fail("数组元素类型 '${ref.name}'")
         }
     }
@@ -778,7 +804,12 @@ class CBackend(private val model: SemanticModel) {
         val left = expr(e.left)
         val right = expr(e.right)
         return when (e.op) {
-            TokenKind.PLUS -> if (stringy) "rsf_concat($left, $right)" else "($left + $right)"
+            // 阶段 58a：拼接时非字符串侧要转成字符串（`bool + " "`、`Int + "x"` 在解释器里都成立）
+            TokenKind.PLUS -> if (stringy) {
+                "rsf_concat(${asStr(e.left, left)}, ${asStr(e.right, right)})"
+            } else {
+                "($left + $right)"
+            }
             TokenKind.MINUS -> "($left - $right)"
             TokenKind.STAR -> "($left * $right)"
             TokenKind.SLASH -> "($left / $right)"
@@ -794,6 +825,16 @@ class CBackend(private val model: SemanticModel) {
             else -> fail("二元运算 ${e.op}（结果类型 ${type.base.rsfName}）")
         }
     }
+
+    /** 拼接里的一个操作数：字符串原样，数值/布尔走对应的 `rsf_*_to_str`。 */
+    private fun asStr(operand: org.example.complie.ast.Expr, code: String): String =
+        when (model.typeOf(operand).base) {
+            RsfBase.STRING -> code
+            RsfBase.BOOL -> "rsf_bool_to_str($code)"
+            RsfBase.LONG -> "rsf_long_to_str($code)"
+            RsfBase.INT -> "rsf_int_to_str($code)"
+            else -> fail("字符串拼接里的 ${model.typeOf(operand).base.rsfName}")
+        }
 
     private fun call(e: CallExpr): String {
         if (e.name == "print" || e.name == "println") return printCall(e)
@@ -894,6 +935,68 @@ class CBackend(private val model: SemanticModel) {
 
             static bool rsf_str_eq(rsf_str a, rsf_str b) {
                 return a.len == b.len && memcmp(a.data, b.data, (size_t)a.len) == 0;
+            }
+
+            // 阶段 58a：String 的成员方法（按 UTF-8 字节算，ASCII 之外一个汉字算 3 个）。
+            static int32_t rsf_str_len(rsf_str s) { return (int32_t)s.len; }
+
+            static uint16_t rsf_str_char_at(rsf_str s, int32_t i) {
+                if (i < 0 || (int64_t)i >= s.len) return 0;
+                return (uint16_t)((const unsigned char*)s.data)[i];
+            }
+
+            static rsf_str rsf_str_substr(rsf_str s, int32_t from, int32_t to) {
+                if (from < 0) from = 0;
+                if (to > s.len) to = (int32_t)s.len;
+                if (to < from) to = from;
+                rsf_str r; r.len = to - from; r.data = (char*)s.data + from; return r;
+            }
+
+            static bool rsf_str_starts(rsf_str s, rsf_str p) {
+                return p.len <= s.len && memcmp(s.data, p.data, (size_t)p.len) == 0;
+            }
+
+            static bool rsf_str_ends(rsf_str s, rsf_str p) {
+                return p.len <= s.len && memcmp((char*)s.data + (s.len - p.len), p.data, (size_t)p.len) == 0;
+            }
+
+            static bool rsf_str_contains(rsf_str s, rsf_str p) {
+                if (p.len == 0) return true;
+                if (p.len > s.len) return false;
+                for (int64_t i = 0; i + p.len <= s.len; i++) {
+                    if (memcmp((char*)s.data + i, p.data, (size_t)p.len) == 0) return true;
+                }
+                return false;
+            }
+
+            static rsf_str rsf_str_upper(rsf_str s) {
+                char* p = (char*)malloc((size_t)(s.len > 0 ? s.len : 1));
+                for (int64_t i = 0; i < s.len; i++) {
+                    char c = ((const char*)s.data)[i];
+                    p[i] = (c >= 'a' && c <= 'z') ? (char)(c - 32) : c;
+                }
+                rsf_str r; r.len = s.len; r.data = p; return r;
+            }
+
+            static rsf_str rsf_str_lower(rsf_str s) {
+                char* p = (char*)malloc((size_t)(s.len > 0 ? s.len : 1));
+                for (int64_t i = 0; i < s.len; i++) {
+                    char c = ((const char*)s.data)[i];
+                    p[i] = (c >= 'A' && c <= 'Z') ? (char)(c + 32) : c;
+                }
+                rsf_str r; r.len = s.len; r.data = p; return r;
+            }
+
+            static bool rsf_str_empty(rsf_str s) { return s.len == 0; }
+
+            static rsf_str rsf_bool_to_str(bool v) {
+                return v ? rsf_str_lit("true", 4) : rsf_str_lit("false", 5);
+            }
+
+            static rsf_str rsf_long_to_str(int64_t v) {
+                char* buf = (char*)malloc(32);
+                int n = snprintf(buf, 32, "%lld", (long long)v);
+                rsf_str s; s.len = n; s.data = buf; return s;
             }
 
             static void rsf_print_s(rsf_str s) { fwrite(s.data, 1, (size_t)s.len, stdout); }

@@ -8710,6 +8710,40 @@ class RsfTest {
     }
 
     @Test
+    fun `接口数组：两端都能装实现类并虚分派`() {
+        val text = """
+            interface Shape {
+                fn area() -> Int
+            }
+
+            class Sq(s : Int) : Shape {
+                var side : Int = s
+                fn area() -> Int { rtn side * side }
+            }
+
+            class Box2(w : Int, h : Int) : Shape {
+                var ww : Int = w
+                var hh : Int = h
+                fn area() -> Int { rtn ww * hh }
+            }
+
+            fn main() -> void {
+                var xs : Shape[] = new Shape[3]
+                xs[0] = Sq(3)
+                xs[1] = Box2(2, 5)
+                xs[2] = Sq(4)
+                var total = 0
+                for (s in xs) { total = total + s.area() }
+                println(intToString(total))
+            }
+        """.trimIndent()
+        // 只跑解释器：`runCompiled` 的 ClassLoader 只塞主类字节（RsfTest.kt:7895），
+        // 接口与实现类都不在，会 NoClassDefFoundError。字节码那一路由 verify52 的
+        // `c_iface_arr` 探针（C 后端）与手工 `rsf build` 覆盖面兜住。
+        assertEquals(listOf("35"), lines(runInterpreted(text)))
+    }
+
+    @Test
     fun `指针 L3：字段与数组元素取地址、指针偏移（解释器）`() {
         val text = """
             class Point(x0 : Int) {
