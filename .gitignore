@@ -190,3 +190,8 @@ bin/
 ### 阶段设计文档与语法预案不上传（2026-10-19 用户要求）###
 DESIGN-*.md
 /rsfSrc/语法预案/
+
+### 阶段 59 宿主窗口判据（只收脚本，产物与截图不进库）###
+!/build/verify60/
+/build/verify60/**
+!/build/verify60/run.sh

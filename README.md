@@ -87,6 +87,26 @@ rsf help | version
 
 跑 `rsf run examples/ui_demo.rsf` 会导出 `build/ui_demo_plain.ppm` 与 `build/ui_demo_regions.ppm`（后者带块区域描边）。
 
+## 窗口宿主（Win32，零依赖）
+
+`rsfSrc/ui/Host.rsf` 把 UI 包成一个 `App` 类，再导出**宿主 ABI**（`app_new / app_frame / app_click / app_move / app_text / app_pixels …`，C 侧只看 `rsf_fn_app_*`）。`host/win32_main.c` 是 300 行的 Win32 + GDI 宿主：`StretchDIBits` 把像素缓冲贴上去，鼠标按下/移动/松开、`WM_CHAR` 直接喂回 `App`。
+
+```bat
+rsf build examples/ui_app.rsf --c --lib -o build/host
+gcc host/win32_main.c build/host/ui_app.c -o build/ui_app.exe -luser32 -lgdi32
+build/ui_app.exe
+```
+
+无窗口跑判据：
+
+```bat
+build/ui_app.exe --frames 1 --shot frame.bmp
+build/ui_app.exe --click 140,98 --frames 2   :: 打印 [action] 1
+build/ui_app.exe --text hello --frames 2 --shot typed.bmp
+```
+
+判据台：`bash build/verify60/run.sh`（生成 C → gcc → 截图 → 点击命中 → 输入后截图，5 项全过）。
+
 ## C 后端（native 线）
 
 `rsf build x.rsf --c -o out` 把整份程序摊成**一个 C99 文件**，自带运行时（字符串拼接、`print`/`println`、`intToString`），不依赖任何 rsf 库：
