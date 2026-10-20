@@ -8,6 +8,7 @@ import org.example.complie.ast.BreakStmt
 import org.example.complie.ast.CallExpr
 import org.example.complie.ast.CharLit
 import org.example.complie.ast.ClassDecl
+import org.example.complie.ast.InterfaceDecl
 import org.example.complie.ast.ContinueStmt
 import org.example.complie.ast.DerefAssignStmt
 import org.example.complie.ast.EnumDecl
@@ -103,6 +104,12 @@ class CBackend(private val model: SemanticModel) {
             }
         }
         sb.append('\n')
+        for (iface in model.interfaces.values) {
+            for (fn in iface.methods) {
+                if (fn.body == null) continue
+                sb.append(ifaceProto(iface, fn)).append(";").append(NL)
+            }
+        }
         for (cls in classes.values) {
             val table = vtable(cls)
             if (table != null) sb.append(table)
@@ -112,6 +119,12 @@ class CBackend(private val model: SemanticModel) {
         for (cls in classes.values) {
             for (fn in cls.methods) sb.append(definition(fn, cls))
             if (defaultCtorNames.containsKey(cls)) sb.append(defaultConstructor(cls))
+        }
+        for (iface in model.interfaces.values) {
+            for (fn in iface.methods) {
+                if (fn.body == null) continue
+                sb.append(definition(fn, null, iface)).append(NL)
+            }
         }
         val entry = model.entry ?: throw RsfError("native", "没有 main 函数，C 后端不知道从哪开始跑")
         sb.append("int main(void) {\n")
@@ -144,10 +157,27 @@ class CBackend(private val model: SemanticModel) {
                 defaultCtorNames[cls] = "rsf_new_${cls.name}_0"
             }
         }
+        // 接口方法：默认方法要发实体，抽象方法只进槽位表（实现由类提供）
+        for (iface in model.interfaces.values) {
+            for (fn in iface.methods) {
+                methodNames[fn] = if (fn.isStatic) {
+                    "rsf_st_${iface.name}_${fn.name}"
+                } else {
+                    "rsf_m_${iface.name}_${fn.name}"
+                }
+            }
+        }
         // 虚方法槽位按名字 + 参数个数排序后编号：不依赖 Map 的迭代顺序，产物可复现
         val signatures = ArrayList<String>()
         for (cls in classes.values) {
             for (fn in cls.methods) {
+                if (fn.isConstructor || fn.isStatic) continue
+                val key = fn.name + "/" + fn.params.size
+                if (key !in signatures) signatures.add(key)
+            }
+        }
+        for (iface in model.interfaces.values) {
+            for (fn in iface.methods) {
                 if (fn.isConstructor || fn.isStatic) continue
                 val key = fn.name + "/" + fn.params.size
                 if (key !in signatures) signatures.add(key)
@@ -160,18 +190,23 @@ class CBackend(private val model: SemanticModel) {
     // ------------------------------------------------------------------ 前置检查
 
     private fun checkProgram() {
-        if (model.interfaces.isNotEmpty()) fail("接口")
         if (model.annotations.isNotEmpty()) fail("注解")
-        if (model.superInterfaces.isNotEmpty()) fail("接口实现")
         for (sup in model.superClasses.values) {
             if (sup.fromClassPath) fail("继承 JDK 类（${sup.name}）")
+        }
+        for (iface in model.interfaces.values) {
+            if (iface.typeParams.isNotEmpty()) fail("泛型接口（${iface.name}）")
+        }
+        for (list in model.superInterfaces.values) {
+            for (sup in list) {
+                if (sup.fromClassPath) fail("实现 JDK 接口（${sup.name}）")
+            }
         }
         for (fn in model.functions) {
             if (model.functionTable[fn.name]?.size ?: 0 > 1) fail("重载函数（${fn.name}）")
         }
         for (cls in classes.values) {
             if (cls.typeParams.isNotEmpty()) fail("泛型类（${cls.name}）")
-            if (cls.supertypes.isNotEmpty()) fail("类的父类型（${cls.name}）")
             for (fn in cls.methods) if (fn.body == null) fail("无方法体（${fn.name}）")
         }
     }
@@ -218,6 +253,7 @@ class CBackend(private val model: SemanticModel) {
     private fun classPointer(type: RsfType): String {
         val name = type.externalName ?: fail("外部类型")
         if (classes.containsKey(name)) return "void*"
+        if (model.interfaces.containsKey(name)) return "void*"
         if (model.enums.containsKey(name)) return "rsf_enum_$name"
         fail("JVM 类型（$name）")
     }
@@ -302,9 +338,45 @@ class CBackend(private val model: SemanticModel) {
                     break
                 }
             }
+            if (found == null) {
+                // 类链里没有 → 找接口默认方法（抽象方法没有实体，留在 0 上）
+                for (iface in interfacesOf(cls.name)) {
+                    val fn = iface.methods.firstOrNull {
+                        !it.isConstructor && !it.isStatic && it.body != null &&
+                            it.name == name && it.params.size == arity
+                    }
+                    if (fn != null) {
+                        found = methodNames[fn]
+                        break
+                    }
+                }
+            }
             entries.add(if (found != null) "(void*)$found" else "0")
         }
         return "static void* rsf_vtbl_${cls.name}[${slots.size}] = { ${entries.joinToString(", ")} };$NL$NL"
+    }
+
+    /** 类实现的所有 rsf 接口（含接口继承来的父接口），按声明顺序。 */
+    private fun interfacesOf(className: String): List<InterfaceDecl> {
+        val out = ArrayList<InterfaceDecl>()
+        val seen = HashSet<String>()
+        fun visit(name: String) {
+            val iface = model.interfaces[name] ?: return
+            if (!seen.add(name)) return
+            out.add(iface)
+            for (sup in iface.supertypes) visit(sup.name)
+        }
+        for (sup in model.superInterfaces[className].orEmpty()) visit(sup.name)
+        return out
+    }
+
+    /** 接口里的默认方法/静态方法：一行 C 原型（self 就是 `void*`）。 */
+    private fun ifaceProto(iface: InterfaceDecl, fn: FuncDecl): String {
+        val params = paramTypesOf(fn)
+        val first = if (fn.isStatic) emptyList() else listOf("void* self")
+        val rest = fn.params.mapIndexed { i, p -> "${cType(params[i])} ${paramName(p.name)}" }
+        val list = (first + rest).joinToString(", ").ifEmpty { "void" }
+        return "${cType(returnType(fn))} ${methodNames[fn]}($list)"
     }
 
     private fun protoTop(fn: FuncDecl): String {
@@ -335,9 +407,16 @@ class CBackend(private val model: SemanticModel) {
         return "void* $name(${list.joinToString(", ").ifEmpty { "void" }})"
     }
 
-    private fun definition(fn: FuncDecl, cls: ClassDecl?): String {
+    private fun definition(fn: FuncDecl, cls: ClassDecl?, iface: InterfaceDecl? = null): String {
         currentClass = cls
         val sb = StringBuilder()
+        if (iface != null) {
+            sb.append(ifaceProto(iface, fn)).append(" {").append(NL)
+            fn.body?.statements?.forEach { sb.append(stmt(it, 1)) }
+            sb.append("}").append(NL).append(NL)
+            currentClass = null
+            return sb.toString()
+        }
         if (cls == null) {
             sb.append(protoTop(fn)).append(" {\n")
             fn.body?.statements?.forEach { sb.append(stmt(it, 1)) }

@@ -77,8 +77,8 @@ class CBackendTest {
         val error = assertThrows<RsfError> {
             emit(
                 """
-                interface Greeter {
-                    fn greet() -> String
+                class Box&<T>(v : T) {
+                    var v : T = v
                 }
 
                 fn main() -> void {
@@ -89,6 +89,42 @@ class CBackendTest {
         }
         assertEquals("native", error.phase)
         assertTrue(error.detail.contains("暂不支持"), error.detail)
+    }
+
+    @Test
+    fun `接口摊成 void 指针、默认方法走虚表`() {
+        val c = emit(
+            """
+            interface Greeter {
+                fn greet(name : String) -> String
+                fn shout(name : String) -> String {
+                    rtn this.greet(name) + "!"
+                }
+            }
+
+            class Person(who : String) : Greeter {
+                var who : String = who
+
+                fn greet(name : String) -> String {
+                    rtn name + who
+                }
+            }
+
+            fn main() -> void {
+                var g : Greeter = Person("ann")
+                println(g.shout("bob"))
+                rtn
+            }
+            """.trimIndent(),
+        )
+        // 接口方法有实体（默认方法），类实现的那份也在
+        assertTrue(c.contains("rsf_str rsf_m_Greeter_shout(void* self, rsf_str v_name)"), c)
+        assertTrue(c.contains("rsf_str rsf_m_Person_greet(void* self, rsf_str v_name)"), c)
+        // 虚表里 shout / greet 都要有槽位；接口默认方法进 greet 的实现链
+        assertTrue(c.contains("static void* rsf_vtbl_Person["), c)
+        assertTrue(c.contains("(void*)rsf_m_Person_greet"), c)
+        // 接口类型的参数就是 void*
+        assertTrue(c.contains("void* v_g"), c)
     }
 
     @Test

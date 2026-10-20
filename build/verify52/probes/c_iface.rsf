@@ -1,0 +1,43 @@
+interface Greeter {
+    fn greet(name : String) -> String
+    fn shout(name : String) -> String {
+        rtn this.greet(name) + "!"
+    }
+}
+
+interface Named {
+    fn name() -> String
+}
+
+class Person(who : String) : Greeter, Named {
+    var who : String = who
+
+    fn greet(name : String) -> String {
+        rtn "hi " + name + " from " + who
+    }
+
+    fn name() -> String {
+        rtn who
+    }
+}
+
+class Robot(id : Int) : Greeter {
+    var id : Int = id
+
+    fn greet(name : String) -> String {
+        rtn "beep " + name + " #" + intToString(id)
+    }
+}
+
+fn main() {
+    var p = Person("ann")
+    var g : Greeter = p
+    println(g.greet("bob"))
+    println(g.shout("bob"))
+    var r = Robot(7)
+    var g2 : Greeter = r
+    println(g2.greet("bob"))
+    println(g2.shout("bob"))
+    var n : Named = p
+    println(n.name())
+}
