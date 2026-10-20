@@ -423,8 +423,20 @@ class Parser(
      */
     private fun parseAnnotationDecl(annotations: List<AnnotationUse> = emptyList()): AnnotationDecl {
         var control = ControlType.DEFAULT
-        if (peek().kind.isControlKeyword) {
-            control = ControlType.of(advance().kind)
+        var declTarget = BuildTarget.BOTH
+        var going = true
+        while (going) {
+            if (control == ControlType.DEFAULT && peek().kind.isControlKeyword) {
+                control = ControlType.of(advance().kind)
+            } else if (peek().kind == TokenKind.KW_NATIVE || peek().kind == TokenKind.KW_JVM) {
+                val tk = advance()
+                if (declTarget != BuildTarget.BOTH) {
+                    throw error(tk, "注解的构建目标写了两次（native / jvm 只能选一个）")
+                }
+                declTarget = if (tk.kind == TokenKind.KW_NATIVE) BuildTarget.NATIVE else BuildTarget.JVM
+            } else {
+                going = false
+            }
         }
         val annotationTok = expect(TokenKind.KW_ANNOTATION, "注解声明缺少 'annotation'")
         val nameTok = expect(TokenKind.IDENT, "'annotation' 后面缺少注解名")
@@ -454,6 +466,7 @@ class Parser(
             at = annotationTok.at,
             companion = companion,
             annotations = annotations,
+            target = declTarget,
         )
     }
 
@@ -714,11 +727,20 @@ class Parser(
         var control = ControlType.DEFAULT
         var sawControl = false
         var inherit: InheritModifiers? = null
+        var declTarget = BuildTarget.BOTH
+        var sawTarget = false
         var going = true
         while (going) {
             if (!sawControl && peek().kind.isControlKeyword) {
                 control = ControlType.of(advance().kind)
                 sawControl = true
+            } else if (peek().kind == TokenKind.KW_NATIVE || peek().kind == TokenKind.KW_JVM) {
+                val tk = advance()
+                if (sawTarget) {
+                    throw error(tk, "类 '${peek().lexeme}' 的构建目标写了两次（native / jvm 只能选一个）")
+                }
+                declTarget = if (tk.kind == TokenKind.KW_NATIVE) BuildTarget.NATIVE else BuildTarget.JVM
+                sawTarget = true
             } else if (peek().kind.isInheritKeyword) {
                 // 被权限修饰词隔开的几段继承修饰词要**合起来**判重与互斥（`final public abstract`），
                 // 和 [parseFuncDecl] 前后收到两段时走的是同一个 [mergeInherit]。
@@ -828,6 +850,7 @@ class Parser(
             superArgs = sup.baseArgs,
             isFinal = mods.isFinal,
             isAbstract = mods.isAbstract,
+            target = declTarget,
         )
     }
 
@@ -1122,8 +1145,20 @@ class Parser(
      */
     private fun parseInterfaceDecl(annotations: List<AnnotationUse> = emptyList()): InterfaceDecl {
         var control = ControlType.DEFAULT
-        if (peek().kind.isControlKeyword) {
-            control = ControlType.of(advance().kind)
+        var declTarget = BuildTarget.BOTH
+        var going = true
+        while (going) {
+            if (control == ControlType.DEFAULT && peek().kind.isControlKeyword) {
+                control = ControlType.of(advance().kind)
+            } else if (peek().kind == TokenKind.KW_NATIVE || peek().kind == TokenKind.KW_JVM) {
+                val tk = advance()
+                if (declTarget != BuildTarget.BOTH) {
+                    throw error(tk, "接口的构建目标写了两次（native / jvm 只能选一个）")
+                }
+                declTarget = if (tk.kind == TokenKind.KW_NATIVE) BuildTarget.NATIVE else BuildTarget.JVM
+            } else {
+                going = false
+            }
         }
         val ifaceTok = expect(TokenKind.KW_INTERFACE, "interface 声明缺少 'interface'")
         val nameTok = expect(TokenKind.IDENT, "'interface' 后面缺少接口名")
@@ -1214,6 +1249,7 @@ class Parser(
             at = ifaceTok.at,
             typeParams = typeParams,
             annotations = annotations,
+            target = declTarget,
         )
     }
 

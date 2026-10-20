@@ -3,6 +3,7 @@ package org.example.complie.codegen
 import org.example.complie.ast.AnnotationDecl
 import org.example.complie.ast.AsExpr
 import org.example.complie.ast.BinaryExpr
+import org.example.complie.ast.BuildTarget
 import org.example.complie.ast.Block
 import org.example.complie.ast.BoolLit
 import org.example.complie.ast.CallExpr
@@ -375,6 +376,20 @@ class BytecodeCompiler(
 
         for (fn in model.functions) {
             emitFunction(cw, className, fn)
+        }
+        // 阶段 60b：有 native 方法就自动 System.loadLibrary(<类名>)——库名与类名一致，
+        // JVM 只查「已经加载过的库」，不自动去 java.library.path 里找，所以这一步必须显式做。
+        if (model.functions.any { it.target == BuildTarget.NATIVE }) {
+            val simple = className.substringAfterLast('/')
+            val mv = cw.visitMethod(Opcodes.ACC_STATIC, "<clinit>", "()V", null, null)
+            mv.visitCode()
+            mv.visitLdcInsn(simple)
+            mv.visitMethodInsn(
+                Opcodes.INVOKESTATIC, "java/lang/System", "loadLibrary", "(Ljava/lang/String;)V", false,
+            )
+            mv.visitInsn(Opcodes.RETURN)
+            mv.visitMaxs(0, 0)
+            mv.visitEnd()
         }
         // 阶段 16：parseInt 的辅助方法（失败要把 Java 的异常换成 rsf 的消息）
         emitParseIntHelper(cw)
@@ -1950,6 +1965,17 @@ class BytecodeCompiler(
 
     private fun emitFunction(cw: ClassWriter, owner: String, fn: FuncDecl) {
         val returnType = model.returnTypeOf(fn)
+
+        // 阶段 60b：`native fn` 在 JVM 侧只发签名（ACC_NATIVE，无 Code），实现由 `--jni`
+        // 生成的 C 桥提供；类加载后第一次调用会走 JNI，找不到本地库才抛 UnsatisfiedLinkError。
+        if (fn.target == BuildTarget.NATIVE) {
+            val mv = cw.visitMethod(
+                accessOf(fn) or Opcodes.ACC_STATIC or Opcodes.ACC_NATIVE, fn.name, descriptorOf(fn), null, null,
+            )
+            emitUseSites({ descriptor, visible -> mv.visitAnnotation(descriptor, visible) }, fn)
+            mv.visitEnd()
+            return
+        }
 
         if (isEntry(fn) && returnType != RsfType.VOID) {
             warnings += "入口函数 main 的返回类型是 ${returnType.rsfName}，" +

@@ -1,6 +1,7 @@
 package org.example
 
 import org.example.complie.Rsf
+import org.example.complie.ast.BuildTarget
 import org.example.complie.diag.RsfError
 import org.example.complie.diag.SourceFile
 import org.example.complie.native.CBackend
@@ -20,6 +21,14 @@ class CBackendTest {
     private fun emit(text: String): String {
         val source = SourceFile.of("c.kt", text)
         return CBackend(Rsf.analyze(source)).emit()
+    }
+
+    /** native 函数在 JVM 构建里只有签名，所以 C 侧要用 native 目标加载才有函数体。 */
+    private fun nativeBackend(text: String, withEntry: Boolean = false): CBackend {
+        val file = java.io.File.createTempFile("rsf-jni", ".rsf")
+        file.writeText(text, Charsets.UTF_8)
+        file.deleteOnExit()
+        return CBackend(Rsf.analyze(Rsf.load(file, target = BuildTarget.NATIVE)), withEntry)
     }
 
     @Test
@@ -282,6 +291,34 @@ class CBackendTest {
         assertTrue(c.contains("int32_t sw_0 = v_n;"), c)
         assertTrue(c.contains("if ((sw_0 == 1) || (sw_0 == 2)) {"), c)
         assertTrue(c.contains("rsf_str_eq(sw_1, rsf_str_lit(\"ok\", 2LL))"), c)
+    }
+
+
+    @Test
+    fun `JNI 桥把 native 函数摊成 Java_ 符号`() {
+        val backend = nativeBackend(
+            """
+            native fn add(a : Int, b : Int) -> Int { rtn a + b }
+            native fn greet(name : String) -> String { rtn "hi " + name }
+            """.trimIndent(),
+        )
+        val jni = backend.emitJni("Main")
+        assertTrue(jni.contains("extern int32_t rsf_fn_add(int32_t, int32_t);"), jni)
+        assertTrue(jni.contains("JNIEXPORT jint JNICALL Java_Main_add(JNIEnv* env, jclass cls, jint j0, jint j1)"), jni)
+        assertTrue(jni.contains("GetStringUTFChars(env, j0, 0)"), jni)
+        assertTrue(jni.contains("ReleaseStringUTFChars(env, j0, c0)"), jni)
+        assertTrue(jni.contains("NewStringUTF(env, t)"), jni)
+    }
+
+    @Test
+    fun `JNI 桥拒绝过不了边界的类型`() {
+        val backend = nativeBackend(
+            """
+            native fn take(xs : Int[]) -> Int { rtn xs.length }
+            """.trimIndent(),
+        )
+        val e = assertThrows<RsfError> { backend.emitJni("Main") }
+        assertTrue(e.message!!.contains("JNI 桥只支持"), e.message!!)
     }
 
 }

@@ -1,0 +1,12 @@
+native fn add(a : Int, b : Int) -> Int { rtn a + b }
+
+native fn greet(name : String) -> String { rtn "hi " + name }
+
+native class Fast() {
+    fn twice(x : Int) -> Int { rtn x * 2 }
+}
+
+fn main() -> void {
+    println(intToString(add(2, 3)))
+    println(greet("bob"))
+}

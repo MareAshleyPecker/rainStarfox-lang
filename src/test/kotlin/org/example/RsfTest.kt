@@ -1,6 +1,7 @@
 package org.example
 
 import org.example.complie.Rsf
+import org.example.complie.ast.BuildTarget
 import org.example.complie.ast.CallExpr
 import org.example.complie.ast.ClassImport
 import org.example.complie.ast.ControlType
@@ -8840,9 +8841,11 @@ class RsfTest {
             """.trimIndent(),
         )
 
+        // 阶段 60b：native 函数在 JVM 构建里保留声明（JNI 桥接），所以它不再进 otherSide；
+        // 文件级 `target native` 的 lib.rsf 仍然整份跳过。
         val jvm = Rsf.load(app, target = org.example.complie.ast.BuildTarget.JVM)
-        assertEquals(listOf("both", "slow"), jvm.functions.map { it.name }.sorted())
-        assertEquals(setOf("helper", "fast"), jvm.otherSide.keys)
+        assertEquals(listOf("both", "fast", "slow"), jvm.functions.map { it.name }.sorted())
+        assertEquals(setOf("helper"), jvm.otherSide.keys)
 
         val nat = Rsf.load(app, target = org.example.complie.ast.BuildTarget.NATIVE)
         assertEquals(listOf("both", "fast", "helper"), nat.functions.map { it.name }.sorted())
@@ -8859,14 +8862,15 @@ class RsfTest {
         val app = File(dir, "app.rsf")
         app.writeText(
             """
-            native fn fast(x : Int) -> Int { rtn x + 1 }
+            jvm fn slow(x : Int) -> Int { rtn x + 1 }
 
-            fn main() { println(intToString(fast(1))) }
+            fn main() { println(intToString(slow(1))) }
             """.trimIndent(),
         )
-        val loaded = Rsf.load(app, target = org.example.complie.ast.BuildTarget.JVM)
+        // native 构建里 jvm 函数不存在 → 调它要报「只写在 jvm 侧」
+        val loaded = Rsf.load(app, target = org.example.complie.ast.BuildTarget.NATIVE)
         val error = assertFailsWith<RsfError> { Rsf.analyze(loaded) }
-        assertTrue(error.message!!.contains("只写在 native 侧"), error.message)
+        assertTrue(error.message!!.contains("只写在 JVM 侧"), error.message)
     }
 
     @Test
@@ -8889,6 +8893,64 @@ class RsfTest {
         val out = java.io.ByteArrayOutputStream()
         Rsf.interpret(model, java.io.PrintStream(out, true, "UTF-8"))
         assertEquals(listOf("42"), lines(out.toString(Charsets.UTF_8)))
+    }
+
+
+    // ------------------------------------------------------------------ 阶段 60b/60c：构建目标
+
+    @Test
+    fun `native 函数在 JVM 构建里保留签名、在 C 构建里也有`() {
+        val text = """
+            native fn add(a : Int, b : Int) -> Int { rtn a + b }
+            fn main() -> void { println(intToString(add(1, 2))) }
+        """.trimIndent()
+        val file = java.io.File.createTempFile("rsf-target", ".rsf")
+        file.writeText(text, Charsets.UTF_8)
+        file.deleteOnExit()
+
+        val jvm = Rsf.load(file, target = BuildTarget.JVM)
+        assertEquals(listOf("add", "main"), jvm.functions.map { it.name })
+        assertTrue(jvm.otherSide.isEmpty(), "native 函数在 JVM 侧不再算「对面才有」")
+        assertEquals(BuildTarget.NATIVE, jvm.functions.first().target)
+
+        val native = Rsf.load(file, target = BuildTarget.NATIVE)
+        assertEquals(listOf("add", "main"), native.functions.map { it.name })
+    }
+
+    @Test
+    fun `native 类与接口只进 native 构建`() {
+        val text = """
+            native class Fast() { fn v() -> Int { rtn 7 } }
+            native interface Sink { fn put(x : Int) -> void }
+            fn main() -> void { println(intToString(1)) }
+        """.trimIndent()
+        val file = java.io.File.createTempFile("rsf-target", ".rsf")
+        file.writeText(text, Charsets.UTF_8)
+        file.deleteOnExit()
+
+        val jvm = Rsf.load(file, target = BuildTarget.JVM)
+        assertTrue(jvm.classes.isEmpty(), "native 类不该进 JVM 构建")
+        assertTrue(jvm.interfaces.isEmpty(), "native 接口不该进 JVM 构建")
+        assertEquals(BuildTarget.NATIVE, jvm.otherSide["Fast"])
+        assertEquals(BuildTarget.NATIVE, jvm.otherSide["Sink"])
+
+        val native = Rsf.load(file, target = BuildTarget.NATIVE)
+        assertEquals(listOf("Fast"), native.classes.map { it.name })
+        assertEquals(listOf("Sink"), native.interfaces.map { it.name })
+    }
+
+    @Test
+    fun `jvm 类只进 JVM 构建`() {
+        val text = """
+            jvm class Slow() { fn v() -> Int { rtn 8 } }
+            fn main() -> void { println(intToString(2)) }
+        """.trimIndent()
+        val file = java.io.File.createTempFile("rsf-target", ".rsf")
+        file.writeText(text, Charsets.UTF_8)
+        file.deleteOnExit()
+
+        assertTrue(Rsf.load(file, target = BuildTarget.NATIVE).classes.isEmpty())
+        assertEquals(listOf("Slow"), Rsf.load(file, target = BuildTarget.JVM).classes.map { it.name })
     }
 
 }

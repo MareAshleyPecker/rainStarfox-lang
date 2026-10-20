@@ -181,7 +181,9 @@ class SourceLoader {
         }
 
         for (fn in program.functions) {
-            if (fn.target != BuildTarget.BOTH && fn.target != target) {
+            // 阶段 60b：JVM 构建里 native 函数**保留声明**（编成 ACC_NATIVE 方法，由 JNI 桥实现），
+            // 所以不再丢进 otherSide；C 构建里反过来，jvm 函数直接丢。
+            if (fn.target == BuildTarget.JVM && target == BuildTarget.NATIVE) {
                 otherSide[fn.name] = fn.target
                 continue
             }
@@ -190,6 +192,10 @@ class SourceLoader {
         }
 
         for (cls in program.classes) {
+            if (cls.target != BuildTarget.BOTH && cls.target != target) {
+                otherSide[cls.name] = cls.target
+                continue
+            }
             classes.add(cls)
             sourceOfClass[cls] = source
         }
@@ -200,6 +206,10 @@ class SourceLoader {
         }
 
         for (iface in program.interfaces) {
+            if (iface.target != BuildTarget.BOTH && iface.target != target) {
+                otherSide[iface.name] = iface.target
+                continue
+            }
             interfaces.add(iface)
             sourceOfInterface[iface] = source
         }
@@ -207,6 +217,10 @@ class SourceLoader {
         // 阶段 21：注解声明也要一路带到 Checker——漏掉这里的话 `rsf check` 会
         // 悄悄把注解当没写过（M1 只做了语法，这条通路是 M2 补上的）
         for (ann in program.annotations) {
+            if (ann.target != BuildTarget.BOTH && ann.target != target) {
+                otherSide[ann.name] = ann.target
+                continue
+            }
             annotations.add(ann)
             sourceOfAnnotation[ann] = source
         }

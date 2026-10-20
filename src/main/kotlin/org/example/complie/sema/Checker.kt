@@ -4919,6 +4919,9 @@ class Checker(
     }
 
     private fun checkFunctionBody(fn: FuncDecl) {
+        // 阶段 60b：JVM 构建里的 native 函数只有签名（实现由 JNI 桥提供），
+        // 函数体是 C 侧的，不能在 JVM 侧做语义检查。
+        if (fn.target == BuildTarget.NATIVE && program.target == BuildTarget.JVM) return
         currentFn = fn
         currentSource = sourceOfFunction[fn] ?: currentClass?.source ?: source
         // 返回类型直接从签名算，不查 returnTypes 表：那张表只装了顶层函数，

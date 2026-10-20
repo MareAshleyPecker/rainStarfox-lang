@@ -178,6 +178,15 @@ bin/
 !/build/verify52/expected/
 !/build/verify52/expected/*.txt
 
+### 判据台（阶段 60b：JNI 桥）###
+!/build/verify61/
+/build/verify61/**
+!/build/verify61/**/
+!/build/verify61/**/*.sh
+!/build/verify61/**/*.rsf
+!/build/verify61/expected/
+!/build/verify61/expected/*.txt
+
 ### Termux 分发包（jar 与 tar.gz 不进库，脚本进）###
 !/dist/
 /dist/*

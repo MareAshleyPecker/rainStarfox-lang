@@ -4,6 +4,7 @@ import org.example.complie.ast.AssignStmt
 import org.example.complie.ast.BinaryExpr
 import org.example.complie.ast.Block
 import org.example.complie.ast.BoolLit
+import org.example.complie.ast.BuildTarget
 import org.example.complie.ast.BreakStmt
 import org.example.complie.ast.CallExpr
 import org.example.complie.ast.CharLit
@@ -909,6 +910,115 @@ class CBackend(private val model: SemanticModel, private val withEntry: Boolean 
 
     private fun pad(indent: Int): String = "    ".repeat(indent)
 
+    // ------------------------------------------------------------------ JNI 桥（阶段 60b）
+
+    /**
+     * 生成 `Java_<类>_<方法>` 形式的 JNI 桥：JVM 侧的 `native` 方法调到这里，
+     * 这里再调 `--c --lib` 出的 `rsf_fn_*`。
+     *
+     * 只支持基本类型与 `String`：对象跨边界要用句柄，v1 不开放。
+     */
+    fun emitJni(internalName: String): String {
+        val sb = StringBuilder()
+        sb.append("/* 由 rsf build --c --lib --jni 生成：JVM -> native 的 JNI 桥，别手改 */").append(NL)
+        sb.append("#include <jni.h>").append(NL)
+        sb.append("#include <stdint.h>").append(NL)
+        sb.append("#include <stdbool.h>").append(NL)
+        sb.append("#include <stdlib.h>").append(NL)
+        sb.append("#include <string.h>").append(NL).append(NL)
+        sb.append("#ifndef RSF_STR_DEFINED").append(NL)
+        sb.append("#define RSF_STR_DEFINED").append(NL)
+        sb.append("typedef struct { int64_t len; const char* data; } rsf_str;").append(NL)
+        sb.append("#endif").append(NL).append(NL)
+
+        val natives = model.functions.filter { it.target == BuildTarget.NATIVE }
+        for (fn in natives) {
+            sb.append("extern ").append(cType(model.returnTypeOf(fn)))
+                .append(" rsf_fn_").append(fn.name).append("(")
+            val ps = model.paramTypesOf(fn)
+            sb.append(ps.joinToString(", ") { cType(it) })
+            sb.append(");").append(NL)
+        }
+        sb.append(NL)
+
+        // JNI 符号名不是「把分隔符换成下划线」：类名里本来就有 `_` 时要转义成 `_1`，
+        // 否则 `jni_basic` 会去找 `Java_jni_basic_add`，而 JVM 实际要的是 `Java_jni_1basic_add`。
+        val cls = internalName.replace('.', '/').replace("_", "_1").replace('/', '_')
+        for (fn in natives) {
+            val ps = model.paramTypesOf(fn)
+            val ret = model.returnTypeOf(fn)
+            sb.append("JNIEXPORT ").append(jniType(ret)).append(" JNICALL Java_")
+                .append(cls).append('_').append(fn.name).append("(JNIEnv* env, jclass cls")
+            for (i in ps.indices) sb.append(", ").append(jniType(ps[i])).append(" j").append(i)
+            sb.append(") {").append(NL)
+            sb.append("    (void)env; (void)cls;").append(NL)
+            for ((i, t) in ps.withIndex()) {
+                when (t.base) {
+                    RsfBase.STRING -> {
+                        sb.append("    const char* c").append(i)
+                            .append(" = (*env)->GetStringUTFChars(env, j").append(i).append(", 0);").append(NL)
+                        sb.append("    rsf_str a").append(i)
+                            .append("; a").append(i).append(".len = (int64_t)strlen(c").append(i)
+                            .append("); a").append(i).append(".data = c").append(i).append(";").append(NL)
+                    }
+                    else -> sb.append("    ").append(cType(t)).append(" a").append(i)
+                        .append(" = (").append(cType(t)).append(")j").append(i).append(";").append(NL)
+                }
+            }
+            val args = ps.indices.joinToString(", ") { "a" + it }
+            when (ret.base) {
+                RsfBase.VOID -> sb.append("    rsf_fn_").append(fn.name).append("(").append(args).append(");").append(NL)
+                RsfBase.STRING -> {
+                    sb.append("    rsf_str r = rsf_fn_").append(fn.name).append("(").append(args).append(");").append(NL)
+                    sb.append("    char* t = (char*)malloc((size_t)r.len + 1);").append(NL)
+                    sb.append("    if (r.len > 0) memcpy(t, r.data, (size_t)r.len);").append(NL)
+                    sb.append("    t[r.len] = 0;").append(NL)
+                    sb.append("    jstring out = (*env)->NewStringUTF(env, t);").append(NL)
+                    sb.append("    free(t);").append(NL)
+                }
+                else -> sb.append("    ").append(cType(ret)).append(" r = rsf_fn_").append(fn.name)
+                    .append("(").append(args).append(");").append(NL)
+            }
+            for ((i, t) in ps.withIndex()) {
+                if (t.base == RsfBase.STRING) {
+                    sb.append("    (*env)->ReleaseStringUTFChars(env, j").append(i).append(", c").append(i).append(");").append(NL)
+                }
+            }
+            when (ret.base) {
+                RsfBase.VOID -> sb.append("    return;").append(NL)
+                RsfBase.STRING -> sb.append("    return out;").append(NL)
+                else -> sb.append("    return (").append(jniType(ret)).append(")r;").append(NL)
+            }
+            sb.append("}").append(NL).append(NL)
+        }
+        if (natives.isEmpty()) {
+            sb.append("/* 这个程序里没有 native fn，桥是空的 */").append(NL)
+        }
+        return sb.toString()
+    }
+
+    /** JNI 头的参数/返回类型（对象只开放 String）。 */
+    private fun jniType(t: RsfType): String {
+        if (t.arrayDepth != 0 || t.ptrDepth != 0) {
+            throw RsfError("native", "JNI 桥只支持基本类型与 String，不支持 ${t.rsfName}（数组/指针要用句柄传，v1 没做）")
+        }
+        return jniTypeOf(t)
+    }
+
+    private fun jniTypeOf(t: RsfType): String = when (t.base) {
+        RsfBase.VOID -> "void"
+        RsfBase.INT -> "jint"
+        RsfBase.LONG -> "jlong"
+        RsfBase.BOOL -> "jboolean"
+        RsfBase.BYTE -> "jbyte"
+        RsfBase.CHAR -> "jchar"
+        RsfBase.STRING -> "jstring"
+        else -> throw RsfError(
+            "native",
+            "JNI 桥只支持 Int / Long / Bool / Byte / Char / String 与 void，不支持 ${t.rsfName}",
+        )
+    }
+
     companion object {
         /** 单文件运行时：程序与这些辅助函数编在一起，不依赖任何 rsf 运行时库。 */
         private val RUNTIME = """
@@ -919,7 +1029,10 @@ class CBackend(private val model: SemanticModel, private val withEntry: Boolean 
             #include <stdlib.h>
             #include <string.h>
 
+            #ifndef RSF_STR_DEFINED
+            #define RSF_STR_DEFINED
             typedef struct { int64_t len; const char* data; } rsf_str;
+            #endif
             typedef struct { int64_t len; void* data; } rsf_arr;
 
             static rsf_arr rsf_arr_new(int64_t len, int64_t elem) {

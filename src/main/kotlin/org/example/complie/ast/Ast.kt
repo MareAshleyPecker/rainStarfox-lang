@@ -128,6 +128,8 @@ data class AnnotationDecl(
      * 「至多一个」在 Parser 强制（第二个 `companion` 当场报错），所以这里不是列表。
      */
     val companion: CompanionEntityDecl? = null,
+    /** 阶段 60c：注解声明也有构建目标（`native anno` / `jvm anno`）。 */
+    val target: BuildTarget = BuildTarget.BOTH,
     /** 写在注解声明自己前面的注解（元注解）：`@Meta annotation M { }`，v1 只解析不做语义。 */
     val annotations: List<AnnotationUse> = emptyList(),
 ) : Node
@@ -712,6 +714,8 @@ data class ClassDecl(
      * `abstract`（否则报错）。没写 `abstract` 的类里出现抽象方法一律报错。
      */
     val isAbstract: Boolean = false,
+    /** 阶段 60c：类声明的构建目标（`native class` / `jvm class`）。 */
+    val target: BuildTarget = BuildTarget.BOTH,
 ) : Node {
     /**
      * 所有构造器：主构造（写了类头括号才有）在前，次构造（`constructor`）按源码顺序在后。
@@ -794,6 +798,8 @@ data class InterfaceDecl(
      * 写在 `interface` 前面的注解（阶段 21）：`@Marker interface I { }`。缺省空表。
      */
     val annotations: List<AnnotationUse> = emptyList(),
+    /** 阶段 60c：接口声明的构建目标（`native interface` / `jvm interface`）。 */
+    val target: BuildTarget = BuildTarget.BOTH,
 ) : Node {
     /** 抽象方法：只声明签名，实现类/子接口必须提供（多接口默认方法冲突也看这里）。 */
     val abstractMethods: List<FuncDecl> get() = methods.filter { it.isAbstract }

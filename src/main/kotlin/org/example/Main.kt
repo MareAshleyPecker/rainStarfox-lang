@@ -70,6 +70,7 @@ class Cli {
         var dump = false
         var cMode = false
         var cLib = false
+        var cJni = false
         val positional = ArrayList<String>()
 
         var i = 0
@@ -87,6 +88,7 @@ class Cli {
                 "--dump" -> dump = true
                 "--c" -> cMode = true
                 "--lib" -> cLib = true
+                "--jni" -> cJni = true
                 else -> positional.add(a)
             }
             i++
@@ -94,7 +96,7 @@ class Cli {
 
         val file = requireFile(
             positional.firstOrNull(),
-            "build <file.rsf> [-o <dir>] [-n <类名>] [--dump] [--c [--lib]]",
+            "build <file.rsf> [-o <dir>] [-n <类名>] [--dump] [--c [--lib] [--jni]]",
         )
         // 阶段 60：`--c` 是 native 构建，只收 target native / 两侧都写的声明
         val loaded = Rsf.load(file, target = if (cMode) BuildTarget.NATIVE else BuildTarget.JVM)
@@ -109,6 +111,14 @@ class Cli {
             val out = File(outDir, "$name.c")
             out.writeText(text, Charsets.UTF_8)
             println("[rsf] 已生成 ${out.path}")
+            // 阶段 60b：JVM → native 的桥。符号名要跟 JVM 类名一致，所以这里用同一个 name。
+            if (cJni) {
+                val bridge = File(outDir, "${name}_jni.c")
+                bridge.writeText(CBackend(model, withEntry = false).emitJni(name), Charsets.UTF_8)
+                println("[rsf] 已生成 JNI 桥 ${bridge.path}")
+                println("[rsf] 链接: gcc -shared " + out.path + " " + bridge.path +
+                    " -I%JAVA_HOME%/include -I%JAVA_HOME%/include/win32 -o " + name + ".dll")
+            }
             if (cLib) {
                 println("[rsf] 这是库（没有 main）: gcc -c ${out.path} -o ${File(outDir, "$name.o").path}")
             } else {
