@@ -23,6 +23,21 @@ class CBackendTest {
     }
 
     @Test
+    fun `库模式不生成 main`() {
+        val source = SourceFile.of(
+            "lib.kt",
+            """
+            fn twice(x : Int) -> Int {
+                rtn x * 2
+            }
+            """.trimIndent(),
+        )
+        val c = CBackend(Rsf.analyze(source), withEntry = false).emit()
+        assertTrue(c.contains("rsf_fn_twice"), "函数要照常摊出来")
+        assertTrue(!c.contains("int main("), "库模式不生成 main")
+    }
+
+    @Test
     fun `基础程序摊出运行时与函数`() {
         val c = emit(
             """

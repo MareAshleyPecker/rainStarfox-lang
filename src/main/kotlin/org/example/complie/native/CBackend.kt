@@ -65,7 +65,7 @@ import org.example.complie.sema.UserMember
  * `intToString` 等少数内置。
  * 类继承、接口、枚举、泛型、多维数组、浮点、错误返回都还没接，遇到**显式报错**。
  */
-class CBackend(private val model: SemanticModel) {
+class CBackend(private val model: SemanticModel, private val withEntry: Boolean = true) {
 
     /** 换行符用码点拼，避免源码里的转义在工具链里被二次解析。 */
     private val NL: Char = 10.toChar()
@@ -125,6 +125,10 @@ class CBackend(private val model: SemanticModel) {
                 if (fn.body == null) continue
                 sb.append(definition(fn, null, iface)).append(NL)
             }
+        }
+        if (!withEntry) {
+            // --c --lib：不发 main，宿主自己声明/调用导出的 rsf_fn_* 函数
+            return sb.toString()
         }
         val entry = model.entry ?: throw RsfError("native", "没有 main 函数，C 后端不知道从哪开始跑")
         sb.append("int main(void) {\n")

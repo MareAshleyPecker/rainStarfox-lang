@@ -1,0 +1,35 @@
+// 阶段 58：UI 库 · 几何基础
+//
+// 只有矩形的整数版本：UI 的布局与命中测试全在整数像素上做，
+// 这样解释器、字节码与 C 后端在浮点上不可能分叉（语言里浮点本来就还没接）。
+pub class Rect(x0 : Int, y0 : Int, w0 : Int, h0 : Int) {
+    var x : Int = x0
+    var y : Int = y0
+    var w : Int = w0
+    var h : Int = h0
+
+    pub fn right() -> Int { rtn x + w }
+
+    pub fn bottom() -> Int { rtn y + h }
+
+    pub fn contains(px : Int, py : Int) -> Bool {
+        rtn px >= x && px < x + w && py >= y && py < y + h
+    }
+
+    /// 往里收一圈边距（负值就是往外扩）。
+    pub fn inset(by : Int) -> Rect {
+        rtn Rect(x + by, y + by, w - by * 2, h - by * 2)
+    }
+
+    pub fn isEmpty() -> Bool { rtn w <= 0 || h <= 0 }
+}
+
+/// 水平切分：`[x, x+w)` 里取第 `index` 块，每块宽 `part`，间隔 `gap`。
+pub fn cell(r : Rect, index : Int, part : Int, gap : Int) -> Rect {
+    rtn Rect(r.x + index * (part + gap), r.y, part, r.h)
+}
+
+/// 垂直切分：同 [cell]，不过是往下排。
+pub fn rowCell(r : Rect, index : Int, part : Int, gap : Int) -> Rect {
+    rtn Rect(r.x, r.y + index * (part + gap), r.w, part)
+}

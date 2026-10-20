@@ -68,6 +68,7 @@ class Cli {
         var className: String? = null
         var dump = false
         var cMode = false
+        var cLib = false
         val positional = ArrayList<String>()
 
         var i = 0
@@ -84,6 +85,7 @@ class Cli {
                 }
                 "--dump" -> dump = true
                 "--c" -> cMode = true
+                "--lib" -> cLib = true
                 else -> positional.add(a)
             }
             i++
@@ -91,7 +93,7 @@ class Cli {
 
         val file = requireFile(
             positional.firstOrNull(),
-            "build <file.rsf> [-o <dir>] [-n <类名>] [--dump] [--c]",
+            "build <file.rsf> [-o <dir>] [-n <类名>] [--dump] [--c [--lib]]",
         )
         val loaded = Rsf.load(file)
         val source = loaded.root
@@ -100,12 +102,16 @@ class Cli {
 
         if (cMode) {
             for (warning in model.warnings) System.err.println("[rsf] 警告: $warning")
-            val text = CBackend(model).emit()
+            val text = CBackend(model, withEntry = !cLib).emit()
             outDir.mkdirs()
             val out = File(outDir, "$name.c")
             out.writeText(text, Charsets.UTF_8)
             println("[rsf] 已生成 ${out.path}")
-            println("[rsf] 编译: gcc ${out.path} -o ${File(outDir, "$name.exe").path}")
+            if (cLib) {
+                println("[rsf] 这是库（没有 main）: gcc -c ${out.path} -o ${File(outDir, "$name.o").path}")
+            } else {
+                println("[rsf] 编译: gcc ${out.path} -o ${File(outDir, "$name.exe").path}")
+            }
             return 0
         }
 

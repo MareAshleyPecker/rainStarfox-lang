@@ -1,0 +1,6 @@
+frame 0
+button 1 1
+typed hello
+shifted 0
+kept hello
+toggle 1 2

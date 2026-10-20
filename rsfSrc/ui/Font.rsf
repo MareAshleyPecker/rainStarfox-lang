@@ -1,0 +1,76 @@
+// 阶段 58：UI 库 · 5x7 点阵字形表（大写字母、数字与少量符号；小写按大写渲染）
+//
+// 每个字形 7 行、每行 5 位，编码成 14 个十六进制字符（"01110" -> "0E"）。
+// 只收 ASCII 里常用的这些；不认识的字符返回空串，渲染时当空格。
+pub fn glyphPattern(code : Int) -> String {
+    if (code == 32) { rtn "00000000000000" }
+    if (code == 65) { rtn "0E11111F111111" }
+    if (code == 66) { rtn "1E11111E11111E" }
+    if (code == 67) { rtn "0E11101010110E" }
+    if (code == 68) { rtn "1E11111111111E" }
+    if (code == 69) { rtn "1F10101E10101F" }
+    if (code == 70) { rtn "1F10101E101010" }
+    if (code == 71) { rtn "0E11101711110F" }
+    if (code == 72) { rtn "1111111F111111" }
+    if (code == 73) { rtn "1F04040404041F" }
+    if (code == 74) { rtn "0702020202120C" }
+    if (code == 75) { rtn "11121418141211" }
+    if (code == 76) { rtn "1010101010101F" }
+    if (code == 77) { rtn "111B1515111111" }
+    if (code == 78) { rtn "11191513111111" }
+    if (code == 79) { rtn "0E11111111110E" }
+    if (code == 80) { rtn "1E11111E101010" }
+    if (code == 81) { rtn "0E11111115120D" }
+    if (code == 82) { rtn "1E11111E141211" }
+    if (code == 83) { rtn "0F10100E01011E" }
+    if (code == 84) { rtn "1F040404040404" }
+    if (code == 85) { rtn "1111111111110E" }
+    if (code == 86) { rtn "11111111110A04" }
+    if (code == 87) { rtn "11111115151B11" }
+    if (code == 88) { rtn "11110A040A1111" }
+    if (code == 89) { rtn "11110A04040404" }
+    if (code == 90) { rtn "1F01020408101F" }
+    if (code == 48) { rtn "0E11131519110E" }
+    if (code == 49) { rtn "040C040404040E" }
+    if (code == 50) { rtn "0E11010204081F" }
+    if (code == 51) { rtn "1F02040201110E" }
+    if (code == 52) { rtn "02060A121F0202" }
+    if (code == 53) { rtn "1F101E0101110E" }
+    if (code == 54) { rtn "0608101E11110E" }
+    if (code == 55) { rtn "1F010204080808" }
+    if (code == 56) { rtn "0E11110E11110E" }
+    if (code == 57) { rtn "0E11110F01020C" }
+    if (code == 46) { rtn "00000000000C0C" }
+    if (code == 44) { rtn "000000000C0C08" }
+    if (code == 58) { rtn "000C0C000C0C00" }
+    if (code == 45) { rtn "0000001F000000" }
+    if (code == 43) { rtn "0004041F040400" }
+    if (code == 47) { rtn "01020204080810" }
+    if (code == 33) { rtn "04040404040004" }
+    if (code == 63) { rtn "0E110102040004" }
+    if (code == 40) { rtn "02040808080402" }
+    if (code == 41) { rtn "08040202020408" }
+    if (code == 61) { rtn "00001F001F0000" }
+    if (code == 42) { rtn "00150E1F0E1500" }
+    if (code == 37) { rtn "191A0404081606" }
+    rtn ""
+}
+
+/// 一行 5 位：`row` 取 0..6，越界回 0。
+pub fn glyphRow(code : Int, row : Int) -> Int {
+    var pat = glyphPattern(code)
+    if (pat.length() == 0 || row < 0 || row > 6) { rtn 0 }
+    var i = row * 2
+    var hi = hexVal(pat.charAt(i))
+    var lo = hexVal(pat.charAt(i + 1))
+    rtn hi * 16 + lo
+}
+
+/// 十六进制一位 -> 0..15（不是十六进制字符回 0）。
+pub fn hexVal(c : Char) -> Int {
+    var n = charToInt(c)
+    if (n >= 48 && n <= 57) { rtn n - 48 }
+    if (n >= 65 && n <= 70) { rtn n - 55 }
+    if (n >= 97 && n <= 102) { rtn n - 87 }
+    rtn 0
+}

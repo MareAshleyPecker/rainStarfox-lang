@@ -1,0 +1,191 @@
+// 阶段 58b：声明式 UI 的第一层——控件节点
+//
+// 调用方每帧写一棵树（`view(app)`），渲染器遍历它、画、判命中、把被点的
+// 动作 id 收进一个数组。没有回调、没有函数类型：事件用 **action id** 回传，
+// 调用方拿 id 做 if/else 分发（Elm 风格）。这样 C 后端也能原样编。
+//
+// 控件的「身份」是 `key`：输入框的文字、焦点这类**跨帧状态**按 key 记住，
+// 这就是 diff 的全部入口（树按位置重建，状态按 key 复用）。
+
+pub class Kids {
+    var items : Widget[] = new Widget[4]
+    var n : Int = 0
+
+    pub fn add(w : Widget) -> Kids {
+        if (n == items.length) {
+            var bigger = new Widget[items.length * 2]
+            var i = 0
+            while (i < n) {
+                bigger[i] = items[i]
+                i = i + 1
+            }
+            items = bigger
+        }
+        items[n] = w
+        n = n + 1
+        rtn this
+    }
+
+    pub fn size() -> Int { rtn n }
+
+    pub fn at(i : Int) -> Widget { rtn items[i] }
+
+    pub fn toArray() -> Widget[] {
+        var out = new Widget[n]
+        var i = 0
+        while (i < n) {
+            out[i] = items[i]
+            i = i + 1
+        }
+        rtn out
+    }
+}
+
+pub class Widget {
+    var kind : String = "label"
+    var key : String = ""
+    var text : String = ""
+    var action : Int = 0
+    var pad : Int = 4
+    var gap : Int = 3
+    var bg : Int = 0
+    var fg : Int = 0
+    var accent : Int = 0
+    var checked : Bool = false
+    var kids : Widget[] = new Widget[0]
+
+    pub fn withKey(k : String) -> Widget {
+        key = k
+        rtn this
+    }
+
+    pub fn withColors(bgColor : Int, fgColor : Int) -> Widget {
+        bg = bgColor
+        fg = fgColor
+        rtn this
+    }
+
+    pub fn withAccent(c : Int) -> Widget {
+        accent = c
+        rtn this
+    }
+
+    pub fn withPad(p : Int) -> Widget {
+        pad = p
+        rtn this
+    }
+
+    pub fn add(w : Widget) -> Widget {
+        var box = Kids()
+        var i = 0
+        while (i < kids.length) {
+            box.add(kids[i])
+            i = i + 1
+        }
+        box.add(w)
+        kids = box.toArray()
+        rtn this
+    }
+
+    pub fn hasKids() -> Bool { rtn kids.length > 0 }
+}
+
+// ------------------------------------------------------------------ 构造器
+
+pub fn label(text0 : String) -> Widget {
+    var w = Widget()
+    w.kind = "label"
+    w.text = text0
+    rtn w
+}
+
+pub fn button(text0 : String, actionId : Int) -> Widget {
+    var w = Widget()
+    w.kind = "button"
+    w.text = text0
+    w.action = actionId
+    rtn w
+}
+
+pub fn toggle(text0 : String, actionId : Int, checked : Bool) -> Widget {
+    var w = Widget()
+    w.kind = "check"
+    w.text = text0
+    w.action = actionId
+    if (checked) { w.text = text0 + "\u0001" }
+    rtn w
+}
+
+pub fn field(text0 : String) -> Widget {
+    var w = Widget()
+    w.kind = "field"
+    w.text = text0
+    rtn w
+}
+
+pub fn spacer(h : Int) -> Widget {
+    var w = Widget()
+    w.kind = "spacer"
+    w.pad = h
+    rtn w
+}
+
+pub fn panel() -> Widget {
+    var w = Widget()
+    w.kind = "panel"
+    rtn w
+}
+
+pub fn column() -> Widget {
+    var w = Widget()
+    w.kind = "column"
+    rtn w
+}
+
+pub fn row() -> Widget {
+    var w = Widget()
+    w.kind = "row"
+    rtn w
+}
+
+/// 控件在垂直方向占多高（容器递归求和）。
+pub fn heightOf(w : Widget) -> Int {
+    if (w.kind == "column") {
+        var total = w.pad * 2
+        var i = 0
+        while (i < w.kids.length) {
+            total = total + heightOf(w.kids[i])
+            if (i > 0) { total = total + w.gap }
+            i = i + 1
+        }
+        rtn total
+    }
+    if (w.kind == "row") {
+        var tallest = 0
+        var i = 0
+        while (i < w.kids.length) {
+            var h = heightOf(w.kids[i])
+            if (h > tallest) { tallest = h }
+            i = i + 1
+        }
+        rtn tallest + w.pad * 2
+    }
+    if (w.kind == "spacer") { rtn w.pad }
+    if (w.kind == "label") { rtn 7 + w.pad * 2 }
+    rtn 14
+}
+
+/// 控件在水平方向占多宽（`row` 用它求子宽度，其余按 stretch 处理）。
+pub fn widthOf(w : Widget, avail : Int) -> Int {
+    if (w.kind == "row") {
+        var total = w.pad * 2
+        var i = 0
+        while (i < w.kids.length) {
+            total = total + widthOf(w.kids[i], avail)
+            if (i > 0) { total = total + w.gap }
+            i = i + 1
+        }
+        rtn total
+    }
+    rtn avail
+}

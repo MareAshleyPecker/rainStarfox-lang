@@ -1,0 +1,219 @@
+// 阶段 58b：声明式树的渲染器
+//
+// 一次 `frame` 做三件事：按布局算矩形、画、把被点中的控件的 action id 收集起来。
+// 树每帧重建（声明式的写法），但**跨帧状态按 key 复用**：
+//   - 输入框里的文字存在 [typed]（key -> 文本）
+//   - 焦点是一个 key
+// 这就是「按 key diff」的最小实现；控件位置可以任意变，只要 key 不变状态就跟着走。
+import "Canvas.rsf"
+import "Geometry.rsf"
+import "Node.rsf"
+
+/// 极简字符串表（key -> 文本）；用线性查找，UI 里几十个 key 足够。
+pub class StrMap {
+    var keys : String[] = new String[8]
+    var vals : String[] = new String[8]
+    var n : Int = 0
+
+    pub fn find(k : String) -> Int {
+        var i = 0
+        while (i < n) {
+            if (keys[i] == k) { rtn i }
+            i = i + 1
+        }
+        rtn -1
+    }
+
+    pub fn has(k : String) -> Bool { rtn find(k) >= 0 }
+
+    pub fn getOr(k : String, fallback : String) -> String {
+        var i = find(k)
+        if (i < 0) { rtn fallback }
+        rtn vals[i]
+    }
+
+    pub fn put(k : String, v : String) -> void {
+        var i = find(k)
+        if (i >= 0) {
+            vals[i] = v
+            rtn
+        }
+        if (n == keys.length) {
+            var biggerKeys = new String[keys.length * 2]
+            var biggerVals = new String[vals.length * 2]
+            var j = 0
+            while (j < n) {
+                biggerKeys[j] = keys[j]
+                biggerVals[j] = vals[j]
+                j = j + 1
+            }
+            keys = biggerKeys
+            vals = biggerVals
+        }
+        keys[n] = k
+        vals[n] = v
+        n = n + 1
+    }
+}
+
+pub class Renderer(cv : Canvas) {
+    var cv : Canvas = cv
+    var actions : Int[] = new Int[8]
+    var actionCount : Int = 0
+    var focus : String = ""
+    var typed : StrMap = StrMap()
+    var mouseX : Int = 0
+    var mouseY : Int = 0
+    var clickX : Int = -1
+    var clickY : Int = -1
+    /// 这一帧有没有需要重绘的变化（输入/点击/动画）。调用方可以据此跳过重绘。
+    var dirty : Bool = false
+
+    pub fn moveTo(x : Int, y : Int) -> void {
+        mouseX = x
+        mouseY = y
+        dirty = true
+    }
+
+    pub fn click(x : Int, y : Int) -> void {
+        clickX = x
+        clickY = y
+        dirty = true
+    }
+
+    /// 键盘输入：把一段文字追加到当前焦点输入框。焦点之外忽略。
+    /// 键盘输入：把一段文字追加到当前焦点输入框（宿主把输入法/按键文本原样传进来）。
+    pub fn typeText(s : String) -> void {
+        if (s == "") { rtn }
+        dirty = true
+        if (focus == "") { rtn }
+        typed.put(focus, typed.getOr(focus, "") + s)
+    }
+
+    /// 退格：删掉焦点输入框的最后一个字符。
+    pub fn backspace() -> void {
+        dirty = true
+        if (focus == "") { rtn }
+        var current = typed.getOr(focus, "")
+        if (current.length() > 0) {
+            typed.put(focus, current.substring(0, current.length() - 1))
+        }
+    }
+
+    pub fn resetActions() -> void {
+        actionCount = 0
+    }
+
+    pub fn actionAt(i : Int) -> Int { rtn actions[i] }
+
+    /// 某个 key 的输入框当前文字。
+    pub fn textOf(key : String, fallback : String) -> String { rtn typed.getOr(key, fallback) }
+
+    /// 渲染一帧；返回这一帧触发的动作个数。
+    pub fn frame(root : Widget, x : Int, y : Int, w : Int, h : Int) -> Int {
+        resetActions()
+        layout(root, Rect(x, y, w, h))
+        rtn actionCount
+    }
+
+    // -------------------------------------------------------------- 布局 + 画
+
+    prv fn layout(w : Widget, r : Rect) -> void {
+        if (w.kind == "column") {
+            var inner = Rect(r.x + w.pad, r.y + w.pad, r.w - w.pad * 2, r.h - w.pad * 2)
+            var cursor = inner.y
+            var i = 0
+            while (i < w.kids.length) {
+                var kid = w.kids[i]
+                var kh = heightOf(kid)
+                layout(kid, Rect(inner.x, cursor, inner.w, kh))
+                cursor = cursor + kh + w.gap
+                i = i + 1
+            }
+            rtn
+        }
+        if (w.kind == "row") {
+            var inner = Rect(r.x + w.pad, r.y + w.pad, r.w - w.pad * 2, r.h - w.pad * 2)
+            var count = w.kids.length
+            if (count == 0) { rtn }
+            var used = w.gap * (count - 1)
+            var each = (inner.w - used) / count
+            var cursor = inner.x
+            var i = 0
+            while (i < count) {
+                layout(w.kids[i], Rect(cursor, inner.y, each, inner.h))
+                cursor = cursor + each + w.gap
+                i = i + 1
+            }
+            rtn
+        }
+        leaf(w, r)
+    }
+
+    prv fn leaf(w : Widget, r : Rect) -> void {
+        if (w.kind == "spacer") { rtn }
+        if (w.kind == "label") {
+            cv.text(w.text, r.x, r.y + 2, w.fg)
+            rtn
+        }
+        if (w.kind == "panel") {
+            cv.fill(r, w.bg)
+            cv.stroke(r, w.accent, 1)
+            rtn
+        }
+        if (w.kind == "button") {
+            var bg = w.bg
+            if (r.contains(mouseX, mouseY)) { bg = w.accent }
+            cv.fill(r, bg)
+            cv.stroke(r, w.accent, 1)
+            var tx = r.x + (r.w - cv.textWidth(w.text)) / 2
+            cv.text(w.text, tx, r.y + (r.h - 7) / 2, w.fg)
+            if (hit(r)) { push(w.action) }
+            rtn
+        }
+        if (w.kind == "check") {
+            var box = Rect(r.x, r.y + (r.h - 10) / 2, 10, 10)
+            cv.stroke(box, w.fg, 1)
+            if (w.checked) { cv.fill(Rect(box.x + 2, box.y + 2, 6, 6), w.accent) }
+            cv.text(w.text, r.x + 16, r.y + (r.h - 7) / 2, w.fg)
+            if (hit(r)) { push(w.action) }
+            rtn
+        }
+        if (w.kind == "field") {
+            var focused = focus == w.key
+            cv.fill(r, w.bg)
+            cv.stroke(r, w.fg, 1)
+            var shown = typed.getOr(w.key, w.text)
+            cv.text(shown, r.x + 4, r.y + (r.h - 7) / 2, w.fg)
+            if (focused) {
+                var cx = r.x + 4 + cv.textWidth(shown)
+                cv.fill(Rect(cx, r.y + 3, 1, r.h - 6), w.accent)
+            }
+            if (hit(r)) { focus = w.key }
+            rtn
+        }
+    }
+
+    prv fn hit(r : Rect) -> Bool {
+        if (clickX < 0) { rtn false }
+        if (!r.contains(clickX, clickY)) { rtn false }
+        clickX = -1
+        clickY = -1
+        dirty = true
+        rtn true
+    }
+
+    prv fn push(action : Int) -> void {
+        if (actionCount == actions.length) {
+            var bigger = new Int[actions.length * 2]
+            var i = 0
+            while (i < actionCount) {
+                bigger[i] = actions[i]
+                i = i + 1
+            }
+            actions = bigger
+        }
+        actions[actionCount] = action
+        actionCount = actionCount + 1
+    }
+}

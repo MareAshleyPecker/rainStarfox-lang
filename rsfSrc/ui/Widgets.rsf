@@ -1,0 +1,90 @@
+// 阶段 58：UI 库 · 立即模式控件
+//
+// 用法：每帧 new 一个 Ui（或者复用），先 moveTo/click 喂输入，再按顺序摆控件，
+// 控件的返回值就是「这一帧被点了」。命中测试是**消费式**的：一个点击只会被
+// 第一个命中的控件吃掉，不会穿透到后面的控件。
+import "Canvas.rsf"
+import "Geometry.rsf"
+
+pub class Ui(cv : Canvas) {
+    var cv : Canvas = cv
+    var mouseX : Int = 0
+    var mouseY : Int = 0
+    var clickX : Int = -1
+    var clickY : Int = -1
+    var clicks : Int = 0
+
+    pub fn moveTo(x : Int, y : Int) -> void {
+        mouseX = x
+        mouseY = y
+    }
+
+    /// 这一帧按下了一次（坐标就是按下点）。没被任何控件吃掉就留到下一帧。
+    pub fn click(x : Int, y : Int) -> void {
+        clickX = x
+        clickY = y
+    }
+
+    /// 有没有待消费的点击。
+    pub fn hasClick() -> Bool { rtn clickX >= 0 }
+
+    pub fn hovering(r : Rect) -> Bool { rtn r.contains(mouseX, mouseY) }
+
+    /// 命中就消费掉，返回 true。
+    pub fn takeClick(r : Rect) -> Bool {
+        if (!hasClick()) { rtn false }
+        if (!r.contains(clickX, clickY)) { rtn false }
+        clickX = -1
+        clickY = -1
+        clicks = clicks + 1
+        rtn true
+    }
+
+    pub fn label(text : String, x : Int, y : Int, fg : Int) -> void {
+        cv.text(text, x, y, fg)
+    }
+
+    /// 居中文字：在 `r` 里水平垂直居中（字高 7，向下取整）。
+    pub fn centered(text : String, r : Rect, fg : Int) -> void {
+        var tx = r.x + (r.w - cv.textWidth(text)) / 2
+        var ty = r.y + (r.h - 7) / 2
+        cv.text(text, tx, ty, fg)
+    }
+
+    pub fn panel(r : Rect, bg : Int, border : Int) -> void {
+        cv.fill(r, bg)
+        cv.stroke(r, border, 1)
+    }
+
+    /// 按钮：悬停时底色提亮，被点返回 true。
+    pub fn button(text : String, r : Rect, bg : Int, hover : Int, fg : Int, border : Int) -> Bool {
+        var fillColor = bg
+        if (hovering(r)) { fillColor = hover }
+        panel(r, fillColor, border)
+        centered(text, r, fg)
+        rtn takeClick(r)
+    }
+
+    /// 复选框：返回新的勾选状态（被点就翻转）。
+    pub fn checkbox(text : String, r : Rect, checked : Bool, fg : Int, accent : Int) -> Bool {
+        var box = Rect(r.x, r.y + (r.h - 10) / 2, 10, 10)
+        var on = checked
+        if (takeClick(r)) { on = !on }
+        cv.stroke(box, fg, 1)
+        if (on) {
+            cv.fill(Rect(box.x + 2, box.y + 2, 6, 6), accent)
+        }
+        cv.text(text, r.x + 16, r.y + (r.h - 7) / 2, fg)
+        rtn on
+    }
+
+    /// 单行输入框的「外观」：不接键盘，只画当前内容和光标。
+    pub fn field(text : String, r : Rect, bg : Int, fg : Int, caret : Int) -> void {
+        panel(r, bg, fg)
+        cv.text(text, r.x + 4, r.y + (r.h - 7) / 2, fg)
+        var cx = r.x + 4 + cv.textWidth(text)
+        if (cx < r.x + r.w - 2) {
+            cv.fill(Rect(cx, r.y + 3, 1, r.h - 6), caret)
+        }
+    }
+}

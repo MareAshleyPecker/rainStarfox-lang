@@ -1,0 +1,32 @@
+// 阶段 58b：声明式 UI —— 建树、命中、动作 id、输入框状态按 key 跨帧复用
+import "../../../rsfSrc/ui/Renderer.rsf"
+
+fn view(app : Int) -> Widget {
+    var root = column()
+    root.withKey("root")
+    if (app > 0) { root.add(label("EXTRA")) }
+    root.add(label("NAME").withColors(0, 15658734))
+    root.add(field("type here").withKey("name"))
+    root.add(button("OK", 1))
+    root.add(toggle("REMEMBER", 2, true))
+    rtn root
+}
+
+fn main() {
+    var cv = Canvas(100, 80)
+    var r = Renderer(cv)
+    var n = r.frame(view(0), 0, 0, 100, 80)
+    println("frame " + intToString(n))
+    r.click(10, 45)
+    n = r.frame(view(0), 0, 0, 100, 80)
+    println("button " + intToString(n) + " " + intToString(r.actionAt(0)))
+    r.click(10, 26)
+    r.frame(view(0), 0, 0, 100, 80)
+    r.typeText("hello")
+    println("typed " + r.textOf("name", "?"))
+    println("shifted " + intToString(r.frame(view(1), 0, 0, 100, 80)))
+    println("kept " + r.textOf("name", "?"))
+    r.click(10, 80)
+    n = r.frame(view(1), 0, 0, 100, 80)
+    println("toggle " + intToString(n) + " " + intToString(r.actionAt(0)))
+}

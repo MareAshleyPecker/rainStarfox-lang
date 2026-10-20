@@ -79,6 +79,12 @@ rsf help | version
 
 三条后端有一条硬约束：**解释器与字节码后端的 stdout 必须逐字节一致**（`build/verify36/` 与 `build/verify32/` 两套台子守着）。
 
+## UI 库（`rsfSrc/ui/`）
+
+声明式：`fn view(app) -> Widget` 每帧写一棵树，`Renderer.frame` 画面、判命中、返回动作 id；输入框文字按 `key` 跨帧复用。纯 rsf，解释器与 C 后端都能跑。
+
+`rsf build app.rsf --c --lib -o out` 只出 C 函数、不出 `main`，交给宿主窗口调用。
+
 ## C 后端（native 线）
 
 `rsf build x.rsf --c -o out` 把整份程序摊成**一个 C99 文件**，自带运行时（字符串拼接、`print`/`println`、`intToString`），不依赖任何 rsf 库：
