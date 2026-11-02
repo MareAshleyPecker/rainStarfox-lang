@@ -4220,10 +4220,20 @@ class BytecodeCompiler(
      * 这一点和解释器不同（那边 Char 是个对象，要 `.code`），但可观察的结果一样。
      */
     private fun emitBuiltinCall(ctx: ExprCtx, expr: CallExpr, builtin: Builtin) {
+        // jvmCall / jvmNew / jvmCallOn 是 native 构建专用：在压参数之前就拒绝，
+        // 否则可变参数的内置函数会按固定形参表下标越界。
+        if (builtin.name == "jvmCall" || builtin.name == "jvmNew" || builtin.name == "jvmCallOn") {
+            throw RsfError(
+                "codegen",
+                "jvmCall / jvmNew / jvmCallOn 只在 native 构建（--c）里可用：" +
+                    "JVM 侧直接 import/java 调就行，不用过桥",
+            )
+        }
         val mv = ctx.mv
         for ((i, arg) in expr.arguments.withIndex()) {
             emitExpr(ctx, arg)
-            emitWiden(mv, model.typeOf(arg), builtin.params[i])
+            val want = builtin.params[if (i < builtin.params.size) i else builtin.params.size - 1]
+            emitWiden(mv, model.typeOf(arg), want)
         }
         when (builtin.name) {
             // 截断 / 转换：对应 Java 的 (Byte) 与 (Char)
@@ -4240,9 +4250,10 @@ class BytecodeCompiler(
             // 带 rsf 消息的 RuntimeException（和解释器的 RsfFailure 一字不差）
             // jvmCall 是 native → JVM 的方向：JVM 侧本来就在 JVM 里，直接调 Java 即可，
             // 不走桥（那条路只在 --c 出来的原生程序里才有意义）。
-            "jvmCall" -> throw RsfError(
+            "jvmCall", "jvmNew", "jvmCallOn" -> throw RsfError(
                 "codegen",
-                "jvmCall 只在 native 构建（--c）里可用：JVM 侧直接 import/java 调就行，不用过桥",
+                "jvmCall / jvmNew / jvmCallOn 只在 native 构建（--c）里可用：" +
+                    "JVM 侧直接 import/java 调就行，不用过桥",
             )
 
             "parseInt" -> mv.visitMethodInsn(

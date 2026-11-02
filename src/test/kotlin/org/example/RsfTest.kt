@@ -8979,4 +8979,40 @@ class RsfTest {
         assertTrue(e.message!!.contains("只在 native 构建"))
     }
 
+    @Test
+    fun `jvmNew 与 jvmCallOn 在解释器里调 Java 对象`() {
+        val text = """
+            fn main() -> void {
+                var sb = jvmNew("java.lang.StringBuilder", "a")
+                println(jvmCallOn(sb, "append", "b"))
+                println(jvmCallOn(sb, "toString"))
+                println(jvmCall("java.lang.Integer", "parseInt", "41"))
+            }
+        """.trimIndent()
+        assertEquals(listOf("ab", "ab", "41"), lines(runInterpreted(text)))
+    }
+
+    @Test
+    fun `jvmNew 与 jvmCallOn 在字节码后端显式报错`() {
+        val text = """
+            fn main() -> void {
+                var sb = jvmNew("java.lang.StringBuilder", "a")
+                println(jvmCallOn(sb, "toString"))
+            }
+        """.trimIndent()
+        val e = assertFailsWith<RsfError> { runCompiled(text) }
+        assertTrue(e.message!!.contains("只在 native 构建"))
+    }
+
+    @Test
+    fun `jvmCall 至少要有类名与方法名`() {
+        val text = """
+            fn main() -> void {
+                println(jvmCall("java.lang.String"))
+            }
+        """.trimIndent()
+        val e = assertFailsWith<RsfError> { runInterpreted(text) }
+        assertTrue(e.message!!.contains("至少需要 2 个参数"))
+    }
+
 }

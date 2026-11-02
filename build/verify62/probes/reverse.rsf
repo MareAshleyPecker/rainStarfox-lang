@@ -1,3 +1,6 @@
 fn main() -> void {
     println(jvmCall("Echo", "hi", "bob"))
+    println(jvmCall("Echo", "join", "ab", "cd"))
+    var e = jvmNew("Echo", "tag")
+    println(jvmCallOn(e, "prefix", "hello"))
 }

@@ -7060,7 +7060,15 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
     }
 
     private fun checkBuiltinCall(expr: CallExpr, builtin: Builtin): RsfType {
-        if (expr.arguments.size != builtin.params.size) {
+        if (builtin.vararg) {
+            if (expr.arguments.size < builtin.params.size) {
+                throw err(
+                    "'${expr.name}' 至少需要 ${builtin.params.size} 个参数" +
+                        "（${builtin.display()}），实际给了 ${expr.arguments.size} 个",
+                    expr.at,
+                )
+            }
+        } else if (expr.arguments.size != builtin.params.size) {
             throw err(
                 "'${expr.name}' 的参数个数不对：需要 ${builtin.params.size} 个" +
                     "（${builtin.display()}），实际给了 ${expr.arguments.size} 个",
@@ -7072,7 +7080,7 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
             if (argType == RsfType.VOID) {
                 throw err("第 ${i + 1} 个实参是 void 表达式，不能当参数传", arg.at)
             }
-            val want = builtin.params[i]
+            val want = builtin.params[if (i < builtin.params.size) i else builtin.params.size - 1]
             if (!acceptsValue(want, arg, argType)) {
                 throw err(
                     "参数类型不匹配：'${builtin.name}' 的第 ${i + 1} 个参数需要 ${want.rsfName}，" +

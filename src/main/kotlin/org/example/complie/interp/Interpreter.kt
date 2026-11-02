@@ -2187,14 +2187,11 @@ class Interpreter(
             "toChar" -> asNumber(arg).toInt().toChar()
             "charToInt" -> (arg as Char).code
             "intToString" -> asNumber(arg).toString()
-            // native → JVM：解释器这边直接把 JVM 起在同一个进程里（反射调静态方法），
-            // 语义与 C 侧 jvmCall 一致：只认 public static String m(String)。
-            "jvmCall" -> {
-                val cls = args[0] as String
-                val method = args[1] as String
-                val arg = args[2] as String
-                jvmCall(cls, method, arg)
-            }
+            // native → JVM：解释器本来就跑在 JVM 上，直接反射调，语义与 C 侧的
+            // jvmCall / jvmNew / jvmCallOn 一致（实参都是 String，返回值按 toString 取）。
+            "jvmCall" -> jvmCall(args[0] as String, args[1] as String, stringsOf(args, 2))
+            "jvmNew" -> jvmNew(args[0] as String, stringsOf(args, 1))
+            "jvmCallOn" -> jvmCallOn(args[0] as String, args[1] as String, stringsOf(args, 2))
 
             "parseInt" -> {
                 val text = arg as String
@@ -2499,26 +2496,75 @@ class Interpreter(
      * 所以 `'a' + 1` 在编译产物里是 Int 加法；解释器这边就得自己把 Char 翻译成码点，
      * 否则 `coerce('a', Int)` 会直接 ClassCastException。
      */
+    /** `jvmNew` 造出来的对象：句柄是下标，放在解释器自己的表里。 */
+    private val jvmObjects = mutableListOf<Any>()
+
+    private fun stringsOf(args: List<Any?>, from: Int): List<String> =
+        args.drop(from).map { it as String }
+
+    private fun jvmClass(cls: String): Class<*> = try {
+        Class.forName(cls)
+    } catch (e: Throwable) {
+        throw RsfFailure("jvmCall 失败：找不到类 '$cls'")
+    }
+
+    private fun onlyStrings(types: Array<Class<*>>, count: Int): Boolean =
+        types.size == count && types.all { it == String::class.java }
+
     /** `jvmCall` 的解释器实现：与 C 侧 `rsf_jvm_call` 同样的查找规则。 */
-    private fun jvmCall(cls: String, method: String, arg: String): String {
-        val type = try {
-            Class.forName(cls)
-        } catch (e: Throwable) {
-            throw RsfFailure("jvmCall 失败：找不到类 '$cls'")
-        }
+    private fun jvmCall(cls: String, method: String, args: List<String>): String {
+        val type = jvmClass(cls)
         val target = type.methods.firstOrNull {
             it.name == method && java.lang.reflect.Modifier.isStatic(it.modifiers) &&
-                it.parameterCount == 1 && it.parameterTypes[0] == String::class.java &&
-                it.returnType == String::class.java
+                onlyStrings(it.parameterTypes, args.size)
         } ?: throw RsfFailure(
-            "jvmCall 失败：类 '$cls' 里没有 public static String $method(String)",
+            "jvmCall 失败：类 '$cls' 里没有 public static $method(${args.size} 个 String 参数)",
         )
         return try {
-            target.invoke(null, arg) as String
+            (target.invoke(null, *args.toTypedArray()) ?: "null").toString()
         } catch (e: java.lang.reflect.InvocationTargetException) {
             throw RsfFailure("jvmCall 失败：$method 抛了 ${e.targetException}")
         } catch (e: Throwable) {
             throw RsfFailure("jvmCall 失败：$method 调不动（${e.message}）")
+        }
+    }
+
+    /** `jvmNew`：构造器只收 String 参数，返回 `obj:<下标>`。 */
+    private fun jvmNew(cls: String, args: List<String>): String {
+        val type = jvmClass(cls)
+        val ctor = type.constructors.firstOrNull { onlyStrings(it.parameterTypes, args.size) }
+            ?: throw RsfFailure("jvmNew 失败：类 '$cls' 里没有收 ${args.size} 个 String 的公有构造器")
+        val obj = try {
+            ctor.newInstance(*args.toTypedArray())
+        } catch (e: java.lang.reflect.InvocationTargetException) {
+            throw RsfFailure("jvmNew 失败：$cls 的构造器抛了 ${e.targetException}")
+        } catch (e: Throwable) {
+            throw RsfFailure("jvmNew 失败：$cls 造不出来（${e.message}）")
+        }
+        jvmObjects += obj
+        return "obj:" + (jvmObjects.size - 1)
+    }
+
+    /** `jvmCallOn`：句柄 → 对象 → 实例方法，返回值按 toString 取。 */
+    private fun jvmCallOn(handle: String, method: String, args: List<String>): String {
+        if (!handle.startsWith("obj:")) {
+            throw RsfFailure("jvmCallOn 失败：'$handle' 不是 jvmNew 返回的句柄（应当是 obj:0 这种）")
+        }
+        val index = handle.removePrefix("obj:").toIntOrNull()
+        val obj = index?.let { jvmObjects.getOrNull(it) }
+            ?: throw RsfFailure("jvmCallOn 失败：句柄 '$handle' 指的对象不存在")
+        val target = obj.javaClass.methods.firstOrNull {
+            it.name == method && !java.lang.reflect.Modifier.isStatic(it.modifiers) &&
+                onlyStrings(it.parameterTypes, args.size)
+        } ?: throw RsfFailure(
+            "jvmCallOn 失败：${obj.javaClass.name} 里没有 $method(${args.size} 个 String 参数)",
+        )
+        return try {
+            (target.invoke(obj, *args.toTypedArray()) ?: "null").toString()
+        } catch (e: java.lang.reflect.InvocationTargetException) {
+            throw RsfFailure("jvmCallOn 失败：$method 抛了 ${e.targetException}")
+        } catch (e: Throwable) {
+            throw RsfFailure("jvmCallOn 失败：$method 调不动（${e.message}）")
         }
     }
 

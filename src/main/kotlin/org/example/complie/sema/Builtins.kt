@@ -35,11 +35,18 @@ class Builtin(
      */
     val helperName: String? = null,
     val helperDesc: String? = null,
+    /** 最后一个形参可以重复：`jvmCall("类", "方法", 参数…)` 的参数个数不固定。 */
+    val vararg: Boolean = false,
 ) {
     /** `charAt(Int) -> Char` 这种可读签名（可能失败的带 `!`）。补全列表也用它。 */
     fun display(): String {
         val mark = if (mayError) "!" else ""
-        return "$name(${params.joinToString(", ") { it.rsfName }}) -> $mark${ret.rsfName}"
+        val list = if (vararg) {
+            params.joinToString(", ") { it.rsfName } + "…"
+        } else {
+            params.joinToString(", ") { it.rsfName }
+        }
+        return "$name($list) -> $mark${ret.rsfName}"
     }
 }
 
@@ -150,12 +157,27 @@ object Builtins {
 
     // ------------------------------------------------------------------ native → JVM（阶段 62）
 
-    /** `jvmCall(类名, 方法名, 参数) -> String`：native 侧起 JVM 调 `public static String m(String)`。 */
+    /** `jvmCall(类名, 方法名, 参数…) -> String`：native 侧起 JVM 调静态方法（实参都是 String）。 */
     val JVM_CALL = Builtin(
-        "jvmCall", listOf(RsfType.STRING, RsfType.STRING, RsfType.STRING), RsfType.STRING,
+        "jvmCall", listOf(RsfType.STRING, RsfType.STRING), RsfType.STRING,
         // C 后端没有错误返回，找不到类/方法一律直接中止（stderr 说清楚），
         // 所以这里不标 mayError：调用方不用写 catch，`rsf run` 与 `--c` 写法一致。
-        doc = "调 Java 的 public static String 方法：jvmCall(\"类\", \"方法\", \"参数\")（只在 --c 构建可用）",
+        doc = "调 Java 的静态方法（实参都是 String，返回值按 toString 取）：jvmCall(\"类\", \"方法\", 参数…)（只在 --c 构建可用）",
+        vararg = true,
+    )
+
+    /** `jvmNew(类名, 参数…) -> String`：构造一个 Java 对象，返回句柄（`obj:0`）。 */
+    val JVM_NEW = Builtin(
+        "jvmNew", listOf(RsfType.STRING), RsfType.STRING,
+        doc = "构造 Java 对象（构造器只收 String）：jvmNew(\"java.lang.StringBuilder\") 返回句柄，配合 jvmCallOn 用",
+        vararg = true,
+    )
+
+    /** `jvmCallOn(句柄, 方法名, 参数…) -> String`：调上一步造出来的对象的实例方法。 */
+    val JVM_CALL_ON = Builtin(
+        "jvmCallOn", listOf(RsfType.STRING, RsfType.STRING), RsfType.STRING,
+        doc = "调 Java 对象的实例方法：jvmCallOn(句柄, \"方法\", 参数…)，返回值按 toString 取",
+        vararg = true,
     )
 
     /** 带签名的内置函数（`print` / `println` 是单参数特例，签名不在这里表达）。 */
@@ -163,7 +185,7 @@ object Builtins {
         TO_BYTE, TO_CHAR, CHAR_TO_INT, INT_TO_STRING, PARSE_INT,
         IS_DIGIT, IS_LETTER, IS_WHITESPACE, TO_UPPER, TO_LOWER,
         READ_TEXT, WRITE_TEXT, READ_BYTES, WRITE_BYTES,
-        JVM_CALL,
+        JVM_CALL, JVM_NEW, JVM_CALL_ON,
     )
 
     private val BY_NAME: Map<String, Builtin> = ALL.associateBy { it.name }
