@@ -166,6 +166,14 @@ class Checker(
     private val lowered = IdentityHashMap<FuncDecl, LoweredFunction>()
     private val diagnostics = ArrayList<Diagnostic>()
 
+    /** 阶段 63：被 `&x` 取过地址的绑定 → 所属函数（字节码后端只提升本帧的）。 */
+    private val addressedBindings: MutableSet<Binding> =
+        java.util.Collections.newSetFromMap(java.util.IdentityHashMap<Binding, Boolean>())
+    private val addressedOwners = java.util.IdentityHashMap<Binding, FuncDecl>()
+
+    /** 程序里出现过指针吗（决定字节码后端要不要发 `__rsf_ptr_*` 辅助方法）。 */
+    private var usesPointers = false
+
     // ---------------------------------------------------------------- 函数类型（阶段 30）
 
     /**
@@ -325,7 +333,7 @@ class Checker(
             companionAnnotations = companionAnnotations,
             annotationAccessors = annotationAccessors.toList(),
             genericCalls = genericCalls,
-        )
+        ).also { it.setPointerInfo(addressedBindings.toSet(), HashMap(addressedOwners), usesPointers) }
     }
 
     // ------------------------------------------------------------------ 作用域
@@ -5952,10 +5960,21 @@ class Checker(
                                 expr.at,
                             )
                         }
+                        // 阶段 63：登记「被取过地址的变量」，字节码后端据此把它提升成帧格子
+                        usesPointers = true
+                        val target = expr.operand
+                        if (target is VarExpr) {
+                            val binding = runCatching { varRefs[target] }.getOrNull()
+                            if (binding != null) {
+                                addressedBindings += binding
+                                addressedOwners[binding] = currentFn
+                            }
+                        }
                         operand.pointerOf(1)
                     }
 
                     TokenKind.STAR -> {
+                        usesPointers = true
                         if (!operand.isPointer) {
                             throw err(
                                 "不能解引用 ${operand.rsfName}：'*' 只能用在指针上（例如 Int* 或 Point*）",

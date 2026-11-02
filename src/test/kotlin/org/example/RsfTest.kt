@@ -8689,25 +8689,24 @@ class RsfTest {
     }
 
     @Test
-    fun `指针：JVM 字节码后端显式报错`() {
+    fun `指针：JVM 字节码后端也能跑（局部与形参）`() {
         val text = """
+            fn bump(p : Int*) -> void { *p = *p + 1 }
+
             fn main() -> void {
                 var x : Int = 1
                 var p : Int* = &x
-                *p = 2
-                rtn
+                *p = 7
+                bump(p)
+                println(x)
+                println(*p)
+                var q : Int* = p + 1
+                println(q == (p + 1))
             }
         """.trimIndent()
-        val model = Rsf.analyze(source(text))
-        val dir = File.createTempFile("rsf-test", "").let {
-            it.delete()
-            it.mkdirs()
-            it
-        }
-        val error = assertFailsWith<RsfError> {
-            Rsf.build(model, source(text), "RsfPtrJvm", dir)
-        }
-        assertTrue(error.message!!.contains("不支持指针"), error.message)
+        val want = listOf("8", "8", "true")
+        assertEquals(want, lines(runInterpreted(text)))
+        assertEquals(want, lines(runCompiled(text)))
     }
 
     @Test
@@ -8789,13 +8788,16 @@ class RsfTest {
     }
 
     @Test
-    fun `指针运算：JVM 字节码后端显式报错`() {
+    fun `指针：JVM 上字段与数组元素取地址仍然显式报错`() {
         val text = """
+            class Box {
+                var v : Int = 1
+            }
+
             fn main() -> void {
-                var xs = new Int[2]
-                var p : Int* = &xs[0]
-                *p = 1
-                *(p + 1) = 2
+                var b = Box()
+                var p : Int* = &b.v
+                *p = 2
                 rtn
             }
         """.trimIndent()
@@ -8806,9 +8808,9 @@ class RsfTest {
             it
         }
         val error = assertFailsWith<RsfError> {
-            Rsf.build(model, source(text), "RsfPtrArithJvm", dir)
+            Rsf.build(model, source(text), "RsfPtrFieldJvm", dir)
         }
-        assertTrue(error.message!!.contains("不支持指针"), error.message)
+        assertTrue(error.message!!.contains("还不支持对字段/数组元素取地址"), error.message)
     }
 
     // ---------------------------------------------------------------- 阶段 60：构建目标

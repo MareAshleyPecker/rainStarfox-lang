@@ -150,6 +150,14 @@ fn both(x : Int) -> Int { rtn x }              // 两侧都有
 
 调到「对面才有」的函数会报清楚（「函数 'fast' 只写在 native 侧」），而不是「未定义的函数」。两边互调（JNI 桥）还没接，见 `DESIGN-60.md`。
 
+### JVM 字节码后端
+
+`rsf build x.rsf`（不带 `--c`）出 class：
+
+- 已支持：类 / 继承 / 虚表分派、接口与默认方法、枚举、泛型（擦除 + 装箱）、`switch`（枚举用 `tableswitch`，Int/Long/String 用比较链）、浮点、注解、指针（`T*` / `&x` / `*p` / `*p = v` / `p + n` / `p == q`）。
+- 指针在 JVM 上表示成 `Object[]{ 帧, 格子号 }`：只有被 `&x` 取过地址的变量会被提升进帧数组，没用指针的函数字节码不受影响（`build/verify37/` 守着）。
+- 还不支持：`&obj.f`、`&a[i]`（显式报错）；`jvmCall` 只在 native 构建里可用（JVM 侧直接调 Java 即可）。
+
 ### Termux / aarch64
 
 Termux 里 `pkg install openjdk-17`，解压 `dist/rainStarfox-termux-arm64-0.9.0.tar.gz`（用 `./gradlew.bat jar` 之后按 `dist/termux/README.md` 打包）再 `./install.sh`，就有 `rsf` 命令。jar 编到 Java 17 字节码（major 61），openjdk-17 / 21 都能跑。

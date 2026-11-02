@@ -907,6 +907,42 @@ class SemanticModel(
     fun castTargetOf(expr: Expr): RsfType =
         castTargets[expr] ?: throw IllegalStateException("类型转换/判断缺少目标类型: $expr")
 
+    /**
+     * 阶段 63：被 `&x` 取过地址的局部变量/形参。
+     *
+     * Checker 在检查 `&x` 时登记；字节码后端据此把这些变量**提升成帧里的格子**
+     * （`Object[]` 的一格），指针只需要记「帧 + 格子号」，取地址与解引用才有同一个落点。
+     * 没被取地址的函数一个字节都不变。
+     */
+    var addressedBindings: Set<Binding> = emptySet()
+        private set
+
+    /** 被取地址的绑定 → 它所属的函数（字节码后端只提升**本帧**的绑定）。 */
+    var addressedOwners: Map<Binding, FuncDecl> = emptyMap()
+        private set
+
+    /**
+     * 这份程序里出现过指针（`&` / `*` / 指针运算）吗？
+     *
+     * 字节码后端据此决定要不要在程序类上多发两个指针辅助方法（`__rsf_ptr_add` /
+     * `__rsf_ptr_eq`）。没碰指针的程序**一个字节都不变**——自举对拍（verify37）靠这条。
+     */
+    var usesPointers: Boolean = false
+        private set
+
+    /** Checker 在构造完之后回填（阶段 63）。 */
+    fun setPointerInfo(bindings: Set<Binding>, owners: Map<Binding, FuncDecl>, uses: Boolean) {
+        addressedBindings = bindings
+        addressedOwners = owners
+        usesPointers = uses
+    }
+
+    fun isAddressed(binding: Binding): Boolean = binding in addressedBindings
+
+    /** 这个函数里被取过地址的绑定（按槽位升序）。 */
+    fun addressedBindingsOf(fn: FuncDecl): List<Binding> =
+        addressedBindings.filter { addressedOwners[it] === fn }.sortedBy { it.slot }
+
     fun bindingOf(decl: VarDeclStmt): Binding =
         declBindings[decl] ?: throw IllegalStateException("变量声明没有绑定: $decl")
 

@@ -401,6 +401,11 @@ class BytecodeCompiler(
         emitCastHelper(cw)
         // `?:` 生成的合成方法跟调用点同住一个类（这样私有方法也照样能调）
         emitOrElseMethods(cw)
+        // 阶段 63：指针辅助方法（只有本程序真用过指针才发，旧语料逐字节不变）
+        if (model.usesPointers) {
+            emitPtrAddHelper(cw)
+            emitPtrEqHelper(cw)
+        }
         cw.visitEnd()
         return cw
     }
@@ -742,6 +747,7 @@ class BytecodeCompiler(
         // 阶段 13：数组 = 一层 '[' + 元素的描述符，**递归一层**。
         // （别写成 `"[".repeat(arrayDepth) + descriptorOfType(elementType)`：
         // elementType 自己还带着剩下的维度，那样 `Int[][]` 会算出 `[[[I`。）
+        if (type.isPointer) return "[Ljava/lang/Object;" // 阶段 63：指针 = Object[]{ 帧, 格子号 }
         if (type.isArray) return "[" + descriptorOfType(type.elementType)
         type.fnTypeText?.let { text ->
             val sig = fnSignatureOf(text)
@@ -2390,7 +2396,32 @@ class BytecodeCompiler(
         if (lvt != null && closure == null) bodyLvtEntries(fn, body, localOffset, lvt)
         val cf = ControlFlow(body.instructions, body.labelIndex, body.handlers)
         val reach = cf.reachable()
-        val ctx = ExprCtx(mv, owner, body, localOffset, closures, closure)
+        // 阶段 63：本帧有没有变量被取过地址？有就整帧提升成 `Object[] frame`。
+        val promoted: Map<Binding, Int> =
+            if (closure == null) {
+                model.addressedBindingsOf(fn).associateWith { it.slot }
+            } else {
+                emptyMap()
+            }
+        val frameSlot = if (promoted.isEmpty()) -1 else body.slotCount + localOffset
+        val tmpSlot = frameSlot + 1
+        val ctx = ExprCtx(mv, owner, body, localOffset, closures, closure, promoted, frameSlot)
+        if (frameSlot >= 0) {
+            pushInt(mv, body.slotCount)
+            mv.visitTypeInsn(ANEWARRAY, "java/lang/Object")
+            mv.visitVarInsn(ASTORE, frameSlot)
+            // 形参一进来就得装进格子：它们的值已经在槽里了
+            for (b in promoted.keys) {
+                if (!b.isParam) continue
+                loadSlot(mv, b.type, b.slot + localOffset)
+                emitBoxValue(mv, b.type)
+                mv.visitVarInsn(ASTORE, tmpSlot)
+                mv.visitVarInsn(ALOAD, frameSlot)
+                pushInt(mv, b.slot)
+                mv.visitVarInsn(ALOAD, tmpSlot)
+                mv.visitInsn(AASTORE)
+            }
+        }
 
         val labels = HashMap<String, Label>()
         for (instr in body.instructions) {
@@ -2454,9 +2485,18 @@ class BytecodeCompiler(
 
                 is IVarDecl -> {
                     val binding = model.bindingOf(instr.stmt)
-                    emitExpr(ctx, instr.stmt.initializer)
-                    emitWiden(mv, model.typeOf(instr.stmt.initializer), binding.type)
-                    storeSlot(mv, binding.type, ctx.slotOf(binding) + localOffset)
+                    if (ctx.promoted.containsKey(binding)) {
+                        mv.visitVarInsn(ALOAD, ctx.frameSlot)
+                        pushInt(mv, ctx.slotOf(binding))
+                        emitExpr(ctx, instr.stmt.initializer)
+                        emitWiden(mv, model.typeOf(instr.stmt.initializer), binding.type)
+                        emitBoxValue(mv, binding.type)
+                        mv.visitInsn(AASTORE)
+                    } else {
+                        emitExpr(ctx, instr.stmt.initializer)
+                        emitWiden(mv, model.typeOf(instr.stmt.initializer), binding.type)
+                        storeSlot(mv, binding.type, ctx.slotOf(binding) + localOffset)
+                    }
                 }
 
                 is IAssign -> {
@@ -2474,9 +2514,18 @@ class BytecodeCompiler(
                         )
                     } else {
                         val binding = model.bindingOf(instr.stmt)
-                        emitExpr(ctx, instr.stmt.value)
-                        emitWiden(mv, model.typeOf(instr.stmt.value), binding.type)
-                        storeSlot(mv, binding.type, ctx.slotOf(binding) + localOffset)
+                        if (ctx.promoted.containsKey(binding)) {
+                            mv.visitVarInsn(ALOAD, ctx.frameSlot)
+                            pushInt(mv, ctx.slotOf(binding))
+                            emitExpr(ctx, instr.stmt.value)
+                            emitWiden(mv, model.typeOf(instr.stmt.value), binding.type)
+                            emitBoxValue(mv, binding.type)
+                            mv.visitInsn(AASTORE)
+                        } else {
+                            emitExpr(ctx, instr.stmt.value)
+                            emitWiden(mv, model.typeOf(instr.stmt.value), binding.type)
+                            storeSlot(mv, binding.type, ctx.slotOf(binding) + localOffset)
+                        }
                     }
                 }
 
@@ -2528,10 +2577,25 @@ class BytecodeCompiler(
                 // 接收者 → 长度 → 下标 → **越界检查** → 右值 → `*ASTORE`。
                 // 右值放在检查之后：越界时右值里的副作用一次都不能发生
                 // （JVM 上越界会直接抛，`a[i] = f()` 里的 f 根本不会跑）。
-                is IDerefAssign -> throw RsfError(
-                    "codegen",
-                    "JVM 字节码后端不支持指针（阶段 53 的指针只有解释器和 C 后端实现）：不能写 '*p = …'",
-                )
+                is IDerefAssign -> {
+                    val target = instr.stmt.target as? UnaryExpr
+                        ?: throw IllegalStateException("内部错误：解引用赋值的左值不是 *p")
+                    emitExpr(ctx, target.operand)
+                    mv.visitInsn(DUP)
+                    mv.visitInsn(ICONST_0)
+                    mv.visitInsn(AALOAD)
+                    mv.visitTypeInsn(CHECKCAST, "[Ljava/lang/Object;")
+                    mv.visitInsn(Opcodes.SWAP)
+                    mv.visitInsn(ICONST_1)
+                    mv.visitInsn(AALOAD)
+                    mv.visitTypeInsn(CHECKCAST, "java/lang/Integer")
+                    mv.visitMethodInsn(INVOKEVIRTUAL, "java/lang/Integer", "intValue", "()I", false)
+                    val pointee = model.typeOf(target)
+                    emitExpr(ctx, instr.stmt.value)
+                    emitWiden(mv, model.typeOf(instr.stmt.value), pointee)
+                    emitBoxValue(mv, pointee)
+                    mv.visitInsn(AASTORE)
+                }
 
                 is IIndexAssign -> {
                     val target = instr.stmt.target
@@ -2787,6 +2851,10 @@ class BytecodeCompiler(
         val closures: ClosurePlan = ClosurePlan.EMPTY,
         /** 非 null 表示正在发一个 lambda 合成方法——帧布局是闭包自己的那一套。 */
         private val closure: LambdaClosure? = null,
+        /** 阶段 63：本帧被取过地址的绑定 → 帧数组里的格子号（空 = 没有指针）。 */
+        val promoted: Map<Binding, Int> = emptyMap(),
+        /** 帧数组 `Object[]` 的局部槽；-1 表示本帧没有指针。 */
+        val frameSlot: Int = -1,
     ) {
 
         /** lambda 帧里 `this` 的捕获槽；不在 lambda 里就是 null（= 0 号槽）。 */
@@ -2834,7 +2902,11 @@ class BytecodeCompiler(
                     )
                 } else {
                     val binding = model.bindingOf(expr)
-                    loadSlot(mv, binding.type, ctx.slotOf(binding) + ctx.localOffset)
+                    if (ctx.promoted.containsKey(binding)) {
+                        emitPromotedLoad(ctx, binding)
+                    } else {
+                        loadSlot(mv, binding.type, ctx.slotOf(binding) + ctx.localOffset)
+                    }
                 }
             }
 
@@ -2860,6 +2932,34 @@ class BytecodeCompiler(
             is CallExpr -> if (model.isConstruction(expr)) emitNew(ctx, expr) else emitCall(ctx, expr)
 
             is UnaryExpr -> {
+                // 阶段 63：&x 不能先发操作数——操作数是读值，发出去会多压一个 int，
+                // 后面指针 Object[] 与它交错，校验器直接 VerifyError。
+                if (expr.op == TokenKind.AMP) {
+                    val target = expr.operand
+                    val binding = (target as? VarExpr)?.let { runCatching { model.bindingOf(it) }.getOrNull() }
+                    if (binding == null || !ctx.promoted.containsKey(binding) || ctx.frameSlot < 0) {
+                        throw RsfError(
+                            "codegen",
+                            "JVM 字节码后端还不支持对字段/数组元素取地址（&obj.f、&a[i]）：" +
+                                "用 'rsf run' 跑，或者 'rsf build x.rsf --c' 出 C",
+                            expr.at.line, expr.at.column, null,
+                        )
+                    }
+                    mv.visitInsn(Opcodes.ICONST_2)
+                    mv.visitTypeInsn(ANEWARRAY, "java/lang/Object")
+                    mv.visitInsn(DUP)
+                    mv.visitInsn(ICONST_0)
+                    mv.visitVarInsn(ALOAD, ctx.frameSlot)
+                    mv.visitInsn(AASTORE)
+                    mv.visitInsn(DUP)
+                    mv.visitInsn(ICONST_1)
+                    pushInt(mv, binding.slot)
+                    mv.visitMethodInsn(
+                        INVOKESTATIC, "java/lang/Integer", "valueOf", "(I)Ljava/lang/Integer;", false,
+                    )
+                    mv.visitInsn(AASTORE)
+                    return
+                }
                 emitExpr(ctx, expr.operand)
                 when (expr.op) {
                     TokenKind.MINUS -> mv.visitInsn(
@@ -2883,12 +2983,22 @@ class BytecodeCompiler(
                         mv.visitInsn(ICONST_1)
                         mv.visitInsn(IXOR)
                     }
-                    // 阶段 53：指针只有解释器与 C 后端实现
-                    TokenKind.AMP, TokenKind.STAR -> throw RsfError(
-                        "codegen",
-                        "JVM 字节码后端不支持指针（阶段 53 的指针只有解释器和 C 后端实现）：" +
-                            "不能写 '${expr.op.text}…'",
-                    )
+
+
+                    TokenKind.STAR -> {
+                        // p[帧][p[格子号]]：先取帧，再取格子号，再取格里的值
+                        mv.visitInsn(DUP)
+                        mv.visitInsn(ICONST_0)
+                        mv.visitInsn(AALOAD)
+                        mv.visitTypeInsn(CHECKCAST, "[Ljava/lang/Object;")
+                        mv.visitInsn(Opcodes.SWAP)
+                        mv.visitInsn(ICONST_1)
+                        mv.visitInsn(AALOAD)
+                        mv.visitTypeInsn(CHECKCAST, "java/lang/Integer")
+                        mv.visitMethodInsn(INVOKEVIRTUAL, "java/lang/Integer", "intValue", "()I", false)
+                        mv.visitInsn(AALOAD)
+                        emitUnboxValue(mv, model.typeOf(expr))
+                    }
                     else -> throw IllegalStateException("不认识的一元运算符 ${expr.op}")
                 }
             }
@@ -3484,6 +3594,125 @@ class BytecodeCompiler(
      * 放在**程序类**上并且是 public 的：用户类里的方法也要跨类调它（和 `parseInt`
      * 那批辅助方法是同一个理由）。名字带 `$`，rsf 的标识符语法写不出，绝不撞车。
      */
+    /**
+     * 阶段 63：`p + n` —— 指针的格子号加上 n，帧不变。
+     *
+     * 指针是 `Object[]{ 帧, Integer 格子号 }`；这里新建一份，避免改动原指针
+     * （`q = p + 1` 不能把 p 自己也挪了）。
+     */
+    private fun emitPtrAddHelper(cw: ClassWriter) {
+        val mv = cw.visitMethod(
+            ACC_PUBLIC or ACC_STATIC, PTR_ADD_HELPER,
+            "([Ljava/lang/Object;I)[Ljava/lang/Object;", null, null,
+        )
+        mv.visitCode()
+        mv.visitInsn(Opcodes.ICONST_2)
+        mv.visitTypeInsn(ANEWARRAY, "java/lang/Object")
+        mv.visitVarInsn(ASTORE, 2)
+        // out[0] = p[0]
+        mv.visitVarInsn(ALOAD, 2)
+        mv.visitInsn(ICONST_0)
+        mv.visitVarInsn(ALOAD, 0)
+        mv.visitInsn(ICONST_0)
+        mv.visitInsn(AALOAD)
+        mv.visitInsn(AASTORE)
+        // out[1] = p[1] + n
+        mv.visitVarInsn(ALOAD, 2)
+        mv.visitInsn(ICONST_1)
+        mv.visitVarInsn(ALOAD, 0)
+        mv.visitInsn(ICONST_1)
+        mv.visitInsn(AALOAD)
+        mv.visitTypeInsn(CHECKCAST, "java/lang/Integer")
+        mv.visitMethodInsn(INVOKEVIRTUAL, "java/lang/Integer", "intValue", "()I", false)
+        mv.visitVarInsn(ILOAD, 1)
+        mv.visitInsn(IADD)
+        mv.visitMethodInsn(INVOKESTATIC, "java/lang/Integer", "valueOf", "(I)Ljava/lang/Integer;", false)
+        mv.visitInsn(AASTORE)
+        mv.visitVarInsn(ALOAD, 2)
+        mv.visitInsn(ARETURN)
+        mv.visitMaxs(0, 0)
+        mv.visitEnd()
+    }
+
+    /**
+     * 阶段 63：`p == q` —— 比「同一个帧 + 同一个格子号」。
+     *
+     * **不能**直接比两个 `Object[]` 的引用：`&x + 0` 每次都会造一个新数组，
+     * 但它指的仍是同一个格子（解释器那边也是按存储位置比，见 `RsfPointer.sameAs`）。
+     */
+    private fun emitPtrEqHelper(cw: ClassWriter) {
+        val mv = cw.visitMethod(
+            ACC_PUBLIC or ACC_STATIC, PTR_EQ_HELPER,
+            "([Ljava/lang/Object;[Ljava/lang/Object;)Z", null, null,
+        )
+        mv.visitCode()
+        val notSame = Label()
+        mv.visitVarInsn(ALOAD, 0)
+        mv.visitInsn(ICONST_0)
+        mv.visitInsn(AALOAD)
+        mv.visitVarInsn(ALOAD, 1)
+        mv.visitInsn(ICONST_0)
+        mv.visitInsn(AALOAD)
+        mv.visitJumpInsn(Opcodes.IF_ACMPNE, notSame)
+        mv.visitVarInsn(ALOAD, 0)
+        mv.visitInsn(ICONST_1)
+        mv.visitInsn(AALOAD)
+        mv.visitTypeInsn(CHECKCAST, "java/lang/Integer")
+        mv.visitMethodInsn(INVOKEVIRTUAL, "java/lang/Integer", "intValue", "()I", false)
+        mv.visitVarInsn(ALOAD, 1)
+        mv.visitInsn(ICONST_1)
+        mv.visitInsn(AALOAD)
+        mv.visitTypeInsn(CHECKCAST, "java/lang/Integer")
+        mv.visitMethodInsn(INVOKEVIRTUAL, "java/lang/Integer", "intValue", "()I", false)
+        mv.visitJumpInsn(IF_ICMPNE, notSame)
+        mv.visitInsn(ICONST_1)
+        mv.visitInsn(IRETURN)
+        mv.visitLabel(notSame)
+        mv.visitInsn(ICONST_0)
+        mv.visitInsn(IRETURN)
+        mv.visitMaxs(0, 0)
+        mv.visitEnd()
+    }
+
+    /** 被提升进帧的局部变量：`(T) frame[slot]`。 */
+    private fun emitPromotedLoad(ctx: ExprCtx, binding: Binding) {
+        val mv = ctx.mv
+        mv.visitVarInsn(ALOAD, ctx.frameSlot)
+        pushInt(mv, ctx.slotOf(binding))
+        mv.visitInsn(AALOAD)
+        emitUnboxValue(mv, binding.type)
+    }
+
+    /** 栈顶的值装进对象（只有非可空的基本类型需要装箱，引用类型原样）。 */
+    private fun emitBoxValue(mv: MethodVisitor, type: RsfType) {
+        if (type.isPointer) return
+        if (type.isPrimitive && !type.nullable) boxValue(mv, type.base)
+    }
+
+    /** 把栈顶的 Object 还原成 [type]：基本类型拆箱、引用类型 CHECKCAST。 */
+    private fun emitUnboxValue(mv: MethodVisitor, type: RsfType) {
+        if (type.isPointer) {
+            mv.visitTypeInsn(CHECKCAST, "[Ljava/lang/Object;")
+            return
+        }
+        if (type.nullable && type.base.isPrimitive) {
+            mv.visitTypeInsn(CHECKCAST, type.base.wrapper ?: "java/lang/Object")
+            return
+        }
+        if (type.isPrimitive) {
+            mv.visitTypeInsn(CHECKCAST, type.base.wrapper ?: "java/lang/Object")
+            unboxValue(mv, type.base)
+            return
+        }
+        val desc = descriptorOfType(type)
+        val target = when {
+            desc.startsWith("[") -> desc
+            desc.startsWith("L") && desc.endsWith(";") -> desc.substring(1, desc.length - 1)
+            else -> return
+        }
+        if (target != "java/lang/Object") mv.visitTypeInsn(CHECKCAST, target)
+    }
+
     private fun emitCastHelper(cw: ClassWriter) {
         val mv = cw.visitMethod(
             ACC_PUBLIC or ACC_STATIC,
@@ -4021,12 +4250,36 @@ class BytecodeCompiler(
         val rightType = model.typeOf(expr.right)
         val resultType = model.typeOf(expr)
 
-        // 阶段 53b：指针算术 / 指针判等——字节码后端从阶段 53 起就显式拒绝指针，
-        // 这里必须先拦，否则会掉进数值分支去编 ADD/ISUB。
+        // 阶段 63：指针运算——指针在 JVM 上是 Object[]{ 帧, 格子号 }
         if (resultType.isPointer || leftType.isPointer || rightType.isPointer) {
+            if (op == TokenKind.EQ || op == TokenKind.NE) {
+                emitExpr(ctx, expr.left)
+                emitExpr(ctx, expr.right)
+                mv.visitMethodInsn(
+                    INVOKESTATIC, programInternalName, PTR_EQ_HELPER,
+                    "([Ljava/lang/Object;[Ljava/lang/Object;)Z", false,
+                )
+                if (op == TokenKind.NE) {
+                    mv.visitInsn(ICONST_1)
+                    mv.visitInsn(IXOR)
+                }
+                return
+            }
+            if (op == TokenKind.PLUS || op == TokenKind.MINUS) {
+                val ptrSide = if (leftType.isPointer) expr.left else expr.right
+                val intSide = if (leftType.isPointer) expr.right else expr.left
+                emitExpr(ctx, ptrSide)
+                emitExpr(ctx, intSide)
+                if (op == TokenKind.MINUS) mv.visitInsn(INEG)
+                mv.visitMethodInsn(
+                    INVOKESTATIC, programInternalName, PTR_ADD_HELPER,
+                    "([Ljava/lang/Object;I)[Ljava/lang/Object;", false,
+                )
+                return
+            }
             throw RsfError(
                 "codegen",
-                "JVM 字节码后端不支持指针运算（${leftType.rsfName} ${op.text} ${rightType.rsfName}）：" +
+                "JVM 字节码后端不支持这种指针运算（${leftType.rsfName} ${op.text} ${rightType.rsfName}）：" +
                     "用 'rsf run' 跑，或者 'rsf build x.rsf --c' 出 C",
                 expr.at.line, expr.at.column, null,
             )
@@ -4358,7 +4611,7 @@ class BytecodeCompiler(
         }
         // 阶段 13：数组是引用（占一格、走 ALOAD/ASTORE）——这一条必须在按 base 分派
         // **之前**，否则 `Long[]` 会因为 base 是 LONG 而被当成两格的 Long
-        if (type.isArray) return ref
+        if (type.isArray || type.isPointer) return ref
         if (type.nullable && type.base.isPrimitive) return ref
         return when (type.base) {
             // Byte / Char 在栈上和局部变量槽里都是 Int（JVM 的校验类型不区分它们）
@@ -4384,7 +4637,7 @@ class BytecodeCompiler(
     private fun returnInsn(type: RsfType): Int {
         if (type.isVoid) return RETURN
         // 数组是引用，用 ARETURN 返回（`fun make() -> Int[]`）
-        if (type.isArray) return ARETURN
+        if (type.isArray || type.isPointer) return ARETURN
         if (type.nullable && type.base.isPrimitive) return ARETURN
         return when (type.base) {
             RsfBase.VOID -> RETURN
@@ -4427,6 +4680,10 @@ class BytecodeCompiler(
          * 三个参数分别是「被转的值」「目标类常量」「目标类的 JVM 名（印进错误消息）」。
          */
         const val CAST_HELPER = "__rsf_cast"
+
+        /** 阶段 63：指针加偏移 / 指针判等（只在程序里真用过指针时才发）。 */
+        const val PTR_ADD_HELPER = "__rsf_ptr_add"
+        const val PTR_EQ_HELPER = "__rsf_ptr_eq"
         const val CAST_HELPER_DESC =
             "(Ljava/lang/Object;Ljava/lang/Class;Ljava/lang/String;)Ljava/lang/Object;"
 
