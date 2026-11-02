@@ -2525,29 +2525,24 @@ fn printDesc(t : BType) -> String {
 
 // ============================================================ 字节码小工具
 
-fn recipeText() -> String {
-    rtn "" + toChar(1) + toChar(1)
+fn eConcat(g : Gen, mv : MethodVisitor) -> void {
+    mv.visitMethodInsn(184, g.owner, "__rsf_concat2", "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;", false)
 }
 
-fn bsmHandle() -> Handle {
-    rtn new Handle(
-        6,
-        "java/lang/invoke/StringConcatFactory",
-        "makeConcatWithConstants",
-        "(Ljava/lang/invoke/MethodHandles$Lookup;Ljava/lang/String;Ljava/lang/invoke/MethodType;Ljava/lang/String;[Ljava/lang/Object;)Ljava/lang/invoke/CallSite;",
-        false
-    )
-}
-
-fn eConcat(mv : MethodVisitor) -> void {
-    var args : Object[] = new Object[1]
-    args[0] = recipeText()
-    mv.visitInvokeDynamicInsn(
-        "makeConcatWithConstants",
-        "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;",
-        bsmHandle(),
-        args
-    )
+fn emitConcatHelper(g : Gen) -> void {
+    var mv = g.cw.visitMethod(accPublic() + accStatic(), "__rsf_concat2", "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;", null, null)
+    mv.visitCode()
+    mv.visitTypeInsn(187, "java/lang/StringBuilder")
+    mv.visitInsn(89)
+    mv.visitMethodInsn(183, "java/lang/StringBuilder", "<init>", "()V", false)
+    mv.visitVarInsn(25, 0)
+    mv.visitMethodInsn(182, "java/lang/StringBuilder", "append", "(Ljava/lang/String;)Ljava/lang/StringBuilder;", false)
+    mv.visitVarInsn(25, 1)
+    mv.visitMethodInsn(182, "java/lang/StringBuilder", "append", "(Ljava/lang/String;)Ljava/lang/StringBuilder;", false)
+    mv.visitMethodInsn(182, "java/lang/StringBuilder", "toString", "()Ljava/lang/String;", false)
+    mv.visitInsn(176)
+    mv.visitMaxs(0, 0)
+    mv.visitEnd()
 }
 
 fn eStringValueOfInt(mv : MethodVisitor) -> void {
@@ -5524,9 +5519,9 @@ fn emitParseIntHelper(g : Gen) -> void {
     eRuntimeExceptionHeader(mv)
     mv.visitLdcInsn(parseIntPrefix())
     mv.visitVarInsn(25, 0)
-    eConcat(mv)
+    eConcat(g, mv)
     mv.visitLdcInsn(parseIntSuffix())
-    eConcat(mv)
+    eConcat(g, mv)
     eRuntimeExceptionThrow(mv)
     mv.visitMaxs(0, 0)
     mv.visitEnd()
@@ -5549,7 +5544,7 @@ fn emitCastHelper(g : Gen) -> void {
     eRuntimeExceptionHeader(mv)
     mv.visitLdcInsn(castNullPrefix())
     mv.visitVarInsn(25, 2)
-    eConcat(mv)
+    eConcat(g, mv)
     eRuntimeExceptionThrow(mv)
     mv.visitLabel(nonNull)
     // if (!target.isInstance(v)) throw ...
@@ -5563,11 +5558,11 @@ fn emitCastHelper(g : Gen) -> void {
     mv.visitVarInsn(25, 0)
     mv.visitMethodInsn(182, "java/lang/Object", "getClass", "()Ljava/lang/Class;", false)
     mv.visitMethodInsn(182, "java/lang/Class", "getName", "()Ljava/lang/String;", false)
-    eConcat(mv)
+    eConcat(g, mv)
     mv.visitLdcInsn(castMid())
-    eConcat(mv)
+    eConcat(g, mv)
     mv.visitVarInsn(25, 2)
-    eConcat(mv)
+    eConcat(g, mv)
     eRuntimeExceptionThrow(mv)
     mv.visitLabel(ok)
     // return v
@@ -5629,12 +5624,12 @@ fn emitFileHelper(
     eRuntimeExceptionHeader(mv)
     mv.visitLdcInsn(msgName + filePrefixTail())
     mv.visitVarInsn(25, 0)
-    eConcat(mv)
+    eConcat(g, mv)
     mv.visitLdcInsn(filePathTail())
-    eConcat(mv)
+    eConcat(g, mv)
     mv.visitVarInsn(25, exSlot)
     mv.visitMethodInsn(182, "java/lang/Throwable", "getMessage", "()Ljava/lang/String;", false)
-    eConcat(mv)
+    eConcat(g, mv)
     eRuntimeExceptionThrow(mv)
     mv.visitMaxs(0, 0)
     mv.visitEnd()
@@ -5665,12 +5660,12 @@ fn emitArrayHelpers(g : Gen) -> void {
     mv.visitLdcInsn(arrayIndexPrefix())
     mv.visitVarInsn(21, 0)
     eStringValueOfInt(mv)
-    eConcat(mv)
+    eConcat(g, mv)
     mv.visitLdcInsn(arrayIndexMid())
-    eConcat(mv)
+    eConcat(g, mv)
     mv.visitVarInsn(21, 1)
     eStringValueOfInt(mv)
-    eConcat(mv)
+    eConcat(g, mv)
     eRuntimeExceptionThrow(mv)
     mv.visitMaxs(0, 0)
     mv.visitEnd()
@@ -5686,7 +5681,7 @@ fn emitArrayHelpers(g : Gen) -> void {
     mv2.visitLdcInsn(arrayLengthPrefix())
     mv2.visitVarInsn(21, 0)
     eStringValueOfInt(mv2)
-    eConcat(mv2)
+    eConcat(g, mv2)
     eRuntimeExceptionThrow(mv2)
     mv2.visitLabel(ok)
     mv2.visitVarInsn(21, 0)
@@ -5836,7 +5831,7 @@ fn emitBinary(g : Gen, mv : MethodVisitor, e : Node, off : Int) -> void {
         emitToString(g, mv, lt)
         emitExpr(g, mv, e.children[1], off)
         emitToString(g, mv, rt)
-        eConcat(mv)
+        eConcat(g, mv)
         rtn
     }
     if (op == "EQ" || op == "NE" || op == "LT" || op == "GT" || op == "LE" || op == "GE") {
@@ -9487,6 +9482,7 @@ pub fn compileProgram(g : Gen, ast : Node, sourceName : String) -> void {
     // （parseInt → file → array → **cast** → orElse），方法顺序影响 class 字节。
     emitCastHelper(g)
     emitOrElseRange(g, 0, g.orCount)
+    emitConcatHelper(g)
     g.cw.visitEnd()
 
     // 用户类、用户接口与枚举（顺序决定常量池与方法顺序，必须固定）

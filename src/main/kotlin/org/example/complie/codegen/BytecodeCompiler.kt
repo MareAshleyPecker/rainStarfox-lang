@@ -114,6 +114,9 @@ import java.io.File
  *   （类里叫 `main` 的方法只是普通方法，不是入口）；
  * - 类名 = 源文件主名，所以 `lang/main.rsf` 编译出 `main.class`。
  */
+private const val CONCAT_HELPER = "__rsf_concat2"
+private const val CONCAT_HELPER_DESC = "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;"
+
 class BytecodeCompiler(
     private val model: SemanticModel,
     private val sourceName: String,
@@ -401,6 +404,8 @@ class BytecodeCompiler(
         emitCastHelper(cw)
         // `?:` 生成的合成方法跟调用点同住一个类（这样私有方法也照样能调）
         emitOrElseMethods(cw)
+        // 阶段 64e：拼接辅助方法（放在 orElse 之后，与自举 Backend 的顺序一致）
+        emitConcatHelper(cw)
         // 阶段 63：指针辅助方法（只有本程序真用过指针才发，旧语料逐字节不变）
         if (model.usesPointers) {
             emitPtrAddHelper(cw)
@@ -4490,21 +4495,47 @@ class BytecodeCompiler(
         )
     }
 
+    /**
+     * 阶段 64e：字符串拼接不再用 StringConcatFactory 的 invokedynamic。
+     *
+     * indy 要求 class 版本 >= 51，而自写 class 写出器出的是 49（免 StackMapTable）。
+     * 改成调程序类上的 `__rsf_concat2(String, String)String`，方法体就是 StringBuilder。
+     * 两边后端必须发出**一模一样**的指令序列，verify37 的 javap -c 才比得过。
+     */
     private fun emitConcat(mv: MethodVisitor) {
-        mv.visitInvokeDynamicInsn(
-            "makeConcatWithConstants",
-            "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;",
-            Handle(
-                H_INVOKESTATIC,
-                "java/lang/invoke/StringConcatFactory",
-                "makeConcatWithConstants",
-                "(Ljava/lang/invoke/MethodHandles\$Lookup;Ljava/lang/String;" +
-                    "Ljava/lang/invoke/MethodType;Ljava/lang/String;" +
-                    "[Ljava/lang/Object;)Ljava/lang/invoke/CallSite;",
-                false,
-            ),
-            "\u0001\u0001",
+        mv.visitMethodInsn(
+            INVOKESTATIC,
+            programInternalName,
+            CONCAT_HELPER,
+            CONCAT_HELPER_DESC,
+            false,
         )
+    }
+
+    private fun emitConcatHelper(cw: ClassWriter) {
+        val mv = cw.visitMethod(
+            ACC_PUBLIC or ACC_STATIC, CONCAT_HELPER, CONCAT_HELPER_DESC, null, null,
+        )
+        mv.visitCode()
+        mv.visitTypeInsn(NEW, "java/lang/StringBuilder")
+        mv.visitInsn(DUP)
+        mv.visitMethodInsn(INVOKESPECIAL, "java/lang/StringBuilder", "<init>", "()V", false)
+        mv.visitVarInsn(ALOAD, 0)
+        mv.visitMethodInsn(
+            INVOKEVIRTUAL, "java/lang/StringBuilder", "append",
+            "(Ljava/lang/String;)Ljava/lang/StringBuilder;", false,
+        )
+        mv.visitVarInsn(ALOAD, 1)
+        mv.visitMethodInsn(
+            INVOKEVIRTUAL, "java/lang/StringBuilder", "append",
+            "(Ljava/lang/String;)Ljava/lang/StringBuilder;", false,
+        )
+        mv.visitMethodInsn(
+            INVOKEVIRTUAL, "java/lang/StringBuilder", "toString", "()Ljava/lang/String;", false,
+        )
+        mv.visitInsn(ARETURN)
+        mv.visitMaxs(0, 0)
+        mv.visitEnd()
     }
 
     private fun emitWiden(mv: MethodVisitor, from: RsfType, to: RsfType) {
