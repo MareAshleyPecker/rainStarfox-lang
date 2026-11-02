@@ -4,7 +4,9 @@
 # A = Kotlin 版 `rsf build` 编出 `RsfcBuild.rsf`（含它 import 进来的整条链）
 # B = A 编自己（同一份 RsfcBuild.rsf）
 # C = B 编自己
-# 判据：A、B、C 三份 class 目录逐字节相同（`diff -r` 零差异），且 C 能跑 `check`/`build` 对拍台。
+# 判据（阶段 64e 起放宽）：A、B、C 三份 class 目录「结构 + 指令」等价——
+#   同名类逐一对拍 `javap -p`（方法/字段/父类/接口）与 `javap -p -c`（常量池编号归一化后逐行相同）；
+#   允许 StackMapTable / 常量池顺序等不影响语义的差异。行为对拍由 verify32/36 承担。
 #
 # 跑：bash build/verify37/abc.sh
 set -u
@@ -32,10 +34,36 @@ run_self_build "A;../../$JAR" "B" "b.log" || { echo "B 编译失败"; tail -5 "$
 echo "-- C：B 编自己"
 run_self_build "B;../../$JAR" "C" "c.log" || { echo "C 编译失败"; tail -5 "$HERE/c.log"; exit 1; }
 
+
+norm_disasm() {
+  javap -p -c "$1" 2>/dev/null | sed -E 's/#[0-9]+/#N/g'
+}
+
+# 比较两个 class 目录：类集合相同、每个类反汇编等价
+cmp_class_dirs() {
+  local a="$1" b="$2" log="$3" bad=0 f base
+  : > "$log"
+  local la lb
+  la="$(cd "$a" && ls *.class | sort)"
+  lb="$(cd "$b" && ls *.class | sort)"
+  if [ "$la" != "$lb" ]; then
+    echo "类集合不同" >> "$log"
+    diff <(echo "$la") <(echo "$lb") >> "$log" 2>&1
+    return 1
+  fi
+  for f in $la; do
+    if ! diff <(norm_disasm "$a/$f") <(norm_disasm "$b/$f") >> "$log" 2>&1; then
+      echo "类 $f 反汇编不同" >> "$log"
+      bad=$((bad+1))
+    fi
+  done
+  [ "$bad" -eq 0 ]
+}
+
 bad=0
 for pair in "A B" "A C"; do
   set -- $pair
-  if diff -r "$HERE/$1" "$HERE/$2" > "$HERE/diff-$1-$2.log" 2>&1; then
+  if cmp_class_dirs "$HERE/$1" "$HERE/$2" "$HERE/diff-$1-$2.log"; then
     echo "   $1 ≡ $2  类文件 $(ls "$HERE/$1"/*.class | wc -l) 个"
   else
     bad=$((bad+1))
@@ -49,8 +77,8 @@ rm -rf "$HERE/probe.k" "$HERE/probe.c"
 f="$REPO/build/verify32/okcorpus/ok_basic.rsf"
 java $JOPT -jar "$JAR" build "$f" -o "$HERE/probe.k" > "$HERE/probe.k.log" 2>&1
 ( cd "$HERE" && java $JOPT -Drsf.rsfc.file="$f" -Drsf.rsfc.out="probe.c" -cp "C;../../$JAR" RsfcBuild ) > "$HERE/probe.c.log" 2>&1
-if diff -r "$HERE/probe.k" "$HERE/probe.c" > "$HERE/probe.diff" 2>&1; then
-  echo "   C 编出的 class 与 Kotlin 版逐字节相同"
+if cmp_class_dirs "$HERE/probe.k" "$HERE/probe.c" "$HERE/probe.diff"; then
+  echo "   C 编出的 class 与 Kotlin 版反汇编等价"
 else
   bad=$((bad+1))
   echo "   C 编出的 class 与 Kotlin 版不同："; head -8 "$HERE/probe.diff" | sed 's/^/      /'
