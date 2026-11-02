@@ -101,8 +101,7 @@ class CBackendTest {
         val error = assertThrows<RsfError> {
             emit(
                 """
-                class Box&<T>(v : T) {
-                    var v : T = v
+                fn f(a : Int[][]) -> void {
                 }
 
                 fn main() -> void {

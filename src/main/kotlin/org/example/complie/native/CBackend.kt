@@ -15,6 +15,9 @@ import org.example.complie.ast.DerefAssignStmt
 import org.example.complie.ast.EnumDecl
 import org.example.complie.ast.Expr
 import org.example.complie.ast.ForceExpr
+import org.example.complie.ast.FloatLit
+import org.example.complie.ast.DoubleLit
+import org.example.complie.ast.ElvisExpr
 import org.example.complie.ast.TryStmt
 import org.example.complie.ast.ExprStmt
 import org.example.complie.ast.FieldDecl
@@ -208,9 +211,7 @@ class CBackend(private val model: SemanticModel, private val withEntry: Boolean 
         for (sup in model.superClasses.values) {
             if (sup.fromClassPath) fail("继承 JDK 类（${sup.name}）")
         }
-        for (iface in model.interfaces.values) {
-            if (iface.typeParams.isNotEmpty()) fail("泛型接口（${iface.name}）")
-        }
+        // 泛型接口/类一律擦除（类型参数当成 void* 的盒子，见 cType 的 TYPE_PARAM 分支）。
         for (list in model.superInterfaces.values) {
             for (sup in list) {
                 if (sup.fromClassPath) fail("实现 JDK 接口（${sup.name}）")
@@ -220,7 +221,6 @@ class CBackend(private val model: SemanticModel, private val withEntry: Boolean 
             if (model.functionTable[fn.name]?.size ?: 0 > 1) fail("重载函数（${fn.name}）")
         }
         for (cls in classes.values) {
-            if (cls.typeParams.isNotEmpty()) fail("泛型类（${cls.name}）")
             for (fn in cls.methods) if (fn.body == null) fail("无方法体（${fn.name}）")
         }
     }
@@ -250,7 +250,8 @@ class CBackend(private val model: SemanticModel, private val withEntry: Boolean 
             expectedType = types.getOrNull(i)
             val code = expr(a)
             expectedType = saved
-            code
+            val want = types.getOrNull(i) ?: return@mapIndexed code
+            adapt(want, physicalType(a), code)
         }.joinToString(", ")
 
     private fun cType(type: RsfType): String {
@@ -268,9 +269,12 @@ class CBackend(private val model: SemanticModel, private val withEntry: Boolean 
             RsfBase.LONG -> "int64_t"
             RsfBase.BOOL -> "bool"
             RsfBase.STRING -> "rsf_str"
+            RsfBase.FLOAT -> "float"
+            RsfBase.DOUBLE -> "double"
             RsfBase.CHAR -> "uint16_t"
             RsfBase.BYTE -> "int8_t"
             RsfBase.EXTERNAL -> classPointer(type)
+            RsfBase.TYPE_PARAM -> "rsf_val"
             else -> fail("类型 '${type.base.rsfName}'")
         }
     }
@@ -488,7 +492,7 @@ class CBackend(private val model: SemanticModel, private val withEntry: Boolean 
             appendSuperInit(sb, cls, model.classModel.superDelegationOf(fn) ?: model.classModel.implicitSuperDelegationOf(cls))
             for (f in cls.fields) {
                 sb.append("    ").append(fieldAccess("self", cls, f)).append(" = ")
-                    .append(expr(f.initializer)).append(';').append(NL)
+                    .append(adapt(fieldTypeOf(cls, f), physicalType(f.initializer), expr(f.initializer))).append(';').append(NL)
             }
         }
         fn.body?.statements?.forEach {
@@ -540,7 +544,7 @@ class CBackend(private val model: SemanticModel, private val withEntry: Boolean 
         appendSuperInit(sb, cls, model.classModel.implicitSuperDelegationOf(cls))
         for (f in cls.fields) {
             sb.append("    ").append(fieldAccess("self", cls, f)).append(" = ")
-                .append(expr(f.initializer)).append(';').append(NL)
+                .append(adapt(fieldTypeOf(cls, f), physicalType(f.initializer), expr(f.initializer))).append(';').append(NL)
         }
         sb.append("}").append(NL).append(NL)
         sb.append("void* $name(void) {").append(NL)
@@ -557,6 +561,74 @@ class CBackend(private val model: SemanticModel, private val withEntry: Boolean 
     private fun fnName(fn: FuncDecl): String = "rsf_fn_" + fn.name
 
     private fun paramName(name: String): String = "v_" + name
+
+    // ------------------------------------------------------------------ 泛型擦除
+    // 类型参数 T 在 C 里是 rsf_val（带标签的盒子）：写进泛型字段/数组/参数时装箱，
+    // 读出来落到具体类型时拆箱。只在本文件做，前端与自举侧不受影响。
+
+    private val RuntimeErase = """
+/* ---- 泛型擦除：类型参数的值盒子 ---- */
+typedef struct { int64_t tag; int32_t i; int64_t l; void* p; rsf_str s; double d; } rsf_val;
+static rsf_val rsf_box_int(int32_t v) { rsf_val b; b.tag = 1; b.i = v; b.l = 0; b.p = 0; b.s.len = 0; b.s.data = 0; return b; }
+static rsf_val rsf_box_long(int64_t v) { rsf_val b; b.tag = 2; b.i = 0; b.l = v; b.p = 0; b.s.len = 0; b.s.data = 0; return b; }
+static rsf_val rsf_box_bool(bool v) { rsf_val b; b.tag = 3; b.i = v ? 1 : 0; b.l = 0; b.p = 0; b.s.len = 0; b.s.data = 0; return b; }
+static rsf_val rsf_box_double(double v) { rsf_val b; b.tag = 7; b.i = 0; b.l = 0; b.p = 0; b.s.len = 0; b.s.data = 0; b.d = v; b.l = 0; return b; }
+static rsf_val rsf_box_char(uint16_t v) { rsf_val b; b.tag = 4; b.i = v; b.l = 0; b.p = 0; b.s.len = 0; b.s.data = 0; return b; }
+static rsf_val rsf_box_str(rsf_str v) { rsf_val b; b.tag = 5; b.i = 0; b.l = 0; b.p = 0; b.s = v; return b; }
+static rsf_val rsf_box_ptr(void* v) { rsf_val b; b.tag = 6; b.i = 0; b.l = 0; b.p = v; b.s.len = 0; b.s.data = 0; return b; }
+static int32_t rsf_unbox_int(rsf_val b) { return b.i; }
+static int64_t rsf_unbox_long(rsf_val b) { return b.l; }
+static bool rsf_unbox_bool(rsf_val b) { return b.i != 0; }
+static double rsf_unbox_double(rsf_val b) { return b.d; }
+static uint16_t rsf_unbox_char(rsf_val b) { return (uint16_t)b.i; }
+static rsf_str rsf_unbox_str(rsf_val b) { return b.s; }
+static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
+"""
+
+    private fun boxed(type: RsfType, code: String): String =
+        if (type.nullable && type.base != RsfBase.STRING && type.base != RsfBase.EXTERNAL) code else
+        when (type.base) {
+            RsfBase.INT -> "rsf_box_int($code)"
+            RsfBase.LONG -> "rsf_box_long($code)"
+            RsfBase.BOOL -> "rsf_box_bool($code)"
+            RsfBase.FLOAT -> "rsf_box_double((double)$code)"
+            RsfBase.DOUBLE -> "rsf_box_double($code)"
+            RsfBase.CHAR -> "rsf_box_char($code)"
+            RsfBase.BYTE -> "rsf_box_int($code)"
+            RsfBase.STRING -> "rsf_box_str($code)"
+            RsfBase.EXTERNAL -> "rsf_box_ptr($code)"
+            else -> code
+        }
+
+    private fun unboxed(type: RsfType, code: String): String = when (type.base) {
+        RsfBase.INT -> "rsf_unbox_int($code)"
+        RsfBase.LONG -> "rsf_unbox_long($code)"
+        RsfBase.BOOL -> "rsf_unbox_bool($code)"
+        RsfBase.FLOAT -> "(float)rsf_unbox_double($code)"
+        RsfBase.DOUBLE -> "rsf_unbox_double($code)"
+        RsfBase.CHAR -> "rsf_unbox_char($code)"
+        RsfBase.BYTE -> "rsf_unbox_int($code)"
+        RsfBase.STRING -> "rsf_unbox_str($code)"
+        RsfBase.EXTERNAL -> "rsf_unbox_ptr($code)"
+        else -> code
+    }
+
+    /** 表达式在 C 里的**物理**类型：泛型方法/字段的返回与读取是盒子，即使前端已把它替换成 Int。 */
+    private fun physicalType(e: Expr): RsfType = when (e) {
+        is CallExpr -> model.callTargets[e]?.let { returnType(it) } ?: model.typeOf(e)
+        is MemberExpr -> {
+            val m = model.classModel.members[e]
+            if (m is UserMember.Field) m.type else model.typeOf(e)
+        }
+        else -> model.typeOf(e)
+    }
+
+    /** 期望是具体类型、拿到的是盒子 ⇒ 拆箱；期望是类型参数、拿到具体值 ⇒ 装箱。 */
+    private fun adapt(want: RsfType, have: RsfType, code: String): String = when {
+        want.base == RsfBase.TYPE_PARAM && have.base != RsfBase.TYPE_PARAM -> boxed(have, code)
+        want.base != RsfBase.TYPE_PARAM && have.base == RsfBase.TYPE_PARAM -> unboxed(want, code)
+        else -> code
+    }
 
     // ------------------------------------------------------------------ 语句
 
@@ -587,7 +659,9 @@ class CBackend(private val model: SemanticModel, private val withEntry: Boolean 
         is IndexAssignStmt -> {
             val target = s.target
             val elem = elemCType(elementOf(model.typeOf(target.receiver)))
-            pad(indent) + "(($elem*)" + expr(target.receiver) + ".data)[" + expr(target.index) + "] = " + expr(s.value) + ";" + NL
+            val want = elementOf(model.typeOf(target.receiver))
+            pad(indent) + "(($elem*)" + expr(target.receiver) + ".data)[" + expr(target.index) + "] = " +
+                adapt(want, physicalType(s.value), expr(s.value)) + ";" + NL
         }
         is ExprStmt -> pad(indent) + expr(s.expr) + ";\n"
         is ReturnStmt -> {
@@ -706,6 +780,23 @@ class CBackend(private val model: SemanticModel, private val withEntry: Boolean 
             is SwitchLabel.StringConst -> "rsf_str_eq($tmp, ${stringLit(label.value)})"
         }
 
+    /** `a ?: b`：C 里用语句表达式，保证 a 只求值一次。 */
+    private fun elvis(e: ElvisExpr): String {
+        val t = model.typeOf(e.left)
+        val code = expr(e.left)
+        val test = when {
+            t.base == RsfBase.STRING -> "_e.data == NULL"
+            t.base == RsfBase.TYPE_PARAM -> "_e.tag == 0"
+            t.base == RsfBase.EXTERNAL || t.arrayDepth > 0 || t.ptrDepth > 0 || t.nullable -> "_e == NULL"
+            else -> "false"
+        }
+        return "({ ${cType(t)} _e = $code; ($test) ? ${expr(e.right)} : _e; })"
+    }
+
+    private fun floatLit(v: Float): String = if (v == Float.POSITIVE_INFINITY) "(1.0f/0.0f)" else if (v == Float.NEGATIVE_INFINITY) "(-1.0f/0.0f)" else v.toString() + "f"
+
+    private fun doubleLit(v: Double): String = if (v == Double.POSITIVE_INFINITY) "(1.0/0.0)" else if (v == Double.NEGATIVE_INFINITY) "(-1.0/0.0)" else v.toString()
+
     /** 把实参摊成 C 的 `(rsf_str[]){…}` 复合字面量；空表给 0。 */
     private fun cArray(items: List<String>): String {
         if (items.isEmpty()) return "0"
@@ -719,6 +810,8 @@ class CBackend(private val model: SemanticModel, private val withEntry: Boolean 
         is IntLit -> e.value.toString()
         is LongLit -> "${e.value}LL"
         is CharLit -> e.value.code.toString() + "u"
+        is FloatLit -> floatLit(e.value)
+        is DoubleLit -> doubleLit(e.value)
         is StringLit -> stringLit(e.value)
         is BoolLit -> if (e.value) "true" else "false"
         is NullLit -> nullValue(e, expected)
@@ -731,6 +824,7 @@ class CBackend(private val model: SemanticModel, private val withEntry: Boolean 
         is ForceExpr -> forceOf(e)
         is BinaryExpr -> binary(e)
         is IfExpr -> "(${expr(e.condition)} ? ${expr(e.whenTrue)} : ${expr(e.whenFalse)})"
+        is ElvisExpr -> elvis(e)
         is CallExpr -> call(e)
         is IndexExpr -> indexRead(e)
         is MemberExpr -> member(e)
@@ -1058,6 +1152,7 @@ class CBackend(private val model: SemanticModel, private val withEntry: Boolean 
             RsfBase.STRING -> if (newline) "rsf_println_s($value)" else "rsf_print_s($value)"
             RsfBase.LONG -> if (newline) "rsf_println_l($value)" else "rsf_print_l($value)"
             RsfBase.BOOL -> if (newline) "rsf_println_b($value)" else "rsf_print_b($value)"
+            RsfBase.FLOAT, RsfBase.DOUBLE -> if (newline) "rsf_println_d($value)" else "rsf_print_d($value)"
             RsfBase.INT -> if (newline) "rsf_println_i($value)" else "rsf_print_i($value)"
             else -> fail("print 的参数类型 '${type.base.rsfName}'")
         }
@@ -1102,6 +1197,7 @@ class CBackend(private val model: SemanticModel, private val withEntry: Boolean 
         sb.append("#ifndef RSF_STR_DEFINED").append(NL)
         sb.append("#define RSF_STR_DEFINED").append(NL)
         sb.append("typedef struct { int64_t len; const char* data; } rsf_str;").append(NL)
+        sb.append(RuntimeErase).append(NL)
         sb.append("#endif").append(NL).append(NL)
 
         val natives = model.functions.filter { it.target == BuildTarget.NATIVE }
@@ -1566,6 +1662,8 @@ class CBackend(private val model: SemanticModel, private val withEntry: Boolean 
             static void rsf_print_i(int32_t v)  { printf("%d", (int)v); }
             static void rsf_print_l(int64_t v)  { printf("%lld", (long long)v); }
             static void rsf_print_b(bool v)     { fputs(v ? "true" : "false", stdout); }
+            static void rsf_print_d(double v)   { printf("%.15g", v); }
+            static void rsf_println_d(double v) { printf("%.15g", v); putchar(10); }
             static void rsf_println_s(rsf_str s) { rsf_print_s(s); putchar('\n'); }
             static void rsf_println_i(int32_t v)  { rsf_print_i(v); putchar('\n'); }
             static void rsf_println_l(int64_t v)  { rsf_print_l(v); putchar('\n'); }
