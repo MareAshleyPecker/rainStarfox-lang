@@ -89,6 +89,7 @@ fn accPublic() -> Int { rtn 1 }
 fn accPrivate() -> Int { rtn 2 }
 fn accProtected() -> Int { rtn 4 }
 fn accStatic() -> Int { rtn 8 }
+fn accFinal() -> Int { rtn 16 }
 fn accSuper() -> Int { rtn 32 }
 fn v17() -> Int { rtn 61 }
 fn computeAll() -> Int { rtn 3 }
@@ -914,6 +915,8 @@ pub class FnLevel(n : Node) {
     var body : Node = n             // lambda 的块（BLOCK 节点）
     var index : Int = 0             // lambda$<包围方法>$<index>
     var implName : String = ""
+    // lambda 内部类（阶段 64e-2）挂在哪个类下面：发码时用 curOwnerInternal(g) 填
+    var owner : String = ""
     var params : BType[] = new BType[0]
     var pnames : String[] = new String[0]
     var ptexts : String[] = new String[0]   // 形参类型文本（空串 = 没写，靠期望类型补）
@@ -1143,6 +1146,10 @@ pub class Gen(owner : String) {
     // ---- 阶段 30c：闭包 / 函数值 ----
     // 正在编译的包围方法里所有 lambda 的计划（按发现顺序 = lambda$…$<k> 的 k 顺序）
     var lvLevels : FnLevel[] = new FnLevel[4]
+    // 所有宿主类的 lambda 计划（阶段 64e-2）：resetLevels() 只清当前类的那批，
+    // 生成内部类时还要回头遍历全部。
+    var lvAll : FnLevel[] = new FnLevel[4]
+    var lvAllCount : Int = 0
     var lvCount : Int = 0
     // 本方法内已经分配给 lambda 的序号（`lambda$<方法名>$<k>` 的 k，含嵌套的）
     var lvSeq : Int = 0
@@ -1796,6 +1803,17 @@ pub class Gen(owner : String) {
         }
         lvLevels[lvCount] = l
         lvCount = lvCount + 1
+        if (lvAllCount >= lvAll.length) {
+            var m : FnLevel[] = new FnLevel[lvAll.length * 2 + 4]
+            var q = 0
+            while (q < lvAllCount) {
+                m[q] = lvAll[q]
+                q = q + 1
+            }
+            lvAll = m
+        }
+        lvAll[lvAllCount] = l
+        lvAllCount = lvAllCount + 1
     }
 
     pub fn levelOf(n : Node) -> ?FnLevel {
@@ -9208,46 +9226,6 @@ fn implDescriptorOf(g : Gen, lv : FnLevel) -> String {
     rtn sb + lv.ret.desc()
 }
 
-fn instantiatedDescriptor(lv : FnLevel) -> String {
-    var sb = "("
-    var i = 0
-    while (i < lv.params.length) {
-        sb = sb + samBoxedDesc(lv.params[i])
-        i = i + 1
-    }
-    sb = sb + ")"
-    if (lv.ret.isVoid()) {
-        rtn sb + "Ljava/lang/Object;"
-    }
-    rtn sb + samBoxedDesc(lv.ret)
-}
-
-fn samFactoryDescriptor(g : Gen, lv : FnLevel) -> String {
-    var sb = "("
-    if (lv.hasThis) { sb = sb + "L" + curOwnerInternal(g) + ";" }
-    var i = 0
-    while (i < lv.capCount) {
-        var c = lv.caps[i]
-        if (c.kind == "this") {
-            sb = sb + "L" + curOwnerInternal(g) + ";"
-        } else {
-            sb = sb + c.type.desc()
-        }
-        i = i + 1
-    }
-    rtn sb + ")L" + samName(lv.arity()) + ";"
-}
-
-fn lambdaMetafactoryHandle() -> Handle {
-    rtn new Handle(
-        6,
-        "java/lang/invoke/LambdaMetafactory",
-        "metafactory",
-        "(Ljava/lang/invoke/MethodHandles$Lookup;Ljava/lang/String;Ljava/lang/invoke/MethodType;Ljava/lang/invoke/MethodType;Ljava/lang/invoke/MethodHandle;Ljava/lang/invoke/MethodType;)Ljava/lang/invoke/CallSite;",
-        false
-    )
-}
-
 // lambda 表达式的值：按捕获清单压栈，然后 invokedynamic 造出 SAM 实例
 fn emitLambdaAt(g : Gen, mv : MethodVisitor, e : Node, off : Int) -> void {
     var lvo = g.levelOf(e)
@@ -9256,6 +9234,10 @@ fn emitLambdaAt(g : Gen, mv : MethodVisitor, e : Node, off : Int) -> void {
         rtn
     }
     var lv = lvo!!
+    if (lv.owner.length() == 0) { lv.owner = curOwnerInternal(g) }
+    var cls = lambdaClassNameOf(lv)
+    mv.visitTypeInsn(187, cls)
+    mv.visitInsn(89)
     if (lv.hasThis) { mv.visitVarInsn(25, 0) }
     var i = 0
     while (i < lv.capCount) {
@@ -9271,11 +9253,7 @@ fn emitLambdaAt(g : Gen, mv : MethodVisitor, e : Node, off : Int) -> void {
         }
         i = i + 1
     }
-    var args : Object[] = new Object[3]
-    args[0] = Type.getMethodType(samInvokeDescriptor(lv.arity()))
-    args[1] = new Handle(6, curOwnerInternal(g), lv.implName, implDescriptorOf(g, lv), false)
-    args[2] = Type.getMethodType(instantiatedDescriptor(lv))
-    mv.visitInvokeDynamicInsn("invoke", samFactoryDescriptor(g, lv), lambdaMetafactoryHandle(), args)
+    mv.visitMethodInsn(183, cls, "<init>", lambdaCtorDescOf(lv), false)
 }
 
 // 函数值调用点：CHECKCAST 到 SAM → 实参装箱 → INVOKEINTERFACE invoke → 按静态返回类型收敛
@@ -9318,14 +9296,119 @@ fn emitFnValueCallAt(g : Gen, mv : MethodVisitor, e : Node, off : Int) -> void {
     }
 }
 
-// 一个包围方法的所有 lambda 合成都紧跟在它后面发（k 升序，嵌套的不单独插队）
+// ---- 阶段 64e-2：lambda 内部类 -------------------------------------------------
+// 形状与 Kotlin `BytecodeCompiler.lambdaClassBytes` 逐条对应：字段 f<i> 按捕获顺序、
+// 构造器先 super() 再存字段、invoke 先取字段再拆箱形参、调完实现方法把返回值装箱。
+
+fn lambdaClassNameOf(lv : FnLevel) -> String {
+    rtn lv.owner + "$" + lv.implName
+}
+
+fn lambdaCtorDescOf(lv : FnLevel) -> String {
+    var sb = "("
+    if (lv.hasThis) { sb = sb + "L" + lv.owner + ";" }
+    var i = 0
+    while (i < lv.capCount) {
+        sb = sb + lv.caps[i].type.desc()
+        i = i + 1
+    }
+    rtn sb + ")V"
+}
+
+// `this` 占 0 号字段（与 Kotlin 的 Capture.This 在 captures 列表里排第一一致）
+fn capBaseOf(lv : FnLevel) -> Int {
+    if (lv.hasThis) { rtn 1 }
+    rtn 0
+}
+
+fn lambdaCapWidth(t : BType) -> Int {
+    if (t.isPrimitive() && (t.base == "Long" || t.base == "Double")) { rtn 2 }
+    rtn 1
+}
+
+fn emitLambdaClasses(g : Gen) -> void {
+    var idx = 0
+    while (idx < g.lvAllCount) {
+        if (g.failed) { rtn }
+        var lv = g.lvAll[idx]
+        if (lv.owner.length() > 0) {
+            var nm = lambdaClassNameOf(lv)
+            g.newWriter(nm)
+            var ifs : String[] = new String[1]
+            ifs[0] = samName(lv.arity())
+            g.cw.visit(v17(), accPublic() + accFinal(), nm, null, "java/lang/Object", ifs)
+            var i = 0
+            while (i < lv.capCount) {
+                g.cw.visitField(accPrivate() + accFinal(), "f" + intToString(i), lv.caps[i].type.desc(), null, null).visitEnd()
+                i = i + 1
+            }
+            var ctor = g.cw.visitMethod(accPublic(), "<init>", lambdaCtorDescOf(lv), null, null)
+            ctor.visitCode()
+            ctor.visitVarInsn(25, 0)
+            ctor.visitMethodInsn(183, "java/lang/Object", "<init>", "()V", false)
+            if (lv.hasThis) {
+                ctor.visitVarInsn(25, 0)
+                ctor.visitVarInsn(25, 1)
+                ctor.visitFieldInsn(181, nm, "f0", "L" + lv.owner + ";")
+            }
+            var slot = 1
+            if (lv.hasThis) { slot = 2 }
+            i = 0
+            while (i < lv.capCount) {
+                ctor.visitVarInsn(25, 0)
+                eLoadSlot(ctor, lv.caps[i].type, slot)
+                ctor.visitFieldInsn(181, nm, "f" + intToString(capBaseOf(lv) + i), lv.caps[i].type.desc())
+                slot = slot + lambdaCapWidth(lv.caps[i].type)
+                i = i + 1
+            }
+            ctor.visitInsn(177)
+            ctor.visitMaxs(0, 0)
+            ctor.visitEnd()
+            var iv = g.cw.visitMethod(accPublic(), "invoke", samInvokeDescriptor(lv.arity()), null, null)
+            iv.visitCode()
+            if (lv.hasThis) {
+                iv.visitVarInsn(25, 0)
+                iv.visitFieldInsn(180, nm, "f0", "L" + lv.owner + ";")
+            }
+            i = 0
+            while (i < lv.capCount) {
+                iv.visitVarInsn(25, 0)
+                iv.visitFieldInsn(180, nm, "f" + intToString(capBaseOf(lv) + i), lv.caps[i].type.desc())
+                i = i + 1
+            }
+            i = 0
+            while (i < lv.params.length) {
+                var pt = lv.params[i]
+                iv.visitVarInsn(25, 1 + i)
+                if (pt.isPrimitive() && !pt.nullable) {
+                    iv.visitTypeInsn(192, boxWrap(pt.base))
+                    eUnbox(iv, pt.base)
+                } else {
+                    if (pt.desc() != "Ljava/lang/Object;") {
+                        iv.visitTypeInsn(192, internalNameOf(pt))
+                    }
+                }
+                i = i + 1
+            }
+            iv.visitMethodInsn(184, lv.owner, lv.implName, implDescriptorOf(g, lv), false)
+            if (!lv.ret.isVoid() && lv.ret.isPrimitive() && !lv.ret.nullable) { eBox(iv, lv.ret.base) }
+            iv.visitInsn(176)
+            iv.visitMaxs(0, 0)
+            iv.visitEnd()
+            g.cw.visitEnd()
+        }
+        idx = idx + 1
+    }
+}
+
 fn emitLambdaMethods(g : Gen) -> void {
     if (g.lvCount == 0) { rtn }
     var idx = 0
     while (idx < g.lvCount) {
         if (g.failed) { rtn }
         var lv = g.lvLevels[idx]
-        var mv = g.cw.visitMethod(accPrivate() + accStatic() + accSynthetic(), lv.implName, implDescriptorOf(g, lv), null, null)
+        // 包内可见：lambda 内部类要 invokestatic 它（Kotlin 侧同一处也去掉了 private）
+        var mv = g.cw.visitMethod(accStatic() + accSynthetic(), lv.implName, implDescriptorOf(g, lv), null, null)
         mv.visitCode()
         var root = new Scope(null)
         var slot = 0
@@ -9531,6 +9614,8 @@ pub fn compileProgram(g : Gen, ast : Node, sourceName : String) -> void {
         }
         ar = ar + 1
     }
+    // 阶段 64e-2：lambda 内部类排在 SAM 接口之后（Kotlin `compile()` 同一顺序）
+    emitLambdaClasses(g)
 }
 
 // 阶段 25：帧合并点的 LCA 骨架落盘。

@@ -243,6 +243,13 @@ class BytecodeCompiler(
             pending += internalName to samInterface(internalName, arity)
         }
 
+        for ((name, bytes) in lambdaClasses) {
+            if (pending.any { it.first == name }) {
+                throw RsfError("codegen", "内部错误：lambda 内部类名 '$name' 与已有的类冲突", 1, 1, null)
+            }
+            pending += name to bytes
+        }
+
         if (!outDir.exists() && !outDir.mkdirs()) {
             throw IllegalStateException("无法创建输出目录: ${outDir.absolutePath}")
         }
@@ -2017,22 +2024,6 @@ class BytecodeCompiler(
 
     // ------------------------------------------------------------------ 函数值 / lambda（阶段 30b）
 
-    /**
-     * `LambdaMetafactory.metafactory` 的句柄——描述符是工单 §1 逐字规定的那个。
-     *
-     * 为什么不用 `altMetafactory`：rsf 的 lambda 不捕获泛型、不做序列化、没有
-     * 桥接方法，`metafactory` 正好够用，而且它的参数表最短，30c 复刻时最不容易走样。
-     */
-    private val lambdaMetafactory = Handle(
-        H_INVOKESTATIC,
-        "java/lang/invoke/LambdaMetafactory",
-        "metafactory",
-        "(Ljava/lang/invoke/MethodHandles\$Lookup;Ljava/lang/String;Ljava/lang/invoke/MethodType;" +
-            "Ljava/lang/invoke/MethodType;Ljava/lang/invoke/MethodHandle;Ljava/lang/invoke/MethodType;)" +
-            "Ljava/lang/invoke/CallSite;",
-        false,
-    )
-
     /** 函数类型的 SAM 接口内部名：`(Int, Int) -> Int` → `__RsfFn2`（工单 §1）。 */
     private fun samInternalName(arity: Int): String = "__RsfFn$arity"
 
@@ -2040,22 +2031,12 @@ class BytecodeCompiler(
     private fun samInvokeDescriptor(arity: Int): String =
         "(" + "Ljava/lang/Object;".repeat(arity) + ")Ljava/lang/Object;"
 
-    /** 创建点那条 indy 的描述符：捕获值逐个进来，吐出一个 SAM 接口引用。 */
-    private fun samFactoryDescriptor(arity: Int, captures: List<Capture>): String =
-        "(" + captures.joinToString("") { descriptorOfType(it.type) } + ")L${samInternalName(arity)};"
-
     /**
-     * lambda 实现方法的描述符：捕获值 + 自己的形参 → 声明返回类型（工单 §1）。
+     * lambda 实现方法的描述符：捕获值 + 自己的形参 → 声明返回类型。
      *
      * **void 的 lambda 是个例外**：返回 `void` 的 lambda（`(Int) -> void`）在这里落成
-     * `Ljava/lang/Object;`，方法体末尾压 null 返回。原因是 JVM 的硬约束——
-     * `LambdaMetafactory` 要求实现方法的返回类型**能放进** SAM 的返回类型（Object），
-     * 而 `void` 放不进：
-     * ```
-     * LambdaConversionException: Type mismatch for lambda return: void is not convertible to class java.lang.Object
-     * ```
-     * 非 void 的 lambda 不受这条影响（基本类型由 metafactory 装箱，见
-     * [instantiatedDescriptor]），所以只有这一档偏离工单。
+     * `Ljava/lang/Object;`，方法体末尾压 null 返回——SAM 的 `invoke` 恒返回 Object，
+     * 实现方法的返回类型得能放进 Object 里，`void` 放不进。
      */
     private fun implDescriptorOf(closure: LambdaClosure): String {
         val sb = StringBuilder("(")
@@ -2127,48 +2108,93 @@ class BytecodeCompiler(
         val mv = ctx.mv
         val closure = ctx.closures.lambdaOf(expr)
             ?: throw IllegalStateException("内部错误：lambda 没有闭包分析结果（${expr.at.line} 行）")
-        // 捕获值按工单 §1 的顺序压栈：`this` 在最前，然后按体里首次引用的顺序。
+        // 创建点：new 一个现场生成的内部类，捕获值按工单 §1 的顺序当构造器实参传进去。
+        // 阶段 64e-2：不再用 `LambdaMetafactory`——类文件版本 49 不支持 invokedynamic，
+        // 而自举后端马上要用我们自己的写出器（见 DESIGN-64）。
+        val cls = lambdaClassName(ctx.owner, closure)
+        mv.visitTypeInsn(NEW, cls)
+        mv.visitInsn(DUP)
         for (c in closure.captures) {
             when (c) {
                 is Capture.This -> emitThis(ctx, "lambda 里的 this")
                 is Capture.Local -> loadSlot(mv, c.type, ctx.slotOf(c.binding) + ctx.localOffset)
             }
         }
-        val samDesc = samFactoryDescriptor(closure.arity, closure.captures)
-        mv.visitInvokeDynamicInsn(
-            "invoke",
-            samDesc,
-            lambdaMetafactory,
-            // samMethodType：`invoke` 在接口里的擦除形态 —— (Object…)Object
-            Type.getMethodType(samInvokeDescriptor(closure.arity)),
-            // 实现方法：程序类（或用户类）上的 private static 合成方法
-            Handle(H_INVOKESTATIC, ctx.owner, closure.implName, implDescriptorOf(closure), false),
-            // instantiatedMethodType：形参/返回的**真实类型**。JVM 校验要求它每一项都能
-            // 放进 samMethodType 的 Object 里，所以基本类型在这一栏落成**包装类**
-            // （`(Int)Int` → `(Ljava/lang/Integer;)Ljava/lang/Integer;`）——
-            // 装箱/拆箱由 LambdaMetafactory 适配到实现方法自己的 `(I)I`。这正是 javac
-            // 为 `Function<Integer,Integer>` 写出来的形状。
-            Type.getMethodType(instantiatedDescriptor(closure)),
-        )
+        mv.visitMethodInsn(INVOKESPECIAL, cls, "<init>", lambdaCtorDescriptor(closure), false)
+        if (!lambdaClasses.containsKey(cls)) lambdaClasses[cls] = lambdaClassBytes(ctx.owner, closure)
     }
 
+    /** 每个 lambda 创建点现场生成的内部类（阶段 64e-2）：类名 → 字节。 */
+    private val lambdaClasses = LinkedHashMap<String, ByteArray>()
+
+    /** 内部类名：挂在包围类下面，加上实现方法名（`lambda$main$0`）就唯一了。 */
+    private fun lambdaClassName(owner: String, closure: LambdaClosure): String = "$owner\$${closure.implName}"
+
+    private fun lambdaCtorDescriptor(closure: LambdaClosure): String =
+        "(" + closure.captures.joinToString("") { descriptorOfType(it.type) } + ")V"
+
+    /** `CHECKCAST` 要的是内部名，类型描述符是 `L…;` 形式，这里剥壳。 */
+    private fun castNameOf(type: RsfType): String {
+        val d = descriptorOfType(type)
+        return if (d.length > 2 && d.startsWith("L") && d.endsWith(";")) d.substring(1, d.length - 1) else d
+    }
+
+    /** 一份捕获值占几个槽（long/double 占两个）。 */
+    private fun lambdaSlotSize(type: RsfType): Int =
+        if (!type.nullable && (type.base == RsfBase.LONG || type.base == RsfBase.DOUBLE)) 2 else 1
+
     /**
-     * `instantiatedMethodType` 的描述符（工单 §1 的「形参/返回真实类型」）。
+     * lambda 的内部类（阶段 64e-2）：字段存捕获值，构造器收捕获值，`invoke` 拆箱形参、
+     * 调包围类里的 `private static` 合成方法、把返回值装箱。
      *
-     * 与 [implDescriptorOf] 的唯一区别：基本类型用**包装类**。JVM 的
-     * `LambdaMetafactory` 会校验「samMethodType 的每一项都能装下 instantiated 的对应项」，
-     * 而 `Object` 装不下 `Int`（原始类型不是 Object 的子类型），只装得下 `Integer`。
+     * 这套形状是给自举后端逐条复刻用的：字段名 `f<i>`、字段顺序 = 捕获顺序、
+     * 构造器里先 `super()` 再按序存字段、`invoke` 里先取字段再取形参。
      */
-    private fun instantiatedDescriptor(closure: LambdaClosure): String {
-        val sb = StringBuilder("(")
-        for (p in closure.params) sb.append(samBoxedDescriptor(p.type))
-        // void 的 lambda：`invoke` 的返回在接口里恒为 Object，JVM 校验要求
-        // instantiated 和实现方法的返回都**能放进** Object 里（`void` 放不进），
-        // 所以两栏都落成 Object（实现方法压 null 返回，见 [implDescriptorOf]）。
-        sb.append(')').append(
-            if (closure.returnType == RsfType.VOID) "Ljava/lang/Object;" else samBoxedDescriptor(closure.returnType),
-        )
-        return sb.toString()
+    private fun lambdaClassBytes(owner: String, closure: LambdaClosure): ByteArray {
+        val name = lambdaClassName(owner, closure)
+        val cw = newClassWriter()
+        cw.visit(V17, ACC_PUBLIC or ACC_FINAL, name, null, "java/lang/Object", arrayOf(samInternalName(closure.arity)))
+        for ((i, c) in closure.captures.withIndex()) {
+            cw.visitField(ACC_PRIVATE or ACC_FINAL, "f$i", descriptorOfType(c.type), null, null).visitEnd()
+        }
+        val ctor = cw.visitMethod(ACC_PUBLIC, "<init>", lambdaCtorDescriptor(closure), null, null)
+        ctor.visitCode()
+        ctor.visitVarInsn(ALOAD, 0)
+        ctor.visitMethodInsn(INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false)
+        var slot = 1
+        for ((i, c) in closure.captures.withIndex()) {
+            ctor.visitVarInsn(ALOAD, 0)
+            loadSlot(ctor, c.type, slot)
+            ctor.visitFieldInsn(PUTFIELD, name, "f$i", descriptorOfType(c.type))
+            slot += lambdaSlotSize(c.type)
+        }
+        ctor.visitInsn(RETURN)
+        ctor.visitMaxs(0, 0)
+        ctor.visitEnd()
+        val invoke = cw.visitMethod(ACC_PUBLIC, "invoke", samInvokeDescriptor(closure.arity), null, null)
+        invoke.visitCode()
+        for ((i, c) in closure.captures.withIndex()) {
+            invoke.visitVarInsn(ALOAD, 0)
+            invoke.visitFieldInsn(GETFIELD, name, "f$i", descriptorOfType(c.type))
+        }
+        for ((i, p) in closure.params.withIndex()) {
+            invoke.visitVarInsn(ALOAD, 1 + i)
+            if (p.type.isPrimitive && !p.type.nullable) {
+                invoke.visitTypeInsn(CHECKCAST, p.type.base.wrapper ?: "java/lang/Object")
+                unboxValue(invoke, p.type.base)
+            } else if (descriptorOfType(p.type) != "Ljava/lang/Object;") {
+                invoke.visitTypeInsn(CHECKCAST, castNameOf(p.type))
+            }
+        }
+        invoke.visitMethodInsn(INVOKESTATIC, owner, closure.implName, implDescriptorOf(closure), false)
+        if (closure.returnType != RsfType.VOID && closure.returnType.isPrimitive && !closure.returnType.nullable) {
+            boxValue(invoke, closure.returnType.base)
+        }
+        invoke.visitInsn(ARETURN)
+        invoke.visitMaxs(0, 0)
+        invoke.visitEnd()
+        cw.visitEnd()
+        return cw.toByteArray()
     }
 
     /** 基本类型取包装类描述符，其余同 [descriptorOfType]。 */
@@ -2182,8 +2208,11 @@ class BytecodeCompiler(
     private fun emitLambdaMethods(cw: ClassWriter, owner: String, fn: FuncDecl) {
         val closures = ClosureScopes.of(model, fn)
         for (closure in closures.closures) {
+            // 包内可见（不是 private）：lambda 的内部类（阶段 64e-2）要 invokestatic 它，
+            // 跨类访问 private 会 IllegalAccessError；不生成 NestHost 之类的属性，
+            // 自举后端复刻起来也简单。
             val mv = cw.visitMethod(
-                ACC_PRIVATE or ACC_STATIC or ACC_SYNTHETIC,
+                ACC_STATIC or ACC_SYNTHETIC,
                 closure.implName,
                 implDescriptorOf(closure),
                 null,
