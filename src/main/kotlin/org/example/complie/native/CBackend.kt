@@ -26,6 +26,7 @@ import org.example.complie.ast.IntLit
 import org.example.complie.ast.LongLit
 import org.example.complie.ast.MemberAssignStmt
 import org.example.complie.ast.MemberExpr
+import org.example.complie.ast.NullLit
 import org.example.complie.ast.NewArrayExpr
 import org.example.complie.ast.NewExpr
 import org.example.complie.ast.ReturnStmt
@@ -226,12 +227,26 @@ class CBackend(private val model: SemanticModel, private val withEntry: Boolean 
 
     // ------------------------------------------------------------------ 类型
 
+    /** 「现在这个位置期望的类型」：只用于把 `null` 字面量落成对的 C 表示。 */
+    private var expectedType: RsfType? = null
+    private var currentReturn: RsfType? = null
+
     private fun returnType(fn: FuncDecl): RsfType =
         model.returnTypes[fn] ?: model.classModel.methodReturns[fn] ?: RsfType.VOID
 
     /** 参数类型：顶层函数在 `model.paramTypes`，类方法/构造器在 `classModel.methodParams` 里。 */
     private fun paramTypesOf(fn: FuncDecl): List<RsfType> =
         model.paramTypes[fn] ?: model.classModel.methodParams[fn]?.map { it.type } ?: emptyList()
+
+    /** 实参按形参类型给期望（目前只为 `null` 字面量服务）。 */
+    private fun argsWithExpected(args: List<Expr>, types: List<RsfType>): String =
+        args.mapIndexed { i, a ->
+            val saved = expectedType
+            expectedType = types.getOrNull(i)
+            val code = expr(a)
+            expectedType = saved
+            code
+        }.joinToString(", ")
 
     private fun cType(type: RsfType): String {
         if (type.arrayDepth > 1) fail("多维数组")
@@ -419,6 +434,8 @@ class CBackend(private val model: SemanticModel, private val withEntry: Boolean 
 
     private fun definition(fn: FuncDecl, cls: ClassDecl?, iface: InterfaceDecl? = null): String {
         currentClass = cls
+        val savedReturn = currentReturn
+        currentReturn = returnType(fn)
         val sb = StringBuilder()
         if (iface != null) {
             sb.append(ifaceProto(iface, fn)).append(" {").append(NL)
@@ -663,12 +680,16 @@ class CBackend(private val model: SemanticModel, private val withEntry: Boolean 
             is SwitchLabel.StringConst -> "rsf_str_eq($tmp, ${stringLit(label.value)})"
         }
 
-    private fun expr(e: Expr): String = when (e) {
+    private fun expr(e: Expr): String {
+        val expected = expectedType
+        expectedType = null
+        return when (e) {
         is IntLit -> e.value.toString()
         is LongLit -> "${e.value}LL"
         is CharLit -> e.value.code.toString() + "u"
         is StringLit -> stringLit(e.value)
         is BoolLit -> if (e.value) "true" else "false"
+        is NullLit -> nullValue(e, expected)
         is VarExpr -> {
             val field = model.classModel.fieldReads[e]
             if (field != null) fieldRef("self", field.className, e.name) else paramName(e.name)
@@ -683,13 +704,21 @@ class CBackend(private val model: SemanticModel, private val withEntry: Boolean 
         is NewArrayExpr -> newArray(e)
         is NewExpr -> newObj(e)
         else -> fail("表达式 ${e::class.simpleName}")
+        }
+    }
+
+    private fun nullValue(e: NullLit, expected: RsfType?): String {
+        val t = expected ?: model.typeOf(e)
+        if (t.base == RsfBase.STRING && t.nullable) return "rsf_str_null()"
+        if (t.base == RsfBase.NULL || t.isPointer || t.arrayDepth > 0 || t.base == RsfBase.EXTERNAL) return "NULL"
+        fail("可空的 ${t.rsfName} 上的 null 字面量（第 ${e.at.line} 行）")
     }
 
     private fun newObj(e: NewExpr): String {
         val cls = model.classModel.newTargets[e] ?: fail("new 的类（${e.className}）")
         val ctor = model.classModel.newCtors[e]
         val name = if (ctor != null) ctorNames[ctor] ?: fail("构造器命名") else defaultCtorNames[cls] ?: fail("默认构造器命名")
-        val args = e.arguments.joinToString(", ") { expr(it) }
+        val args = argsWithExpected(e.arguments, if (ctor != null) paramTypesOf(ctor) else emptyList())
         return "$name($args)"
     }
 
@@ -751,7 +780,7 @@ class CBackend(private val model: SemanticModel, private val withEntry: Boolean 
                     dispatchCall(receiver, resolved.decl, args.map { expr(it) })
                 }
             }
-            else -> fail("成员访问 '${e.name}'")
+            else -> fail("成员访问 '${e.name}'（第 ${e.at.line} 行）")
         }
     }
 
@@ -843,6 +872,7 @@ class CBackend(private val model: SemanticModel, private val withEntry: Boolean 
             RsfBase.BOOL -> "rsf_bool_to_str($code)"
             RsfBase.LONG -> "rsf_long_to_str($code)"
             RsfBase.INT -> "rsf_int_to_str($code)"
+            RsfBase.CHAR -> "rsf_char_to_str($code)"
             else -> fail("字符串拼接里的 ${model.typeOf(operand).base.rsfName}")
         }
 
@@ -878,10 +908,11 @@ class CBackend(private val model: SemanticModel, private val withEntry: Boolean 
             } else {
                 defaultCtorNames[ctorClass] ?: fail("默认构造器命名")
             }
-            return "$ctorName(${e.arguments.joinToString(", ") { expr(it) }})"
+            val ctorParams = if (ctor != null) paramTypesOf(ctor) else emptyList()
+            return "$ctorName(${argsWithExpected(e.arguments, ctorParams)})"
         }
         val target = model.callTargets[e] ?: fail("调用 '${e.name}'")
-        val args = e.arguments.joinToString(", ") { expr(it) }
+        val args = argsWithExpected(e.arguments, paramTypesOf(target))
         return "${fnName(target)}($args)"
     }
 
@@ -1160,7 +1191,12 @@ class CBackend(private val model: SemanticModel, private val withEntry: Boolean 
                 rsf_str s; s.len = a.len + b.len; s.data = p; return s;
             }
 
+            static rsf_str rsf_str_null(void) {
+                rsf_str s; s.len = 0; s.data = NULL; return s;
+            }
+
             static bool rsf_str_eq(rsf_str a, rsf_str b) {
+                if (a.data == NULL || b.data == NULL) return a.data == b.data;
                 return a.len == b.len && memcmp(a.data, b.data, (size_t)a.len) == 0;
             }
 
@@ -1235,6 +1271,21 @@ class CBackend(private val model: SemanticModel, private val withEntry: Boolean 
             static void rsf_println_l(int64_t v)  { rsf_print_l(v); putchar('\n'); }
             static void rsf_println_b(bool v)     { rsf_print_b(v); putchar('\n'); }
             static void rsf_println_empty(void)   { putchar('\n'); }
+
+            static rsf_str rsf_char_to_str(uint16_t ch) {
+                char* b = (char*)malloc(4);
+                int n = 0;
+                if (ch < 0x80) { b[n++] = (char)ch; }
+                else if (ch < 0x800) {
+                    b[n++] = (char)(0xC0 | (ch >> 6));
+                    b[n++] = (char)(0x80 | (ch & 0x3F));
+                } else {
+                    b[n++] = (char)(0xE0 | (ch >> 12));
+                    b[n++] = (char)(0x80 | ((ch >> 6) & 0x3F));
+                    b[n++] = (char)(0x80 | (ch & 0x3F));
+                }
+                rsf_str s; s.len = n; s.data = b; return s;
+            }
 
             static rsf_str rsf_int_to_str(int32_t v) {
                 char* buf = (char*)malloc(16);
