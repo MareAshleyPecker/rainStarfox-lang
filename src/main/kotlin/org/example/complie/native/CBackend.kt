@@ -14,6 +14,8 @@ import org.example.complie.ast.ContinueStmt
 import org.example.complie.ast.DerefAssignStmt
 import org.example.complie.ast.EnumDecl
 import org.example.complie.ast.Expr
+import org.example.complie.ast.ForceExpr
+import org.example.complie.ast.TryStmt
 import org.example.complie.ast.ExprStmt
 import org.example.complie.ast.FieldDecl
 import org.example.complie.ast.ForStmt
@@ -229,6 +231,8 @@ class CBackend(private val model: SemanticModel, private val withEntry: Boolean 
 
     /** 「现在这个位置期望的类型」：只用于把 `null` 字面量落成对的 C 表示。 */
     private var expectedType: RsfType? = null
+
+    private val JDK_CLASSES = setOf("Integer", "Long", "Float", "Double", "Math", "String", "System")
     private var currentReturn: RsfType? = null
 
     private fun returnType(fn: FuncDecl): RsfType =
@@ -587,7 +591,13 @@ class CBackend(private val model: SemanticModel, private val withEntry: Boolean 
         is ExprStmt -> pad(indent) + expr(s.expr) + ";\n"
         is ReturnStmt -> {
             val value = s.value
-            if (value == null) pad(indent) + "return;\n" else pad(indent) + "return ${expr(value)};\n"
+            if (value == null) {
+                pad(indent) + "return;\n"
+            } else {
+                expectedType = currentReturn
+                val code = expr(value)
+                pad(indent) + "return $code;\n"
+            }
         }
         is IfStmt -> {
             val sb = StringBuilder()
@@ -614,6 +624,21 @@ class CBackend(private val model: SemanticModel, private val withEntry: Boolean 
         is ForStmt -> forStmt(s, indent)
         is BreakStmt -> pad(indent) + "break;\n"
         is ContinueStmt -> pad(indent) + "continue;\n"
+        is TryStmt -> {
+            val sb = StringBuilder()
+            sb.append(pad(indent)).append("rsf_err = false;\n")
+            for (inner in s.body.statements) {
+                sb.append(pad(indent)).append("if (!rsf_err) {\n")
+                sb.append(stmt(inner, indent + 1))
+                sb.append(pad(indent)).append("}\n")
+            }
+            sb.append(pad(indent)).append("if (rsf_err) {\n")
+            sb.append(pad(indent + 1)).append("rsf_str v_").append(s.catchName).append(" = rsf_err_msg;\n")
+            for (inner in s.catchBody.statements) sb.append(stmt(inner, indent + 1))
+            sb.append(pad(indent)).append("}\n")
+            sb.toString()
+        }
+
         is Block -> {
             val sb = StringBuilder()
             sb.append(pad(indent)).append("{\n")
@@ -696,6 +721,7 @@ class CBackend(private val model: SemanticModel, private val withEntry: Boolean 
         }
         is ThisExpr -> "self"
         is UnaryExpr -> unary(e)
+        is ForceExpr -> forceOf(e)
         is BinaryExpr -> binary(e)
         is IfExpr -> "(${expr(e.condition)} ? ${expr(e.whenTrue)} : ${expr(e.whenFalse)})"
         is CallExpr -> call(e)
@@ -728,7 +754,57 @@ class CBackend(private val model: SemanticModel, private val withEntry: Boolean 
         return "(($elem*)${expr(e.receiver)}.data)[${expr(e.index)}]"
     }
 
+    /**
+     * 阶段 64b：自举源码直接调 JDK（`Integer.toString` / `System.err.println` / `Math.max` …）。
+     * C 后端把这些调用摊到运行时里的同名 shim 上，没登记的返回 null 交给普通成员解析。
+     */
+    private fun jdkMember(e: MemberExpr): String? {
+        // System.err.println(x) / System.err.print(x)
+        val errRecv = e.receiver as? MemberExpr
+        if (errRecv != null && errRecv.name == "err" && (errRecv.receiver as? VarExpr)?.name == "System") {
+            val arg = e.arguments?.firstOrNull() ?: return "fputc('\n', stderr)"
+            val code = expr(arg)
+            val fn = when (model.typeOf(arg).base) {
+                RsfBase.STRING -> "rsf_eprint_s"
+                RsfBase.INT -> "rsf_eprint_i"
+                RsfBase.LONG -> "rsf_eprint_l"
+                RsfBase.BOOL -> "rsf_eprint_b"
+                RsfBase.FLOAT, RsfBase.DOUBLE -> "rsf_eprint_d"
+                else -> "rsf_eprint_s"
+            }
+            val call = "$fn($code)"
+            val line = call.replace("rsf_eprint_", "rsf_eprintln_")
+            return if (e.name == "println") line else call
+        }
+        val recv = (e.receiver as? VarExpr)?.name ?: return null
+        if (recv !in JDK_CLASSES) return null
+        if (runCatching { model.bindingOf(e.receiver) }.isSuccess) return null
+        val args = e.arguments ?: return null
+        val a = args.map { expr(it) }
+        return when ("$recv.${e.name}") {
+            "Integer.toString" -> "rsf_int_to_str(${a[0]})"
+            "Long.toString" -> "rsf_long_to_str(${a[0]})"
+            "Float.toString" -> "rsf_float_to_str(${a[0]})"
+            "Double.toString" -> "rsf_double_to_str(${a[0]})"
+            "Integer.parseInt" -> "rsf_parse_int(${a[0]})"
+            "Long.parseLong" -> "rsf_parse_long(${a[0]})"
+            "Float.parseFloat" -> "rsf_parse_float(${a[0]})"
+            "Double.parseDouble" -> "rsf_parse_double(${a[0]})"
+            "Integer.valueOf", "Long.valueOf", "Float.valueOf", "Double.valueOf" -> "(${a[0]})"
+            "Math.max" -> "rsf_max_i(${a[0]}, ${a[1]})"
+            "Math.min" -> "rsf_min_i(${a[0]}, ${a[1]})"
+            "String.valueOf" -> asStr(args[0], a[0])
+            "String.replace" -> "rsf_str_replace(${a[0]}, ${a[1]}, ${a[2]})"
+            "String.removePrefix" -> "rsf_str_remove_prefix(${a[0]}, ${a[1]})"
+            "System.exit" -> "rsf_exit(${a[0]})"
+            "System.getProperty", "System.getenv" -> "rsf_get_prop(${a[0]})"
+            "System.identityHashCode" -> "((int32_t)(intptr_t)(${a[0]}))"
+            else -> null
+        }
+    }
+
     private fun member(e: MemberExpr): String {
+        jdkMember(e)?.let { return it }
         // super.f(...)：**非虚**调用，直接打声明类那一份实现
         if (e.receiver is SuperExpr) {
             return when (val call = model.classModel.superCalls[e]) {
@@ -762,6 +838,11 @@ class CBackend(private val model: SemanticModel, private val withEntry: Boolean 
                 "startsWith" -> return "rsf_str_starts($recv, ${args[0]})"
                 "endsWith" -> return "rsf_str_ends($recv, ${args[0]})"
                 "contains" -> return "rsf_str_contains($recv, ${args[0]})"
+                "indexOf" -> return "rsf_str_index_of($recv, ${args[0]})"
+                "lastIndexOf" -> return "rsf_str_last_index_of($recv, ${args[0]})"
+                "trim" -> return "rsf_str_trim($recv)"
+                "repeat" -> return "rsf_str_repeat($recv, ${args[0]})"
+                "replace" -> return "rsf_str_replace($recv, ${args[0]}, ${args[1]})"
                 "toUpperCase" -> return "rsf_str_upper($recv)"
                 "toLowerCase" -> return "rsf_str_lower($recv)"
             }
@@ -823,6 +904,12 @@ class CBackend(private val model: SemanticModel, private val withEntry: Boolean 
         }
     }
 
+    private fun forceOf(e: ForceExpr): String {
+        val operand = e.operand
+        val code = expr(operand)
+        return if (model.typeOf(operand).base == RsfBase.STRING) "rsf_force_str($code)" else "rsf_force_ptr($code)"
+    }
+
     private fun unary(e: UnaryExpr): String {
         val operand = expr(e.operand)
         return when (e.op) {
@@ -840,8 +927,18 @@ class CBackend(private val model: SemanticModel, private val withEntry: Boolean 
         val type = model.typeOf(e)
         val stringy = model.typeOf(e.left).base == RsfBase.STRING ||
             model.typeOf(e.right).base == RsfBase.STRING
-        val left = expr(e.left)
-        val right = expr(e.right)
+        val left = if (e.left is NullLit) {
+            expectedType = model.typeOf(e.right)
+            expr(e.left)
+        } else {
+            expr(e.left)
+        }
+        val right = if (e.right is NullLit) {
+            expectedType = model.typeOf(e.left)
+            expr(e.right)
+        } else {
+            expr(e.right)
+        }
         return when (e.op) {
             // 阶段 58a：拼接时非字符串侧要转成字符串（`bool + " "`、`Int + "x"` 在解释器里都成立）
             TokenKind.PLUS -> if (stringy) {
@@ -892,6 +989,16 @@ class CBackend(private val model: SemanticModel, private val withEntry: Boolean 
             "charToInt" -> return "((int32_t)${expr(e.arguments[0])})"
             "toChar" -> return "((uint16_t)${expr(e.arguments[0])})"
             "toByte" -> return "((int8_t)${expr(e.arguments[0])})"
+            "parseInt" -> return "rsf_parse_int(${expr(e.arguments[0])})"
+            "isDigit" -> return "rsf_is_digit(${expr(e.arguments[0])})"
+            "isLetter" -> return "rsf_is_letter(${expr(e.arguments[0])})"
+            "isWhitespace" -> return "rsf_is_whitespace(${expr(e.arguments[0])})"
+            "toUpper" -> return "rsf_to_upper(${expr(e.arguments[0])})"
+            "toLower" -> return "rsf_to_lower(${expr(e.arguments[0])})"
+            "readText" -> return "rsf_read_text(${expr(e.arguments[0])})"
+            "writeText" -> return "rsf_write_text(${expr(e.arguments[0])}, ${expr(e.arguments[1])})"
+            "readBytes" -> return "rsf_read_bytes(${expr(e.arguments[0])})"
+            "writeBytes" -> return "rsf_write_bytes(${expr(e.arguments[0])}, ${expr(e.arguments[1])})"
             "jvmCall" -> {
                 usesJvmCall = true
                 val a = e.arguments.map { expr(it) }
@@ -1191,6 +1298,27 @@ class CBackend(private val model: SemanticModel, private val withEntry: Boolean 
                 rsf_str s; s.len = a.len + b.len; s.data = p; return s;
             }
 
+            static rsf_str rsf_force_str(rsf_str v) {
+                if (!v.data) { fprintf(stderr, "rsf: 空值上做了 '!!'（运行期错误）"); fputc(10, stderr); exit(1); }
+                return v;
+            }
+
+            static void* rsf_force_ptr(void* v) {
+                if (!v) { fprintf(stderr, "rsf: 空值上做了 '!!'（运行期错误）"); fputc(10, stderr); exit(1); }
+                return v;
+            }
+
+            static bool rsf_err = false;
+            static rsf_str rsf_err_msg;
+
+            static void rsf_set_err(rsf_str msg) {
+                if (!rsf_err) { rsf_err = true; rsf_err_msg = msg; }
+            }
+
+            static rsf_str rsf_str_c(const char* s) {
+                rsf_str r; r.data = s; r.len = (int64_t)strlen(s); return r;
+            }
+
             static rsf_str rsf_str_null(void) {
                 rsf_str s; s.len = 0; s.data = NULL; return s;
             }
@@ -1213,6 +1341,38 @@ class CBackend(private val model: SemanticModel, private val withEntry: Boolean 
                 if (to > s.len) to = (int32_t)s.len;
                 if (to < from) to = from;
                 rsf_str r; r.len = to - from; r.data = (char*)s.data + from; return r;
+            }
+
+            static int32_t rsf_str_index_of(rsf_str s, rsf_str p) {
+                if (p.len <= 0) { return 0; }
+                for (int64_t i = 0; i + p.len <= s.len; i++) {
+                    if (memcmp(s.data + i, p.data, (size_t)p.len) == 0) { return (int32_t)i; }
+                }
+                return -1;
+            }
+
+            static int32_t rsf_str_last_index_of(rsf_str s, rsf_str p) {
+                if (p.len <= 0) { return (int32_t)s.len; }
+                for (int64_t i = s.len - p.len; i >= 0; i--) {
+                    if (memcmp(s.data + i, p.data, (size_t)p.len) == 0) { return (int32_t)i; }
+                }
+                return -1;
+            }
+
+            static rsf_str rsf_str_trim(rsf_str s) {
+                int64_t a = 0;
+                int64_t b = s.len;
+                while (a < b && (s.data[a] == 32 || s.data[a] == 9 || s.data[a] == 10 || s.data[a] == 13)) { a++; }
+                while (b > a && (s.data[b - 1] == 32 || s.data[b - 1] == 9 || s.data[b - 1] == 10 || s.data[b - 1] == 13)) { b--; }
+                rsf_str r; r.data = s.data + a; r.len = b - a; return r;
+            }
+
+            static rsf_str rsf_str_repeat(rsf_str s, int32_t times) {
+                int64_t n = s.len * (int64_t)times;
+                char* buf = (char*)malloc((size_t)n + 1);
+                for (int32_t i = 0; i < times; i++) { memcpy(buf + s.len * i, s.data, (size_t)s.len); }
+                buf[n] = 0;
+                rsf_str r; r.data = buf; r.len = n; return r;
             }
 
             static bool rsf_str_starts(rsf_str s, rsf_str p) {
@@ -1286,6 +1446,148 @@ class CBackend(private val model: SemanticModel, private val withEntry: Boolean 
                 }
                 rsf_str s; s.len = n; s.data = b; return s;
             }
+
+            static char* rsf_read_all(rsf_str path, int64_t* outLen) {
+                FILE* f = fopen((const char*)path.data, "rb");
+                if (!f) { *outLen = 0; return NULL; }
+                fseek(f, 0, SEEK_END);
+                long n = ftell(f);
+                fseek(f, 0, SEEK_SET);
+                char* buf = (char*)malloc((size_t)n + 1);
+                size_t got = fread(buf, 1, (size_t)n, f);
+                fclose(f);
+                buf[got] = 0;
+                *outLen = (int64_t)got;
+                return buf;
+            }
+
+            static rsf_str rsf_read_text(rsf_str path) {
+                int64_t n = 0;
+                char* b = rsf_read_all(path, &n);
+                if (!b) { rsf_set_err(rsf_str_c("readText: 文件读不出来")); }
+                rsf_str s;
+                s.len = n; s.data = b;
+                return s;
+            }
+
+            static rsf_arr rsf_read_bytes(rsf_str path) {
+                int64_t n = 0;
+                char* b = rsf_read_all(path, &n);
+                if (!b) { rsf_set_err(rsf_str_c("readBytes: 文件读不出来")); }
+                rsf_arr a;
+                a.len = n; a.data = b;
+                return a;
+            }
+
+            static bool rsf_write_text(rsf_str path, rsf_str text) {
+                FILE* f = fopen((const char*)path.data, "wb");
+                if (!f) { rsf_set_err(rsf_str_c("writeText: 文件写不出来")); return false; }
+                if (text.len > 0) { fwrite(text.data, 1, (size_t)text.len, f); }
+                fclose(f);
+                return true;
+            }
+
+            static bool rsf_write_bytes(rsf_str path, rsf_arr bytes) {
+                FILE* f = fopen((const char*)path.data, "wb");
+                if (!f) { rsf_set_err(rsf_str_c("writeBytes: 文件写不出来")); return false; }
+                if (bytes.len > 0) { fwrite(bytes.data, 1, (size_t)bytes.len, f); }
+                fclose(f);
+                return true;
+            }
+
+            static int32_t rsf_parse_int(rsf_str s) {
+                char* end = NULL;
+                long v = strtol((const char*)s.data, &end, 10);
+                if (end == (const char*)s.data || end == NULL || *end != 0) {
+                    int cap = (int)s.len + 48;
+                    char* m = (char*)malloc((size_t)cap);
+                    int n = snprintf(m, (size_t)cap, "parseInt: 不是合法的整数：'%s'", (const char*)s.data);
+                    rsf_str msg; msg.data = m; msg.len = n;
+                    rsf_set_err(msg);
+                    return 0;
+                }
+                return (int32_t)v;
+            }
+            static int64_t rsf_parse_long(rsf_str s) { return (int64_t)strtoll((const char*)s.data, NULL, 10); }
+            static float rsf_parse_float(rsf_str s) { return strtof((const char*)s.data, NULL); }
+            static double rsf_parse_double(rsf_str s) { return strtod((const char*)s.data, NULL); }
+            static int32_t rsf_max_i(int32_t a, int32_t b) { return a > b ? a : b; }
+            static bool rsf_is_digit(uint16_t c) { return c >= 48 && c <= 57; }
+            static bool rsf_is_letter(uint16_t c) { return (c >= 65 && c <= 90) || (c >= 97 && c <= 122); }
+            static bool rsf_is_whitespace(uint16_t c) { return c == 32 || c == 9 || c == 10 || c == 13; }
+            static uint16_t rsf_to_upper(uint16_t c) { return (c >= 97 && c <= 122) ? (uint16_t)(c - 32) : c; }
+            static uint16_t rsf_to_lower(uint16_t c) { return (c >= 65 && c <= 90) ? (uint16_t)(c + 32) : c; }
+            static int32_t rsf_min_i(int32_t a, int32_t b) { return a < b ? a : b; }
+
+            static rsf_str rsf_float_to_str(float v) {
+                char* buf = (char*)malloc(64);
+                int n = snprintf(buf, 64, "%g", (double)v);
+                rsf_str s; s.len = n; s.data = buf; return s;
+            }
+
+            static rsf_str rsf_double_to_str(double v) {
+                char* buf = (char*)malloc(64);
+                int n = snprintf(buf, 64, "%.17g", v);
+                rsf_str s; s.len = n; s.data = buf; return s;
+            }
+
+            static rsf_str rsf_str_replace(rsf_str s, rsf_str from, rsf_str to) {
+                if (from.len <= 0 || from.len > s.len) { return s; }
+                int64_t cap = s.len + 8;
+                char* out = (char*)malloc((size_t)cap);
+                int64_t n = 0;
+                int64_t i = 0;
+                while (i < s.len) {
+                    bool hit = (i + from.len <= s.len) && (memcmp(s.data + i, from.data, (size_t)from.len) == 0);
+                    if (hit) {
+                        if (n + to.len + 1 > cap) {
+                            while (n + to.len + 1 > cap) { cap = cap * 2; }
+                            out = (char*)realloc(out, (size_t)cap);
+                        }
+                        memcpy(out + n, to.data, (size_t)to.len);
+                        n += to.len;
+                        i += from.len;
+                    } else {
+                        if (n + 2 > cap) { cap = cap * 2; out = (char*)realloc(out, (size_t)cap); }
+                        out[n] = s.data[i];
+                        n += 1;
+                        i += 1;
+                    }
+                }
+                out[n] = 0;
+                rsf_str r; r.len = n; r.data = out; return r;
+            }
+
+            static rsf_str rsf_str_remove_prefix(rsf_str s, rsf_str prefix) {
+                if (prefix.len > 0 && prefix.len <= s.len && memcmp(s.data, prefix.data, (size_t)prefix.len) == 0) {
+                    rsf_str r;
+                    r.len = s.len - prefix.len;
+                    r.data = s.data + prefix.len;
+                    return r;
+                }
+                return s;
+            }
+
+            static rsf_str rsf_get_prop(rsf_str key) {
+                const char* v = getenv((const char*)key.data);
+                rsf_str s;
+                if (!v) { s.len = 0; s.data = NULL; return s; }
+                s.data = v;
+                s.len = (int64_t)strlen(v);
+                return s;
+            }
+
+            static void rsf_exit(int32_t code) { exit((int)code); }
+            static void rsf_eprint_s(rsf_str s) { if (s.len > 0) { fwrite(s.data, 1, (size_t)s.len, stderr); } }
+            static void rsf_eprint_i(int32_t v) { fprintf(stderr, "%d", (int)v); }
+            static void rsf_eprint_l(int64_t v) { fprintf(stderr, "%lld", (long long)v); }
+            static void rsf_eprint_b(bool v) { fprintf(stderr, "%s", v ? "true" : "false"); }
+            static void rsf_eprint_d(double v) { fprintf(stderr, "%.17g", v); }
+            static void rsf_eprintln_s(rsf_str s) { if (s.len > 0) { fwrite(s.data, 1, (size_t)s.len, stderr); } fputc(10, stderr); }
+            static void rsf_eprintln_i(int32_t v) { fprintf(stderr, "%d", (int)v); fputc(10, stderr); }
+            static void rsf_eprintln_l(int64_t v) { fprintf(stderr, "%lld", (long long)v); fputc(10, stderr); }
+            static void rsf_eprintln_b(bool v) { fprintf(stderr, "%s", v ? "true" : "false"); fputc(10, stderr); }
+            static void rsf_eprintln_d(double v) { fprintf(stderr, "%.17g", v); fputc(10, stderr); }
 
             static rsf_str rsf_int_to_str(int32_t v) {
                 char* buf = (char*)malloc(16);
