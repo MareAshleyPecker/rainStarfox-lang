@@ -1,0 +1,53 @@
+// 用 rsf 里的 ASM 风格门面（Cw/Mv/Lb）手搓一个 class，验证写出器的基本功能：
+// 字段 + 构造器 + 静态方法 + 字符串/整数常量 + 方法调用。
+import "../../../rsfSrc/classfile/ClassFile.rsf"
+
+fn main() -> void {
+    var cw = new Cw(0)
+    cw.visit(49, 33, "Shim", null, "java/lang/Object", new String[0])
+    cw.visitField(2, "total", "I", null, null).visitEnd()
+
+    var c = cw.visitMethod(1, "<init>", "()V", null, null)
+    c.visitCode()
+    c.visitVarInsn(25, 0)
+    c.visitMethodInsn(183, "java/lang/Object", "<init>", "()V", false)
+    c.visitInsn(177)
+    c.visitMaxs(1, 1)
+    c.visitEnd()
+
+    var add = cw.visitMethod(9, "add", "(II)I", null, null)
+    add.visitCode()
+    add.visitVarInsn(21, 0)
+    add.visitVarInsn(21, 1)
+    add.visitInsn(96)
+    add.visitInsn(172)
+    add.visitMaxs(2, 2)
+    add.visitEnd()
+
+    var m = cw.visitMethod(9, "main", "([Ljava/lang/String;)V", null, null)
+    m.visitCode()
+    var out = "java/io/PrintStream"
+    // println("ok")
+    m.visitFieldInsn(178, "java/lang/System", "out", "Ljava/io/PrintStream;")
+    m.visitLdcString("ok")
+    m.visitMethodInsn(182, out, "println", "(Ljava/lang/String;)V", false)
+    // println(add(2, 3))
+    m.visitFieldInsn(178, "java/lang/System", "out", "Ljava/io/PrintStream;")
+    m.visitLdcInt(2)
+    m.visitLdcInt(3)
+    m.visitMethodInsn(184, "Shim", "add", "(II)I", false)
+    m.visitMethodInsn(182, out, "println", "(I)V", false)
+    m.visitInsn(177)
+    m.visitMaxs(3, 1)
+    m.visitEnd()
+    cw.visitEnd()
+
+    var bytes = cw.toByteArray()
+    try {
+        writeBytes("build/verify63/out/Shim.class", bytes)
+    } catch (e : String) {
+        System.err.println(e)
+        System.exit(1)
+    }
+    println("wrote Shim.class")
+}

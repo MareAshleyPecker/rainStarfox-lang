@@ -56,12 +56,14 @@ run_build() {
     total=$((total+1))
     local n; n="$(basename "$f" .rsf)"
     rm -rf "$HERE/bk.$n" "$HERE/bs.$n"
-    ( cd "$HERE" && java $JOPT -jar "../../$JAR" build "$f" -o "bk.$n" 2>&1 ) | sed -e $'s/$//' | tr '\\' '/' > "$HERE/.bk"
-    ( cd "$HERE" && java $JOPT -Drsf.rsfc.file="$f" -Drsf.rsfc.out="bs.$n" -cp "self;../../$JAR" RsfcBuild 2>&1 )       | sed -e $'s/$//' | tr '\\' '/' | sed "s#bs\.$n#bk.$n#g" > "$HERE/.bs"
+    ( cd "$HERE" && java $JOPT -jar "../../$JAR" build "$f" -o "bk.$n" 2>&1 ) | sed -e $'s/
+$//' | tr '\\' '/' > "$HERE/.bk"
+    ( cd "$HERE" && java $JOPT -Drsf.rsfc.file="$f" -Drsf.rsfc.out="bs.$n" -cp "self;../../$JAR" RsfcBuild 2>&1 )       | sed -e $'s/
+$//' | tr '\\' '/' | sed "s#bs\.$n#bk.$n#g" > "$HERE/.bs"
     if ! diff -q "$HERE/.bk" "$HERE/.bs" > /dev/null; then
       bad=$((bad+1)); echo "   $n 的 build 输出不同"; diff "$HERE/.bk" "$HERE/.bs" | head -6 | sed 's/^/      /'
-    elif ! diff -r "$HERE/bk.$n" "$HERE/bs.$n" > /dev/null; then
-      bad=$((bad+1)); echo "   $n 的 class 不同"
+    elif ! bash "$HERE/../tools/classes_equal.sh" "$HERE/bk.$n" "$HERE/bs.$n" > /dev/null; then
+      bad=$((bad+1)); echo "   $n 的 class 不同：$(bash "$HERE/../tools/classes_equal.sh" "$HERE/bk.$n" "$HERE/bs.$n" 2>&1 | head -2)"
     fi
   done
   rm -f "$HERE"/.bk "$HERE"/.bs
@@ -77,8 +79,10 @@ run_run() {
     local n; n="$(basename "$f" .rsf)"
     java $JOPT -jar "$JAR" run "$f" > "$HERE/.rk" 2>/dev/null; local kc=$?
     ( cd "$HERE" && java $JOPT -Drsf.rsfc.file="$f" -cp "self;../../$JAR" RsfcRun > "$HERE/.rs" 2>/dev/null ); local sc=$?
-    sed -e $'s/$//' < "$HERE/.rk" > "$HERE/.rkn"
-    sed -e $'s/$//' < "$HERE/.rs" > "$HERE/.rsn"
+    sed -e $'s/
+$//' < "$HERE/.rk" > "$HERE/.rkn"
+    sed -e $'s/
+$//' < "$HERE/.rs" > "$HERE/.rsn"
     if [ "$kc" != "$sc" ] || ! diff -q "$HERE/.rkn" "$HERE/.rsn" > /dev/null; then
       bad=$((bad+1)); echo "   $n 的 run 不同"; diff "$HERE/.rkn" "$HERE/.rsn" | head -6 | sed 's/^/      /'
     fi

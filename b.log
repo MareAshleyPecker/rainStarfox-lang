@@ -36,6 +36,17 @@
 [rsf] 已生成 B/TokenKind.class
 [rsf] 已生成 B/Token.class
 [rsf] 已生成 B/Lexer.class
+[rsf] 已生成 B/Buf.class
+[rsf] 已生成 B/Cp.class
+[rsf] 已生成 B/FieldInfo.class
+[rsf] 已生成 B/Method.class
+[rsf] 已生成 B/ClassWriter.class
+[rsf] 已生成 B/Lb.class
+[rsf] 已生成 B/Av.class
+[rsf] 已生成 B/Fv.class
+[rsf] 已生成 B/Mv.class
+[rsf] 已生成 B/Cw.class
+[rsf] 已生成 B/HashMap.class
 [rsf] 已生成 B/SrcLoader.class
 [rsf] 已生成 B/WarnSink.class
 [rsf] 已生成 B/NodeKind.class

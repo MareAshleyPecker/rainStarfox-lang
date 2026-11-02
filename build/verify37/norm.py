@@ -1,0 +1,48 @@
+#!/usr/bin/env python3
+# 把 javap -p -c 的输出归一化：去偏移、统一紧凑局部变量指令、
+# 把跳转目标换算成「方法内第几条指令」，常量池编号一律 #N。
+import re, sys
+
+JUMPS = set('ifeq ifne iflt ifge ifgt ifle if_icmpeq if_icmpne if_icmplt if_icmpge '
+            'if_icmpgt if_icmple if_acmpeq if_acmpne goto goto_w jsr jsr_w ifnull ifnonnull'.split())
+WIDE = {'aload':25,'astore':58,'iload':21,'istore':54,'lload':22,'lstore':55,
+        'fload':23,'fstore':56,'dload':24,'dstore':57}
+
+def canon(text):
+    out = []
+    ins = []
+
+    def flush():
+        if not ins:
+            return
+        off2idx = {ins[i][0]: i for i in range(len(ins))}
+        for off, op, rest in ins:
+            toks = rest.split()
+            if op in JUMPS and toks and toks[0].lstrip('-').isdigit():
+                t = int(toks[0])
+                toks[0] = '@%d' % off2idx.get(t, -1)
+            if op in ('ldc', 'ldc_w'):
+                op = 'ldc'
+            toks = [re.sub(r'#[0-9]+', '#N', t) for t in toks]
+            out.append(('%s %s' % (op, ' '.join(toks))).strip())
+        ins.clear()
+
+    for ln in text.split('\n'):
+        ln = ln.rstrip()
+        if re.match(r'  \S.*\(.*\).*$', ln) and not ln.strip().startswith(
+                ('Code:', 'Exception', 'LineNumber', 'LocalVariable', 'StackMap')):
+            flush()
+            out.append('## ' + re.sub(r'\s+', ' ', ln.strip()))
+            continue
+        m = re.match(r'\s+(\d+): (\S+)\s*(.*)', ln)
+        if not m:
+            continue
+        off, op, rest = int(m.group(1)), m.group(2), m.group(3).split('//')[0].strip()
+        mm = re.match(r'([a-z]+)_([0-3])$', op)
+        if mm and mm.group(1) in WIDE:
+            op, rest = mm.group(1), mm.group(2) + ' ' + rest
+        ins.append((off, op, rest))
+    flush()
+    return out
+
+print('\n'.join(canon(sys.stdin.read())))

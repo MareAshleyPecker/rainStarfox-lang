@@ -36,7 +36,7 @@ run_self_build "B;../../$JAR" "C" "c.log" || { echo "C 编译失败"; tail -5 "$
 
 
 norm_disasm() {
-  javap -p -c "$1" 2>/dev/null | sed -E 's/#[0-9]+/#N/g'
+  javap -p -c "$1" 2>/dev/null | python3 "$HERE/norm.py"
 }
 
 # 比较两个 class 目录：类集合相同、每个类反汇编等价

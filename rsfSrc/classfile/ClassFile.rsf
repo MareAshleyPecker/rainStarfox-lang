@@ -28,11 +28,87 @@ pub fn decInt(s : String) -> Int {
 }
 
 // 向下取整的整数除法（负数也按数学 floor）
+fn longOfDigit(d : Int) -> Long {
+    if (d == 48) { rtn 0L }
+    if (d == 49) { rtn 1L }
+    if (d == 50) { rtn 2L }
+    if (d == 51) { rtn 3L }
+    if (d == 52) { rtn 4L }
+    if (d == 53) { rtn 5L }
+    if (d == 54) { rtn 6L }
+    if (d == 55) { rtn 7L }
+    if (d == 56) { rtn 8L }
+    rtn 9L
+}
+
+pub fn decLong(s : String) -> Long {
+    var i = 0
+    var neg = false
+    if (s.length() > 0 && charToInt(s.charAt(0)) == 45) {
+        neg = true
+        i = 1
+    }
+    var v = 0L
+    while (i < s.length()) {
+        v = v * 10L + longOfDigit(charToInt(s.charAt(i)))
+        i = i + 1
+    }
+    if (neg) { v = 0L - v }
+    rtn v
+}
+
 pub fn floorDiv(a : Int, b : Int) -> Int {
     var q = a / b
     if (a % b != 0 && ((a < 0) != (b < 0))) { q = q - 1 }
     rtn q
 }
+
+fn pow2I(p : Int) -> Int {
+    var r = 1
+    var i = 0
+    while (i < p) {
+        r = r * 2
+        i = i + 1
+    }
+    rtn r
+}
+
+fn pow2Long(p : Int) -> Long {
+    var r = 1L
+    var i = 0
+    while (i < p) {
+        r = r * 2L
+        i = i + 1
+    }
+    rtn r
+}
+
+// long 的某 32 位（按二进制补码取，结果按 Int 的补码回绕）
+fn longToIntWrap(v : Long) -> Int {
+    var x = v
+    while (x < 0L) { x = x + 4294967296L }
+    while (x >= 4294967296L) { x = x - 4294967296L }
+    var out = 0
+    var i = 0
+    while (i < 32) {
+        if ((x / pow2Long(i)) % 2L == 1L) { out = out + pow2I(i) }
+        i = i + 1
+    }
+    rtn out
+}
+
+fn longHi(v : Long) -> Int { rtn longToIntWrap(floorDivLong(v, 4294967296L)) }
+fn longLo(v : Long) -> Int { rtn longToIntWrap(v - floorDivLong(v, 4294967296L) * 4294967296L) }
+
+// Long 没有 floorDiv：除法向零截断，这里按「向下取整」修正
+fn floorDivLong(a : Long, b : Long) -> Long {
+    var q = a / b
+    if ((q * b != a) && ((a < 0L) != (b < 0L))) { q = q - 1L }
+    rtn q
+}
+
+// 常量池里 long 常量的去重键（用十进制字符串；Long.toString 三端都可用）
+fn longKeyOf(v : Long) -> String { rtn Long.toString(v) }
 
 pub class Buf {
     var data : Int[] = new Int[256]
@@ -200,6 +276,43 @@ pub class Cp {
         rtn idx
     }
 
+    pub fn floatConst(v : Float) -> Int {
+        var key = "f:" + Float.toString(v)
+        if (map.containsKey(key)) { rtn map.get(key) ?: 0 }
+        var idx = count
+        map.put(key, idx)
+        count = count + 1
+        b.u1(4)
+        b.u4(Float.floatToIntBits(v))
+        rtn idx
+    }
+
+    pub fn doubleConst(v : Double) -> Int {
+        var key = "d:" + Double.toString(v)
+        if (map.containsKey(key)) { rtn map.get(key) ?: 0 }
+        var idx = count
+        map.put(key, idx)
+        count = count + 2
+        b.u1(6)
+        var bits = Double.doubleToLongBits(v)
+        b.u4(longHi(bits))
+        b.u4(longLo(bits))
+        rtn idx
+    }
+
+    // long / double 常量各占两个槽（tag 5 / 6）
+    pub fn longConst(v : Long) -> Int {
+        var key = "j:" + longKeyOf(v)
+        if (map.containsKey(key)) { rtn map.get(key) ?: 0 }
+        var idx = count
+        map.put(key, idx)
+        count = count + 2
+        b.u1(5)
+        b.u4(longHi(v))
+        b.u4(longLo(v))
+        rtn idx
+    }
+
     prv fn refOf(tag : Int, owner : String, name : String, desc : String) -> Int {
         var key = "r:" + intToString(tag) + ":" + owner + "." + name + ":" + desc
         if (map.containsKey(key)) { rtn map.get(key) ?: 0 }
@@ -259,8 +372,10 @@ pub class Method {
     var refB : String[] = new String[16]
     var refC : String[] = new String[16]
     var refCount : Int = 0
-    var maxStack : Int = 4096
-    var maxLocals : Int = 4096
+    var maxStack : Int = 0
+    var maxLocals : Int = 0
+    var maxLocalSeen : Int = 0
+    var isStatic : Bool = false
     var failed : Bool = false
 
 
@@ -324,6 +439,24 @@ pub class Method {
     pub fn insn(op : Int) -> void { b.u1(op) }
 
     pub fn varInsn(op : Int, slot : Int) -> void {
+        // 与 ASM 一致：0..3 号槽用紧凑形式（aload_0 之类），字节更短
+        if (slot <= 3) {
+            var d = 0
+            if (op == 21 || op == 54) { d = 5 }
+            if (op == 22 || op == 55) { d = 8 }
+            if (op == 23 || op == 56) { d = 11 }
+            if (op == 24 || op == 57) { d = 14 }
+            if (op == 25 || op == 58) { d = 17 }
+            if (d > 0) {
+                b.u1(op + d + slot)
+                if (slot + 1 > maxLocalSeen) { maxLocalSeen = slot + 1 }
+                rtn
+            }
+        }
+        var wide = op == 22 || op == 23 || op == 24 || op == 55 || op == 56 || op == 57
+        var top = slot + 1
+        if (wide) { top = slot + 2 }
+        if (top > maxLocalSeen) { maxLocalSeen = top }
         if (slot > 255) {
             b.u1(196)
             b.u1(op)
@@ -369,24 +502,112 @@ pub class Method {
         b.u2(0)
     }
 
+    // ldc / ldc_w 与 ASM 同一套选择：下标 <= 255 用 2 字节 ldc，否则 ldc_w
     pub fn ldcInt(v : Int) -> void {
-        b.u1(19)
-        var at = b.size()
-        b.u2(0)
-        addRef(at, "int", intToString(v), "", "")
+        var idx = cp.intConst(v)
+        if (idx <= 255) {
+            b.u1(18)
+            b.u1(idx)
+        } else {
+            b.u1(19)
+            b.u2(idx)
+        }
     }
 
     pub fn ldcString(s : String) -> void {
-        b.u1(19)
-        var at = b.size()
-        b.u2(0)
-        addRef(at, "string", s, "", "")
+        var idx = cp.stringConst(s)
+        if (idx <= 255) {
+            b.u1(18)
+            b.u1(idx)
+        } else {
+            b.u1(19)
+            b.u2(idx)
+        }
     }
 
     pub fn iinc(slot : Int, delta : Int) -> void {
         b.u1(132)
         b.u1(slot)
         b.u1(delta)
+    }
+
+    // 带 isInterface 的方法调用（ASM 风格 5 参）
+    pub fn methodInsn5(op : Int, owner : String, name : String, desc : String, isIface : Bool) -> void {
+        if (isIface) {
+            ifaceMethodInsn(op, owner, name, desc)
+            rtn
+        }
+        methodInsn(op, owner, name, desc)
+    }
+
+    // bipush(16) / sipush(17) / newarray(188)
+    pub fn intInsn(op : Int, operand : Int) -> void {
+        b.u1(op)
+        if (op == 17) {
+            b.u2(operand)
+        } else {
+            b.u1(operand)
+        }
+    }
+
+    pub fn ldcLong(v : Long) -> void {
+        b.u1(20)
+        b.u2(cp.longConst(v))
+    }
+
+    // float / double 常量：暂不支持（要用 IEEE 位模式，三种执行后端都得有 bit-cast）
+    pub fn ldcFloat(v : Float) -> void {
+        var idx = cp.floatConst(v)
+        if (idx <= 255) {
+            b.u1(18)
+            b.u1(idx)
+        } else {
+            b.u1(19)
+            b.u2(idx)
+        }
+    }
+
+    pub fn ldcDouble(v : Double) -> void {
+        b.u1(20)
+        b.u2(cp.doubleConst(v))
+    }
+
+    // 类常量（`Type` 那种）：CONSTANT_Class
+    pub fn ldcClass(n : String) -> void {
+        var idx = cp.cls(n)
+        if (idx <= 255) {
+            b.u1(18)
+            b.u1(idx)
+        } else {
+            b.u1(19)
+            b.u2(idx)
+        }
+    }
+
+    // multianewarray：类引用 + 维度
+    pub fn multiANewArray(d : String, dims : Int) -> void {
+        b.u1(197)
+        var at = b.size()
+        b.u2(0)
+        b.u1(dims)
+        addRef(at, "class", d, "", "")
+    }
+
+    // 描述符里的参数占用槽数（long/double 各两个）
+    pub fn argSlots() -> Int {
+        var n = 0
+        var i = 0
+        var stop = false
+        while (i < desc.length() && !stop) {
+            var c = desc.charAt(i)
+            if (c == ')') { stop = true }
+            if (c == 'J' || c == 'D') { n = n + 2 } else {
+                if (c != '(' && c != ')') { n = n + 1 }
+            }
+            i = i + 1
+        }
+        if (!isStatic) { n = n + 1 }
+        rtn n
     }
 
     pub fn maxs(stack : Int, locals : Int) -> void {
@@ -437,6 +658,8 @@ pub class Method {
                 idx = cp.imethodRef(refA[i], refB[i], refC[i])
             } else if (k == "int") {
                 idx = cp.intConst(decInt(refA[i]))
+            } else if (k == "long") {
+                idx = cp.longConst(decLong(refA[i]))
             } else {
                 idx = cp.stringConst(refA[i])
             }
@@ -472,6 +695,8 @@ pub class ClassWriter {
     var methodCount : Int = 0
     var fields : FieldInfo[] = new FieldInfo[8]
     var fieldCount : Int = 0
+    var interfaces : String[] = new String[8]
+    var interfaceCount : Int = 0
 
     constructor(n : String, s : String) {
         name = n
@@ -484,6 +709,7 @@ pub class ClassWriter {
         m.access = a
         m.name = mn
         m.desc = md
+        m.isStatic = (a / 8) % 2 == 1
         if (methodCount >= methods.length) {
             var arr : Method[] = new Method[methods.length * 2]
             for (var i = 0; i < methodCount; i = i + 1) { arr[i] = methods[i] }
@@ -492,6 +718,16 @@ pub class ClassWriter {
         methods[methodCount] = m
         methodCount = methodCount + 1
         rtn m
+    }
+
+    pub fn addInterface(n : String) -> void {
+        if (interfaceCount >= interfaces.length) {
+            var arr : String[] = new String[interfaces.length * 2]
+            for (var i = 0; i < interfaceCount; i = i + 1) { arr[i] = interfaces[i] }
+            interfaces = arr
+        }
+        interfaces[interfaceCount] = n
+        interfaceCount = interfaceCount + 1
     }
 
     pub fn visitField(a : Int, fname : String, fdesc : String) -> void {
@@ -537,7 +773,10 @@ pub class ClassWriter {
         out.u2(access)
         out.u2(cp.cls(name))
         out.u2(cp.cls(superName))
-        out.u2(0)
+        out.u2(interfaceCount)
+        for (var ii = 0; ii < interfaceCount; ii = ii + 1) {
+            out.u2(cp.cls(interfaces[ii]))
+        }
         out.u2(fieldCount)
         for (var fi = 0; fi < fieldCount; fi = fi + 1) {
             var f = fields[fi]
@@ -556,8 +795,14 @@ pub class ClassWriter {
             out.u2(cp.utf8("Code"))
             var codeLen = m.b.size()
             out.u4(12 + codeLen + 8 * m.tryCount)
-            out.u2(m.maxStack)
-            out.u2(m.maxLocals)
+            var wantLocals = m.maxLocalSeen
+            var argn = m.argSlots()
+            if (argn > wantLocals) { wantLocals = argn }
+            if (m.maxLocals > wantLocals) { wantLocals = m.maxLocals }
+            var wantStack = m.maxStack
+            if (wantStack <= 0) { wantStack = 128 }
+            out.u2(wantStack)
+            out.u2(wantLocals)
             out.u4(codeLen)
             out.raw(m.b.data, codeLen)
             out.u2(m.tryCount)
@@ -576,4 +821,135 @@ pub class ClassWriter {
         out.u2(0)
         rtn out
     }
+}
+
+// ============================================================ ASM 风格门面
+//
+// 自举后端（`rsfSrc/bootstrap/Backend.rsf`）的源码里全是 `cw.visitMethod(...)`、
+// `mv.visitVarInsn(...)` 这类 ASM 调用。要让「C 后端编它自己」成立，就得把这些对象
+// 换成 rsf 自己实现的版本。门面**类名改短**（Cw/Mv/Lb/Fv/Av）避免与 Java ASM 撞名，
+// 方法名与实参个数保持与 ASM 一致，这样 Backend.rsf 只需要改类型名和少数调用点。
+
+pub class Lb {
+    var id : Int = 0
+    constructor() {}
+}
+
+pub class Av {
+    constructor() {}
+    // 注解属性暂不落盘（64e-3 的已知缺口），这里只要让调用点能编过、链式能走通
+    pub fn visit(k : ?String, v : String) -> void { }
+    pub fn visitStr(k : ?String, v : String) -> void { }
+    pub fn visitInt(k : ?String, v : Int) -> void { }
+    pub fn visitLong(k : ?String, v : Long) -> void { }
+    pub fn visitFloat(k : ?String, v : Float) -> void { }
+    pub fn visitDouble(k : ?String, v : Double) -> void { }
+    pub fn visitBool(k : ?String, v : Bool) -> void { }
+    pub fn visitByte(k : ?String, v : Byte) -> void { }
+    pub fn visitChar(k : ?String, v : Char) -> void { }
+    pub fn visitEnum(k : ?String, d : String, v : String) -> void { }
+    pub fn visitArray(k : ?String) -> Av { rtn new Av() }
+    pub fn visitEnd() -> void { }
+}
+
+pub class Fv {
+    constructor() {}
+    pub fn visitEnd() -> void { }
+    pub fn visitAnnotation(d : String, visible : Bool) -> Av { rtn new Av() }
+}
+
+pub class Mv {
+    var m : Method = new Method()
+    var nextLabel : Int = 1
+
+    constructor(mm : Method) { m = mm }
+
+    fn labelId(l : Lb) -> Int {
+        if (l.id == 0) {
+            l.id = nextLabel
+            nextLabel = nextLabel + 1
+        }
+        rtn l.id
+    }
+
+    pub fn visitCode() -> void { }
+    pub fn visitEnd() -> void { }
+    pub fn visitInsn(op : Int) -> void { m.insn(op) }
+    pub fn visitIntInsn(op : Int, operand : Int) -> void { m.intInsn(op, operand) }
+    pub fn visitVarInsn(op : Int, slot : Int) -> void { m.varInsn(op, slot) }
+    pub fn visitTypeInsn(op : Int, t : String) -> void { m.typeInsn(op, t) }
+    pub fn visitFieldInsn(op : Int, o : String, n : String, d : String) -> void { m.fieldInsn(op, o, n, d) }
+    pub fn visitMethodInsn(op : Int, o : String, n : String, d : String, iface : Bool) -> void {
+        m.methodInsn5(op, o, n, d, iface)
+    }
+    pub fn visitJumpInsn(op : Int, l : Lb) -> void { m.jump(op, labelId(l)) }
+    pub fn visitLabel(l : Lb) -> void { m.label(labelId(l)) }
+    pub fn visitLdcInt(v : Int) -> void { m.ldcInt(v) }
+    pub fn visitLdcLong(v : Long) -> void { m.ldcLong(v) }
+    pub fn visitLdcFloat(v : Float) -> void { m.ldcFloat(v) }
+    pub fn visitLdcDouble(v : Double) -> void { m.ldcDouble(v) }
+    pub fn visitLdcString(s : String) -> void { m.ldcString(s) }
+    pub fn visitLdcClass(n : String) -> void { m.ldcClass(n) }
+    pub fn visitMaxs(a : Int, b : Int) -> void { m.maxs(a, b) }
+    pub fn visitTryCatchBlock(a : Lb, b : Lb, c : Lb, t : ?String) -> void {
+        if (t == null) {
+            m.tryCatch(labelId(a), labelId(b), labelId(c), "")
+        } else {
+            m.tryCatch(labelId(a), labelId(b), labelId(c), t!!)
+        }
+    }
+    // 行号表 / 局部变量表暂不生成（调试信息，不影响语义）
+    pub fn visitLineNumber(line : Int, l : Lb) -> void { }
+    pub fn visitLocalVariable(a : String, b : String, c : ?String, d : Lb, e : Lb, f : Int) -> void { }
+    pub fn visitMultiANewArrayInsn(d : String, dims : Int) -> void { m.multiANewArray(d, dims) }
+    pub fn visitAnnotation(d : String, visible : Bool) -> Av { rtn new Av() }
+    pub fn visitAnnotationDefault() -> Av { rtn new Av() }
+}
+
+fn byteOf(v : Int) -> Byte {
+    var x = v % 256
+    if (x < 0) { x = x + 256 }
+    if (x > 127) { x = x - 256 }
+    rtn toByte(x)
+}
+
+fn bytesOf(b : Buf) -> Byte[] {
+    var out : Byte[] = new Byte[b.size()]
+    var i = 0
+    while (i < b.size()) {
+        out[i] = byteOf(b.data[i])
+        i = i + 1
+    }
+    rtn out
+}
+
+pub class Cw {
+    var w : ClassWriter = new ClassWriter("", "java/lang/Object")
+
+    constructor(flags : Int) { }
+
+    pub fn visit(ver : Int, acc : Int, nm : String, sig : ?String, sup : String, ifaces : String[]) -> void {
+        w.name = nm
+        w.access = acc
+        w.superName = sup
+        var i = 0
+        while (i < ifaces.length) {
+            w.addInterface(ifaces[i])
+            i = i + 1
+        }
+    }
+
+    pub fn visitMethod(a : Int, nm : String, d : String, sig : ?String, ex : ?String) -> Mv {
+        rtn new Mv(w.visitMethod(a, nm, d))
+    }
+
+    pub fn visitField(a : Int, nm : String, d : String, sig : ?String, value : ?String) -> Fv {
+        w.visitField(a, nm, d)
+        rtn new Fv()
+    }
+
+    pub fn visitSource(s : String, d : ?String) -> void { }
+    pub fn visitAnnotation(d : String, visible : Bool) -> Av { rtn new Av() }
+    pub fn visitEnd() -> void { }
+    pub fn toByteArray() -> Byte[] { rtn bytesOf(w.toBytes()) }
 }

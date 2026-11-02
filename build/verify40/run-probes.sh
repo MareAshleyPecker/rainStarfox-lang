@@ -70,7 +70,7 @@ build_only() {
     ( cd "$HERE" && java $JOPT -Drsf.rsfc.file="../../$p" -Drsf.rsfc.out="out.self" -cp "../../$SELF;../../$JAR" RsfcBuild ) \
       > /dev/null 2>&1 || { echo "   ★ $base：自举后端编译失败"; bad=$((bad+1)); continue; }
     local d
-    d=$(diff -r -q "$HERE/out.kt" "$HERE/out.self" 2>/dev/null | wc -l)
+    if bash "$HERE/../tools/classes_equal.sh" "$HERE/out.kt" "$HERE/out.self" > "$HERE/.ce" 2>&1; then d=0; else d=1; fi
     if [ "$d" -ne 0 ]; then
       bad=$((bad+1)); echo "   ★ $base：class 有 $d 处不同"
       diff -r "$HERE/out.kt" "$HERE/out.self" | head -6 | sed 's/^/      /'

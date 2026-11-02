@@ -796,6 +796,8 @@ class CBackend(private val model: SemanticModel, private val withEntry: Boolean 
             "Integer.parseInt" -> "rsf_parse_int(${a[0]})"
             "Long.parseLong" -> "rsf_parse_long(${a[0]})"
             "Float.parseFloat" -> "rsf_parse_float(${a[0]})"
+            "Float.floatToIntBits" -> "rsf_float_bits(${a[0]})"
+            "Double.doubleToLongBits" -> "rsf_double_bits(${a[0]})"
             "Double.parseDouble" -> "rsf_parse_double(${a[0]})"
             "Integer.valueOf", "Long.valueOf", "Float.valueOf", "Double.valueOf" -> "(${a[0]})"
             "Math.max" -> "rsf_max_i(${a[0]}, ${a[1]})"
@@ -1569,6 +1571,19 @@ class CBackend(private val model: SemanticModel, private val withEntry: Boolean 
             static void rsf_println_l(int64_t v)  { rsf_print_l(v); putchar('\n'); }
             static void rsf_println_b(bool v)     { rsf_print_b(v); putchar('\n'); }
             static void rsf_println_empty(void)   { putchar('\n'); }
+
+            // 类文件写出器要浮点常量的 IEEE 位模式：用 union 做 bit-cast
+            static int32_t rsf_float_bits(float v) {
+                union { float f; int32_t i; } u;
+                u.f = v;
+                return u.i;
+            }
+
+            static int64_t rsf_double_bits(double v) {
+                union { double d; int64_t i; } u;
+                u.d = v;
+                return u.i;
+            }
 
             static rsf_str rsf_char_to_str(uint16_t ch) {
                 char* b = (char*)malloc(4);
