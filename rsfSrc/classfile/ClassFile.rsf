@@ -1,0 +1,579 @@
+import "../core/HashMap.rsf"
+
+// 阶段 64d：自己写 class 文件（不依赖 ASM）
+//
+// 目标：给自举后端（Backend.rsf）一套与 ASM 同名同形的发射 API，
+// 让它编到 C 之后也能产出 .class。最小实现：
+//   * 常量池按「首次使用」顺序追加（与 ASM 默认行为一致）
+//   * 方法体 = 字节缓冲 + 标签回填（只做 16 位跳转，超范围显式失败）
+//   * 类文件版本 49（Java 5）：不需要 StackMapTable，校验器走类型推导
+//
+// 语言没有位运算，拼字节全用除法/取模。
+
+// 十进制字符串转整数（供常量池回填用；不依赖 parseInt 的错误返回）
+pub fn decInt(s : String) -> Int {
+    var neg = false
+    var i = 0
+    if (s.length() > 0 && s.charAt(0) == 45) {
+        neg = true
+        i = 1
+    }
+    var v = 0
+    while (i < s.length()) {
+        v = v * 10 + (charToInt(s.charAt(i)) - 48)
+        i = i + 1
+    }
+    if (neg) { v = 0 - v }
+    rtn v
+}
+
+// 向下取整的整数除法（负数也按数学 floor）
+pub fn floorDiv(a : Int, b : Int) -> Int {
+    var q = a / b
+    if (a % b != 0 && ((a < 0) != (b < 0))) { q = q - 1 }
+    rtn q
+}
+
+pub class Buf {
+    var data : Int[] = new Int[256]
+    var n : Int = 0
+
+    pub fn size() -> Int { rtn n }
+
+    prv fn grow(k : Int) -> void {
+        var cap = data.length
+        while (cap < n + k) { cap = cap * 2 }
+        var a : Int[] = new Int[cap]
+        for (var i = 0; i < n; i = i + 1) { a[i] = data[i] }
+        data = a
+    }
+
+    pub fn u1(v : Int) -> void {
+        if (n + 1 > data.length) { grow(1) }
+        var x = v % 256
+        if (x < 0) { x = x + 256 }
+        data[n] = x
+        n = n + 1
+    }
+
+    pub fn u2(v : Int) -> void {
+        u1(floorDiv(v, 256) % 256)
+        u1(v % 256)
+    }
+
+    pub fn u4(v : Int) -> void {
+        u1(floorDiv(v, 16777216) % 256)
+        u1(floorDiv(v, 65536) % 256)
+        u1(floorDiv(v, 256) % 256)
+        u1(v % 256)
+    }
+
+    pub fn raw(src : Int[], count : Int) -> void {
+        if (n + count > data.length) { grow(count) }
+        for (var i = 0; i < count; i = i + 1) {
+            var x = src[i] % 256
+            if (x < 0) { x = x + 256 }
+            data[n] = x
+            n = n + 1
+        }
+    }
+
+    pub fn patchU2(at : Int, v : Int) -> void {
+        var hi = floorDiv(v, 256) % 256
+        var lo = v % 256
+        if (hi < 0) { hi = hi + 256 }
+        if (lo < 0) { lo = lo + 256 }
+        data[at] = hi
+        data[at + 1] = lo
+    }
+}
+
+// JVM 类文件里的字符串用「修改版 UTF-8」：0 写成 C0 80，代理对每个码元各 3 字节。
+fn mutfLen(s : String) -> Int {
+    var n = 0
+    for (var i = 0; i < s.length(); i = i + 1) {
+        var ch = charToInt(s.charAt(i))
+        if (ch == 0) {
+            n = n + 2
+        } else if (ch <= 127) {
+            n = n + 1
+        } else if (ch <= 2047) {
+            n = n + 2
+        } else {
+            n = n + 3
+        }
+    }
+    rtn n
+}
+
+fn mutfWrite(b : Buf, s : String) -> void {
+    for (var i = 0; i < s.length(); i = i + 1) {
+        var ch = charToInt(s.charAt(i))
+        if (ch == 0) {
+            b.u1(192)
+            b.u1(128)
+        } else if (ch <= 127) {
+            b.u1(ch)
+        } else if (ch <= 2047) {
+            b.u1(192 + ch / 64)
+            b.u1(128 + ch % 64)
+        } else {
+            b.u1(224 + ch / 4096)
+            b.u1(128 + (ch / 64) % 64)
+            b.u1(128 + ch % 64)
+        }
+    }
+}
+
+pub class Cp {
+    var b : Buf = new Buf()
+    var count : Int = 1
+    var map : HashMap&<Int> = new HashMap&<Int>()
+
+    pub fn utf8(s : String) -> Int {
+        var key = "u:" + s
+        if (map.containsKey(key)) { rtn map.get(key) ?: 0 }
+        var idx = count
+        map.put(key, idx)
+        count = count + 1
+        b.u1(1)
+        b.u2(mutfLen(s))
+        mutfWrite(b, s)
+        rtn idx
+    }
+
+    // 依赖别的常量时先占位（tag + u2 0），拿到下标再回填；下标先占住，保证「下标 = 字节顺序」
+    pub fn cls(name : String) -> Int {
+        var key = "c:" + name
+        if (map.containsKey(key)) { rtn map.get(key) ?: 0 }
+        var idx = count
+        map.put(key, idx)
+        count = count + 1
+        b.u1(7)
+        var at = b.size()
+        b.u2(0)
+        var u = utf8(name)
+        b.patchU2(at, u)
+        rtn idx
+    }
+
+    pub fn stringConst(s : String) -> Int {
+        var key = "s:" + s
+        if (map.containsKey(key)) { rtn map.get(key) ?: 0 }
+        var idx = count
+        map.put(key, idx)
+        count = count + 1
+        b.u1(8)
+        var at = b.size()
+        b.u2(0)
+        var u = utf8(s)
+        b.patchU2(at, u)
+        rtn idx
+    }
+
+    pub fn intConst(v : Int) -> Int {
+        var key = "i:" + intToString(v)
+        if (map.containsKey(key)) { rtn map.get(key) ?: 0 }
+        var idx = count
+        map.put(key, idx)
+        count = count + 1
+        b.u1(3)
+        b.u4(v)
+        rtn idx
+    }
+
+    pub fn nameType(name : String, desc : String) -> Int {
+        var key = "n:" + name + "|" + desc
+        if (map.containsKey(key)) { rtn map.get(key) ?: 0 }
+        var idx = count
+        map.put(key, idx)
+        count = count + 1
+        b.u1(12)
+        var a1 = b.size()
+        b.u2(0)
+        var a2 = b.size()
+        b.u2(0)
+        var n = utf8(name)
+        var d = utf8(desc)
+        b.patchU2(a1, n)
+        b.patchU2(a2, d)
+        rtn idx
+    }
+
+    prv fn refOf(tag : Int, owner : String, name : String, desc : String) -> Int {
+        var key = "r:" + intToString(tag) + ":" + owner + "." + name + ":" + desc
+        if (map.containsKey(key)) { rtn map.get(key) ?: 0 }
+        var idx = count
+        map.put(key, idx)
+        count = count + 1
+        b.u1(tag)
+        var a1 = b.size()
+        b.u2(0)
+        var a2 = b.size()
+        b.u2(0)
+        var o = cls(owner)
+        var nt = nameType(name, desc)
+        b.patchU2(a1, o)
+        b.patchU2(a2, nt)
+        rtn idx
+    }
+
+    pub fn fieldRef(owner : String, name : String, desc : String) -> Int {
+        rtn refOf(9, owner, name, desc)
+    }
+
+    pub fn methodRef(owner : String, name : String, desc : String) -> Int {
+        rtn refOf(10, owner, name, desc)
+    }
+
+    pub fn imethodRef(owner : String, name : String, desc : String) -> Int {
+        rtn refOf(11, owner, name, desc)
+    }
+}
+
+pub class FieldInfo {
+    var access : Int = 0
+    var name : String = ""
+    var desc : String = ""
+}
+
+pub class Method {
+    var cp : Cp = new Cp()
+    var access : Int = 0
+    var name : String = ""
+    var desc : String = ""
+    var b : Buf = new Buf()
+    var labels : HashMap&<Int> = new HashMap&<Int>()
+    var fixAt : Int[] = new Int[16]
+    var fixLabel : Int[] = new Int[16]
+    var fixCount : Int = 0
+    var tryStart : Int[] = new Int[8]
+    var tryEnd : Int[] = new Int[8]
+    var tryHandler : Int[] = new Int[8]
+    var tryType : String[] = new String[8]
+    var tryCount : Int = 0
+    // 待解析的常量池引用：发出时先占位，finish 时统一按下标回填
+    var refAt : Int[] = new Int[16]
+    var refKind : String[] = new String[16]
+    var refA : String[] = new String[16]
+    var refB : String[] = new String[16]
+    var refC : String[] = new String[16]
+    var refCount : Int = 0
+    var maxStack : Int = 4096
+    var maxLocals : Int = 4096
+    var failed : Bool = false
+
+
+    prv fn growFix() -> void {
+        var a : Int[] = new Int[fixAt.length * 2]
+        var l : Int[] = new Int[fixAt.length * 2]
+        for (var i = 0; i < fixCount; i = i + 1) {
+            a[i] = fixAt[i]
+            l[i] = fixLabel[i]
+        }
+        fixAt = a
+        fixLabel = l
+    }
+
+    fn addFix(at : Int, label : Int) -> void {
+        if (fixCount >= fixAt.length) { growFix() }
+        fixAt[fixCount] = at
+        fixLabel[fixCount] = label
+        fixCount = fixCount + 1
+    }
+
+    prv fn growRefs() -> void {
+        var n = refAt.length * 2
+        var p1 : Int[] = new Int[n]
+        var p2 : String[] = new String[n]
+        var p3 : String[] = new String[n]
+        var p4 : String[] = new String[n]
+        var p5 : String[] = new String[n]
+        for (var i = 0; i < refCount; i = i + 1) {
+            p1[i] = refAt[i]
+            p2[i] = refKind[i]
+            p3[i] = refA[i]
+            p4[i] = refB[i]
+            p5[i] = refC[i]
+        }
+        refAt = p1
+        refKind = p2
+        refA = p3
+        refB = p4
+        refC = p5
+    }
+
+    fn addRef(at : Int, kind : String, a : String, b : String, c : String) -> void {
+        if (refCount >= refAt.length) { growRefs() }
+        refAt[refCount] = at
+        refKind[refCount] = kind
+        refA[refCount] = a
+        refB[refCount] = b
+        refC[refCount] = c
+        refCount = refCount + 1
+    }
+
+    pub fn label(id : Int) -> void {
+        labels.put(intToString(id), b.size())
+    }
+
+    pub fn visitCode() -> void { }
+
+    pub fn visitEnd() -> void { }
+
+    pub fn insn(op : Int) -> void { b.u1(op) }
+
+    pub fn varInsn(op : Int, slot : Int) -> void {
+        if (slot > 255) {
+            b.u1(196)
+            b.u1(op)
+            b.u2(slot)
+        } else {
+            b.u1(op)
+            b.u1(slot)
+        }
+    }
+
+    pub fn typeInsn(op : Int, t : String) -> void {
+        b.u1(op)
+        var at = b.size()
+        b.u2(0)
+        addRef(at, "class", t, "", "")
+    }
+
+    pub fn fieldInsn(op : Int, owner : String, name : String, desc : String) -> void {
+        b.u1(op)
+        var at = b.size()
+        b.u2(0)
+        addRef(at, "field", owner, name, desc)
+    }
+
+    pub fn methodInsn(op : Int, owner : String, name : String, desc : String) -> void {
+        b.u1(op)
+        var at = b.size()
+        b.u2(0)
+        addRef(at, "method", owner, name, desc)
+    }
+
+    pub fn ifaceMethodInsn(op : Int, owner : String, name : String, desc : String) -> void {
+        b.u1(op)
+        var at = b.size()
+        b.u2(0)
+        addRef(at, "iface", owner, name, desc)
+    }
+
+    // 16 位跳转：操作数在 addFix 记录的位置回填
+    pub fn jump(op : Int, labelId : Int) -> void {
+        b.u1(op)
+        addFix(b.size(), labelId)
+        b.u2(0)
+    }
+
+    pub fn ldcInt(v : Int) -> void {
+        b.u1(19)
+        var at = b.size()
+        b.u2(0)
+        addRef(at, "int", intToString(v), "", "")
+    }
+
+    pub fn ldcString(s : String) -> void {
+        b.u1(19)
+        var at = b.size()
+        b.u2(0)
+        addRef(at, "string", s, "", "")
+    }
+
+    pub fn iinc(slot : Int, delta : Int) -> void {
+        b.u1(132)
+        b.u1(slot)
+        b.u1(delta)
+    }
+
+    pub fn maxs(stack : Int, locals : Int) -> void {
+        if (stack > 0) { maxStack = stack }
+        if (locals > 0) { maxLocals = locals }
+    }
+
+    pub fn tryCatch(start : Int, end : Int, handler : Int, t : String) -> void {
+        if (tryCount >= tryStart.length) {
+            var a : Int[] = new Int[tryStart.length * 2]
+            var e : Int[] = new Int[tryStart.length * 2]
+            var h : Int[] = new Int[tryStart.length * 2]
+            var s : String[] = new String[tryStart.length * 2]
+            for (var i = 0; i < tryCount; i = i + 1) {
+                a[i] = tryStart[i]
+                e[i] = tryEnd[i]
+                h[i] = tryHandler[i]
+                s[i] = tryType[i]
+            }
+            tryStart = a
+            tryEnd = e
+            tryHandler = h
+            tryType = s
+        }
+        tryStart[tryCount] = start
+        tryEnd[tryCount] = end
+        tryHandler[tryCount] = handler
+        tryType[tryCount] = t
+        tryCount = tryCount + 1
+    }
+
+    pub fn labelAt(id : Int) -> Int {
+        if (!labels.containsKey(intToString(id))) { rtn -1 }
+        rtn labels.get(intToString(id)) ?: -1
+    }
+
+    prv fn resolveRefs() -> void {
+        for (var i = 0; i < refCount; i = i + 1) {
+            var k = refKind[i]
+            var idx = 0
+            if (k == "class") {
+                idx = cp.cls(refA[i])
+            } else if (k == "field") {
+                idx = cp.fieldRef(refA[i], refB[i], refC[i])
+            } else if (k == "method") {
+                idx = cp.methodRef(refA[i], refB[i], refC[i])
+            } else if (k == "iface") {
+                idx = cp.imethodRef(refA[i], refB[i], refC[i])
+            } else if (k == "int") {
+                idx = cp.intConst(decInt(refA[i]))
+            } else {
+                idx = cp.stringConst(refA[i])
+            }
+            b.patchU2(refAt[i], idx)
+        }
+    }
+
+    pub fn finish() -> void {
+        resolveRefs()
+        for (var i = 0; i < fixCount; i = i + 1) {
+            var target = labelAt(fixLabel[i])
+            var opAt = fixAt[i] - 1
+            if (target < 0) {
+                failed = true
+                rtn
+            }
+            var delta = target - opAt
+            if (delta < -32768 || delta > 32767) {
+                failed = true
+                rtn
+            }
+            b.patchU2(fixAt[i], delta)
+        }
+    }
+}
+
+pub class ClassWriter {
+    var access : Int = 1
+    var name : String = ""
+    var superName : String = "java/lang/Object"
+    var cp : Cp = new Cp()
+    var methods : Method[] = new Method[8]
+    var methodCount : Int = 0
+    var fields : FieldInfo[] = new FieldInfo[8]
+    var fieldCount : Int = 0
+
+    constructor(n : String, s : String) {
+        name = n
+        superName = s
+    }
+
+    pub fn visitMethod(a : Int, mn : String, md : String) -> Method {
+        var m = new Method()
+        m.cp = cp
+        m.access = a
+        m.name = mn
+        m.desc = md
+        if (methodCount >= methods.length) {
+            var arr : Method[] = new Method[methods.length * 2]
+            for (var i = 0; i < methodCount; i = i + 1) { arr[i] = methods[i] }
+            methods = arr
+        }
+        methods[methodCount] = m
+        methodCount = methodCount + 1
+        rtn m
+    }
+
+    pub fn visitField(a : Int, fname : String, fdesc : String) -> void {
+        var f = new FieldInfo()
+        f.access = a
+        f.name = fname
+        f.desc = fdesc
+        if (fieldCount >= fields.length) {
+            var arr : FieldInfo[] = new FieldInfo[fields.length * 2]
+            for (var i = 0; i < fieldCount; i = i + 1) { arr[i] = fields[i] }
+            fields = arr
+        }
+        fields[fieldCount] = f
+        fieldCount = fieldCount + 1
+    }
+
+    // 产出 class 文件字节；跳转没落点/超范围时返回 null
+    pub fn toBytes() -> Buf {
+        cp.cls(name)
+        cp.cls(superName)
+        for (var fi = 0; fi < fieldCount; fi = fi + 1) {
+            cp.utf8(fields[fi].name)
+            cp.utf8(fields[fi].desc)
+        }
+        for (var mi = 0; mi < methodCount; mi = mi + 1) {
+            var m = methods[mi]
+            cp.utf8(m.name)
+            cp.utf8(m.desc)
+            cp.utf8("Code")
+            for (var ti = 0; ti < m.tryCount; ti = ti + 1) {
+                if (m.tryType[ti] != "") { cp.cls(m.tryType[ti]) }
+            }
+            m.finish()
+            if (m.failed) { rtn new Buf() }
+        }
+
+        var out = new Buf()
+        out.u4(0 - 889275714)
+        out.u2(0)
+        out.u2(49)
+        out.u2(cp.count)
+        out.raw(cp.b.data, cp.b.size())
+        out.u2(access)
+        out.u2(cp.cls(name))
+        out.u2(cp.cls(superName))
+        out.u2(0)
+        out.u2(fieldCount)
+        for (var fi = 0; fi < fieldCount; fi = fi + 1) {
+            var f = fields[fi]
+            out.u2(f.access)
+            out.u2(cp.utf8(f.name))
+            out.u2(cp.utf8(f.desc))
+            out.u2(0)
+        }
+        out.u2(methodCount)
+        for (var mi = 0; mi < methodCount; mi = mi + 1) {
+            var m = methods[mi]
+            out.u2(m.access)
+            out.u2(cp.utf8(m.name))
+            out.u2(cp.utf8(m.desc))
+            out.u2(1)
+            out.u2(cp.utf8("Code"))
+            var codeLen = m.b.size()
+            out.u4(12 + codeLen + 8 * m.tryCount)
+            out.u2(m.maxStack)
+            out.u2(m.maxLocals)
+            out.u4(codeLen)
+            out.raw(m.b.data, codeLen)
+            out.u2(m.tryCount)
+            for (var ti = 0; ti < m.tryCount; ti = ti + 1) {
+                out.u2(m.labelAt(m.tryStart[ti]))
+                out.u2(m.labelAt(m.tryEnd[ti]))
+                out.u2(m.labelAt(m.tryHandler[ti]))
+                if (m.tryType[ti] == "") {
+                    out.u2(0)
+                } else {
+                    out.u2(cp.cls(m.tryType[ti]))
+                }
+            }
+            out.u2(0)
+        }
+        out.u2(0)
+        rtn out
+    }
+}

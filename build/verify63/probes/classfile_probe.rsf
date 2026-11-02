@@ -1,0 +1,21 @@
+import "../../../rsfSrc/classfile/ClassFile.rsf"
+
+fn main() -> void {
+    var cw = new ClassWriter("Hello", "java/lang/Object")
+    var mv = cw.visitMethod(9, "main", "([Ljava/lang/String;)V")
+    mv.visitCode()
+    mv.fieldInsn(178, "java/lang/System", "out", "Ljava/io/PrintStream;")
+    mv.ldcString("hello from rsf class file")
+    mv.methodInsn(182, "java/io/PrintStream", "println", "(Ljava/lang/String;)V")
+    mv.insn(177)
+    mv.maxs(16, 16)
+    var cls = cw.toBytes()
+    var out : Byte[] = new Byte[cls.size()]
+    for (var i = 0; i < cls.size(); i = i + 1) { out[i] = toByte(cls.data[i]) }
+    try {
+        writeBytes("build/verify63/out/Hello.class", out)
+        println("class " + intToString(cls.size()) + " bytes")
+    } catch (e : String) {
+        println("写失败: " + e)
+    }
+}

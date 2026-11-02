@@ -213,3 +213,7 @@ DESIGN-*.md
 !/build/verify62/java/
 !/build/verify62/java/**
 !/build/verify62/run-probes.sh
+
+### verify63（class 文件写出器）###
+!/build/verify63/
+/build/verify63/out/
