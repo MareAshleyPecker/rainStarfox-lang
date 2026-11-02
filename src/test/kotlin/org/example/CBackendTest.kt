@@ -339,4 +339,20 @@ class CBackendTest {
         assertTrue(!without.contains("JNI_CreateJavaVM"))
     }
 
+    @Test
+    fun `虚分派的接收者只求值一次`() {
+        val code = emit(
+            """
+            class A {
+                pub fn m() -> Int { rtn 1 }
+            }
+            fn mk() -> A { rtn new A() }
+            fn main() -> void { println(mk().m()) }
+            """.trimIndent(),
+        )
+        // 接收者是函数调用：产物里必须先存临时变量，mk 只能出现一次
+        assertEquals(1, Regex("""\(rsf_fn_mk\(\)\)""").findAll(code).count(), code)
+        assertTrue(code.contains("void* __rsf_recv"), code)
+    }
+
 }

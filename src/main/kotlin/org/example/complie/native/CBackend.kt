@@ -87,6 +87,7 @@ class CBackend(private val model: SemanticModel, private val withEntry: Boolean 
 
     /** `switch` 的被分派值落在临时变量里，编号保证同一函数内不重名。 */
     private var switchSeq = 0
+    private var tempSeq = 0
 
     /** 用到 `jvmCall` 才把「起 JVM」那段运行时编进来（不用的人不背 windows.h/jni.h）。 */
     private var usesJvmCall = false
@@ -866,12 +867,15 @@ class CBackend(private val model: SemanticModel, private val withEntry: Boolean 
     }
 
     /** 虚分派：按「名字 + 参数个数」查槽位，从对象的虚表里取实现再调。 */
+    /** 虚分派。接收者表达式的求值结果先存进临时变量——`parseTypeRef().text()` 这种接收者
+     * 本身带调用的写法，如果直接内联会在产物里被求值三次（自举 exe 里“解析两次”的根因）。 */
     private fun dispatchCall(receiver: String, decl: FuncDecl, args: List<String>): String {
         val slot = slotOf(decl.name, args.size)
         val params = (listOf("void*") + paramTypesOf(decl).map { cType(it) }).joinToString(", ")
         val ret = cType(returnType(decl))
-        val call = (listOf(receiver) + args).joinToString(", ")
-        return "(($ret (*)($params))(*(void***)($receiver))[$slot])($call)"
+        val tmp = "__rsf_recv" + (tempSeq++)
+        val call = (listOf(tmp) + args).joinToString(", ")
+        return "({ void* $tmp = (void*)($receiver); (($ret (*)($params))(*(void***)$tmp)[$slot])($call); })"
     }
 
     private fun slotOf(name: String, arity: Int): Int =
