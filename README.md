@@ -109,10 +109,14 @@ build/ui_app.exe --text hello --frames 2 --shot typed.bmp
 
 ### native 调 JVM（`jvmCall`）
 
-`--c` 出来的程序可以起 JVM 再调 Java 的 `public static String m(String)`：
+`--c` 出来的程序可以起 JVM 再调 Java（实参都是 `String`，返回值按 `toString` 取）：
 
 ```rsf
-fn main() -> void { println(jvmCall("Echo", "hi", "bob")) }
+fn main() -> void {
+    println(jvmCall("Echo", "hi", "bob"))            // 静态方法，可多参
+    var e = jvmNew("Echo", "tag")                     // 构造对象，返回句柄
+    println(jvmCallOn(e, "prefix", "hello"))          // 实例方法
+}
 ```
 
 ```bash
@@ -121,7 +125,7 @@ gcc out/x.c -I"$JAVA_HOME/include" -I"$JAVA_HOME/include/win32" -o out/x.exe
 RSF_JVM_CP=out out/x.exe      # → java:bob
 ```
 
-类路径用 `RSF_JVM_CP`（缺省 `.`）；`jvm.dll` 从 `RSF_JVM_DLL` / `$JAVA_HOME/bin/server/jvm.dll` / PATH 找。JVM 构建里 `jvmCall` 会报错（那边直接调 Java 就行）。细节见 `DESIGN-62.md`。
+类路径用 `RSF_JVM_CP`（缺省 `.`）；`jvm.dll` 从 `RSF_JVM_DLL` / `$JAVA_HOME/bin/server/jvm.dll` / PATH 找。构造器只收 `String` 参数，句柄上限 256 个；JVM 构建里这三个内置函数都会报错（那边直接调 Java 就行）。细节见 `DESIGN-62.md`。
 
 ## C 后端（native 线）
 
