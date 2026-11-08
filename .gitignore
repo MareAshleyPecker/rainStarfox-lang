@@ -217,3 +217,8 @@ DESIGN-*.md
 ### verify63（class 文件写出器）###
 !/build/verify63/
 /build/verify63/out/
+
+### 判据台共用的比较脚本（class 反汇编归一化）
+!/build/tools/
+!/build/tools/classes_equal.sh
+!/build/tools/norm.py

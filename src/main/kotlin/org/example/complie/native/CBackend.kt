@@ -14,6 +14,7 @@ import org.example.complie.ast.ContinueStmt
 import org.example.complie.ast.DerefAssignStmt
 import org.example.complie.ast.EnumDecl
 import org.example.complie.ast.Expr
+import org.example.complie.ast.FailStmt
 import org.example.complie.ast.ForceExpr
 import org.example.complie.ast.FloatLit
 import org.example.complie.ast.DoubleLit
@@ -94,12 +95,15 @@ class CBackend(private val model: SemanticModel, private val withEntry: Boolean 
 
     /** 用到 `jvmCall` 才把「起 JVM」那段运行时编进来（不用的人不背 windows.h/jni.h）。 */
     private var usesJvmCall = false
+    private var usesFile = false
 
     fun emit(): String {
         checkProgram()
         nameEverything()
         val sb = StringBuilder()
         sb.append(RUNTIME)
+        // 泛型擦除的盒子运行时：无条件带上（未用到时只是几个 static 函数，-w 下无告警）
+        sb.append(RuntimeErase)
         val runtimeEnd = sb.length
         for (e in model.enums.values) sb.append(enumBlock(e))
         for (cls in classes.values) sb.append(struct(cls))
@@ -139,6 +143,7 @@ class CBackend(private val model: SemanticModel, private val withEntry: Boolean 
             }
         }
         if (usesJvmCall) sb.insert(runtimeEnd, JVM_RUNTIME)
+        if (usesFile) sb.insert(runtimeEnd, FILE_RUNTIME)
         if (!withEntry) {
             // --c --lib：不发 main，宿主自己声明/调用导出的 rsf_fn_* 函数
             return sb.toString()
@@ -225,6 +230,21 @@ class CBackend(private val model: SemanticModel, private val withEntry: Boolean 
         }
     }
 
+    /** `fail` 提前返回时给一个零值：类型不匹配会编译失败，所以按当前函数返回类型挑一个。 */
+    private fun returnZero(type: RsfType?): String {
+        if (type == null) return "return;"
+        return when (type.base) {
+            RsfBase.VOID -> "return;"
+            RsfBase.INT, RsfBase.LONG, RsfBase.CHAR, RsfBase.BYTE -> "return 0;"
+            RsfBase.BOOL -> "return false;"
+            RsfBase.FLOAT -> "return 0.0f;"
+            RsfBase.DOUBLE -> "return 0.0;"
+            RsfBase.STRING -> "return rsf_str_null();"
+            RsfBase.TYPE_PARAM -> "return rsf_val_null();"
+            else -> "return NULL;"
+        }
+    }
+
     private fun fail(what: String): Nothing =
         throw RsfError("native", "C 后端暂不支持：$what（阶段 52 的 C 后端只接了 int/long/bool/string/数组/类）")
 
@@ -289,6 +309,7 @@ class CBackend(private val model: SemanticModel, private val withEntry: Boolean 
         if (classes.containsKey(name)) return "void*"
         if (model.interfaces.containsKey(name)) return "void*"
         if (model.enums.containsKey(name)) return "rsf_enum_$name"
+        if (name == "java/io/File" || name == "File") return "void*"
         fail("JVM 类型（$name）")
     }
 
@@ -574,6 +595,7 @@ static rsf_val rsf_box_long(int64_t v) { rsf_val b; b.tag = 2; b.i = 0; b.l = v;
 static rsf_val rsf_box_bool(bool v) { rsf_val b; b.tag = 3; b.i = v ? 1 : 0; b.l = 0; b.p = 0; b.s.len = 0; b.s.data = 0; return b; }
 static rsf_val rsf_box_double(double v) { rsf_val b; b.tag = 7; b.i = 0; b.l = 0; b.p = 0; b.s.len = 0; b.s.data = 0; b.d = v; b.l = 0; return b; }
 static rsf_val rsf_box_char(uint16_t v) { rsf_val b; b.tag = 4; b.i = v; b.l = 0; b.p = 0; b.s.len = 0; b.s.data = 0; return b; }
+static rsf_val rsf_val_null(void) { rsf_val b; b.tag = 0; b.i = 0; b.l = 0; b.p = 0; b.s.len = 0; b.s.data = 0; b.d = 0; return b; }
 static rsf_val rsf_box_str(rsf_str v) { rsf_val b; b.tag = 5; b.i = 0; b.l = 0; b.p = 0; b.s = v; return b; }
 static rsf_val rsf_box_ptr(void* v) { rsf_val b; b.tag = 6; b.i = 0; b.l = 0; b.p = v; b.s.len = 0; b.s.data = 0; return b; }
 static int32_t rsf_unbox_int(rsf_val b) { return b.i; }
@@ -616,15 +638,19 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
     /** 表达式在 C 里的**物理**类型：泛型方法/字段的返回与读取是盒子，即使前端已把它替换成 Int。 */
     private fun physicalType(e: Expr): RsfType = when (e) {
         is CallExpr -> model.callTargets[e]?.let { returnType(it) } ?: model.typeOf(e)
-        is MemberExpr -> {
-            val m = model.classModel.members[e]
-            if (m is UserMember.Field) m.type else model.typeOf(e)
+        is MemberExpr -> when (val m = model.classModel.members[e]) {
+            is UserMember.Field -> m.type
+            // 方法调用的物理类型看**声明**（泛型方法的 T 在 C 里是 rsf_val 盒子）
+            is UserMember.Method -> returnType(m.decl)
+            else -> model.typeOf(e)
         }
         else -> model.typeOf(e)
     }
 
     /** 期望是具体类型、拿到的是盒子 ⇒ 拆箱；期望是类型参数、拿到具体值 ⇒ 装箱。 */
     private fun adapt(want: RsfType, have: RsfType, code: String): String = when {
+        // null 实参：按形参类型落成对应表示（String 是结构体，不能直接塞 NULL）
+        want.base == RsfBase.STRING && (have.base == RsfBase.NULL || have.isPointer || have.base == RsfBase.EXTERNAL) && code == "NULL" -> "rsf_str_null()"
         want.base == RsfBase.TYPE_PARAM && have.base != RsfBase.TYPE_PARAM -> boxed(have, code)
         want.base != RsfBase.TYPE_PARAM && have.base == RsfBase.TYPE_PARAM -> unboxed(want, code)
         else -> code
@@ -656,6 +682,8 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
                 " = " + expr(s.value) + ";\n"
         }
         is SuperCallStmt, is ThisCallStmt -> ""
+        // 阶段 66：fail "..." → 置错误旗标并立刻从当前函数返回（错误由 try/catch 或顶层兜底）
+        is FailStmt -> pad(indent) + "rsf_set_err(" + expr(s.message) + "); " + returnZero(currentReturn) + NL
         is IndexAssignStmt -> {
             val target = s.target
             val elem = elemCType(elementOf(model.typeOf(target.receiver)))
@@ -703,9 +731,17 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
             val sb = StringBuilder()
             sb.append(pad(indent)).append("rsf_err = false;\n")
             for (inner in s.body.statements) {
-                sb.append(pad(indent)).append("if (!rsf_err) {\n")
-                sb.append(stmt(inner, indent + 1))
-                sb.append(pad(indent)).append("}\n")
+                if (inner is VarDeclStmt) {
+                    // 声明提到外面：否则变量被 if (!rsf_err) { } 关在块里，后面用不到
+                    val type = model.typeOf(inner)
+                    val name = paramName(inner.name)
+                    sb.append(pad(indent)).append("${cType(type)} $name;\n")
+                    sb.append(pad(indent)).append("if (!rsf_err) $name = ${expr(inner.initializer)};\n")
+                } else {
+                    sb.append(pad(indent)).append("if (!rsf_err) {\n")
+                    sb.append(stmt(inner, indent + 1))
+                    sb.append(pad(indent)).append("}\n")
+                }
             }
             sb.append(pad(indent)).append("if (rsf_err) {\n")
             sb.append(pad(indent + 1)).append("rsf_str v_").append(s.catchName).append(" = rsf_err_msg;\n")
@@ -782,15 +818,22 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
 
     /** `a ?: b`：C 里用语句表达式，保证 a 只求值一次。 */
     private fun elvis(e: ElvisExpr): String {
-        val t = model.typeOf(e.left)
+        // 左边可能是泛型盒子（物理类型 rsf_val），结果类型取前端算好的那个
+        val have = physicalType(e.left)
+        val want = model.typeOf(e)
         val code = expr(e.left)
         val test = when {
-            t.base == RsfBase.STRING -> "_e.data == NULL"
-            t.base == RsfBase.TYPE_PARAM -> "_e.tag == 0"
-            t.base == RsfBase.EXTERNAL || t.arrayDepth > 0 || t.ptrDepth > 0 || t.nullable -> "_e == NULL"
+            have.base == RsfBase.STRING -> "_e.data == NULL"
+            have.base == RsfBase.TYPE_PARAM -> "_e.tag == 0"
+            have.base == RsfBase.EXTERNAL || have.arrayDepth > 0 || have.ptrDepth > 0 || have.nullable -> "!_e"
             else -> "false"
         }
-        return "({ ${cType(t)} _e = $code; ($test) ? ${expr(e.right)} : _e; })"
+        val pick = when {
+            want.base == RsfBase.TYPE_PARAM && have.base != RsfBase.TYPE_PARAM -> boxed(have, "_e")
+            have.base == RsfBase.TYPE_PARAM && want.base != RsfBase.TYPE_PARAM -> unboxed(want, "_e")
+            else -> "_e"
+        }
+        return "({ ${cType(have)} _e = $code; ($test) ? ${expr(e.right)} : $pick; })"
     }
 
     private fun floatLit(v: Float): String = if (v == Float.POSITIVE_INFINITY) "(1.0f/0.0f)" else if (v == Float.NEGATIVE_INFINITY) "(-1.0f/0.0f)" else v.toString() + "f"
@@ -837,11 +880,18 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
     private fun nullValue(e: NullLit, expected: RsfType?): String {
         val t = expected ?: model.typeOf(e)
         if (t.base == RsfBase.STRING && t.nullable) return "rsf_str_null()"
+        if (t.base == RsfBase.TYPE_PARAM) return "rsf_val_null()"
         if (t.base == RsfBase.NULL || t.isPointer || t.arrayDepth > 0 || t.base == RsfBase.EXTERNAL) return "NULL"
         fail("可空的 ${t.rsfName} 上的 null 字面量（第 ${e.at.line} 行）")
     }
 
     private fun newObj(e: NewExpr): String {
+        // 阶段 66：new File(path) → 宿主侧 rsf_file
+        if (e.className == "File" || e.className == "java.io.File" || e.className == "java/io/File") {
+            usesFile = true
+            val arg = e.arguments.firstOrNull() ?: fail("new File() 没有参数")
+            return "rsf_file_new(${expr(arg)})"
+        }
         val cls = model.classModel.newTargets[e] ?: fail("new 的类（${e.className}）")
         val ctor = model.classModel.newCtors[e]
         val name = if (ctor != null) ctorNames[ctor] ?: fail("构造器命名") else defaultCtorNames[cls] ?: fail("默认构造器命名")
@@ -876,6 +926,27 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
             val call = "$fn($code)"
             val line = call.replace("rsf_eprint_", "rsf_eprintln_")
             return if (e.name == "println") line else call
+        }
+        // 阶段 66：java.io.File（自举编译器遍历目录/判断文件）
+        val fileType = runCatching { model.typeOf(e.receiver) }.getOrNull()
+        if (fileType != null && fileType.base == RsfBase.EXTERNAL && fileType.arrayDepth == 0 &&
+            (fileType.externalName == "java/io/File" || fileType.externalName == "File")
+        ) {
+            usesFile = true
+            val recv = "((rsf_file*)(${expr(e.receiver)}))"
+            return when (e.name) {
+                "isFile" -> "rsf_file_is_file($recv)"
+                "isDirectory" -> "rsf_file_is_dir($recv)"
+                "exists" -> "rsf_file_exists($recv)"
+                "length" -> "rsf_file_length($recv)"
+                "getName" -> "rsf_file_name($recv)"
+                "getParent" -> "rsf_file_parent($recv)"
+                "getPath", "toString" -> "rsf_file_path($recv)"
+                "listFiles" -> "rsf_file_list($recv)"
+                "mkdirs" -> "rsf_file_mkdirs($recv)"
+                "delete" -> "rsf_file_delete($recv)"
+                else -> null
+            }
         }
         val recv = (e.receiver as? VarExpr)?.name ?: return null
         if (recv !in JDK_CLASSES) return null
@@ -947,6 +1018,7 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
                 "repeat" -> return "rsf_str_repeat($recv, ${args[0]})"
                 "replace" -> return "rsf_str_replace($recv, ${args[0]}, ${args[1]})"
                 "toUpperCase" -> return "rsf_str_upper($recv)"
+                "compareTo" -> return "rsf_str_compare($recv, ${args[0]})"
                 "toLowerCase" -> return "rsf_str_lower($recv)"
             }
         }
@@ -961,7 +1033,10 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
                 if (resolved.decl.isStatic) {
                     "$name(${args.joinToString(", ") { expr(it) }})"
                 } else {
-                    dispatchCall(receiver, resolved.decl, args.map { expr(it) })
+                    val pts = paramTypesOf(resolved.decl)
+                    dispatchCall(receiver, resolved.decl, args.mapIndexed { i, a ->
+                        adapt(pts.getOrNull(i) ?: model.typeOf(a), model.typeOf(a), expr(a))
+                    })
                 }
             }
             else -> fail("成员访问 '${e.name}'（第 ${e.at.line} 行）")
@@ -985,13 +1060,8 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
 
     private fun newArray(e: NewArrayExpr): String {
         if (e.dimensions.size != 1) fail("多维数组")
-        val base = baseOf(e.elementType)
-        val type = if (base == RsfBase.EXTERNAL) {
-            RsfType(base, externalName = e.elementType.name, ptrDepth = e.elementType.ptrDepth)
-        } else {
-            RsfType(base, ptrDepth = e.elementType.ptrDepth)
-        }
-        val elemSize = elemCType(type)
+        // 元素类型用语义类型：泛型实参 T 也会落到 rsf_val（阶段 66）
+        val elemSize = elemCType(elementOf(model.typeOf(e)))
         return "rsf_arr_new(${expr(e.dimensions[0])}, (int64_t)sizeof($elemSize))"
     }
 
@@ -1013,7 +1083,10 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
     private fun forceOf(e: ForceExpr): String {
         val operand = e.operand
         val code = expr(operand)
-        return if (model.typeOf(operand).base == RsfBase.STRING) "rsf_force_str($code)" else "rsf_force_ptr($code)"
+        val t = model.typeOf(operand)
+        // 非可空值上的 !! 是编译期的空断言，C 里没有可做的
+        if (!t.nullable) return code
+        return if (t.base == RsfBase.STRING) "rsf_force_str($code)" else "rsf_force_ptr($code)"
     }
 
     private fun unary(e: UnaryExpr): String {
@@ -1087,11 +1160,15 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
             return if (implicit.decl.isStatic) {
                 "$name(${e.arguments.joinToString(", ") { expr(it) }})"
             } else {
-                dispatchCall("self", implicit.decl, e.arguments.map { expr(it) })
+                val pts = paramTypesOf(implicit.decl)
+                dispatchCall("self", implicit.decl, e.arguments.mapIndexed { i, a ->
+                    adapt(pts.getOrNull(i) ?: model.typeOf(a), model.typeOf(a), expr(a))
+                })
             }
         }
         when (e.name) {
             "intToString" -> return "rsf_int_to_str(${expr(e.arguments[0])})"
+            "stringBytes" -> return "rsf_str_bytes(${expr(e.arguments[0])})"
             "charToInt" -> return "((int32_t)${expr(e.arguments[0])})"
             "toChar" -> return "((uint16_t)${expr(e.arguments[0])})"
             "toByte" -> return "((int8_t)${expr(e.arguments[0])})"
@@ -1505,6 +1582,122 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
 
         """.trimIndent() + '\n'
         /** 单文件运行时：程序与这些辅助函数编在一起，不依赖任何 rsf 运行时库。 */
+        /** 阶段 66：java.io.File 的 shim（只在用到 File 时插进运行时）。 */
+        private val FILE_RUNTIME = """
+            /* ---- 阶段 66：java.io.File 的宿主侧 shim（自举编译器要用它遍历文件） ---- */
+            #include <sys/stat.h>
+            #include <dirent.h>
+            #ifdef _WIN32
+            #include <direct.h>
+            #define rsf_mkdir(p) _mkdir(p)
+            #else
+            #include <sys/types.h>
+            #define rsf_mkdir(p) mkdir(p, 0777)
+            #endif
+
+            typedef struct rsf_file { rsf_str path; } rsf_file;
+
+            static rsf_file* rsf_file_new(rsf_str p) {
+                rsf_file* f = (rsf_file*)malloc(sizeof(rsf_file));
+                f->path = p;
+                return f;
+            }
+            static int rsf_file_stat(rsf_file* f, struct stat* st) {
+                if (!f || !f->path.data) return -1;
+                return stat(f->path.data, st);
+            }
+            static bool rsf_file_is_file(rsf_file* f) {
+                struct stat st;
+                return rsf_file_stat(f, &st) == 0 && (st.st_mode & S_IFREG) != 0;
+            }
+            static bool rsf_file_is_dir(rsf_file* f) {
+                struct stat st;
+                return rsf_file_stat(f, &st) == 0 && (st.st_mode & S_IFDIR) != 0;
+            }
+            static bool rsf_file_exists(rsf_file* f) {
+                struct stat st;
+                return rsf_file_stat(f, &st) == 0;
+            }
+            static int64_t rsf_file_length(rsf_file* f) {
+                struct stat st;
+                if (rsf_file_stat(f, &st) != 0) return 0;
+                return (int64_t)st.st_size;
+            }
+            static rsf_str rsf_file_path(rsf_file* f) {
+                if (!f) return rsf_str_c("");
+                return f->path;
+            }
+            static rsf_str rsf_file_name(rsf_file* f) {
+                if (!f || !f->path.data) return rsf_str_c("");
+                const char* p = f->path.data;
+                const char* last = p;
+                for (; *p; p++) { if (*p == '/' || *p == ((char)92)) last = p + 1; }
+                return rsf_str_c(last);
+            }
+            static rsf_str rsf_file_parent(rsf_file* f) {
+                if (!f || !f->path.data) return rsf_str_c("");
+                int64_t n = f->path.len;
+                const char* p = f->path.data;
+                int64_t i = n - 1;
+                while (i >= 0 && (p[i] == '/' || p[i] == ((char)92))) i--;
+                while (i >= 0 && p[i] != '/' && p[i] != ((char)92)) i--;
+                if (i < 0) return rsf_str_c("");
+                return rsf_str_substr(f->path, 0, i);
+            }
+            static bool rsf_file_mkdirs(rsf_file* f) {
+                if (!f || !f->path.data) return false;
+                char tmp[1024];
+                int64_t n = f->path.len;
+                if (n <= 0 || n >= 1000) return false;
+                memcpy(tmp, f->path.data, (size_t)n);
+                tmp[n] = 0;
+                for (int64_t i = 1; i < n; i++) {
+                    if (tmp[i] == '/' || tmp[i] == ((char)92)) {
+                        char c = tmp[i];
+                        tmp[i] = 0;
+                        rsf_mkdir(tmp);
+                        tmp[i] = c;
+                    }
+                }
+                return rsf_mkdir(tmp) == 0;
+            }
+            static bool rsf_file_delete(rsf_file* f) {
+                if (!f || !f->path.data) return false;
+                return remove(f->path.data) == 0;
+            }
+            static rsf_arr rsf_file_list(rsf_file* f) {
+                rsf_arr a = rsf_arr_new(0, sizeof(void*));
+                if (!f || !f->path.data) return a;
+                DIR* d = opendir(f->path.data);
+                if (!d) return a;
+                int64_t n = 0;
+                struct dirent* e;
+                while ((e = readdir(d)) != NULL) {
+                    if (strcmp(e->d_name, ".") == 0 || strcmp(e->d_name, "..") == 0) continue;
+                    n++;
+                }
+                closedir(d);
+                a = rsf_arr_new(n, sizeof(void*));
+                d = opendir(f->path.data);
+                if (!d) return a;
+                int64_t i = 0;
+                while ((e = readdir(d)) != NULL && i < n) {
+                    if (strcmp(e->d_name, ".") == 0 || strcmp(e->d_name, "..") == 0) continue;
+                    int64_t plen = f->path.len;
+                    int64_t nlen = (int64_t)strlen(e->d_name);
+                    char* buf = (char*)malloc((size_t)(plen + nlen + 2));
+                    memcpy(buf, f->path.data, (size_t)plen);
+                    buf[plen] = '/';
+                    memcpy(buf + plen + 1, e->d_name, (size_t)nlen);
+                    buf[plen + 1 + nlen] = 0;
+                    ((void**)a.data)[i] = (void*)rsf_file_new(rsf_str_c(buf));
+                    i++;
+                }
+                closedir(d);
+                return a;
+            }
+        """
+
         private val RUNTIME = """
             /* 由 rsf build --c 生成（阶段 52 的 C 后端，native 线第一刀） */
             #include <stdint.h>
@@ -1567,6 +1760,14 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
             // 阶段 58a：String 的成员方法（按 UTF-8 字节算，ASCII 之外一个汉字算 3 个）。
             static int32_t rsf_str_len(rsf_str s) { return (int32_t)s.len; }
 
+            static rsf_arr rsf_str_bytes(rsf_str s) {
+                rsf_arr a;
+                a.len = s.len;
+                a.data = malloc((size_t)(s.len > 0 ? s.len : 1));
+                if (s.len > 0) memcpy(a.data, s.data, (size_t)s.len);
+                return a;
+            }
+
             static uint16_t rsf_str_char_at(rsf_str s, int32_t i) {
                 if (i < 0 || (int64_t)i >= s.len) return 0;
                 return (uint16_t)((const unsigned char*)s.data)[i];
@@ -1626,6 +1827,15 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
                     if (memcmp((char*)s.data + i, p.data, (size_t)p.len) == 0) return true;
                 }
                 return false;
+            }
+
+            static int32_t rsf_str_compare(rsf_str a, rsf_str b) {
+                int64_t n = a.len < b.len ? a.len : b.len;
+                for (int64_t i = 0; i < n; i++) {
+                    unsigned char ca = (unsigned char)a.data[i], cb = (unsigned char)b.data[i];
+                    if (ca != cb) return (int32_t)ca - (int32_t)cb;
+                }
+                return a.len < b.len ? -1 : (a.len > b.len ? 1 : 0);
             }
 
             static rsf_str rsf_str_upper(rsf_str s) {
@@ -1746,10 +1956,21 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
                 return true;
             }
 
+            /* rsf 的 string 带长度、不一定以 0 结尾：调 libc 前先拷成 C 字符串 */
+            static char* rsf_zstr(rsf_str s) {
+                static char* buf = NULL;
+                static int cap = 0;
+                int need = (int)s.len + 1;
+                if (need > cap) { cap = need * 2 + 32; buf = (char*)realloc(buf, (size_t)cap); }
+                if (s.len > 0 && s.data) memcpy(buf, s.data, (size_t)s.len);
+                buf[s.len] = 0;
+                return buf;
+            }
             static int32_t rsf_parse_int(rsf_str s) {
+                char* cs = rsf_zstr(s);
                 char* end = NULL;
-                long v = strtol((const char*)s.data, &end, 10);
-                if (end == (const char*)s.data || end == NULL || *end != 0) {
+                long v = strtol(cs, &end, 10);
+                if (end == cs || end == NULL || *end != 0) {
                     int cap = (int)s.len + 48;
                     char* m = (char*)malloc((size_t)cap);
                     int n = snprintf(m, (size_t)cap, "parseInt: 不是合法的整数：'%s'", (const char*)s.data);
@@ -1759,9 +1980,9 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
                 }
                 return (int32_t)v;
             }
-            static int64_t rsf_parse_long(rsf_str s) { return (int64_t)strtoll((const char*)s.data, NULL, 10); }
-            static float rsf_parse_float(rsf_str s) { return strtof((const char*)s.data, NULL); }
-            static double rsf_parse_double(rsf_str s) { return strtod((const char*)s.data, NULL); }
+            static int64_t rsf_parse_long(rsf_str s) { return (int64_t)strtoll(rsf_zstr(s), NULL, 10); }
+            static float rsf_parse_float(rsf_str s) { return strtof(rsf_zstr(s), NULL); }
+            static double rsf_parse_double(rsf_str s) { return strtod(rsf_zstr(s), NULL); }
             static int32_t rsf_max_i(int32_t a, int32_t b) { return a > b ? a : b; }
             static bool rsf_is_digit(uint16_t c) { return c >= 48 && c <= 57; }
             static bool rsf_is_letter(uint16_t c) { return (c >= 65 && c <= 90) || (c >= 97 && c <= 122); }
@@ -1820,7 +2041,7 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
             }
 
             static rsf_str rsf_get_prop(rsf_str key) {
-                const char* v = getenv((const char*)key.data);
+                const char* v = getenv(rsf_zstr(key));
                 rsf_str s;
                 if (!v) { s.len = 0; s.data = NULL; return s; }
                 s.data = v;

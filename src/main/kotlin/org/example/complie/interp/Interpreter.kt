@@ -2215,6 +2215,7 @@ class Interpreter(
                 Files.write(Paths.get(it), (args[1] as String).toByteArray(StandardCharsets.UTF_8))
                 null
             }
+            "stringBytes" -> (args[0] as String).toByteArray(Charsets.UTF_8)
             "readBytes" -> fileCall(builtin.name, args[0] as String) {
                 Files.readAllBytes(Paths.get(it))
             }

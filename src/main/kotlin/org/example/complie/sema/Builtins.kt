@@ -122,6 +122,13 @@ object Builtins {
     val TO_UPPER = Builtin("toUpper", listOf(RsfType.CHAR), RsfType.CHAR, doc = "转大写")
     val TO_LOWER = Builtin("toLower", listOf(RsfType.CHAR), RsfType.CHAR, doc = "转小写")
 
+    /** `stringBytes(s)`：字符串的 UTF-8 字节（自举编译器写 class 常量池要用）。 */
+    private val BYTE_ARRAY_TYPE: RsfType = RsfType.BYTE.arrayOf(1)
+    val STRING_BYTES = Builtin(
+        "stringBytes", listOf(RsfType.STRING), BYTE_ARRAY_TYPE,
+        doc = "字符串的 UTF-8 字节",
+    )
+
     // ------------------------------------------------------------------ 文件读写（阶段 16b）
 
     /** `Byte[]` 的 rsf 类型：`readBytes` 的返回、`writeBytes` 的参数都用它。 */
@@ -183,7 +190,7 @@ object Builtins {
     /** 带签名的内置函数（`print` / `println` 是单参数特例，签名不在这里表达）。 */
     val ALL: List<Builtin> = listOf(
         TO_BYTE, TO_CHAR, CHAR_TO_INT, INT_TO_STRING, PARSE_INT,
-        IS_DIGIT, IS_LETTER, IS_WHITESPACE, TO_UPPER, TO_LOWER,
+        IS_DIGIT, IS_LETTER, IS_WHITESPACE, TO_UPPER, TO_LOWER, STRING_BYTES,
         READ_TEXT, WRITE_TEXT, READ_BYTES, WRITE_BYTES,
         JVM_CALL, JVM_NEW, JVM_CALL_ON,
     )

@@ -3518,6 +3518,10 @@ fn builtinOf(name : String) -> ?Builtin2 {
         one[0] = tInt()
         rtn new Builtin2(name, one, tString(), "", "")
     }
+    if (name == "stringBytes") {
+        one[0] = tString()
+        rtn new Builtin2(name, one, new BType("Byte", "", false, 1), "", "")
+    }
     if (name == "parseInt") {
         one[0] = tString()
         rtn new Builtin2(name, one, tInt(), parseIntHelperName(), parseIntHelperDesc())
@@ -5883,6 +5887,11 @@ fn emitBuiltin(g : Gen, mv : Mv, b : Builtin2) -> void {
     if (n == "charToInt") { rtn }
     if (n == "intToString") {
         eStringValueOfInt(mv)
+        rtn
+    }
+    if (n == "stringBytes") {
+        mv.visitFieldInsn(178, "java/nio/charset/StandardCharsets", "UTF_8", "Ljava/nio/charset/Charset;")
+        mv.visitMethodInsn(182, "java/lang/String", "getBytes", "(Ljava/nio/charset/Charset;)[B", false)
         rtn
     }
     if (n == "parseInt") {

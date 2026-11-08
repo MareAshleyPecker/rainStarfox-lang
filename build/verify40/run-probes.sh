@@ -73,7 +73,7 @@ build_only() {
     if bash "$HERE/../tools/classes_equal.sh" "$HERE/out.kt" "$HERE/out.self" > "$HERE/.ce" 2>&1; then d=0; else d=1; fi
     if [ "$d" -ne 0 ]; then
       bad=$((bad+1)); echo "   ★ $base：class 有 $d 处不同"
-      diff -r "$HERE/out.kt" "$HERE/out.self" | head -6 | sed 's/^/      /'
+      head -2 "$HERE/.ce" | sed "s/^/      /"
     fi
   done
   echo "==== 后端对拍：语料 $(probe_list | wc -l) 份  不同 $bad ===="
