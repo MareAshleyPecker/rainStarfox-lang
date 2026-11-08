@@ -646,13 +646,13 @@ pub class Lexer(source : String) {
         var startCol = column
         advance()   // 开引号
         var value = ""
+        // 非 ASCII 的源码在 C 后端里是「一个字符 = 一个 UTF-8 字节」：
+        // 逐字节 `value = value + c` 会把这些字节再编码一次（双重编码）。
+        // 所以只按「片段」切原文，转义处单独插：片段走 substring，字节原样保留。
+        var segStart = pos
         var going = true
         while (going) {
             if (atEnd()) {
-                // 报错位置指向**开引号那里**（Kotlin 版也是这么记的：漏了收尾引号会
-                // 一路吃到文件末尾，指到末尾没有意义）。
-                // 这里用 markFail 而不是 reportError：safe 模式下 ILLEGAL 的位置也应该是
-                // 开引号，不能是撞上 EOF 时的位置。
                 markFail("字符串没有闭合（缺少 \"）", startLine, startCol)
                 if (safe) {
                     addErrorToken("字符串没有闭合（缺少 \"）", startLine, startCol)
@@ -661,6 +661,7 @@ pub class Lexer(source : String) {
             }
             var c = advance()
             if (c == '"') {
+                value = value + src.substring(segStart, pos - 1)
                 going = false
             } else {
                 if (c == '\\') {
@@ -672,9 +673,8 @@ pub class Lexer(source : String) {
                         rtn
                     }
                     var e = advance()
-                    value = value + stringEscape(e)
-                } else {
-                    value = value + c
+                    value = value + src.substring(segStart, pos - 2) + stringEscape(e)
+                    segStart = pos
                 }
             }
         }
