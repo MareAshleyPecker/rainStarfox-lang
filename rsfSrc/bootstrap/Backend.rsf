@@ -238,40 +238,43 @@ fn hexValue(c : Char) -> Int {
 
 // Parser.escapeValue 的逆
 fn unesc(s : String) -> String {
+    // 不能逐字符 `out = out + c`：C 后端里「字符」是 UTF-8 的一个字节，
+    // 逐字节拼会把非 ASCII 再编码一次。普通字符按片段 substring 取。
     var out = ""
+    var seg = 0
     var i = 0
     var len = s.length()
     while (i < len) {
         var c = s.charAt(i)
         if (c == '\\' && i + 1 < len) {
             var d = s.charAt(i + 1)
+            var repl = ""
+            var skip = 2
             if (d == 'n') {
-                out = out + '\n'
-                i = i + 2
+                repl = "\n"
             } else if (d == 'r') {
-                out = out + '\r'
-                i = i + 2
+                repl = "\r"
             } else if (d == 't') {
-                out = out + '\t'
-                i = i + 2
+                repl = "\t"
             } else if (d == 's') {
-                out = out + ' '
-                i = i + 2
+                repl = " "
             } else if (d == '\\') {
-                out = out + '\\'
-                i = i + 2
+                repl = "\\"
             } else if (d == 'x' && i + 3 < len) {
-                out = out + toChar(hexValue(s.charAt(i + 2)) * 16 + hexValue(s.charAt(i + 3)))
-                i = i + 4
+                repl = toChar(hexValue(s.charAt(i + 2)) * 16 + hexValue(s.charAt(i + 3))) + ""
+                skip = 4
             } else {
-                out = out + c
-                i = i + 1
+                repl = "\\"
+                skip = 1
             }
+            out = out + s.substring(seg, i) + repl
+            i = i + skip
+            seg = i
         } else {
-            out = out + c
             i = i + 1
         }
     }
+    out = out + s.substring(seg, len)
     rtn out
 }
 

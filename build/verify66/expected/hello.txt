@@ -1,0 +1,3 @@
+hello native
+55
+42

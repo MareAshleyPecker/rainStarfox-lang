@@ -162,7 +162,19 @@ fn both(x : Int) -> Int { rtn x }              // 两侧都有
 - 指针在 JVM 上表示成 `Object[]{ 帧, 格子号 }`：只有被 `&x` 取过地址的变量会被提升进帧数组，没用指针的函数字节码不受影响（`build/verify37/` 守着）。
 - 还不支持：`&obj.f`、`&a[i]`（显式报错）；`jvmCall` 只在 native 构建里可用（JVM 侧直接调 Java 即可）。
 
-### Termux / aarch64
+### C 自举（实验）
+
+C 后端能把自举编译器自己编成原生 exe，再由它编出 class：
+
+```bash
+rsf build rsfSrc/bootstrap/RsfcBuild.rsf --c -o build/native-rsfc
+gcc -O1 -w -o build/native-rsfc/RsfcBuild.exe build/native-rsfc/RsfcBuild.c
+cd build/native-rsfc && env rsf.rsfc.cmd=build rsf.rsfc.file=示例.rsf rsf.rsfc.out=out ./RsfcBuild.exe
+```
+
+判据：`bash build/verify66/run-probes.sh`（出 exe → 编样例跑 → stage1 与 Kotlin 版反汇编等价）。
+
+## Termux / aarch64
 
 Termux 里 `pkg install openjdk-17`，解压 `dist/rainStarfox-termux-arm64-0.9.0.tar.gz`（用 `./gradlew.bat jar` 之后按 `dist/termux/README.md` 打包）再 `./install.sh`，就有 `rsf` 命令。jar 编到 Java 17 字节码（major 61），openjdk-17 / 21 都能跑。
 

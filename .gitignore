@@ -222,3 +222,7 @@ DESIGN-*.md
 !/build/tools/
 !/build/tools/classes_equal.sh
 !/build/tools/norm.py
+
+### 阶段 66：原生自举判据台（脚本与金标进库，产物不进）###
+!/build/verify66/
+/build/verify66/work/

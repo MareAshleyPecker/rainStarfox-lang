@@ -1,0 +1,10 @@
+fn fib(n : Int) -> Int {
+    if (n < 2) { rtn n }
+    rtn fib(n - 1) + fib(n - 2)
+}
+
+fn main() -> void {
+    println("hello native")
+    println(fib(10))
+    println(6 * 7)
+}

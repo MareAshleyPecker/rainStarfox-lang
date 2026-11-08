@@ -490,38 +490,42 @@ pub fn labelNameOnlyMessage() -> String {
 // 就没法按空格切了 —— 而字符串字面量 `"hello world"` 里就有空格。
 
 pub fn escapeValue(s : String) -> String {
+    // 注意：不能 `out = out + c` 逐字符拼——C 后端里「字符」是 UTF-8 的一个字节，
+    // 逐字节拼会把非 ASCII 再编码一次。所以普通字符按片段 substring 取。
     var out = ""
-    for (var i = 0; i < s.length(); i = i + 1) {
+    var seg = 0
+    var i = 0
+    var len = s.length()
+    while (i < len) {
         var c = s.charAt(i)
+        var esc = ""
+        var isEsc = true
         if (c == '\\') {
-            out = out + "\\\\"
+            esc = "\\\\"
+        } else if (c == '\n') {
+            esc = "\\n"
+        } else if (c == '\r') {
+            esc = "\\r"
+        } else if (c == '\t') {
+            esc = "\\t"
+        } else if (c == ' ') {
+            esc = "\\s"
+        } else if (charToInt(c) < 32) {
+            esc = "\\x" + hex2(charToInt(c))
         } else {
-            if (c == '\n') {
-                out = out + "\\n"
-            } else {
-                if (c == '\r') {
-                    out = out + "\\r"
-                } else {
-                    if (c == '\t') {
-                        out = out + "\\t"
-                    } else {
-                        if (c == ' ') {
-                            out = out + "\\s"
-                        } else {
-                            if (charToInt(c) < 32) {
-                                out = out + "\\x" + hex2(charToInt(c))
-                            } else {
-                                out = out + c
-                            }
-                        }
-                    }
-                }
-            }
+            isEsc = false
+        }
+        if (isEsc) {
+            out = out + s.substring(seg, i) + esc
+            i = i + 1
+            seg = i
+        } else {
+            i = i + 1
         }
     }
+    out = out + s.substring(seg, len)
     rtn out
 }
-
 fn hexDigitChar(v : Int) -> Char {
     if (v < 10) { rtn toChar(48 + v) }
     rtn toChar(87 + v)

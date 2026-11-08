@@ -166,16 +166,29 @@ pub class Buf {
 
 // JVM 类文件里的字符串用「修改版 UTF-8」：0 写成 C0 80，代理对每个码元各 3 字节。
 fn mutfLen(s : String) -> Int {
-    // 常量池里的 UTF-8 与普通 UTF-8 在 BMP 上逐字节相同（除了 U+0000，这里不考虑）
+    // 常量池里的 UTF-8 是「modified UTF-8」：BMP 上与普通 UTF-8 逐字节相同，
+    // 只有 U+0000 例外——必须写成 C0 80（两个字节），否则 JVM 报
+    // `ClassFormatError: Illegal UTF8 string in constant pool`。
     var bs = stringBytes(s)
-    rtn bs.length
+    var i = 0
+    var n = 0
+    while (i < bs.length) {
+        if ((bs[i] + 0) == 0) { n = n + 2 } else { n = n + 1 }
+        i = i + 1
+    }
+    rtn n
 }
 
 fn mutfWrite(b : Buf, s : String) -> void {
     var bs = stringBytes(s)
     var i = 0
     while (i < bs.length) {
-        b.u1(bs[i] + 0)
+        if ((bs[i] + 0) == 0) {
+            b.u1(192)
+            b.u1(128)
+        } else {
+            b.u1(bs[i] + 0)
+        }
         i = i + 1
     }
 }

@@ -1908,8 +1908,19 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
                 rsf_str s; s.len = n; s.data = b; return s;
             }
 
+            /* rsf 的 string 带长度、不一定以 0 结尾：调 libc 前先拷成 C 字符串 */
+            static char* rsf_zstr(rsf_str s) {
+                static char* buf = NULL;
+                static int cap = 0;
+                int need = (int)s.len + 1;
+                if (need > cap) { cap = need * 2 + 32; buf = (char*)realloc(buf, (size_t)cap); }
+                if (s.len > 0 && s.data) memcpy(buf, s.data, (size_t)s.len);
+                buf[s.len] = 0;
+                return buf;
+            }
+
             static char* rsf_read_all(rsf_str path, int64_t* outLen) {
-                FILE* f = fopen((const char*)path.data, "rb");
+                FILE* f = fopen(rsf_zstr(path), "rb");
                 if (!f) { *outLen = 0; return NULL; }
                 fseek(f, 0, SEEK_END);
                 long n = ftell(f);
@@ -1941,7 +1952,7 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
             }
 
             static bool rsf_write_text(rsf_str path, rsf_str text) {
-                FILE* f = fopen((const char*)path.data, "wb");
+                FILE* f = fopen(rsf_zstr(path), "wb");
                 if (!f) { rsf_set_err(rsf_str_c("writeText: 文件写不出来")); return false; }
                 if (text.len > 0) { fwrite(text.data, 1, (size_t)text.len, f); }
                 fclose(f);
@@ -1949,23 +1960,13 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
             }
 
             static bool rsf_write_bytes(rsf_str path, rsf_arr bytes) {
-                FILE* f = fopen((const char*)path.data, "wb");
+                FILE* f = fopen(rsf_zstr(path), "wb");
                 if (!f) { rsf_set_err(rsf_str_c("writeBytes: 文件写不出来")); return false; }
                 if (bytes.len > 0) { fwrite(bytes.data, 1, (size_t)bytes.len, f); }
                 fclose(f);
                 return true;
             }
 
-            /* rsf 的 string 带长度、不一定以 0 结尾：调 libc 前先拷成 C 字符串 */
-            static char* rsf_zstr(rsf_str s) {
-                static char* buf = NULL;
-                static int cap = 0;
-                int need = (int)s.len + 1;
-                if (need > cap) { cap = need * 2 + 32; buf = (char*)realloc(buf, (size_t)cap); }
-                if (s.len > 0 && s.data) memcpy(buf, s.data, (size_t)s.len);
-                buf[s.len] = 0;
-                return buf;
-            }
             static int32_t rsf_parse_int(rsf_str s) {
                 char* cs = rsf_zstr(s);
                 char* end = NULL;
