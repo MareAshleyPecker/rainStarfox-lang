@@ -58,6 +58,14 @@ test {
     // Gradle 默认只看 Kotlin 源码，改了 .rsf 而没改 .kt 时会认为 test 是最新的、
     // 直接跳过 —— 那对拍就等于没跑。把 rsfSrc 声明成输入，改一个 rsf 文件就会重跑。
     inputs.dir(layout.projectDirectory.dir('rsfSrc')).withPropertyName('rsfSources')
+
+    // 单测里大量用 File.createTempFile() 造源码/产物，默认会落到系统 %TEMP%，
+    // 每次跑测试都往用户目录里堆垃圾。统一把 java.io.tmpdir 指到工作区 build/tmp/tests，
+    // 跑完随 build/ 一起清掉（也可以 `gradlew clean`）。
+    systemProperty 'java.io.tmpdir', layout.buildDirectory.dir('tmp/tests').get().asFile.absolutePath
+    doFirst {
+        layout.buildDirectory.dir('tmp/tests').get().asFile.mkdirs()
+    }
 }
 
 // `gradlew jar` 产出的就是可直接 java -jar 的胖包

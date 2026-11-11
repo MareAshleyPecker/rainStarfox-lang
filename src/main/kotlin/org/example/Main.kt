@@ -11,6 +11,7 @@ import org.example.complie.lsp.EditorSupport
 import org.example.complie.native.CBackend
 import org.example.complie.sema.SemanticModel
 import org.example.complie.util.input
+import org.example.meta.RsfMeta
 import java.io.File
 import kotlin.system.exitProcess
 
@@ -38,6 +39,7 @@ class Cli {
             "check" -> wrap { cmdCheck(argv.drop(1)) }
             "complete" -> wrap { cmdComplete(argv.drop(1)) }
             "lsp" -> wrap { cmdLsp() }
+            "decompile" -> wrap { cmdDecompile(argv.drop(1)) }
             "lex" -> wrap { cmdLex(argv.drop(1)) }
             "repl" -> repl()
             "help", "--help", "-h", "-?" -> { usage(); 0 }
@@ -71,6 +73,7 @@ class Cli {
         var cMode = false
         var cLib = false
         var cJni = false
+        var meta = false
         val positional = ArrayList<String>()
 
         var i = 0
@@ -89,6 +92,7 @@ class Cli {
                 "--c" -> cMode = true
                 "--lib" -> cLib = true
                 "--jni" -> cJni = true
+                "--meta" -> meta = true
                 else -> positional.add(a)
             }
             i++
@@ -103,14 +107,28 @@ class Cli {
         val source = loaded.root
         val model = Rsf.analyze(loaded)
         val name = className ?: Rsf.deriveClassName(source)
+        // --meta：把源码快照 + 符号表打进产物，供 `rsf decompile` 还原
+        val metaBlob = if (meta) {
+            RsfMeta.encode(
+                RsfMeta.snapshotsOf(loaded),
+                RsfMeta.symbolsOf(loaded),
+                RsfMeta.describe(if (cMode) "native" else "jvm", name),
+            )
+        } else {
+            null
+        }
 
         if (cMode) {
             for (warning in model.warnings) System.err.println("[rsf] 警告: $warning")
             val text = CBackend(model, withEntry = !cLib).emit()
             outDir.mkdirs()
             val out = File(outDir, "$name.c")
-            out.writeText(text, Charsets.UTF_8)
+            out.writeText(
+                if (metaBlob != null) text + RsfMeta.cDeclaration(metaBlob) else text,
+                Charsets.UTF_8,
+            )
             println("[rsf] 已生成 ${out.path}")
+            if (metaBlob != null) println("[rsf] 已嵌入源码元数据（${metaBlob.size} 字节，节 ${RsfMeta.SECTION}）")
             // 阶段 60b：JVM → native 的桥。符号名要跟 JVM 类名一致，所以这里用同一个 name。
             if (cJni) {
                 val bridge = File(outDir, "${name}_jni.c")
@@ -127,7 +145,7 @@ class Cli {
             return 0
         }
 
-        val result = Rsf.build(model, source, name, outDir)
+        val result = Rsf.build(model, source, name, outDir, metaBlob)
         for (warning in model.warnings) System.err.println("[rsf] 警告: $warning")
         for (w in result.warnings) System.err.println("[rsf] 警告: $w")
         println("[rsf] 已生成 ${result.classFile.path}")
@@ -148,6 +166,71 @@ class Cli {
             println()
             println(disassemble(result.classFile.readBytes()))
         }
+        return 0
+    }
+
+    /**
+     * 从产物里把源码拿回来：`rsf decompile a.exe` / `rsf decompile Main.class`。
+     *
+     * 产物是用 `--meta` 编出来的才带源码快照（`a.exe` 在 PE 的 `.rsfmeta` 节里，
+     * class 在自定义属性 `RsfSource` 里）；没有快照时至少把符号表和构建信息打印出来。
+     */
+    private fun cmdDecompile(rest: List<String>): Int {
+        var outDir = File("decompiled")
+        var listOnly = false
+        val positional = ArrayList<String>()
+        var i = 0
+        while (i < rest.size) {
+            when (val a = rest[i]) {
+                "-o", "--out" -> {
+                    val v = rest.getOrNull(i + 1) ?: throw RsfError("cli", "-o 后面要跟输出目录")
+                    outDir = File(v)
+                    i++
+                }
+                "--list" -> listOnly = true
+                else -> positional.add(a)
+            }
+            i++
+        }
+        val file = requireFile(
+            positional.firstOrNull(),
+            "decompile <a.exe | X.class> [-o <dir>] [--list]",
+        )
+        if (!file.isFile) throw RsfError("decompile", "${file.path} 不是一个文件")
+
+        val bytes = file.readBytes()
+        val payload = RsfMeta.readPeSection(bytes, RsfMeta.SECTION)
+            ?: RsfMeta.readClassAttribute(bytes, RsfMeta.ATTRIBUTE)
+            ?: bytes.takeIf {
+                it.size > RsfMeta.MAGIC.length &&
+                    String(it, 0, RsfMeta.MAGIC.length, Charsets.US_ASCII) == RsfMeta.MAGIC
+            }
+            ?: throw RsfError(
+                "decompile",
+                "${file.path} 里没有 rsf 元数据。它是用 `rsf build --meta` 编出来的吗？",
+            )
+
+        val blob = RsfMeta.decode(payload)
+        val build = blob.build
+        println("[rsf] 产物: ${file.path}")
+        if (build.isNotEmpty()) {
+            println("[rsf] 编译器: ${build["compiler"] ?: "?"}   类型: ${build["artifact"] ?: "?"}")
+            if (build["class"] != null) println("[rsf] 类名: ${build["class"]}   构建于: ${build["built"] ?: "?"}")
+        }
+        for (s in blob.sources) {
+            println("[rsf] 源文件: ${s.path}（${s.text.count { it == '\n' } + 1} 行，${s.text.length} 字符）")
+        }
+        if (blob.sources.isEmpty()) {
+            println("[rsf] 这份产物不含源码快照，只有符号表：")
+            println(blob.symbols)
+            return 0
+        }
+        if (listOnly) return 0
+
+        // 还原到 -o 目录；产物里记的是编译时的相对路径，按同样的相对结构铺开
+        val written = RsfMeta.writeSources(blob, outDir)
+        for (f in written) println("[rsf] 已还原 ${f.path}")
+        println("[rsf] 共还原 ${written.size} 个文件到 ${outDir.path}")
         return 0
     }
 
@@ -495,6 +578,10 @@ class Cli {
             |用法:
             |  rsf run   <file.rsf>                        解释执行，不生成 .class
             |  rsf build <file.rsf> [-o <dir>] [-n 类名]    编译成 .class（默认输出到 out/）
+            |        [--c] [--lib] [--jni] [--meta] [--dump]
+            |        --c     生成 C（交给 gcc 编成原生程序）
+            |        --meta  把源码快照打进产物，之后可用 decompile 还原
+            |  rsf decompile <产物> [-o <dir>] [--list]   从产物还原源码（需 --meta）
             |  rsf check <file.rsf>                        只做词法/语法/类型检查
             |  rsf lex   <file.rsf>                        打印 token 流
             |  rsf complete <file.rsf> --line L --col C   补全候选（编辑器用，也可自己看）
@@ -507,6 +594,7 @@ class Cli {
             |  rsf build lang/main.rsf
             |  java -cp out main
             |  rsf build lang/main.rsf --dump              顺便打印生成的字节码
+            |  rsf build lang/main.rsf --meta && rsf decompile out/main.class
             """.trimMargin(),
         )
     }

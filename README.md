@@ -69,6 +69,8 @@ rsf run   <file.rsf>                        解释执行
 rsf build <file.rsf> [-o <dir>] [-n 类名]    编成 .class（默认 out/）
 rsf build <file.rsf> --dump                 顺便打印 ASM 文本
 rsf build <file.rsf> --c [-o <dir>]          生成单文件 C99
+rsf build <file.rsf> --meta                 把源码快照打进产物（配合 decompile）
+rsf decompile <产物> [-o <dir>] [--list]    从产物还原源码（需 --meta）
 rsf check <file.rsf>                        只检查，列函数表
 rsf lex   <file.rsf>                        打印 token 流
 rsf complete <file.rsf> --line L --col C    补全候选（给编辑器用）
@@ -173,6 +175,21 @@ cd build/native-rsfc && env rsf.rsfc.cmd=build rsf.rsfc.file=示例.rsf rsf.rsfc
 ```
 
 判据：`bash build/verify66/run-probes.sh`（出 exe → 编样例跑 → stage1 与 Kotlin 版反汇编等价）。
+
+### 产物带源码，可反编译回原文
+
+`--meta` 把参与编译的源文件原文打进产物（默认关）：JVM 构建进 class 的自定义属性 `RsfSource`，native 构建进 PE 的 `.rsfmeta` 节。之后 `rsf decompile` 能把源码原样拿回来——注释、空行、字面量写法都在：
+
+```bash
+rsf build main.rsf --meta -o out
+rsf decompile out/main.class -o src/restored     # 逐字节还原 .rsf
+rsf decompile out/main.exe   -o src/restored     # C 产物同理
+rsf decompile out/main.class --list              # 只列不写
+```
+
+自举规模实测：`rsfSrc/bootstrap` 8 个源文件 1.01 MB → 元数据 179 KB（压缩约 5.6×），还原 8 个文件 SHA256 全一致。形态与判据见 `DESIGN-68.md`，验收脚本 `build/verify68/run.ps1`。
+
+注意：元数据原样带着源码，发布前想清楚要不要把源码一起发出去——所以 `--meta` 默认关。
 
 ## Termux / aarch64
 

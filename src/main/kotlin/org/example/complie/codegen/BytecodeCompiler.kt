@@ -90,8 +90,13 @@ import org.example.complie.sema.UserMember
 import org.example.complie.sema.fnSignatureOf
 import org.example.complie.sema.fnTypeText
 import org.example.complie.sema.isFunctionType
+import org.example.meta.RsfMeta
 import org.objectweb.asm.AnnotationVisitor
+import org.objectweb.asm.Attribute
+import org.objectweb.asm.ClassReader
+import org.objectweb.asm.ClassVisitor
 import org.objectweb.asm.ClassWriter
+import org.objectweb.asm.ByteVector
 import org.objectweb.asm.Handle
 import org.objectweb.asm.Label
 import org.objectweb.asm.MethodVisitor
@@ -139,7 +144,7 @@ class BytecodeCompiler(
      * [className] 是程序类的内部名（写了 `pkg a.b` 时是 `a/b/主文件名`）。
      * 用户类跟着程序类的包走：`pkg a.b` 里的 `class Point` → `a/b/Point.class`。
      */
-    fun compile(className: String, outDir: File): List<File> {
+    fun compile(className: String, outDir: File, meta: ByteArray? = null): List<File> {
         // 阶段 25 K2：K1 在这里的那道守卫（「带父类的类还不能 build」）已经撤掉——
         // 带父类的类现在真的生成 extends、父类构造链、父链字段与虚分派。
         programInternalName = className
@@ -253,7 +258,51 @@ class BytecodeCompiler(
         if (!outDir.exists() && !outDir.mkdirs()) {
             throw IllegalStateException("无法创建输出目录: ${outDir.absolutePath}")
         }
+        // --meta：只往程序类里放一份（用户类各带一份会把体积翻几十倍）
+        if (meta != null && pending.isNotEmpty()) {
+            pending[0] = pending[0].first to withMetaAttribute(pending[0].second, meta)
+        }
         return pending.map { (internalName, bytes) -> writeClass(internalName, bytes, outDir) }
+    }
+
+    /**
+     * 把 `RsfSource` 属性塞进 class 文件。
+     *
+     * 走 ASM 的读-写一趟，而不是改 [newClassWriter] 的五个调用点：方法体是原样拷贝的，
+     * 行号表/LVT/栈图一个字节都不动。
+     */
+    private fun withMetaAttribute(bytes: ByteArray, meta: ByteArray): ByteArray {
+        val writer = ClassWriter(ClassReader(bytes), 0)
+        ClassReader(bytes).accept(
+            object : ClassVisitor(Opcodes.ASM9, writer) {
+                override fun visitEnd() {
+                    visitAttribute(RawAttribute(RsfMeta.ATTRIBUTE, meta))
+                    super.visitEnd()
+                }
+            },
+            0,
+        )
+        return writer.toByteArray()
+    }
+
+    /** 只写不读的自定义属性（除了我们自己写进去的，没人会读它）。 */
+    private class RawAttribute(type: String, private val data: ByteArray) : Attribute(type) {
+        override fun read(
+            classReader: ClassReader,
+            off: Int,
+            len: Int,
+            charBuffer: CharArray,
+            codeAttributeOffset: Int,
+            labels: Array<Label>?,
+        ): Attribute = this
+
+        override fun write(
+            classWriter: ClassWriter,
+            code: ByteArray?,
+            codeLength: Int,
+            maxStack: Int,
+            maxLocals: Int,
+        ): ByteVector = ByteVector().putByteArray(data, 0, data.size)
     }
 
     private fun writeClass(internalName: String, bytes: ByteArray, outDir: File): File {

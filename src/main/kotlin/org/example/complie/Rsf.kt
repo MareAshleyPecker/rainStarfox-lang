@@ -97,6 +97,7 @@ object Rsf {
         source: SourceFile,
         className: String,
         outDir: File,
+        meta: ByteArray? = null,
     ): BuildResult {
         if (!JAVA_IDENTIFIER.matches(className)) {
             throw RsfError("codegen", "'$className' 不是合法的 Java 类名")
@@ -108,7 +109,7 @@ object Rsf {
             ?: className
         val compiler = BytecodeCompiler(model, source.name)
         // 程序类 + 每个用户自定义类各一个 .class
-        val classFiles = compiler.compile(internalName, outDir)
+        val classFiles = compiler.compile(internalName, outDir, meta)
         return BuildResult(className, classFiles.first(), compiler.warnings.toList(), classFiles)
     }
 }
