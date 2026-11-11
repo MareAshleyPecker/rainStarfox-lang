@@ -10,13 +10,13 @@
 //     java -Drsf.backend.file=a.rsf -Drsf.backend.name=a -Drsf.backend.out=build/tmp17d/out \
 //          -cp "build/tmp17d/out;build/libs/rainStarfox-0.9.0.jar" BackendCli
 //
-// ================================================================ 已知的两处刻意差异
+// ================================================================ 已知的刻意差异
 //
-// 1. **没有行号表**。Kotlin 版按 AST 上每条语句的 `SourceLine` 发 `visitLineNumber`，
-//    而 rsf 版的胖节点（见 `Parser.rsf`）**不带行列**——只有 token 带。给语句节点补一个
-//    `line=` 属性会改掉 17b 的 AST dump（那是另一条硬约束的回归基准），所以这一版
-//    **不发任何 `visitLineNumber`**，源码行位置在反汇编里表现为缺少 LINENUMBER 行。
-//    除此之外的指令序列与 Kotlin 版一致。
+// 1. **行号表**：阶段 67 起与 Kotlin 版一致——按每条待发指令前的 `visitLabel` 发
+//    `visitLineNumber`，并在方法尾部发 `LocalVariableTable`。此前 `ClassFile.rsf` 的
+//    门面是空实现，所以原生产物缺 LINENUMBER / LVT / SourceFile；现已落盘（见该文件
+//    `Method.visitLineNumber` / `visitLocalVariable` 与 `ClassWriter.visitSource`）。
+//    自举语法器的胖节点仍不带行列，行号取自 `Parser` 记在语句上的 `line=` 属性。
 // 2. **没有 `getCommonSuperClass` 覆写**。Kotlin 版用匿名子类把帧合并点强制成
 //    `java/lang/Object`；rsf 没有继承、写不出子类，这里用 ASM 的默认实现。当前支持的
 //    子集里引用类型只有 JDK 类，两者结果相同。

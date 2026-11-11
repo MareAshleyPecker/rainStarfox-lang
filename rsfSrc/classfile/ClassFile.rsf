@@ -370,6 +370,20 @@ pub class Method {
     var isStatic : Bool = false
     var failed : Bool = false
 
+    // 阶段 67：调试信息。自举后端早已在每条指令前调 `visitLineNumber`、在方法尾部调
+    // `visitLocalVariable`（与 Kotlin 侧 `emitBody` / `endLvt` 同构），但这里的门面一直
+    // 是空实现，所以原生产物没有 LINENUMBER / LVT / SourceFile 属性。反编译要靠它们
+    // 把字节码偏移映射回源码行，故在此真正落盘。
+    var lineLbl : Int[] = new Int[16]
+    var lineNo : Int[] = new Int[16]
+    var lineCount : Int = 0
+    var lvName : String[] = new String[8]
+    var lvDesc : String[] = new String[8]
+    var lvStart : Int[] = new Int[8]
+    var lvEnd : Int[] = new Int[8]
+    var lvSlot : Int[] = new Int[8]
+    var lvCount : Int = 0
+
 
     prv fn growFix() -> void {
         var a : Int[] = new Int[fixAt.length * 2]
@@ -418,6 +432,80 @@ pub class Method {
         refB[refCount] = b
         refC[refCount] = c
         refCount = refCount + 1
+    }
+
+    prv fn growLines() -> void {
+        var a : Int[] = new Int[lineLbl.length * 2]
+        var n : Int[] = new Int[lineLbl.length * 2]
+        for (var i = 0; i < lineCount; i = i + 1) {
+            a[i] = lineLbl[i]
+            n[i] = lineNo[i]
+        }
+        lineLbl = a
+        lineNo = n
+    }
+
+    prv fn growLocalVars() -> void {
+        var cap = lvStart.length * 2
+        var n : String[] = new String[cap]
+        var d : String[] = new String[cap]
+        var s : Int[] = new Int[cap]
+        var e : Int[] = new Int[cap]
+        var k : Int[] = new Int[cap]
+        for (var i = 0; i < lvCount; i = i + 1) {
+            n[i] = lvName[i]
+            d[i] = lvDesc[i]
+            s[i] = lvStart[i]
+            e[i] = lvEnd[i]
+            k[i] = lvSlot[i]
+        }
+        lvName = n
+        lvDesc = d
+        lvStart = s
+        lvEnd = e
+        lvSlot = k
+    }
+
+    // 行号表条目：`line` 在标签 `lid` 之后生效（ASM 的 (line, Label) 语义）
+    pub fn visitLineNumber(line : Int, lid : Int) -> void {
+        if (lineCount >= lineLbl.length) { growLines() }
+        lineLbl[lineCount] = lid
+        lineNo[lineCount] = line
+        lineCount = lineCount + 1
+    }
+
+    pub fn visitLocalVariable(nm : String, dsc : String, sig : ?String, start : Int, end : Int, slot : Int) -> void {
+        if (lvCount >= lvStart.length) { growLocalVars() }
+        lvName[lvCount] = nm
+        lvDesc[lvCount] = dsc
+        lvStart[lvCount] = start
+        lvEnd[lvCount] = end
+        lvSlot[lvCount] = slot
+        lvCount = lvCount + 1
+    }
+
+    // 落盘前先数一遍能解析的条目：标签可能从未 visit（ASM 会抛，这里选择丢弃该条），
+    // 而 Code 属性长度必须提前写，所以要先知道条目数。
+    pub fn lineTableCount() -> Int {
+        var n = 0
+        var i = 0
+        while (i < lineCount) {
+            if (labelAt(lineLbl[i]) >= 0) { n = n + 1 }
+            i = i + 1
+        }
+        rtn n
+    }
+
+    pub fn localVarTableCount() -> Int {
+        var n = 0
+        var i = 0
+        while (i < lvCount) {
+            var st = labelAt(lvStart[i])
+            var en = labelAt(lvEnd[i])
+            if (st >= 0 && en > st) { n = n + 1 }
+            i = i + 1
+        }
+        rtn n
     }
 
     pub fn label(id : Int) -> void {
@@ -682,6 +770,9 @@ pub class ClassWriter {
     var access : Int = 1
     var name : String = ""
     var superName : String = "java/lang/Object"
+    // 阶段 67：SourceFile 属性。Kotlin 侧 `cw.visitSource(sourceName, null)` 一直有，
+    // 这里此前是空实现，产物因此丢掉「这个类来自哪个 .rsf 文件」。
+    var sourceFile : String = ""
     var cp : Cp = new Cp()
     var methods : Method[] = new Method[8]
     var methodCount : Int = 0
@@ -694,6 +785,8 @@ pub class ClassWriter {
         name = n
         superName = s
     }
+
+    pub fn visitSource(s : String, d : ?String) -> void { sourceFile = s }
 
     pub fn visitMethod(a : Int, mn : String, md : String) -> Method {
         var m = new Method()
@@ -740,6 +833,10 @@ pub class ClassWriter {
     pub fn toBytes() -> Buf {
         cp.cls(name)
         cp.cls(superName)
+        if (sourceFile != "") {
+            cp.utf8("SourceFile")
+            cp.utf8(sourceFile)
+        }
         for (var fi = 0; fi < fieldCount; fi = fi + 1) {
             cp.utf8(fields[fi].name)
             cp.utf8(fields[fi].desc)
@@ -751,6 +848,15 @@ pub class ClassWriter {
             cp.utf8("Code")
             for (var ti = 0; ti < m.tryCount; ti = ti + 1) {
                 if (m.tryType[ti] != "") { cp.cls(m.tryType[ti]) }
+            }
+            // Code 属性里的子属性名 / LVT 的变量名与描述符都必须在 `cp.count` 写出前登记
+            if (m.lineTableCount() > 0) { cp.utf8("LineNumberTable") }
+            if (m.localVarTableCount() > 0) {
+                cp.utf8("LocalVariableTable")
+                for (var li = 0; li < m.lvCount; li = li + 1) {
+                    cp.utf8(m.lvName[li])
+                    cp.utf8(m.lvDesc[li])
+                }
             }
             m.finish()
             if (m.failed) { rtn new Buf() }
@@ -786,7 +892,12 @@ pub class ClassWriter {
             out.u2(1)
             out.u2(cp.utf8("Code"))
             var codeLen = m.b.size()
-            out.u4(12 + codeLen + 8 * m.tryCount)
+            var lnCnt = m.lineTableCount()
+            var lvCnt = m.localVarTableCount()
+            var attrBytes = 0
+            if (lnCnt > 0) { attrBytes = attrBytes + 8 + 4 * lnCnt }
+            if (lvCnt > 0) { attrBytes = attrBytes + 8 + 10 * lvCnt }
+            out.u4(12 + codeLen + 8 * m.tryCount + attrBytes)
             var wantLocals = m.maxLocalSeen
             var argn = m.argSlots()
             if (argn > wantLocals) { wantLocals = argn }
@@ -808,9 +919,53 @@ pub class ClassWriter {
                     out.u2(cp.cls(m.tryType[ti]))
                 }
             }
+            // Code 属性自己的 attributes_count：先 LineNumberTable，再 LocalVariableTable
+            // （与 ASM 的输出顺序一致）
+            var codeAttrs = 0
+            if (lnCnt > 0) { codeAttrs = codeAttrs + 1 }
+            if (lvCnt > 0) { codeAttrs = codeAttrs + 1 }
+            out.u2(codeAttrs)
+            if (lnCnt > 0) {
+                out.u2(cp.utf8("LineNumberTable"))
+                out.u4(2 + 4 * lnCnt)
+                out.u2(lnCnt)
+                var lx = 0
+                while (lx < m.lineCount) {
+                    var pc = m.labelAt(m.lineLbl[lx])
+                    if (pc >= 0) {
+                        out.u2(pc)
+                        out.u2(m.lineNo[lx])
+                    }
+                    lx = lx + 1
+                }
+            }
+            if (lvCnt > 0) {
+                out.u2(cp.utf8("LocalVariableTable"))
+                out.u4(2 + 10 * lvCnt)
+                out.u2(lvCnt)
+                var vx = 0
+                while (vx < m.lvCount) {
+                    var st = m.labelAt(m.lvStart[vx])
+                    var en = m.labelAt(m.lvEnd[vx])
+                    if (st >= 0 && en > st) {
+                        out.u2(st)
+                        out.u2(en - st)
+                        out.u2(cp.utf8(m.lvName[vx]))
+                        out.u2(cp.utf8(m.lvDesc[vx]))
+                        out.u2(m.lvSlot[vx])
+                    }
+                    vx = vx + 1
+                }
+            }
+        }
+        if (sourceFile != "") {
+            out.u2(1)
+            out.u2(cp.utf8("SourceFile"))
+            out.u4(2)
+            out.u2(cp.utf8(sourceFile))
+        } else {
             out.u2(0)
         }
-        out.u2(0)
         rtn out
     }
 }
@@ -890,9 +1045,11 @@ pub class Mv {
             m.tryCatch(labelId(a), labelId(b), labelId(c), t!!)
         }
     }
-    // 行号表 / 局部变量表暂不生成（调试信息，不影响语义）
-    pub fn visitLineNumber(line : Int, l : Lb) -> void { }
-    pub fn visitLocalVariable(a : String, b : String, c : ?String, d : Lb, e : Lb, f : Int) -> void { }
+    // 行号表 / 局部变量表（阶段 67 起真正落盘，见 Method.visitLineNumber / visitLocalVariable）
+    pub fn visitLineNumber(line : Int, l : Lb) -> void { m.visitLineNumber(line, labelId(l)) }
+    pub fn visitLocalVariable(a : String, b : String, c : ?String, d : Lb, e : Lb, f : Int) -> void {
+        m.visitLocalVariable(a, b, c, labelId(d), labelId(e), f)
+    }
     pub fn visitMultiANewArrayInsn(d : String, dims : Int) -> void { m.multiANewArray(d, dims) }
     pub fn visitAnnotation(d : String, visible : Bool) -> Av { rtn new Av() }
     pub fn visitAnnotationDefault() -> Av { rtn new Av() }
@@ -940,7 +1097,7 @@ pub class Cw {
         rtn new Fv()
     }
 
-    pub fn visitSource(s : String, d : ?String) -> void { }
+    pub fn visitSource(s : String, d : ?String) -> void { w.visitSource(s, d) }
     pub fn visitAnnotation(d : String, visible : Bool) -> Av { rtn new Av() }
     pub fn visitEnd() -> void { }
     pub fn toByteArray() -> Byte[] { rtn bytesOf(w.toBytes()) }
