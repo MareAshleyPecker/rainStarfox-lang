@@ -197,7 +197,8 @@ bin/
 !/dist/termux/README.md
 
 ### 阶段设计文档与语法预案不上传（2026-10-19 用户要求）###
-DESIGN-*.md
+### 设计笔记集中在 design/（含索引 design/README.md），整目录本地保留 ###
+/design/
 /rsfSrc/语法预案/
 
 ### 阶段 59 宿主窗口判据（只收脚本，产物与截图不进库）###

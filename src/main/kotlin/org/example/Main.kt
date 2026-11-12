@@ -573,29 +573,47 @@ class Cli {
     private fun usage() {
         println(
             """
-            |rainStarfox ${Rsf.VERSION} —— 玩具语言 .rsf 的编译器 / 解释器
+            |rainStarfox ${Rsf.VERSION} —— .rsf 源文件的编译器 / 解释器
             |
             |用法:
-            |  rsf run   <file.rsf>                        解释执行，不生成 .class
-            |  rsf build <file.rsf> [-o <dir>] [-n 类名]    编译成 .class（默认输出到 out/）
-            |        [--c] [--lib] [--jni] [--meta] [--dump]
-            |        --c     生成 C（交给 gcc 编成原生程序）
-            |        --meta  把源码快照打进产物，之后可用 decompile 还原
-            |  rsf decompile <产物> [-o <dir>] [--list]   从产物还原源码（需 --meta）
-            |  rsf check <file.rsf>                        只做词法/语法/类型检查
-            |  rsf lex   <file.rsf>                        打印 token 流
-            |  rsf complete <file.rsf> --line L --col C   补全候选（编辑器用，也可自己看）
-            |  rsf lsp                                     语言服务器（stdio 上的 LSP）
-            |  rsf repl                                    交互式解释器（不带参数也是）
-            |  rsf help | version
+            |  rsf <命令> [参数]                 不带参数进 REPL
+            |
+            |命令:
+            |  run <file.rsf>                   解释执行，不生成任何产物
+            |  build <file.rsf> [选项]           编译，默认出 .class
+            |  decompile <产物> [选项]           从产物还原源码（产物要用 build --meta 编出）
+            |  check <file.rsf> [选项]           只做词法、语法、类型检查
+            |  lex <file.rsf>                   打印 token 流
+            |  complete <file.rsf> [选项]        补全候选，JSON（编辑器用）
+            |  lsp                              语言服务器，stdio 上的 LSP
+            |  repl                             交互式解释器（不带参数也是）
+            |  help | version                   看帮助 / 看版本
+            |
+            |build 的选项:
+            |  -o, --out <dir>     输出目录，默认 out/
+            |  -n, --name <类名>    产物名，默认取源文件名
+            |  --c                 不产 .class，产 C 源码（自己交给 gcc / clang）
+            |  --lib               配合 --c：当库编，不生成 main
+            |  --jni               配合 --c：另出一份 <名字>_jni.c，给 JVM 侧调 native 用
+            |  --meta              把源码快照和符号表打进产物，之后可 decompile 还原
+            |  --dump              配合默认模式：顺便打印生成的字节码
+            |
+            |decompile 的选项:
+            |  -o, --out <dir>     还原到哪，默认 decompiled/
+            |  --list              只列产物里有哪些源文件，不落盘
+            |
+            |check / complete 的选项:
+            |  --json              机器可读输出（check 的 JSON 诊断）
+            |  --base <dir>        指定 import 的根目录（编辑器传缓冲区临时文件时用）
+            |  --line L --col C    complete 的插入位置，行列都从 1 数
             |
             |例:
-            |  rsf run   lang/main.rsf
-            |  rsf build lang/main.rsf
-            |  java -cp out main
-            |  rsf build lang/main.rsf --dump              顺便打印生成的字节码
-            |  rsf build lang/main.rsf --meta && rsf decompile out/main.class
-            """.trimMargin(),
+            |  rsf run lang/main.rsf
+            |  rsf build lang/main.rsf                  然后 java -cp out main
+            |  rsf build lang/main.rsf --dump           顺便看字节码
+            |  rsf build lang/main.rsf --c -o build/c   然后 gcc build/c/main.c -o main.exe
+            |  rsf build lang/main.rsf --meta -o out    然后 rsf decompile out/main.class -o src
+            |""".trimMargin(),
         )
     }
 

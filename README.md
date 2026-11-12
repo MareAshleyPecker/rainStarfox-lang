@@ -127,7 +127,7 @@ gcc out/x.c -I"$JAVA_HOME/include" -I"$JAVA_HOME/include/win32" -o out/x.exe
 RSF_JVM_CP=out out/x.exe      # → java:bob
 ```
 
-类路径用 `RSF_JVM_CP`（缺省 `.`）；`jvm.dll` 从 `RSF_JVM_DLL` / `$JAVA_HOME/bin/server/jvm.dll` / PATH 找。构造器只收 `String` 参数，句柄上限 256 个；JVM 构建里这三个内置函数都会报错（那边直接调 Java 就行）。细节见 `DESIGN-62.md`。
+类路径用 `RSF_JVM_CP`（缺省 `.`）；`jvm.dll` 从 `RSF_JVM_DLL` / `$JAVA_HOME/bin/server/jvm.dll` / PATH 找。构造器只收 `String` 参数，句柄上限 256 个；JVM 构建里这三个内置函数都会报错（那边直接调 Java 就行）。细节见 `design/DESIGN-62.md`。
 
 ## C 后端（native 线）
 
@@ -154,7 +154,7 @@ jvm fn slow(x : Int) -> Int { rtn x + 2 }      // 只写在 JVM 侧
 fn both(x : Int) -> Int { rtn x }              // 两侧都有
 ```
 
-调到「对面才有」的函数会报清楚（「函数 'fast' 只写在 native 侧」），而不是「未定义的函数」。两边互调（JNI 桥）还没接，见 `DESIGN-60.md`。
+调到「对面才有」的函数会报清楚（「函数 'fast' 只写在 native 侧」），而不是「未定义的函数」。两边互调（JNI 桥）还没接，见 `design/DESIGN-60.md`。
 
 ### JVM 字节码后端
 
@@ -187,7 +187,7 @@ rsf decompile out/main.exe   -o src/restored     # C 产物同理
 rsf decompile out/main.class --list              # 只列不写
 ```
 
-自举规模实测：`rsfSrc/bootstrap` 8 个源文件 1.01 MB → 元数据 179 KB（压缩约 5.6×），还原 8 个文件 SHA256 全一致。形态与判据见 `DESIGN-68.md`，验收脚本 `build/verify68/run.ps1`。
+自举规模实测：`rsfSrc/bootstrap` 8 个源文件 1.01 MB → 元数据 179 KB（压缩约 5.6×），还原 8 个文件 SHA256 全一致。形态与判据见 `design/DESIGN-68.md`，验收脚本 `build/verify68/run.ps1`。
 
 注意：元数据原样带着源码，发布前想清楚要不要把源码一起发出去——所以 `--meta` 默认关。
 
@@ -221,6 +221,7 @@ build/verify*/                        判据台（解释器 / 字节码 / 自举
 idea-rainstarfox/                     IDEA 插件
 SYNTAX.md                             语法总表
 BOOTSTRAP.md                          自举链的设计与现状
+design/                               各阶段设计笔记（本地，不入库；索引见 design/README.md）
 ```
 
 ## 当前限制
