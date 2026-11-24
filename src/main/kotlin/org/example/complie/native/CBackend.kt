@@ -110,7 +110,7 @@ class CBackend(
         // fix: 运行时拆到 rsfRuntimelib.h，不再随每份生成代码携带 RUNTIME + RuntimeErase 全文。
         // 多文件一起 build 只出一个 lib.h（实际文件名 rsfRuntimelib.h），多个 .c 共同包含它；
         // 共享状态走 extern + 单一定义，全程序恰好一个编译单元 define RSF_RUNTIME_IMPL。
-        // 头文件由构建侧调 ensureRuntimeLib(outDir) 写出（out 里已存在则跳过）；
+        // 头文件由构建侧调 ensureRuntimeLib(outDir) 写出（内容不同才重写）；
         // emitImpl=true 交给其中**一个**实例。RuntimeErase 仍被 emitJni 使用，故常量保留。
         if (emitImpl) sb.append("#define RSF_RUNTIME_IMPL\n")
         sb.append("#include \"rsfRuntimelib.h\"\n")
@@ -173,11 +173,12 @@ class CBackend(
     /**
      * fix: 运行时头文件 rsfRuntimelib.h 的唯一来源（RUNTIME + RuntimeErase 仍是单一事实源）。
      * 机械变换四步：
-     *   1) 去掉两行文件级 error 变量（改由 extern + RSF_RUNTIME_IMPL 提供全程序唯一份）；
+     *   1) 去掉两行文件级 error 变量（改由 ctx 持有，extern + RSF_RUNTIME_IMPL 提供唯一份）；
      *   2) 顶层 static 函数 -> static inline（多 TU 包含安全、消 unused-function 告警）；
-     *   3) malloc/calloc/realloc -> 登记包装（退出集中回收，修内存泄漏）；
-     *   4) 在 rsf_arr_new 前插入共享状态 extern 块与回收函数块。
-     * 此变换已用等价脚本产出头文件并经 gcc 多 TU / LeetCode 1352 + ASan 验证（0 泄漏）。
+     *   3) malloc/calloc -> rsf_malloc/rsf_calloc（走分配器；realloc 已全部改成 rsf_grow）；
+     *   4) 在 rsf_arr_new 前插入「分配器 + 上下文 + arena」实现。
+     * 第 3 步之后有一道守卫：body 里若还残留裸 malloc/calloc/realloc/free 就直接抛错。
+     * C 侧的改动可用 build/verify69/gen_runtime.py 反推同一份头文件，只靠 gcc 验证。
      */
     fun runtimeLibSource(): String {
         var body = RUNTIME + RuntimeErase
@@ -186,7 +187,14 @@ class CBackend(
         body = body.replace(Regex("(?m)^static "), "static inline ")
         body = body.replace("malloc(", "rsf_malloc(")
         body = body.replace("calloc(", "rsf_calloc(")
-        body = body.replace("realloc(", "rsf_reg_realloc(")
+        // 分配点必须全部走分配器：漏一个（例如又冒出 realloc）就会绕过 ctx 的 arena，
+        // 在 --lib / 嵌入模式下变成「宿主的分配器看不见的块」。宁可在这里炸。
+        // 注意用词边界：rsf_malloc( 里的 malloc( 不算漏。
+        val raw = Regex("(?<![A-Za-z0-9_])(malloc|calloc|realloc|free)\\(")
+        val hit = raw.find(body)
+        check(hit == null) {
+            "运行时里还有没走分配器的内存调用：'${hit?.value}'（偏移 ${hit?.range?.first}）"
+        }
         val marker = "static inline rsf_arr rsf_arr_new"
         val idx = body.indexOf(marker)
         check(idx >= 0) { "运行时里找不到 rsf_arr_new，无法定位共享状态插入点" }
@@ -196,16 +204,21 @@ class CBackend(
     }
 
     /**
-     * fix: 把 rsfRuntimelib.h 写进 out 目录；**已存在则跳过生成**（多文件 build 只出一个 lib.h）。
-     * 返回本次是否真正写出。注意：跳过的是“头文件重写”，与“哪个 .c 定义 RSF_RUNTIME_IMPL”无关——
+     * 把 rsfRuntimelib.h 写进 out 目录（多文件 build 只出一个 lib.h）。
+     *
+     * 判定标准从「存在就跳过」改成「**内容不同就重写**」：运行时是编译器的一部分，
+     * 升级编译器却沿用 out 里的旧头文件，会得到最难查的一类失败（生成代码与运行时
+     * 不同源、链接期才炸或运行期静默错）。内容相同才跳过，这样多文件 build 依然只写一次。
+     *
+     * 返回本次是否真正写出。注意这与「哪个 .c 定义 RSF_RUNTIME_IMPL」无关——
      * 后者每次 build 仍须恰好一个（构建侧给其中一个 CBackend 传 emitImpl=true）。
-     * 运行时升级后请删掉 out 里的旧 rsfRuntimelib.h（或干净重建），否则会沿用旧头文件。
      */
     fun ensureRuntimeLib(outDir: java.io.File): Boolean {
         val f = java.io.File(outDir, "rsfRuntimelib.h")
-        if (f.exists()) return false // fix: out 里已有 lib.h，跳过生成
+        val want = runtimeLibSource()
+        if (f.exists() && f.readText() == want) return false
         outDir.mkdirs()
-        f.writeText(runtimeLibSource())
+        f.writeText(want)
         return true
     }
 
@@ -1649,7 +1662,7 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
             typedef struct rsf_file { rsf_str path; } rsf_file;
 
             static rsf_file* rsf_file_new(rsf_str p) {
-                rsf_file* f = (rsf_file*)malloc(sizeof(rsf_file));
+                rsf_file* f = (rsf_file*)rsf_malloc(sizeof(rsf_file));
                 f->path = p;
                 return f;
             }
@@ -1760,67 +1773,248 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
 
 """
 
-        /** fix: 共享状态 extern 声明 + RSF_RUNTIME_IMPL 唯一定义（多文件 build 安全）。 */
-        private val SHARED_STATE = """/* ============ fix: 共享状态 extern + 单一定义（多文件 build 安全）============
- * rsf 多文件一起 build 只出一个 lib.h：多个 .c 包含同一头文件（多 TU）。
- * 错误旗标与内存登记簿必须全程序唯一，否则：
- *   - 跨文件 try/catch 失效（A 置的 rsf_err，B 查不到）；
- *   - 跨文件内存泄漏（A 登记的块，main 在 B 时退出没人收）。
- * 用法（stb 风格单头库）：恰好一个 .c 在 include 前 #define RSF_RUNTIME_IMPL，
- *   由它提供这些变量的唯一定义；其余 .c 只拿 extern 声明。
- *   例：  #define RSF_RUNTIME_IMPL
- *         #include "rsfRuntimelib.h"
+        /**
+         * 分配器接口 + 上下文（native 线的内存模型：Zig 的实现，Odin 的形状）。
+         *
+         * 三件事一起解决：
+         * - 分配器是**值 + vtable**，不再有全局的“登记簿”；
+         * - `new` / 字符串拼接 / 数组这些**语法里藏着的分配**统一读当前上下文，
+         *   所以发射代码一行都不用改；
+         * - `rsf_err` / `rsf_err_msg` 变成宏，落进 ctx——状态搬家但对生成代码透明。
+         */
+        private val SHARED_STATE = """/* ============ 分配器 + 上下文（native 线的内存模型）============
+ * 一个 rsf_ctx 装两样东西：
+ *   alloc        分配器（值 + vtable），默认是进程级 arena；
+ *   err/err_msg  `fail` / `try` 的错误状态。
+ *
+ * 生成代码里的 `rsf_err` / `rsf_err_msg` 是**宏**，落到「当前上下文」的字段上：
+ * 所以 C 后端不需要为「状态搬家」改一行发射逻辑，但状态已经不在全局变量里了。
+ *
+ * 多 TU：extern 声明在这里，唯一定义由恰好一个 #define RSF_RUNTIME_IMPL 的 .c 给出。
  * ========================================================================= */
-extern bool rsf_err;
-extern rsf_str rsf_err_msg;
-extern void** rsf_alloc_reg;
-extern size_t rsf_alloc_reg_len;
-extern size_t rsf_alloc_reg_cap;
-extern int rsf_alloc_atexit_armed;
+typedef struct rsf_allocator {
+    void* (*alloc)(void* user, size_t size, size_t align);
+    void* (*resize)(void* user, void* ptr, size_t oldSize, size_t newSize, size_t align);
+    void  (*free)(void* user, void* ptr, size_t size, size_t align);
+    void* user;
+} rsf_allocator;
+
+typedef struct rsf_ctx {
+    rsf_allocator alloc;
+    bool err;
+    rsf_str err_msg;
+} rsf_ctx;
+
+/* 线程局部当前上下文；-DRSF_NO_TLS 退回单线程全局（C99 编译器也能编）。 */
+#if defined(RSF_NO_TLS)
+#  define RSF_TLS
+#elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+#  define RSF_TLS _Thread_local
+#elif defined(__GNUC__) || defined(__clang__)
+#  define RSF_TLS __thread
+#else
+#  define RSF_TLS
+#endif
+
+extern RSF_TLS rsf_ctx* rsf_ctx_cur;
+extern rsf_ctx rsf_ctx_default;
 
 #ifdef RSF_RUNTIME_IMPL
-bool rsf_err = false;
-rsf_str rsf_err_msg;
-void** rsf_alloc_reg = NULL;
-size_t rsf_alloc_reg_len = 0;
-size_t rsf_alloc_reg_cap = 0;
-int rsf_alloc_atexit_armed = 0;
+RSF_TLS rsf_ctx* rsf_ctx_cur = NULL;
+rsf_ctx rsf_ctx_default;
 #endif
+
+/* 生成代码照旧写 rsf_err / rsf_err_msg，宏把它们落到当前上下文。 */
+#define rsf_err     (rsf_ctx_get()->err)
+#define rsf_err_msg (rsf_ctx_get()->err_msg)
 
 """
 
-        /** fix: 内存回收函数（登记 + atexit 集中释放；状态见 SHARED_STATE 的 extern 块）。 */
-        private val FIX_FUNCS = """/* ---- fix: 内存回收函数（登记 + atexit 集中释放；状态见上方 extern 块）----
- * 运行期只登记不释放，退出统一 free。局限：非运行中途 GC；realloc 追踪 O(n)。
+        /**
+         * 默认分配器：进程级 arena（bump 分配、整块释放）+ 上下文入口。
+         *
+         * 原来那套「每次 malloc 都登记进全局数组、退出统一 free」被替换成：
+         * 默认走 arena，exit 时一次 reset；要单块回收/长驻就把自己的 rsf_allocator
+         * 交给 rsf_ctx_init（宿主持有上下文，运行时不做任何分配）。
+         * checkRuntimeLib() 会盯住“分配点不要绕开分配器”。
+         */
+        private val FIX_FUNCS = """/* ---- arena：默认分配器（bump 分配，整块释放；不做单块回收）----
+ * 语义跟 Zig 的 ArenaAllocator 一样：分配只增不改，reset/free 一次性归还。
+ * `free` 是空操作——这既是它的优点（几乎零开销），也是它的契约：
+ * 长驻代码必须在循环里手动 reset，或者换一个真正的分配器（rsf_ctx_init）。
  */
-static inline void rsf_free_all(void) {
-    for (size_t i = 0; i < rsf_alloc_reg_len; i++) free(rsf_alloc_reg[i]);
-    free(rsf_alloc_reg);
-    rsf_alloc_reg = NULL; rsf_alloc_reg_len = 0; rsf_alloc_reg_cap = 0;
+typedef struct rsf_arena_block {
+    struct rsf_arena_block* next;
+    size_t start;   /* 数据区相对 (b+1) 的对齐偏移 */
+    size_t used;    /* 数据区已用字节 */
+    size_t cap;     /* 数据区可用字节 */
+} rsf_arena_block;
+
+typedef struct rsf_arena {
+    rsf_arena_block* head;
+    size_t blockSize;
+} rsf_arena;
+
+extern rsf_arena rsf_ctx_arena;
+#ifdef RSF_RUNTIME_IMPL
+rsf_arena rsf_ctx_arena;
+#endif
+
+static inline unsigned char* rsf_arena_data(rsf_arena_block* b) {
+    return (unsigned char*)(b + 1) + b->start;
 }
-static inline void rsf_reg_add(void* p) {
-    if (!p) return;
-    if (rsf_alloc_reg_len == rsf_alloc_reg_cap) {
-        size_t ncap = rsf_alloc_reg_cap ? rsf_alloc_reg_cap * 2 : 64;
-        void** nreg = (void**)realloc(rsf_alloc_reg, ncap * sizeof(void*));
-        if (!nreg) return; /* OOM：放弃登记，退化为原行为 */
-        rsf_alloc_reg = nreg; rsf_alloc_reg_cap = ncap;
-    }
-    rsf_alloc_reg[rsf_alloc_reg_len++] = p;
-    if (!rsf_alloc_atexit_armed) { atexit(rsf_free_all); rsf_alloc_atexit_armed = 1; }
-}
-static inline void* rsf_malloc(size_t n) { void* p = malloc(n); rsf_reg_add(p); return p; }
-static inline void* rsf_calloc(size_t a, size_t b) { void* p = calloc(a, b); rsf_reg_add(p); return p; }
-static inline void* rsf_reg_realloc(void* old, size_t n) {
-    void* np = realloc(old, n);
-    if (!np) return NULL;
-    if (old) {
-        for (size_t i = 0; i < rsf_alloc_reg_len; i++) {
-            if (rsf_alloc_reg[i] == old) { rsf_alloc_reg[i] = np; return np; }
+
+static inline void* rsf_arena_alloc(void* user, size_t size, size_t align) {
+    rsf_arena* a = (rsf_arena*)user;
+    size_t need = size < 1 ? 1 : size;
+    if (align < 8) align = 8;
+    if (align > 64) align = 64;
+    for (rsf_arena_block* b = a->head; b != NULL; b = b->next) {
+        unsigned char* d = rsf_arena_data(b);
+        size_t at = (size_t)(d + b->used);
+        size_t pad = (size_t)(((at + (align - 1)) & ~(align - 1)) - at);
+        if (b->used + pad + need <= b->cap) {
+            b->used += pad + need;
+            return (void*)(d + b->used - need);
         }
     }
-    rsf_reg_add(np);
-    return np;
+    {
+        size_t cap = need > a->blockSize ? need : a->blockSize;
+        rsf_arena_block* nb = (rsf_arena_block*)malloc(sizeof(rsf_arena_block) + cap + align);
+        if (!nb) return NULL;
+        {
+            size_t base = (size_t)(nb + 1);
+            size_t pad = (size_t)(((base + (align - 1)) & ~(align - 1)) - base);
+            nb->next = a->head;
+            nb->start = pad;
+            nb->used = need;
+            nb->cap = cap;
+            a->head = nb;
+        }
+        return (void*)((unsigned char*)(nb + 1) + nb->start);
+    }
+}
+
+static inline void* rsf_arena_resize(void* user, void* ptr, size_t oldSize, size_t newSize, size_t align) {
+    if (!ptr) return rsf_arena_alloc(user, newSize, align);
+    if (newSize <= oldSize) return ptr;
+    {
+        /* 最新一次分配能原地扩就扩（字符串拼接常走这条路） */
+        rsf_arena* a = (rsf_arena*)user;
+        rsf_arena_block* b = a->head;
+        if (b != NULL) {
+            unsigned char* d = rsf_arena_data(b);
+            if ((unsigned char*)ptr + oldSize == d + b->used &&
+                b->used + (newSize - oldSize) <= b->cap) {
+                b->used += newSize - oldSize;
+                return ptr;
+            }
+        }
+    }
+    {
+        void* np = rsf_arena_alloc(user, newSize, align);
+        if (!np) return NULL;
+        if (oldSize) memcpy(np, ptr, oldSize);
+        return np;
+    }
+}
+
+/* arena 不做单块回收：ptr/size/align 全部忽略（参数留着是为了满足分配器签名）。 */
+static inline void rsf_arena_release(void* user, void* ptr, size_t size, size_t align) {
+    (void)user; (void)ptr; (void)size; (void)align;
+}
+
+static inline void rsf_arena_reset(rsf_arena* a) {
+    rsf_arena_block* b = a->head;
+    while (b != NULL) {
+        rsf_arena_block* n = b->next;
+        free(b);
+        b = n;
+    }
+    a->head = NULL;
+}
+
+/* ---- 当前上下文 ---- */
+static inline void rsf_ctx_process_exit(void);
+
+static inline rsf_ctx* rsf_ctx_get(void) {
+    if (rsf_ctx_cur != NULL) return rsf_ctx_cur;
+    {
+        rsf_ctx* c = &rsf_ctx_default;
+        rsf_ctx_arena.head = NULL;
+        rsf_ctx_arena.blockSize = 65536;
+        c->alloc.alloc = rsf_arena_alloc;
+        c->alloc.resize = rsf_arena_resize;
+        c->alloc.free = rsf_arena_release;
+        c->alloc.user = &rsf_ctx_arena;
+        c->err = false;
+        c->err_msg.len = 0;
+        c->err_msg.data = NULL;
+        rsf_ctx_cur = c;
+        atexit(rsf_ctx_process_exit);
+        return c;
+    }
+}
+
+static inline void rsf_ctx_process_exit(void) {
+    rsf_arena_reset(&rsf_ctx_arena);
+}
+
+/* 宿主注入分配器（--lib / 嵌入）：上下文由调用方持有，这里一次分配都不做。 */
+static inline void rsf_ctx_init(rsf_ctx* c, rsf_allocator a) {
+    c->alloc = a;
+    c->err = false;
+    c->err_msg.len = 0;
+    c->err_msg.data = NULL;
+}
+
+static inline void rsf_ctx_use(rsf_ctx* c) {
+    rsf_ctx_cur = c;
+}
+
+/* ---- 分配器入口：生成代码与运行时都走这里 ---- */
+static inline void* rsf_alloc(size_t n) {
+    rsf_ctx* c = rsf_ctx_get();
+    void* p = c->alloc.alloc(c->alloc.user, n < 1 ? 1 : n, 16);
+    if (!p) {
+        fprintf(stderr, "rsf: 内存不足（%zu 字节）", n);
+        fputc(10, stderr);
+        exit(1);
+    }
+    return p;
+}
+
+static inline void rsf_dealloc(void* p, size_t n) {
+    rsf_ctx* c;
+    if (!p) return;
+    c = rsf_ctx_get();
+    c->alloc.free(c->alloc.user, p, n, 16);
+}
+
+static inline void* rsf_malloc(size_t n) {
+    return rsf_alloc(n);
+}
+
+static inline void* rsf_calloc(size_t count, size_t elem) {
+    size_t n = count * elem;
+    void* p = rsf_alloc(n);
+    memset(p, 0, n);
+    return p;
+}
+
+/* 增长：旧容量显式传进来（类型是静态的，调用点一定知道），不用分配头。 */
+static inline void* rsf_grow(void* ptr, size_t oldSize, size_t newSize) {
+    rsf_ctx* c;
+    void* p;
+    if (newSize < 1) return ptr;
+    c = rsf_ctx_get();
+    p = c->alloc.resize(c->alloc.user, ptr, oldSize, newSize, 16);
+    if (!p) {
+        fprintf(stderr, "rsf: 内存不足（%zu 字节）", newSize);
+        fputc(10, stderr);
+        exit(1);
+    }
+    return p;
 }
 
 """
@@ -2038,9 +2232,13 @@ static inline void* rsf_reg_realloc(void* old, size_t n) {
             /* rsf 的 string 带长度、不一定以 0 结尾：调 libc 前先拷成 C 字符串 */
             static char* rsf_zstr(rsf_str s) {
                 static char* buf = NULL;
-                static int cap = 0;
-                int need = (int)s.len + 1;
-                if (need > cap) { cap = need * 2 + 32; buf = (char*)realloc(buf, (size_t)cap); }
+                static size_t cap = 0;
+                size_t need = (size_t)s.len + 1;
+                if (need > cap) {
+                    size_t ncap = need * 2 + 32;
+                    buf = (char*)rsf_grow(buf, cap, ncap);
+                    cap = ncap;
+                }
                 if (s.len > 0 && s.data) memcpy(buf, s.data, (size_t)s.len);
                 buf[s.len] = 0;
                 return buf;
@@ -2141,14 +2339,20 @@ static inline void* rsf_reg_realloc(void* old, size_t n) {
                     bool hit = (i + from.len <= s.len) && (memcmp(s.data + i, from.data, (size_t)from.len) == 0);
                     if (hit) {
                         if (n + to.len + 1 > cap) {
-                            while (n + to.len + 1 > cap) { cap = cap * 2; }
-                            out = (char*)realloc(out, (size_t)cap);
+                            int64_t ncap = cap;
+                            while (n + to.len + 1 > ncap) { ncap = ncap * 2; }
+                            out = (char*)rsf_grow(out, (size_t)cap, (size_t)ncap);
+                            cap = ncap;
                         }
                         memcpy(out + n, to.data, (size_t)to.len);
                         n += to.len;
                         i += from.len;
                     } else {
-                        if (n + 2 > cap) { cap = cap * 2; out = (char*)realloc(out, (size_t)cap); }
+                        if (n + 2 > cap) {
+                            int64_t ncap = cap * 2;
+                            out = (char*)rsf_grow(out, (size_t)cap, (size_t)ncap);
+                            cap = ncap;
+                        }
                         out[n] = s.data[i];
                         n += 1;
                         i += 1;
