@@ -160,7 +160,7 @@ fn both(x : Int) -> Int { rtn x }              // 两侧都有
 
 `rsf build x.rsf`（不带 `--c`）出 class：
 
-- 已支持：类 / 继承 / 虚表分派、接口与默认方法、枚举、泛型（擦除 + 装箱）、`switch`（枚举用 `tableswitch`，Int/Long/String 用比较链）、浮点、注解、指针（`T*` / `&x` / `*p` / `*p = v` / `p + n` / `p == q`）。
+- 已支持：类 / 继承 / 虚表分派、接口与默认方法、枚举（真 `java.lang.Enum`：`values()` / `valueOf` / `name` / `ordinal`，Java 的 `switch` 与 `EnumSet` 可直接用）、泛型（擦除 + 装箱）、`switch`（枚举用 `tableswitch`，Int/Long/String 用比较链）、浮点、注解、指针（`T*` / `&x` / `*p` / `*p = v` / `p + n` / `p == q`）。
 - 指针在 JVM 上表示成 `Object[]{ 帧, 格子号 }`：只有被 `&x` 取过地址的变量会被提升进帧数组，没用指针的函数字节码不受影响（`build/verify37/` 守着）。
 - 还不支持：`&obj.f`、`&a[i]`（显式报错）；`jvmCall` 只在 native 构建里可用（JVM 侧直接调 Java 即可）。
 
@@ -240,7 +240,7 @@ design/                               各阶段设计笔记（本地，不入库
 | JVM 字节码 + 解释器双后端逐字节一致 | ✅ |
 | 自举链（rsf 写前端/后端，与 Kotlin 版对拍） | ✅ 词法/语法/解释器/字节码后端 |
 | C 后端（native 线） | 🚧 类/继承（虚表）/接口（默认方法）/枚举/指针已接；JDK 接口、泛型、lambda、多维数组待接 |
-| JVM 互操作 | ✅ 可变参数 + 装箱、`try` 接 Java 异常（阶段 70）；待补：泛型 `Signature`、`--cp`、jar |
+| JVM 互操作 | ✅ 可变参数 + 装箱、`try` 接 Java 异常（阶段 70）、枚举是真 `java.lang.Enum`（阶段 72）；待补：泛型 `Signature`、`--cp`、jar |
 | LSP + IDEA 插件 | ✅ 诊断/补全/跳转/悬停/引用/重命名 |
 | 原生编译器（aarch64 二进制） | ⏳ 依赖 C 后端补全后再自举 |
 | 指针 L3（字段/元素取址、指针算术） | ✅ native 侧（阶段 69 起 JVM 侧由检查期挡住） |

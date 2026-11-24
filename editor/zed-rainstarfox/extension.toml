@@ -1,0 +1,37 @@
+id = "rainstarfox"
+name = "rainStarfox"
+version = "0.1.0"
+schema_version = 1
+description = "rainStarfox (.rsf) language support: syntax highlighting via tree-sitter and LSP via `java -jar rainStarfox-0.9.0.jar lsp`."
+repository = "https://github.com/MareAshleyPecker/rainStarfox-lang"
+authors = ["rainStarfox contributors"]
+themes = []
+icon_themes = []
+languages = ["languages/rsf"]
+capabilities = []
+
+[lib]
+kind = "Rust"
+version = "0.7.0"
+
+# Zed requires every grammar to be fetched from a git repository
+# (GrammarManifestEntry: `repository` and `rev` are mandatory, `path` is an
+# optional sub-directory inside the checkout). Because the grammar sources live
+# side by side with this extension, languages/rsf is its own small git repo and
+# Zed clones it into grammars/rsf/ (gitignored) during installation.
+# After changing grammar.js or regenerating src/, commit inside languages/rsf
+# and update `rev` to the new commit hash. To publish the extension, point
+# `repository` at the public GitHub URL instead (and drop the local path).
+[grammars.rsf]
+repository = "file:///D:/java/rainStarfox/editor/zed-rainstarfox/languages/rsf"
+rev = "2e2b4f59cd8f5b69d45622577b8fba51ba17355c"
+
+[language_servers.rainstarfox-lsp]
+language = "rainStarfox"
+languages = []
+
+[language_servers.rainstarfox-lsp.language_ids]
+
+[context_servers]
+
+[slash_commands]

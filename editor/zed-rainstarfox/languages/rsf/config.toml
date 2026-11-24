@@ -1,0 +1,11 @@
+name = "rainStarfox"
+grammar = "rsf"
+path_suffixes = ["rsf"]
+line_comments = ["// "]
+block_comment = { start = "/*", prefix = " * ", end = "*/" }
+autoclose_before = ";:.,=}])>"
+brackets = [
+  { start = "(", end = ")", close = true, newline = false },
+  { start = "[", end = "]", close = true, newline = false },
+  { start = "{", end = "}", close = true, newline = true },
+]

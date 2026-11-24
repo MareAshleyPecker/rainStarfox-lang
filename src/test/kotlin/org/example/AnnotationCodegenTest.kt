@@ -331,22 +331,18 @@ class AnnotationCodegenTest {
             ann.values["level"],
             "枚举元素必须是 enum_const_value（e 标签 + 枚举描述符 + 常量名）",
         )
-        // 已知限制（阶段 19c 的设计）：rsf 的枚举**不是** java.lang.Enum 的子类
-        // （`enum Level` 生成的是一个带静态单例的普通类），而 JDK 的注解解析器要求
-        // 枚举元素指向真正的枚举类，所以**这个成员**在运行期读不出来
-        // （`value()` / `n()` 这些非枚举成员不受影响）。类文件本身是合法的，
-        // 这里连带把这条限制钉住，免得以后有人以为是 M3 写坏了。
+        // 阶段 72：rsf 的枚举终于是真 java.lang.Enum 了，所以 JDK 的注解解析器
+        // 能认出 `e` 标签指向的枚举常量——这个成员现在读得出值，不再是
+        // AnnotationTypeMismatchException（阶段 19c 的那条限制已经消掉）。
         val onClass = assertNotNull(c.load("Demo").getAnnotation(c.classOf("Marker")))
-        val failure = assertFailsWith<java.lang.reflect.InvocationTargetException> {
-            member(onClass, "level")
-        }
-        assertTrue(
-            failure.cause is java.lang.annotation.AnnotationTypeMismatchException,
-            "枚举成员读不出来应该是 AnnotationTypeMismatchException：实际 ${failure.cause}",
+        val levelClass = c.load("Level")
+        assertEquals(
+            levelClass.getField("HIGH").get(null),
+            member(onClass, "level"),
+            "枚举成员的注解值应该能读出 Level.HIGH",
         )
         // 伴生类上的元素字段是普通字段，照样读得到
         val impl = c.load("Marker\$Impl")
-        val levelClass = c.load("Level")
         val instance = impl.getConstructor(levelClass).newInstance(levelClass.getField("HIGH").get(null))
         assertEquals(levelClass.getField("HIGH").get(null), impl.getField("level").get(instance))
     }

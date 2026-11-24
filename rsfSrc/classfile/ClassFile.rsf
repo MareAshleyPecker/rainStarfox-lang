@@ -773,6 +773,10 @@ pub class ClassWriter {
     // 阶段 67：SourceFile 属性。Kotlin 侧 `cw.visitSource(sourceName, null)` 一直有，
     // 这里此前是空实现，产物因此丢掉「这个类来自哪个 .rsf 文件」。
     var sourceFile : String = ""
+    // 阶段 72：Signature 属性（泛型签名）。枚举的父类要写成
+    // `Ljava/lang/Enum<Lpkg/Color;>;`，Java 侧才认得出 `Enum<Color>`；Kotlin 侧走
+    // ASM 的 `cw.visit(..., signature, ...)`，这里以前也是空实现。
+    var signature : String = ""
     var cp : Cp = new Cp()
     var methods : Method[] = new Method[8]
     var methodCount : Int = 0
@@ -836,6 +840,10 @@ pub class ClassWriter {
         if (sourceFile != "") {
             cp.utf8("SourceFile")
             cp.utf8(sourceFile)
+        }
+        if (signature != "") {
+            cp.utf8("Signature")
+            cp.utf8(signature)
         }
         for (var fi = 0; fi < fieldCount; fi = fi + 1) {
             cp.utf8(fields[fi].name)
@@ -958,13 +966,21 @@ pub class ClassWriter {
                 }
             }
         }
+        // 类属性：Signature 在前、SourceFile 在后（与 ASM 的写出顺序一致，
+        // 这样 stage1 与 Kotlin 侧的类在 javap -v 里也是同一个顺序）。
+        var attrCount = 0
+        if (signature != "") { attrCount = attrCount + 1 }
+        if (sourceFile != "") { attrCount = attrCount + 1 }
+        out.u2(attrCount)
+        if (signature != "") {
+            out.u2(cp.utf8("Signature"))
+            out.u4(2)
+            out.u2(cp.utf8(signature))
+        }
         if (sourceFile != "") {
-            out.u2(1)
             out.u2(cp.utf8("SourceFile"))
             out.u4(2)
             out.u2(cp.utf8(sourceFile))
-        } else {
-            out.u2(0)
         }
         rtn out
     }
@@ -1081,6 +1097,7 @@ pub class Cw {
         w.name = nm
         w.access = acc
         w.superName = sup
+        if (sig != null) { w.signature = sig!! }
         var i = 0
         while (i < ifaces.length) {
             w.addInterface(ifaces[i])

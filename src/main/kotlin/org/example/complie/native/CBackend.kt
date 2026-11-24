@@ -1668,7 +1668,7 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
             }
             static int rsf_file_stat(rsf_file* f, struct stat* st) {
                 if (!f || !f->path.data) return -1;
-                return stat(f->path.data, st);
+                return stat(rsf_zstr(f->path), st);
             }
             static bool rsf_file_is_file(rsf_file* f) {
                 struct stat st;
@@ -1693,7 +1693,7 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
             }
             static rsf_str rsf_file_name(rsf_file* f) {
                 if (!f || !f->path.data) return rsf_str_c("");
-                const char* p = f->path.data;
+                const char* p = rsf_zstr(f->path);
                 const char* last = p;
                 for (; *p; p++) { if (*p == '/' || *p == ((char)92)) last = p + 1; }
                 return rsf_str_c(last);
@@ -1727,12 +1727,12 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
             }
             static bool rsf_file_delete(rsf_file* f) {
                 if (!f || !f->path.data) return false;
-                return remove(f->path.data) == 0;
+                return remove(rsf_zstr(f->path)) == 0;
             }
             static rsf_arr rsf_file_list(rsf_file* f) {
                 rsf_arr a = rsf_arr_new(0, sizeof(void*));
                 if (!f || !f->path.data) return a;
-                DIR* d = opendir(f->path.data);
+                DIR* d = opendir(rsf_zstr(f->path));
                 if (!d) return a;
                 int64_t n = 0;
                 struct dirent* e;
@@ -1742,7 +1742,7 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
                 }
                 closedir(d);
                 a = rsf_arr_new(n, sizeof(void*));
-                d = opendir(f->path.data);
+                d = opendir(rsf_zstr(f->path));
                 if (!d) return a;
                 int64_t i = 0;
                 while ((e = readdir(d)) != NULL && i < n) {
@@ -2041,10 +2041,13 @@ static inline void* rsf_grow(void* ptr, size_t oldSize, size_t newSize) {
                 rsf_str s; s.len = len; s.data = data; return s;
             }
 
+            /* 末尾补一个 0：rsf 的 string 是长度前缀、不保证以 0 结尾，但宿主 shim
+             * （stat / fopen / opendir / getenv）要的是 C 字符串。补上不改变 len。 */
             static rsf_str rsf_concat(rsf_str a, rsf_str b) {
-                char* p = (char*)malloc((size_t)(a.len + b.len));
+                char* p = (char*)malloc((size_t)(a.len + b.len + 1));
                 if (a.len > 0) memcpy(p, a.data, (size_t)a.len);
                 if (b.len > 0) memcpy(p + a.len, b.data, (size_t)b.len);
+                p[a.len + b.len] = 0;
                 rsf_str s; s.len = a.len + b.len; s.data = p; return s;
             }
 

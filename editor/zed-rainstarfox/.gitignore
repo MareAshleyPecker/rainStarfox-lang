@@ -1,0 +1,3 @@
+/target
+# Zed clones the grammar git repo into this directory at install time.
+/grammars

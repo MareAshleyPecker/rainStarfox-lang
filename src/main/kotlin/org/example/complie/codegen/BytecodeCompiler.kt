@@ -1954,95 +1954,138 @@ class BytecodeCompiler(
     private fun enumDescriptorOf(enumName: String): String = "L${classInternalName(enumName)};"
 
     /**
-     * 一个枚举编译出来的类（阶段 19c）——**普通类，不是 JVM 的 `enum`**。
+     * 一个枚举编译出来的类（阶段 19c；阶段 72 起是**真 JVM 枚举**）。
      *
      * 生成出来的形状（口径写在 [org.example.complie.ast.EnumDecl] 的注释里）：
      * ```
-     * public final class TokenKind extends java.lang.Object {
-     *     public static final TokenKind IDENT;      // 每个值一个单例
+     * public final class TokenKind extends java.lang.Enum<TokenKind> {   // ACC_ENUM
+     *     public static final TokenKind IDENT;      // 每个值一个单例（ACC_ENUM 字段）
      *     public static final TokenKind INT_LIT;
-     *     private final String name;                // 私有的名字字段
-     *     private TokenKind(String name) { super(); this.name = name; }
-     *     public String toString() { return this.name; }
-     *     static {                                  // <clinit>：造出全部单例
-     *         IDENT = new TokenKind("IDENT");
-     *         INT_LIT = new TokenKind("INT_LIT");
+     *     private static final TokenKind[] $VALUES;
+     *     private TokenKind(String name, int ordinal) { super(name, ordinal); }
+     *     public static TokenKind[] values() { return (TokenKind[]) $VALUES.clone(); }
+     *     public static TokenKind valueOf(String name) {
+     *         return (TokenKind) Enum.valueOf(TokenKind.class, name);
+     *     }
+     *     static {                                  // <clinit>：造出全部单例再填 $VALUES
+     *         IDENT = new TokenKind("IDENT", 0);
+     *         INT_LIT = new TokenKind("INT_LIT", 1);
+     *         $VALUES = new TokenKind[] { IDENT, INT_LIT };
      *     }
      * }
      * ```
      *
-     * 三个决定了形状的取舍：
+     * 五个决定了形状的取舍：
      *
-     * 1. **`<clinit>` 而不是「每个字段各自初始化」**：JVM 的静态字段初值本来就统一
+     * 1. **父类是 `java.lang.Enum`**：这样 `name()/ordinal()/toString()/equals()/
+     *    hashCode()` 全部继承下来（`toString()` 返回 `name()`，与解释器
+     *    [org.example.complie.interp.Interpreter.RsfEnumValue.toString] 的文本一致），
+     *    Java 侧的 `switch`、`EnumSet`、`EnumMap`、`valueOf` 反射都能直接用。
+     * 2. **`<clinit>` 而不是「每个字段各自初始化」**：JVM 的静态字段初值本来就统一
      *    放在 `<clinit>` 里，一条 `PUTSTATIC` 一个值，顺序就是声明顺序。
      *    这样 `GETSTATIC` 第一次触发类初始化时，那些单例必然已经造好了。
-     * 2. **单例**：值字段是 `public static final`，且构造器是 `private`——外面造不出
+     * 3. **单例**：值字段是 `public static final`，且构造器是 `private`——外面造不出
      *    第二个 `TokenKind`，所以引用相等就是「同一个常量」，`==` 在两端都成立。
-     * 3. **`toString()` 返回名字**：这是「打印出值名」和「`"k = " + k` 拼出值名」
-     *    两条路的**同一个落点**——JVM 上 `PrintStream.println(Object)` 与
-     *    `String.valueOf(Object)` 都会调到它。解释器那边对应
-     *    [org.example.complie.interp.Interpreter.RsfEnumValue.toString]，两个
-     *    `toString` 返回的都是 `valueName` 本身，所以文本必然一致。
-     *    （`StringBuilder.append(Object)` 那条也走同一个 `toString()`。）
+     * 4. **`values()` 每次 clone**：JDK 约定 `values()` 返回的数组归调用方所有，
+     *    改了不能影响下一次调用；`$VALUES` 是 private static final，只在这里读。
+     * 5. **`valueOf(String)` 转发给 `Enum.valueOf`**：名字对不上时由它抛
+     *    `IllegalArgumentException`，与 Java 枚举语义一致。
      *
-     * 类标记 `ACC_FINAL | ACC_SUPER | ACC_PUBLIC`：`final` 是因为 rsf 里没有继承，
-     * 枚举更不该被继承；加了 `ACC_SUPER` 才是现代 JVM 的常规形态。
+     * 类标记 `ACC_PUBLIC | ACC_FINAL | ACC_SUPER | ACC_ENUM`：`final` 是因为 rsf 里
+     * 没有继承，枚举更不该被继承；`ACC_ENUM` 让反射（`Class.isEnum()`）与
+     * `Enum.valueOf`、`java.util.EnumSet` 认得出它是枚举。
      */
     private fun enumClass(internalName: String, decl: EnumDecl): ClassWriter {
         val cw = newClassWriter()
-        cw.visit(V17, ACC_PUBLIC or ACC_FINAL or ACC_SUPER, internalName, null, "java/lang/Object", null)
+        val selfDesc = "L$internalName;"
+        val arrayDesc = "[L$internalName;"
+        cw.visit(
+            V17,
+            ACC_PUBLIC or ACC_FINAL or ACC_SUPER or ACC_ENUM,
+            internalName,
+            // 泛型签名：Enum<E extends Enum<E>>；少了它，Java 侧拿到的就是裸 Enum
+            "Ljava/lang/Enum<$selfDesc>;",
+            "java/lang/Enum",
+            null,
+        )
         cw.visitSource(sourceName, null)
 
-        val selfDesc = "L$internalName;"
-
-        // 每个值一个 public static final 单例字段
+        // 每个值一个 public static final 单例字段（ACC_ENUM：反射里算枚举常量）
         for (v in decl.values) {
-            cw.visitField(ACC_PUBLIC or ACC_STATIC or ACC_FINAL, v.name, selfDesc, null, null).visitEnd()
+            cw.visitField(
+                ACC_PUBLIC or ACC_STATIC or ACC_FINAL or ACC_ENUM, v.name, selfDesc, null, null,
+            ).visitEnd()
         }
-        // 私有的名字字段：toString() 返回的就是它
-        cw.visitField(ACC_PRIVATE or ACC_FINAL, ENUM_NAME_FIELD, "Ljava/lang/String;", null, null).visitEnd()
+        cw.visitField(
+            ACC_PRIVATE or ACC_STATIC or ACC_FINAL or ACC_SYNTHETIC,
+            ENUM_VALUES_FIELD, arrayDesc, null, null,
+        ).visitEnd()
 
-        // private <init>(String name) { super(); this.name = name; }
+        // private <init>(String name, int ordinal) { super(name, ordinal); }
         run {
-            val mv = cw.visitMethod(ACC_PRIVATE, "<init>", "(Ljava/lang/String;)V", null, null)
+            val mv = cw.visitMethod(ACC_PRIVATE, "<init>", "(Ljava/lang/String;I)V", null, null)
             mv.visitCode()
-            // 生成的构造器：LVT 只有 this（那个 String 形参是合成的，不发）
+            // 生成的构造器：LVT 只有 this（两个形参都是合成的，不发）
             val lvt = beginLvt(mv, internalName)
             mv.visitVarInsn(ALOAD, 0)
-            mv.visitMethodInsn(INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false)
-            mv.visitVarInsn(ALOAD, 0)
             mv.visitVarInsn(ALOAD, 1)
-            mv.visitFieldInsn(PUTFIELD, internalName, ENUM_NAME_FIELD, "Ljava/lang/String;")
+            mv.visitVarInsn(ILOAD, 2)
+            mv.visitMethodInsn(INVOKESPECIAL, "java/lang/Enum", "<init>", "(Ljava/lang/String;I)V", false)
             mv.visitInsn(RETURN)
             endLvt(mv, lvt)
             mv.visitMaxs(0, 0)
             mv.visitEnd()
         }
 
-        // public String toString() { return this.name; }
+        // public static TokenKind[] values() { return (TokenKind[]) $VALUES.clone(); }
         run {
-            val mv = cw.visitMethod(ACC_PUBLIC, "toString", "()Ljava/lang/String;", null, null)
+            val mv = cw.visitMethod(ACC_PUBLIC or ACC_STATIC, "values", "()$arrayDesc", null, null)
             mv.visitCode()
-            val lvt = beginLvt(mv, internalName)
-            mv.visitVarInsn(ALOAD, 0)
-            mv.visitFieldInsn(GETFIELD, internalName, ENUM_NAME_FIELD, "Ljava/lang/String;")
+            mv.visitFieldInsn(GETSTATIC, internalName, ENUM_VALUES_FIELD, arrayDesc)
+            mv.visitMethodInsn(INVOKEVIRTUAL, arrayDesc, "clone", "()Ljava/lang/Object;", false)
+            mv.visitTypeInsn(CHECKCAST, arrayDesc)
             mv.visitInsn(ARETURN)
-            endLvt(mv, lvt)
             mv.visitMaxs(0, 0)
             mv.visitEnd()
         }
 
-        // static { IDENT = new TokenKind("IDENT"); ... }：顺序 = 声明顺序
+        // public static TokenKind valueOf(String name) { return (TokenKind) Enum.valueOf(...); }
+        run {
+            val mv = cw.visitMethod(ACC_PUBLIC or ACC_STATIC, "valueOf", "(Ljava/lang/String;)$selfDesc", null, null)
+            mv.visitCode()
+            mv.visitLdcInsn(Type.getObjectType(internalName))
+            mv.visitVarInsn(ALOAD, 0)
+            mv.visitMethodInsn(
+                INVOKESTATIC, "java/lang/Enum", "valueOf",
+                "(Ljava/lang/Class;Ljava/lang/String;)Ljava/lang/Enum;", false,
+            )
+            mv.visitTypeInsn(CHECKCAST, internalName)
+            mv.visitInsn(ARETURN)
+            mv.visitMaxs(0, 0)
+            mv.visitEnd()
+        }
+
+        // static { IDENT = new TokenKind("IDENT", 0); ...; $VALUES = new TokenKind[]{...}; }
         run {
             val mv = cw.visitMethod(ACC_STATIC, "<clinit>", "()V", null, null)
             mv.visitCode()
-            for (v in decl.values) {
+            for ((ordinal, v) in decl.values.withIndex()) {
                 mv.visitTypeInsn(NEW, internalName)
                 mv.visitInsn(DUP)
                 mv.visitLdcInsn(v.name)
-                mv.visitMethodInsn(INVOKESPECIAL, internalName, "<init>", "(Ljava/lang/String;)V", false)
+                pushInt(mv, ordinal)
+                mv.visitMethodInsn(INVOKESPECIAL, internalName, "<init>", "(Ljava/lang/String;I)V", false)
                 mv.visitFieldInsn(PUTSTATIC, internalName, v.name, selfDesc)
             }
+            pushInt(mv, decl.values.size)
+            mv.visitTypeInsn(ANEWARRAY, internalName)
+            for ((ordinal, v) in decl.values.withIndex()) {
+                mv.visitInsn(DUP)
+                pushInt(mv, ordinal)
+                mv.visitFieldInsn(GETSTATIC, internalName, v.name, selfDesc)
+                mv.visitInsn(AASTORE)
+            }
+            mv.visitFieldInsn(PUTSTATIC, internalName, ENUM_VALUES_FIELD, arrayDesc)
             mv.visitInsn(RETURN)
             mv.visitMaxs(0, 0)
             mv.visitEnd()
@@ -4908,6 +4951,8 @@ class BytecodeCompiler(
         const val ACC_STATIC = Opcodes.ACC_STATIC
         const val ACC_FINAL = Opcodes.ACC_FINAL
         const val ACC_SUPER = Opcodes.ACC_SUPER
+        // 阶段 72：枚举的类标记与值字段标记（`Class.isEnum()` / `Enum.valueOf` 认它）。
+        const val ACC_ENUM = Opcodes.ACC_ENUM
         // 阶段 20：接口的头与抽象方法的头（`ACC_INTERFACE | ACC_ABSTRACT`）。
         const val ACC_INTERFACE = Opcodes.ACC_INTERFACE
         const val ACC_ABSTRACT = Opcodes.ACC_ABSTRACT
@@ -4973,16 +5018,16 @@ class BytecodeCompiler(
         const val IXOR = Opcodes.IXOR
 
         /**
-         * 枚举类里那个**私有名字字段**的字段名（阶段 19c）。
+         * 枚举类里那个**私有 `$VALUES` 字段**的字段名（阶段 72）。
          *
-         * 为什么叫 `$name` 而不是 `name`：rsf 的标识符只允许「字母 / 数字 / 下划线」
-         * （见 `Lexer.isIdentStart`），**永远写不出 `$`**，所以这个名字与任何
-         * 枚举值名都不可能撞车——`enum E { name }` 这种写法在 rsf 里是合法的，
-         * 若私有字段也叫 `name`，生成的类里就会有两个同名字段，类文件直接报废。
-         * 用 `$` 前缀把「编译器内部字段」和「用户写的值名」彻底分开，
-         * 比在 Checker 里加一条「值名不能叫 name」的限制干净。
+         * 为什么叫 `$VALUES` 而不是 `values`：rsf 的标识符只允许「字母 / 数字 /
+         * 下划线」（见 `Lexer.isIdentStart`），**永远写不出 `$`**，所以这个名字与
+         * 任何枚举值名都不可能撞车——`enum E { values }` 这种写法在 rsf 里是合法的，
+         * 若字段也叫 `values`，生成的类里就会与 `values()` 所在的名字空间纠缠，
+         * 用户也读不到。用 `$` 前缀把「编译器内部字段」和「用户写的值名」彻底分开，
+         * 与 javac 给枚举生成的 `$VALUES` 同名，工具链看着也熟。
          */
-        const val ENUM_NAME_FIELD = "\$name"
+        const val ENUM_VALUES_FIELD = "\$VALUES"
 
         const val I2L = Opcodes.I2L
         const val I2F = Opcodes.I2F

@@ -6709,14 +6709,53 @@ fn emitExpr(g : Gen, mv : Mv, e : Node, off : Int) -> void {
 
 // ------------------------------------------------------------ 指令
 
+// ------------------------------------------------------------ catch 入口的消息整理
+//
+// 阶段 70 起与 Kotlin BytecodeCompiler.emitCaughtMessage 同构：栈上进来的是异常对象 t，
+// 出去时错误变量槽里放「消息文本」——rsf 自己的失败（RuntimeException）只留原文，
+// Java 互调抛出来的补上 `完整类名: ` 前缀。
+//
+// 这段指令**内联在 emitIns 的 catch 分支里**，不抽成顶层 fn：顶层 fn 会成为 RsfcBuild
+// 自己的一个方法，类形状就与 Kotlin 侧不同，stage1 对拍永远对不上。
+// 临时槽 temp / temp+1 放在 g.slotCount + off 之后（ClassFile 的 maxLocalSeen 会跟着记）。
+
 fn emitIns(g : Gen, w : Walker, mv : Mv, i : Int, off : Int) -> void {
     var ins = w.out[i]
     var k = ins.kind
     if (k == "label") {
         mv.visitLabel(ins.lbl)
         if (ins.catchSlot >= 0) {
-            mv.visitMethodInsn(182, "java/lang/RuntimeException", "getMessage", "()Ljava/lang/String;", false)
-            eStoreSlot(mv, tString(), ins.catchSlot + off)
+            // 接住的值 = 「类名: 消息」；rsf 自己的 RuntimeException 只留消息原文
+            var slot = ins.catchSlot + off
+            var temp = g.slotCount + off
+            var hasText = new Lb()
+            var isPlain = new Lb()
+            mv.visitInsn(89)
+            mv.visitMethodInsn(182, "java/lang/Object", "getClass", "()Ljava/lang/Class;", false)
+            mv.visitMethodInsn(182, "java/lang/Class", "getName", "()Ljava/lang/String;", false)
+            mv.visitVarInsn(58, temp)
+            mv.visitInsn(89)
+            mv.visitMethodInsn(182, "java/lang/Throwable", "getMessage", "()Ljava/lang/String;", false)
+            mv.visitVarInsn(58, temp + 1)
+            mv.visitVarInsn(25, temp + 1)
+            mv.visitJumpInsn(199, hasText)
+            mv.visitLdcString("")
+            mv.visitVarInsn(58, temp + 1)
+            mv.visitLabel(hasText)
+            mv.visitVarInsn(25, temp)
+            mv.visitLdcString("java.lang.RuntimeException")
+            mv.visitMethodInsn(182, "java/lang/String", "equals", "(Ljava/lang/Object;)Z", false)
+            mv.visitJumpInsn(154, isPlain)
+            mv.visitVarInsn(25, temp)
+            mv.visitLdcString(": ")
+            mv.visitMethodInsn(182, "java/lang/String", "concat", "(Ljava/lang/String;)Ljava/lang/String;", false)
+            mv.visitVarInsn(25, temp + 1)
+            mv.visitMethodInsn(182, "java/lang/String", "concat", "(Ljava/lang/String;)Ljava/lang/String;", false)
+            mv.visitVarInsn(58, temp + 1)
+            mv.visitLabel(isPlain)
+            mv.visitVarInsn(25, temp + 1)
+            eStoreSlot(mv, tString(), slot)
+            mv.visitInsn(87)
         }
         rtn
     }
@@ -7244,7 +7283,8 @@ fn flushBody(g : Gen, mv : Mv, p : Prep, off : Int, ret : BType, tailName : Stri
     var hi = 0
     while (hi < w.hCount) {
         if (reach[w.hStartIdx[hi]]) {
-            mv.visitTryCatchBlock(w.hStarts[hi], w.hEnds[hi], w.hHandlers[hi], "java/lang/RuntimeException")
+            // 阶段 70：接 Throwable 而不是 RuntimeException —— Java 互调抛的 IOException 这类受检异常也要能接。
+            mv.visitTryCatchBlock(w.hStarts[hi], w.hEnds[hi], w.hHandlers[hi], "java/lang/Throwable")
             w.out[w.hStartIdx[hi]].forced = true
             w.out[w.hEndIdx[hi]].forced = true
             w.out[w.hHandlerIdx[hi]].forced = true
@@ -7778,39 +7818,49 @@ fn emitEnumClass(g : Gen, ei : EInfo) -> void {
     g.curMeth = null
     g.curStatic = false
     var orFrom = g.orCount
-    g.cw.visit(v17(), accPublic() + 16 + accSuper(), ei.internal, null, "java/lang/Object", new String[0])
-    g.cw.visitSource(g.sourceName, null)
     var selfDesc = "L" + ei.internal + ";"
+    var arrayDesc = "[L" + ei.internal + ";"
+    // 阶段 72：真 JVM 枚举 —— 父类 java.lang.Enum<自己>，类与值字段都带 ACC_ENUM。
+    g.cw.visit(v17(), accPublic() + 16 + accSuper() + 16384, ei.internal, "Ljava/lang/Enum<" + selfDesc + ">;", "java/lang/Enum", new String[0])
+    g.cw.visitSource(g.sourceName, null)
     var i = 0
     while (i < ei.valueCount) {
-        g.cw.visitField(accPublic() + accStatic() + 16, ei.values[i], selfDesc, null, null).visitEnd()
+        g.cw.visitField(accPublic() + accStatic() + 16 + 16384, ei.values[i], selfDesc, null, null).visitEnd()
         i = i + 1
     }
-    g.cw.visitField(accPrivate() + 16, "$name", "Ljava/lang/String;", null, null).visitEnd()
-    // prv <init>(Ljava/lang/String;)V
-    var mv = g.cw.visitMethod(accPrivate(), "<init>", "(Ljava/lang/String;)V", null, null)
+    // private static final TokenKind[] $VALUES（ACC_SYNTHETIC = 4096）
+    g.cw.visitField(accPrivate() + accStatic() + 16 + 4096, "$VALUES", arrayDesc, null, null).visitEnd()
+    // prv <init>(Ljava/lang/String;I)V —— 两个形参都是合成的，LVT 只有 this
+    var mv = g.cw.visitMethod(accPrivate(), "<init>", "(Ljava/lang/String;I)V", null, null)
     mv.visitCode()
-    // 生成的构造器：LVT 只有 this（那个 String 形参是合成的，不发）
     lvtBegin(g, mv, ei.internal)
     mv.visitVarInsn(25, 0)
-    mv.visitMethodInsn(183, "java/lang/Object", "<init>", "()V", false)
-    mv.visitVarInsn(25, 0)
     mv.visitVarInsn(25, 1)
-    mv.visitFieldInsn(181, ei.internal, "$name", "Ljava/lang/String;")
+    mv.visitVarInsn(21, 2)
+    mv.visitMethodInsn(183, "java/lang/Enum", "<init>", "(Ljava/lang/String;I)V", false)
     mv.visitInsn(177)
     lvtEnd(g, mv, 0)
     mv.visitMaxs(0, 0)
     mv.visitEnd()
-    // pub toString()
-    var mv2 = g.cw.visitMethod(accPublic(), "toString", "()Ljava/lang/String;", null, null)
-    mv2.visitCode()
-    lvtBegin(g, mv2, ei.internal)
-    mv2.visitVarInsn(25, 0)
-    mv2.visitFieldInsn(180, ei.internal, "$name", "Ljava/lang/String;")
-    mv2.visitInsn(176)
-    lvtEnd(g, mv2, 0)
-    mv2.visitMaxs(0, 0)
-    mv2.visitEnd()
+    // pub stc TokenKind[] values() { return (TokenKind[]) $VALUES.clone(); }
+    var mvV = g.cw.visitMethod(accPublic() + accStatic(), "values", "()" + arrayDesc, null, null)
+    mvV.visitCode()
+    mvV.visitFieldInsn(178, ei.internal, "$VALUES", arrayDesc)
+    mvV.visitMethodInsn(182, arrayDesc, "clone", "()Ljava/lang/Object;", false)
+    mvV.visitTypeInsn(192, arrayDesc)
+    mvV.visitInsn(176)
+    mvV.visitMaxs(0, 0)
+    mvV.visitEnd()
+    // pub stc TokenKind valueOf(String name) { return (TokenKind) Enum.valueOf(TokenKind.class, name); }
+    var mvOf = g.cw.visitMethod(accPublic() + accStatic(), "valueOf", "(Ljava/lang/String;)" + selfDesc, null, null)
+    mvOf.visitCode()
+    mvOf.visitLdcClass(ei.internal)
+    mvOf.visitVarInsn(25, 0)
+    mvOf.visitMethodInsn(184, "java/lang/Enum", "valueOf", "(Ljava/lang/Class;Ljava/lang/String;)Ljava/lang/Enum;", false)
+    mvOf.visitTypeInsn(192, ei.internal)
+    mvOf.visitInsn(176)
+    mvOf.visitMaxs(0, 0)
+    mvOf.visitEnd()
     // <clinit>（stc，且合成变量不进 LVT：这条不 lvtBegin）
     var mv3 = g.cw.visitMethod(accStatic(), "<clinit>", "()V", null, null)
     mv3.visitCode()
@@ -7819,10 +7869,23 @@ fn emitEnumClass(g : Gen, ei : EInfo) -> void {
         mv3.visitTypeInsn(187, ei.internal)
         mv3.visitInsn(89)
         mv3.visitLdcString(ei.values[k])
-        mv3.visitMethodInsn(183, ei.internal, "<init>", "(Ljava/lang/String;)V", false)
+        pushInt(mv3, k)
+        mv3.visitMethodInsn(183, ei.internal, "<init>", "(Ljava/lang/String;I)V", false)
         mv3.visitFieldInsn(179, ei.internal, ei.values[k], selfDesc)
         k = k + 1
     }
+    // $VALUES = new TokenKind[] { A, B, ... }
+    pushInt(mv3, ei.valueCount)
+    mv3.visitTypeInsn(189, ei.internal)
+    k = 0
+    while (k < ei.valueCount) {
+        mv3.visitInsn(89)
+        pushInt(mv3, k)
+        mv3.visitFieldInsn(178, ei.internal, ei.values[k], selfDesc)
+        mv3.visitInsn(83)
+        k = k + 1
+    }
+    mv3.visitFieldInsn(179, ei.internal, "$VALUES", arrayDesc)
     mv3.visitInsn(177)
     mv3.visitMaxs(0, 0)
     mv3.visitEnd()

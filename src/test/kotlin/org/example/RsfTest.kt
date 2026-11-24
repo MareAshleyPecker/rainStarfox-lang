@@ -5701,7 +5701,96 @@ class RsfTest {
         )
     }
 
-    // ------------------------------------------------------------------ 阶段 19c：enum
+    @Test
+    fun `枚举在 JVM 上是真 Enum 有 values 和 valueOf`() {
+        val program = """
+            enum Color { RED, GREEN, BLUE }
+
+            fn main() -> void {
+                println(Color.GREEN)
+                rtn
+            }
+        """.trimIndent() + "\n"
+
+        assertEquals(listOf("GREEN"), lines(runInterpreted(program)))
+        val (loader, main) = compileAndLoad(program, "RsfEnumReal")
+        assertEquals(listOf("GREEN"), lines(runMain(main)), "真枚举也不影响 rsf 侧的打印")
+
+        val cls = loader.loadClass("Color")
+        assertTrue(java.lang.Enum::class.java.isAssignableFrom(cls), "枚举类的父类应该是 java.lang.Enum")
+        assertTrue(cls.isEnum, "类上要有 ACC_ENUM，Class.isEnum() 才为 true")
+        assertEquals("java/lang/Enum", cls.superclass?.let { it.name.replace('.', '/') })
+
+        // values()：顺序 = 声明顺序，而且每次返回一份新数组（改一份不影响下一份）
+        val values1 = cls.getMethod("values").invoke(null) as Array<*>
+        val values2 = cls.getMethod("values").invoke(null) as Array<*>
+        assertEquals(listOf("RED", "GREEN", "BLUE"), values1.map { it.toString() })
+        java.lang.reflect.Array.set(values1, 0, values1[2])
+        assertEquals("RED", (cls.getMethod("values").invoke(null) as Array<*>)[0].toString(), "values() 必须给新数组")
+
+        val red = cls.getField("RED").get(null)
+        assertEquals("RED", cls.getMethod("name").invoke(red))
+        assertEquals(0, cls.getMethod("ordinal").invoke(red))
+        assertEquals(2, cls.getMethod("ordinal").invoke(values2[2]))
+        assertEquals("RED", red.toString(), "toString() 继承自 Enum，返回名字")
+
+        // valueOf：同一个常量（单例）、大小写敏感、名字对不上抛 IllegalArgumentException
+        val valueOf = cls.getMethod("valueOf", String::class.java)
+        assertTrue(red === valueOf.invoke(null, "RED"), "valueOf 必须返回同一个单例")
+        val failure = assertFailsWith<java.lang.reflect.InvocationTargetException> {
+            valueOf.invoke(null, "red")
+        }
+        assertTrue(failure.cause is IllegalArgumentException, "未知名字应抛 IllegalArgumentException：${failure.cause}")
+    }
+
+    @Test
+    fun `枚举可以被 Java 的 switch 和 EnumSet 使用`() {
+        val program = """
+            enum Op { ADD, SUB }
+
+            fn main() -> void { println(Op.ADD) }
+        """.trimIndent() + "\n"
+
+        // Java 侧 switch 需要枚举类的 values()/ordinal()，EnumSet 需要 ACC_ENUM + 单例
+        val javaSide = """
+            import java.util.EnumSet;
+
+            public class EnumUser {
+                public static String use(Op op) {
+                    String s;
+                    switch (op) {
+                        case ADD: s = "add"; break;
+                        case SUB: s = "sub"; break;
+                        default: s = "?"; break;
+                    }
+                    return s + "/" + EnumSet.of(Op.ADD, Op.SUB).size() + "/" + Op.valueOf("SUB").ordinal();
+                }
+            }
+        """.trimIndent()
+
+        val dir = tempDir()
+        val programSource = source(program)
+        Rsf.build(Rsf.analyze(programSource), programSource, "RsfEnumJavaUse", dir)
+        val loader = java.net.URLClassLoader(arrayOf(dir.toURI().toURL()), javaClass.classLoader)
+        val cls = loader.loadClass("Op")
+
+        val src = java.io.File(dir, "EnumUser.java")
+        src.writeText(javaSide, Charsets.UTF_8)
+        val out = java.io.File(dir, "classes")
+        out.mkdirs()
+        // 把编译出来的枚举类放到 javac 的类路径上，它才能解析 Op
+        java.io.File(out, "Op.class").writeBytes(java.io.File(dir, "Op.class").readBytes())
+        val javac = javax.tools.ToolProvider.getSystemJavaCompiler()
+        if (javac == null) throw AssertionError("需要 JDK 自带编译器")
+        val rc = javac.run(null, null, null, "-cp", out.absolutePath, "-d", out.absolutePath, src.absolutePath)
+        assertEquals(0, rc, "javac 应该能编译使用枚举的 Java 代码")
+
+        val userLoader = java.net.URLClassLoader(arrayOf(out.toURI().toURL()), loader)
+        val user = userLoader.loadClass("EnumUser")
+        assertEquals("add/2/1", user.getMethod("use", cls).invoke(null, cls.getField("ADD").get(null)))
+    }
+
+    // ------------------------------------------------------------------ 阶段 19c：enum（续）
 
     @Test
     fun `枚举声明与取值两端一致`() {

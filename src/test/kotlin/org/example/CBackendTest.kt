@@ -70,6 +70,30 @@ class CBackendTest {
     }
 
     @Test
+    fun `拼出来的字符串要以 0 结尾，宿主 shim 才敢交给 libc`() {
+        // 阶段 72 定位到的坑：rsf_str 是「长度 + 指针」，拼接只按长度分配、不写结尾 0。
+        // FILE_RUNTIME 的 java.io.File shim 要把它交给 stat/opendir/remove，这些都要 C 字符串，
+        // 于是末尾的随机字节让 stat 报 ENOENT —— 表现为「读文件读不出来」而路径其实是对的。
+        val header = CBackend(Rsf.analyze(SourceFile.of("c.kt", "fn main() -> void { rtn }"))).runtimeLibSource()
+        assertTrue(header.contains("(size_t)(a.len + b.len + 1)"), "拼接要多留一个字节写结尾 0")
+        assertTrue(header.contains("p[a.len + b.len] = 0;"), "拼接要显式写结尾 0")
+
+        val c = emit(
+            """
+            import java.io.File
+
+            fn main() -> void {
+                var f = new File("no-such-file.txt")
+                println(f.exists())
+                rtn
+            }
+            """.trimIndent(),
+        )
+        assertTrue(c.contains("rsf_zstr(f->path)"), "宿主 shim 走 rsf_zstr 换成 C 字符串")
+        assertTrue(!c.contains("stat(f->path.data"), "不能把非 0 结尾的缓冲区交给 libc")
+    }
+
+    @Test
     fun `字符串字面量按 UTF-8 字节算长度`() {
         val c = emit(
             """

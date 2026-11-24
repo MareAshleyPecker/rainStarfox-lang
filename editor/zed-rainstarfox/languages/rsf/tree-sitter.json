@@ -1,0 +1,29 @@
+{
+  "grammars": [
+    {
+      "name": "rsf",
+      "camelcase": "Rsf",
+      "title": "rainStarfox",
+      "scope": "source.rsf",
+      "file-types": [
+        "rsf"
+      ],
+      "highlights": "queries/highlights.scm",
+      "injection-regex": "^rsf$",
+      "class-name": "TreeSitterRsf"
+    }
+  ],
+  "metadata": {
+    "version": "0.1.0",
+    "license": "MIT",
+    "description": "rainStarfox (.rsf) grammar for tree-sitter",
+    "authors": [
+      {
+        "name": "rainStarfox"
+      }
+    ],
+    "links": {
+      "repository": "https://github.com/MareAshleyPecker/rainStarfox-lang"
+    }
+  }
+}

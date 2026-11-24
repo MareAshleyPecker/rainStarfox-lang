@@ -134,6 +134,11 @@ pub enum TokenKind {
 
 取值 `TokenKind.IDENT`；同枚举可 `==`/`!=`，跨枚举比较直接报错；打印出来就是值名。
 
+JVM 侧它就是真的 `java.lang.Enum`：`TokenKind.values()` 给全部值（新数组）、
+`TokenKind.valueOf("IDENT")` 按名字取（名字不对抛 `IllegalArgumentException`）、
+`.name()` / `.ordinal()` 都有，Java 那边 `switch` 与 `EnumSet` 也能直接用。
+native 侧（C 后端）只当整型常量用，没有 `values()`。
+
 ### 4.6 注解与伴生实体
 
 ```rsf
