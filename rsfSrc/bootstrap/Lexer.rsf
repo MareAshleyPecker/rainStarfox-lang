@@ -278,7 +278,7 @@ fn keywordKind(word : String) -> String {
     if (word == "module") { rtn "KW_MODULE" }
     if (word == "pkg") { rtn "KW_PKG" }
     if (word == "var") { rtn "KW_VAR" }
-    if (word == "imutvar") { rtn "KW_IMUTVAR" }
+    if (word == "val") { rtn "KW_VAL" }
     if (word == "let") { rtn "KW_LET" }
     if (word == "pub") { rtn "KW_PUBLIC" }
     if (word == "prv") { rtn "KW_PRIVATE" }
@@ -361,6 +361,14 @@ fn legacyVarMessage() -> String {
 // n1 负例验 rsf 侧，Kotlin 侧由 RsfTest 兜住）。
 fn legacyFnMessage() -> String {
     rtn "'fun' 已改名为 'fn'：请写成 'fn main() { … }'"
+}
+
+// 老写法 `imutvar` 的统一文案（2026-11-24 阶段 70 改名为 `val`，对齐 Kotlin）：同样
+// **不在这张关键字表里**（表仍是 57 项，只是 KW_IMUTVAR 那一项的字面量换成了 `val`），
+// 拦截同样在 readIdentOrKeyword 里单独做一次。文案与 Kotlin 版 Lexer.kt 的
+// LEGACY_VAL_MESSAGE **逐字相同**。
+fn legacyValMessage() -> String {
+    rtn "'imutvar' 已改名为 'val'：请写成 'val x : Int = 0'"
 }
 
 // 单字符标点的 kind（Kotlin 版 readPunct 的 one(...) 那批）
@@ -557,10 +565,10 @@ pub class Lexer(source : String) {
             if (!isIdentPart(c)) { break }
             word = word + advance()
         }
-        // 老写法 `fun`（2026-10-18 改名为 `fn`）与老写法 `varis`（2026-10-11 改名为 `var`）：
-        // 与 Kotlin 版 Lexer.kt 的 readIdentOrKeyword 里那两条判断**一一对应**。它们
-        // **不在**关键字表里（keywordKind 里的 56 项要跟 Kotlin 版逐条对齐，不能多一项），
-        // 所以单独拦一次；文案也跟 Kotlin 版逐字相同（有差分测试守着）。
+        // 老写法 `fun`（2026-10-18 改名为 `fn`）、`varis`（2026-10-11 改名为 `var`）与
+        // `imutvar`（2026-11-24 改名为 `val`）：与 Kotlin 版 Lexer.kt 的 readIdentOrKeyword
+        // 里那三条判断**一一对应**。它们**不在**关键字表里（keywordKind 里的项数要跟 Kotlin 版
+        // 逐条对齐，不能多一项），所以单独拦一次；文案也跟 Kotlin 版逐字相同（有差分测试守着）。
         // 位置取这个词的开头，与 Kotlin 版 `RsfError(.., at.line, at.column, ..)` 同口径。
         if (word == "fun") {
             reportError(legacyFnMessage(), startLine, startCol)
@@ -568,6 +576,12 @@ pub class Lexer(source : String) {
         }
         if (word == "varis") {
             reportError(legacyVarMessage(), startLine, startCol)
+            rtn
+        }
+        // 老写法 `imutvar`（2026-11-24 阶段 70 改名为 `val`）：同上，不在关键字表里，
+        // 单独拦一次，文案与 Kotlin 版 LEGACY_VAL_MESSAGE 逐字相同。
+        if (word == "imutvar") {
+            reportError(legacyValMessage(), startLine, startCol)
             rtn
         }
         var kind = keywordKind(word)

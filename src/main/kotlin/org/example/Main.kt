@@ -499,7 +499,7 @@ class Cli {
             |语句
             |  var x = 1                             声明可变变量（块作用域，出了块就不可见）
             |  var n : Int = 0                       带类型标注（类型写在名字后面）
-            |  imutvar y = 2                           声明不可变变量（重新赋值会报错）
+            |  val y = 2                           声明不可变变量（重新赋值会报错）
             |  x = x * 3                               赋值（只能给 var 声明的变量赋）
             |  println("x = " + x)                     输出（内置 print / println）
             |  rtn 0    /  return 0                     返回（两个关键字等价）
@@ -663,7 +663,7 @@ class Cli {
         val DECL_START = Regex("^\\s*(public|private)?\\s*fn\\b")
 
         /** 从语句里抠出变量名，让 REPL 能识别重复声明。 */
-        val LET_HEAD = Regex("^\\s*(?:var|imutvar)\\s+([A-Za-z_][A-Za-z0-9_]*)")
+        val LET_HEAD = Regex("^\\s*(?:var|val)\\s+([A-Za-z_][A-Za-z0-9_]*)")
 
         /** 合成函数体里分隔「会话前缀」和「刚敲的这一句」的标签。 */
         const val BEGIN_LABEL = "__rsf_repl_begin__"

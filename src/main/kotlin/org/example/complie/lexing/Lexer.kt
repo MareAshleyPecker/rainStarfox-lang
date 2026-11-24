@@ -32,6 +32,18 @@ internal const val LEGACY_FUN_KEYWORD: String = "fun"
 /** 老写法 `fun` 的统一报错文案（与 `rsfSrc/bootstrap/Lexer.rsf` 的 `legacyFnMessage` 逐字相同）。 */
 internal const val LEGACY_FUN_MESSAGE: String = "'fun' 已改名为 'fn'：请写成 'fn main() { … }'"
 
+/**
+ * 不可变变量关键字的老写法（2026-11-24 阶段 70 起唯一写法是 `val`，对齐 Kotlin）。
+ *
+ * 与 [LEGACY_VAR_KEYWORD] 同一条路子：`imutvar` **不在** [KEYWORDS] 里，靠
+ * [Lexer.readIdentOrKeyword] 里一条独立判断拦下——它在任何声明位置都可能出现，
+ * 逐个语法入口去查会漏。
+ */
+internal const val LEGACY_VAL_KEYWORD: String = "imutvar"
+
+/** 老写法 `imutvar` 的统一报错文案（与 `rsfSrc/bootstrap/Lexer.rsf` 的 `legacyValMessage` 逐字相同）。 */
+internal const val LEGACY_VAL_MESSAGE: String = "'imutvar' 已改名为 'val'：请写成 'val x : Int = 0'"
+
 private val KEYWORDS: Map<String, TokenKind> = buildMap {
     put("fn", TokenKind.KW_FUN)
     put("lam", TokenKind.KW_LAM)
@@ -41,7 +53,7 @@ private val KEYWORDS: Map<String, TokenKind> = buildMap {
     put("module", TokenKind.KW_MODULE)
     put("pkg", TokenKind.KW_PKG)
     put("var", TokenKind.KW_VAR)
-    put("imutvar", TokenKind.KW_IMUTVAR)
+    put("val", TokenKind.KW_VAL)
     put("let", TokenKind.KW_LET)
     put("pub", TokenKind.KW_PUBLIC)
     put("prv", TokenKind.KW_PRIVATE)
@@ -243,17 +255,23 @@ class Lexer(private val source: SourceFile) {
     private fun legacyFunError(at: SourceLine): RsfError =
         RsfError("lexer", LEGACY_FUN_MESSAGE, at.line, at.column, source)
 
+    /** 老写法 `imutvar` 的报错（位置指向那个词本身，与 rsf 版 `reportError` 同口径）。 */
+    private fun legacyValError(at: SourceLine): RsfError =
+        RsfError("lexer", LEGACY_VAL_MESSAGE, at.line, at.column, source)
+
     private fun readIdentOrKeyword(at: SourceLine): Token {
         val sb = StringBuilder()
         while (pos < text.length && isIdentPart(text[pos])) sb.append(advance())
         val word = sb.toString()
-        // 旧名 `fun`（2026-10-18 改名为 `fn`）与旧名 `varis`（改名为 `var`）**都不再是关键字**，
-        // 所以它们落在关键字表外面——这里是唯一一处能拦住它们、并给出改写建议的地方。
+        // 旧名 `fun`（2026-10-18 改名为 `fn`）、旧名 `varis`（改名为 `var`）与旧名
+        // `imutvar`（2026-11-24 改名为 `val`）**都不再是关键字**，所以它们落在关键字表外面
+        // ——这里是唯一一处能拦住它们、并给出改写建议的地方。
         // 拦在词法层而不是语法层：它们可以出现在任何声明位置（顶层 / 类体字段 /
-        // 局部 / for 初始化），逐个入口去查会漏；而且 `fn` / `var` 已经是关键字，
+        // 局部 / for 初始化），逐个入口去查会漏；而且 `fn` / `var` / `val` 已经是关键字，
         // 再让旧名当合法标识符只会让两套写法并存。
         if (word == LEGACY_FUN_KEYWORD) throw legacyFunError(at)
         if (word == LEGACY_VAR_KEYWORD) throw legacyVarError(at)
+        if (word == LEGACY_VAL_KEYWORD) throw legacyValError(at)
         val kind = KEYWORDS[word]
         return if (kind == null) {
             Token(TokenKind.IDENT, word, at)

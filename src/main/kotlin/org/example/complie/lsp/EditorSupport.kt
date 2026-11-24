@@ -161,7 +161,7 @@ data class CompletionItem(val label: String, val kind: String, val detail: Strin
  * 1. **能解析**（文件当前是合法的）→ 用 AST 给出带签名的建议：函数（含签名）、
  *    当前函数的参数、光标之前声明过的变量（含类型）、成员访问。
  * 2. **解析不了**（正在打字，很常见）→ 退化成 token 扫描：把 `fun 名字`、
- *    `var/imutvar 名字` 扫出来。粗糙但胜在「任何时候都有东西可补」。
+ *    `var/val 名字` 扫出来。粗糙但胜在「任何时候都有东西可补」。
  */
 class Completer(
     private val source: SourceFile,
@@ -183,13 +183,13 @@ class Completer(
 
         val out = ArrayList<CompletionItem>()
         for (k in KEYWORDS) {
-            // `let` 已经是废弃的关键字（写了会报「已经换成 var 与 imutvar」），
+            // `let` 已经是废弃的关键字（写了会报「已经换成 var 与 val」），
             // 但词法器仍把它当保留字，所以候选里留着它、只是把话说清楚
             out.add(
                 CompletionItem(
                     k,
                     "keyword",
-                    if (k == "let") "保留字（已废弃：改用 var / imutvar）" else "关键字",
+                    if (k == "let") "保留字（已废弃：改用 var / val）" else "关键字",
                 ),
             )
         }
@@ -344,7 +344,7 @@ class Completer(
 
     private companion object {
         val KEYWORDS = listOf(
-            "fn", "rtn", "return", "var", "imutvar", "if", "else", "while", "for",
+            "fn", "rtn", "return", "var", "val", "if", "else", "while", "for",
             "in", "step", "break", "continue", "goto", "true", "false", "null",
             // pkg（阶段 6a）一直漏在补全表外：关键字表要同步——
             // 这里和 idea 插件的 RsfKeywords 一起改（由 EditorKeywordParityTest 守着）。
@@ -375,7 +375,7 @@ class Completer(
             "as", "is",
             // 阶段 30 的 lambda 字面量：`lam(x : Int) -> Int { … }`
             "lam",
-            // `let` 在词法器里仍然是保留字（写了会得到「let 已经换成 var 与 imutvar」
+            // `let` 在词法器里仍然是保留字（写了会得到「let 已经换成 var 与 val」
             // 的提示），所以补全表也留着它，但 detail 会标成已废弃
             "let",
         )

@@ -60,8 +60,10 @@ class CBackendTest {
             }
             """.trimIndent(),
         )
-        assertTrue(c.contains("#include <stdint.h>"), "要自带运行时头")
-        assertTrue(c.contains("static rsf_str rsf_concat"), "要带字符串拼接")
+        assertTrue(c.contains("#include \"rsf_runtime.h\""), "要包含运行时头（阶段 69 起运行时拆到 rsf_runtime.h）")
+        val header = CBackend(Rsf.analyze(SourceFile.of("c.kt", "fn main() -> void { rtn }"))).runtimeLibSource()
+        assertTrue(header.contains("#include <stdint.h>"), "运行时头要自带 stdint")
+        assertTrue(header.contains("rsf_concat"), "运行时头要带字符串拼接")
         assertTrue(c.contains("int32_t rsf_fn_add(int32_t v_a, int32_t v_b)"), c)
         assertTrue(c.contains("rsf_println_i(rsf_fn_add(1, 2));"), c)
         assertTrue(c.contains("int main(void)"), "要有 C 的入口")
@@ -249,6 +251,7 @@ class CBackendTest {
     fun `指针摊成 C 指针`() {
         val c = emit(
             """
+            target native
             fn main() -> void {
                 var x : Int = 7
                 var p : Int* = &x

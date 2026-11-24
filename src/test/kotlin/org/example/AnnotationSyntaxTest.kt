@@ -209,7 +209,7 @@ class AnnotationSyntaxTest {
             annotation M {
                 companion entity Impl : Runnable {
                     var hits : Int = 0
-                    imutvar name : String = "m"
+                    val name : String = "m"
                     constructor(tag : String) { }
                     fn describe() -> String { rtn "Marker" }
                     fn run() -> void { rtn }
@@ -221,7 +221,7 @@ class AnnotationSyntaxTest {
         assertTrue(companion != null)
         assertEquals(listOf("hits", "name"), companion.fields.map { it.name })
         assertTrue(companion.fields[0].mutable, "'var' 的字段 mutable 应该是 true")
-        assertTrue(!companion.fields[1].mutable, "'imutvar' 的字段 mutable 应该是 false")
+        assertTrue(!companion.fields[1].mutable, "'val' 的字段 mutable 应该是 false")
         assertEquals(listOf("describe", "run"), companion.plainMethods.map { it.name })
         assertEquals(1, companion.constructors.size, "应该有一个次构造")
     }

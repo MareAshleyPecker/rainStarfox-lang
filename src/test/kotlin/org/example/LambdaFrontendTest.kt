@@ -168,11 +168,11 @@ class LambdaFrontendTest {
     }
 
     @Test
-    fun `imutvar 值捕获合法`() {
+    fun `val 值捕获合法`() {
         Rsf.analyze(
             source(
                 "fn main() -> void {\n" +
-                    "    imutvar base : Int = 10\n" +
+                    "    val base : Int = 10\n" +
                     "    var add : (Int) -> Int = lam(x : Int) -> Int { rtn x + base }\n" +
                     "    println(\"\" + add(5))\n" +
                     "}\n",
@@ -196,7 +196,7 @@ class LambdaFrontendTest {
         }
         assertEquals("checker", e.phase)
         assertEquals(
-            "lambda 只能值捕获：'count' 是 var（DESIGN-30）——改成 imutvar，或者把它当参数传进来",
+            "lambda 只能值捕获：'count' 是 var（DESIGN-30）——改成 val，或者把它当参数传进来",
             e.detail,
         )
     }

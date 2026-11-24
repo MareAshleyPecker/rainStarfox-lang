@@ -30,7 +30,7 @@ enum class TokenKind(val text: String) {
     /** 包声明：`pkg 名字`（以当前目录为准，段之间用 . 或 \ 或 / 都行）。 */
     KW_PKG("pkg"),
     KW_VAR("var"),
-    KW_IMUTVAR("imutvar"),
+    KW_VAL("val"),
     /** 旧关键字，保留只为给出迁移提示。 */
     KW_LET("let"),
     KW_PUBLIC("pub"),
@@ -290,9 +290,9 @@ enum class TokenKind(val text: String) {
     val isReturnKeyword: Boolean
         get() = this == KW_RTN || this == KW_RETURN
 
-    /** 变量声明关键字：var 可变，imutvar 不可变。 */
+    /** 变量声明关键字：var 可变，val 不可变。 */
     val isVarKeyword: Boolean
-        get() = this == KW_VAR || this == KW_IMUTVAR
+        get() = this == KW_VAR || this == KW_VAL
 
     /** 访问控制修饰符（<ControlType>）。 */
     val isControlKeyword: Boolean

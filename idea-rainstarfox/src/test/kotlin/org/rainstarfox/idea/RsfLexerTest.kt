@@ -182,7 +182,7 @@ class RsfLexerTest {
      */
     private val COMPILER_KEYWORDS = setOf(
         "fn", "rtn", "return", "import", "module", "pkg",
-        "var", "imutvar", "let",
+        "var", "val", "let",
         // 阶段 20：`interface` 是那时进的前端（这份快照当时漏抄了，插件的高亮表其实已经有一份）；
         // `override` 是阶段 20 追加的可选修饰词，和 public/static 同族
         // 阶段 25：继承带来的三个修饰词/表达式关键字（这份快照当时漏抄了，插件高亮表早有）
@@ -247,7 +247,7 @@ class RsfLexerTest {
         // 可空与数组
         assertEquals(RsfTokens.IDENTIFIER.toString(), tokenOf("var maybe : ?String = null", "maybe"))
         assertEquals(RsfTokens.TYPE_KEYWORD.toString(), tokenOf("var maybe : ?String = null", "String"))
-        assertEquals(RsfTokens.IDENTIFIER.toString(), tokenOf("imutvar xs : Int[] = new Int[3]", "xs"))
+        assertEquals(RsfTokens.IDENTIFIER.toString(), tokenOf("val xs : Int[] = new Int[3]", "xs"))
     }
 
     @Test

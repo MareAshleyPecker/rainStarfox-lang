@@ -835,7 +835,7 @@ pub class Checker(failure : ?CheckFailure) {
         scopes.enter()
         var cname = nodeProp(stmt, "catch")
         if (cname.length() > 0) {
-            scopes.declare(symOf(cname, "imutvar", "String", stmt.line, stmt.col))
+            scopes.declare(symOf(cname, "val", "String", stmt.line, stmt.col))
         }
         if (stmt.childCount > 0) {
             var body = stmt.children[0]
@@ -906,7 +906,7 @@ pub class Checker(failure : ?CheckFailure) {
             failAt("不能把 " + initType + " 赋给 " + declared + " 变量 '" + nodeProp(stmt, "name") + "'", stmt)
             rtn
         }
-        var kindWord = "imutvar"
+        var kindWord = "val"
         if (nodeProp(stmt, "mutable") == "true") { kindWord = "var" }
         // 阶段 34：没写类型的 `var x = 1` 绑到推出来的类型上（`declared` 这时是 "-"）
         var bindingType = declared
@@ -921,8 +921,8 @@ pub class Checker(failure : ?CheckFailure) {
             failAt("未声明的变量 '" + nodeProp(stmt, "name") + "'", stmt)
             rtn
         }
-        if (sym!!.kind == "imutvar") {
-            failAt("变量 '" + nodeProp(stmt, "name") + "' 是 'imutvar' 声明的，不能重新赋值。想改值就把它声明成 'var'。", stmt)
+        if (sym!!.kind == "val") {
+            failAt("变量 '" + nodeProp(stmt, "name") + "' 是 'val' 声明的，不能重新赋值。想改值就把它声明成 'var'。", stmt)
             rtn
         }
         if (!acceptsText(valueType, sym!!.typeText)) {
@@ -1368,7 +1368,7 @@ pub class Checker(failure : ?CheckFailure) {
             var nm = nodeProp(n, "name")
             var sym = scopes.lookup(nm)
             if (sym != null && sym!!.kind == "var") {
-                failAt("lambda 只能值捕获：'" + nm + "' 是 var（DESIGN-30）——改成 imutvar，或者把它当参数传进来", n)
+                failAt("lambda 只能值捕获：'" + nm + "' 是 var（DESIGN-30）——改成 val，或者把它当参数传进来", n)
                 rtn
             }
         }

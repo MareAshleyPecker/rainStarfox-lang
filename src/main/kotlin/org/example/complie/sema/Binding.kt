@@ -19,7 +19,7 @@ class Binding(
      * 是不是 `catch (e : String)` 的错误变量（阶段 14；老写法 `catch (e String)` 也收）。
      *
      * 它跟参数一样「进作用域就有值」，所以不参与确定性赋值分析；
-     * 归错时也要给一句专门的话，而不是让它冒充 imutvar 局部变量。
+     * 归错时也要给一句专门的话，而不是让它冒充 val 局部变量。
      */
     val catchVar: Boolean = false,
 ) {
@@ -29,5 +29,5 @@ class Binding(
     var slot: Int = -1
 
     override fun toString(): String =
-        "Binding($name: ${type.rsfName}, ${if (mutable) "var" else "imutvar"}, slot=$slot)"
+        "Binding($name: ${type.rsfName}, ${if (mutable) "var" else "val"}, slot=$slot)"
 }

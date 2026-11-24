@@ -71,7 +71,7 @@ sealed interface Instr {
     val at: SourceLine
 }
 
-/** `var x = ...` / `imutvar x = ...`：声明 + 初始化。 */
+/** `var x = ...` / `val x = ...`：声明 + 初始化。 */
 class IVarDecl(val stmt: VarDeclStmt) : Instr {
     override val at get() = stmt.at
 }

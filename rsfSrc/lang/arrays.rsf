@@ -68,7 +68,7 @@ fn sumGrid(grid : Int[][]) -> Int {
 // 数组可以当类的字段（字段类型写在名字前面，初值照样必填）
 class Bag {
     var items : Int[] = new Int[2]
-    imutvar label : String = "bag"
+    val label : String = "bag"
 
     fn total() -> Int {
         rtn items[0] + items[1]

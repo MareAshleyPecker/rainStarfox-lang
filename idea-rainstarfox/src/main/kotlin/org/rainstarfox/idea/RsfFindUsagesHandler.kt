@@ -87,7 +87,7 @@ class RsfFindUsagesProvider : FindUsagesProvider {
         "class" -> "类"
         "interface" -> "接口"
         "enum" -> "枚举"
-        "var", "imutvar" -> "变量"
+        "var", "val" -> "变量"
         else -> "声明"
     }
 

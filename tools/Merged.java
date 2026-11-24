@@ -10,7 +10,7 @@ import java.util.regex.*;
  */
 public class Merged {
     static final Pattern CODEY = Pattern.compile(
-            "(^|[^A-Za-z0-9_])(val|var|var|imutvar|if|else|for|while|return|rtn|throw|fun|private|public"
+            "(^|[^A-Za-z0-9_])(val|var|var|val|if|else|for|while|return|rtn|throw|fun|private|public"
             + "|protected|internal|class|import|module|object|companion|try|catch|when|do|const)\\s");
 
     /** A Chinese character, a gap, then something that is clearly a statement or a call. */

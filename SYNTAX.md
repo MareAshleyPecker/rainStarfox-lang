@@ -24,7 +24,7 @@ module "plugins"         // ③ 一个目录顶层的所有 .rsf（不递归，�
 
 | 类别 | 关键字（共 57，与两个词法器的表逐条对齐） |
 | --- | --- |
-| 声明 | `pkg` `import` `module` `class` `interface` `enum` `annotation` `companion` `entity` `constructor` `fn` `lam` `var` `imutvar` `let`(已废，仅留报错) |
+| 声明 | `pkg` `import` `module` `class` `interface` `enum` `annotation` `companion` `entity` `constructor` `fn` `lam` `var` `val` `let`(已废，仅留报错) |
 | 修饰 | `pub` `prv` `prot` `stc` `override` `final` `abstract` |
 | 控制 | `if` `else` `while` `for` `in` `break` `continue` `goto` `switch` `case`(老写法) `try` `catch` `fail` `rtn` `return` |
 | 类型 / 值 / 接收者 | `void` `Int` `Long` `Float` `Double` `String` `Str` `Bool` `Boolean` `Byte` `Char` `true` `false` `null` `new` `this` `super` |
@@ -86,7 +86,7 @@ Box&<Int>                  // 泛型实参（class 级泛型）
 
 ```rsf
 var x : Int = 0          // 可变
-imutvar y : Int = 1      // 不可变（只能赋一次）
+val y : Int = 1      // 不可变（只能赋一次）
 var z = 3                // 类型可省（由初值推）
 ```
 
@@ -97,7 +97,7 @@ var z = 3                // 类型可省（由初值推）
 ```rsf
 pub class Point(x0 : Int, y0 : Int) : Base(), Greeter {   // 主构造 + 继承/实现（共用 `:`）
     pub var x : Int = x0                                  // 字段初值 = 主构造的「体」
-    pub imutvar tag : String = "p"
+    pub val tag : String = "p"
 
     pub constructor() {                                   // 次构造：不写返回类型、不写权限（阶段 30b 前的口径）
         this(0, 0)                                           // 委托必须是第一句
@@ -197,7 +197,7 @@ class Greeter { }
 - 成员/静态：`obj.f`、`Cls.staticFn()`、`obj.field`、`arr.length`、`arr[i]`。
 - 数组只有 `new T[n]` / `new T[n][m]`，**没有**数组字面量 `{1, 2}`。
 - **lambda（阶段 30 前端已可用）**：`lam(x : Int) -> Int { rtn x + 1 }`，
-  参数类型与返回子句都可省（靠期望类型）；捕获是**值快照**，只许捕获 `imutvar` / 形参 / `this`，
+  参数类型与返回子句都可省（靠期望类型）；捕获是**值快照**，只许捕获 `val` / 形参 / `this`，
   捕获 `var` 直接报错。可空的函数值要 `f!!(...)` 才能调。
   ⚠️ 后端（解释器 + 字节码）在 30b 落地前会报 `17c/17d 后端暂不支持：lambda 表达式`。
 

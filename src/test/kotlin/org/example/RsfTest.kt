@@ -171,7 +171,7 @@ class RsfTest {
             source(
                 "pub class Point {\n" +
                     "    var x : Int = 0\n" +
-                    "    imutvar id : Int = 7\n" +
+                    "    val id : Int = 7\n" +
                     "    constructor(x0 : Int) {\n        x = x0\n    }\n" +
                     "    prot fn sum() -> Int {\n        rtn x\n    }\n" +
                     "}\n",
@@ -456,16 +456,16 @@ class RsfTest {
     }
 
     @Test
-    fun `给 imutvar 字段重新赋值会被拦住`() {
+    fun `给 val 字段重新赋值会被拦住`() {
         val e = assertFailsWith<RsfError> {
             Rsf.analyze(
                 source(
-                    "class P {\n    imutvar id : Int = 7\n}\n" +
+                    "class P {\n    val id : Int = 7\n}\n" +
                         "fn main() -> void {\n    var p = new P()\n    p.id = 9\n    rtn\n}\n",
                 ),
             )
         }
-        assertTrue(e.detail.contains("imutvar"), e.detail)
+        assertTrue(e.detail.contains("val"), e.detail)
     }
 
     @Test
@@ -1350,7 +1350,7 @@ class RsfTest {
                 source(
                     "fn main() -> void {\n" +
                         "    var c = true\n" +
-                        "    if (c) { rtn } else { imutvar y = 1 }\n" +
+                        "    if (c) { rtn } else { val y = 1 }\n" +
                         "    println(y)\n" +
                         "    rtn\n" +
                         "}\n",
@@ -1361,12 +1361,12 @@ class RsfTest {
     }
 
     @Test
-    fun `imutvar 不能重新赋值`() {
+    fun `val 不能重新赋值`() {
         val e = assertFailsWith<RsfError> {
-            Rsf.analyze(source("fn main() -> void {\n    imutvar x = 1\n    x = 2\n    rtn\n}\n"))
+            Rsf.analyze(source("fn main() -> void {\n    val x = 1\n    x = 2\n    rtn\n}\n"))
         }
         assertEquals("checker", e.phase)
-        assertTrue(e.detail.contains("imutvar"), e.detail)
+        assertTrue(e.detail.contains("val"), e.detail)
     }
 
     @Test
@@ -1384,8 +1384,8 @@ class RsfTest {
     }
 
     @Test
-    fun `imutvar 与 var 生成的指令序列一致`() {
-        val a = Rsf.analyze(source("fn main() -> void {\n    imutvar x = 1 + 2\n    rtn\n}\n"))
+    fun `val 与 var 生成的指令序列一致`() {
+        val a = Rsf.analyze(source("fn main() -> void {\n    val x = 1 + 2\n    rtn\n}\n"))
         val b = Rsf.analyze(source("fn main() -> void {\n    var x = 1 + 2\n    rtn\n}\n"))
         assertEquals(
             a.loweredOf(a.functions.single()).instructions.size,
@@ -1394,14 +1394,14 @@ class RsfTest {
     }
 
     @Test
-    fun `let 已经换成 var 与 imutvar 并给出提示`() {
+    fun `let 已经换成 var 与 val 并给出提示`() {
         val e = assertFailsWith<RsfError> {
             Rsf.analyze(source("fn main() -> void {\n    let x = 1\n    rtn\n}\n"))
         }
         assertEquals("parser", e.phase)
-        // 带引号比，免得被 `imutvar` 里那三个字母 `var` 蒙混过去
+        // 带引号比，免得被 `val` 里那三个字母 `var` 蒙混过去
         assertTrue(e.detail.contains("'var'"), e.detail)
-        assertTrue(e.detail.contains("imutvar"), e.detail)
+        assertTrue(e.detail.contains("val"), e.detail)
         // 老名字 `varis` 已经彻底退场：提示里不该再出现它
         assertFalse(e.detail.contains("varis"), e.detail)
     }
@@ -1775,7 +1775,7 @@ class RsfTest {
                 ),
             )
         }
-        assertTrue(e.detail.contains("imutvar"), e.detail)
+        assertTrue(e.detail.contains("val"), e.detail)
     }
 
     @Test
@@ -2069,7 +2069,7 @@ class RsfTest {
                 s = "set"
                 println("s = " + s)
 
-                imutvar k : Int = 7
+                val k : Int = 7
                 println("k = " + k)
                 rtn
             }
@@ -2890,7 +2890,7 @@ class RsfTest {
             pub class Box {
                 var n : Int = 1
                 var twice : Int = n * 2
-                imutvar tag : String = "box"
+                val tag : String = "box"
 
                 constructor(start : Int) {
                     n = start
@@ -3257,11 +3257,11 @@ class RsfTest {
         val program = """
             pub class Pair&<K, V> {
                 var key : K = 0
-                var val : V = 0
+                var value : V = 0
 
                 constructor(k0 : K, v0 : V) {
                     key = k0
-                    val = v0
+                    value = v0
                 }
 
                 pub fn keyOf() -> K {
@@ -3269,7 +3269,7 @@ class RsfTest {
                 }
 
                 pub fn valOf() -> V {
-                    rtn val
+                    rtn value
                 }
             }
 
@@ -3732,7 +3732,7 @@ class RsfTest {
         pub class Point {
             var x : Int = 0
             var y : Int = 0
-            imutvar label : String = "point"
+            val label : String = "point"
 
             constructor(x0 : Int, y0 : Int) {
                 x = x0
@@ -4160,7 +4160,7 @@ class RsfTest {
         val program = """
             pub class Bag {
                 var items : Int[] = new Int[2]
-                imutvar label : String = "bag"
+                val label : String = "bag"
 
                 constructor(a : Int, b : Int) {
                     items[0] = a
@@ -6750,7 +6750,7 @@ class RsfTest {
         // 与注解前缀 `@` 也列进来 —— 这几项此前只有 Kotlin 版认，靠下面那条
         // 「已知差异」用例单独钉着；现在两边都认，那份差异清单随之删掉。
         val keywords = listOf(
-            "fn", "rtn", "return", "import", "module", "pkg", "var", "imutvar", "let",
+            "fn", "rtn", "return", "import", "module", "pkg", "var", "val", "let",
             "pub", "prv", "prot", "stc", "override", "class",
             "enum", "interface", "annotation", "companion", "entity", "mathematic",
             "switch", "case",
@@ -7193,7 +7193,7 @@ class RsfTest {
             "类与构造器" to """
                 pub class Point&<T>(x0 : Int, y0 : Int) {
                     var x : Int = x0
-                    imutvar y : Int = y0
+                    val y : Int = y0
                     pub fn sum() -> Int { rtn x + y }
                     pub stc fn origin() -> Int { rtn 0 }
                     constructor() { this(0, 0) }
@@ -7269,7 +7269,7 @@ class RsfTest {
             "语句全家桶" to """
                 fn stmts(a : Int[], p : Point) -> Int {
                     var x : Int = 0
-                    imutvar y = 1
+                    val y = 1
                     var z : Box&<Int>[] = new Box&<Int>[2]
                     var q : Int[][] = new Int[1][1]
                     x = 2
@@ -8646,67 +8646,78 @@ class RsfTest {
         }
     """.trimIndent()
 
+    // 阶段 70：指针收进 native 侧。以前这四条测的是「解释器/JVM 后端也能跑指针」（阶段 53/63），
+    // 现在这类源码在**检查期**就被拒——指针是 C 的内存模型，JVM 侧没有对应物，
+    // 两套实现并存只会让人写出「在 JVM 上能跑、到 C 上行为不同」的代码。
+    // 语义本身的覆盖挪到 C 后端（CBackendTest 的「指针摊成 C 指针」）与 verify 脚本。
+
     @Test
-    fun `指针：取地址 解引用 写回 二级指针 类指针（解释器）`() {
-        val text = """
-            class Point(x0 : Int) {
-                var x : Int = x0
-
-                fn get() -> Int { rtn x }
-            }
-
-            fn bump(p : Int*, by : Int) -> void {
-                *p = *p + by
-            }
-
-            fn main() -> void {
-                var x : Int = 7
-                var p : Int* = &x
-                println(*p)
-                *p = 9
-                println(x)
-                bump(p, 5)
-                println(x)
-                var pp : Int** = &p
-                **pp = 100
-                println(x)
-                var y : Long = 40L
-                var q : Long* = &y
-                *q = *q + 2L
-                println(y)
-                var pt : Point = new Point(3)
-                var cp : Point* = &pt
-                println((*cp).get())
-                (*cp).x = 11
-                println(pt.x)
-                rtn
-            }
-        """.trimIndent()
-        val nl = Character.toString(10)
-        val expected = listOf("7", "9", "14", "100", "42", "3", "11").joinToString(nl) + nl
-        val actual = runInterpreted(text).replace(Character.toString(13), "")
-        assertEquals(expected, actual)
+    fun `指针只在 native 侧：普通函数里写 Int* 直接报错`() {
+        val error = assertFailsWith<RsfError> {
+            Rsf.analyze(source("fn poke(p : Int*) -> void { rtn }"))
+        }
+        assertTrue(error.message!!.contains("只能用 native 侧"), error.message)
     }
 
     @Test
-    fun `指针：JVM 字节码后端也能跑（局部与形参）`() {
-        val text = """
-            fn bump(p : Int*) -> void { *p = *p + 1 }
+    fun `指针只在 native 侧：& 取地址在 JVM 侧直接报错`() {
+        val error = assertFailsWith<RsfError> {
+            Rsf.analyze(
+                source(
+                    """
+                    fn main() -> void {
+                        var x : Int = 1
+                        var p = &x
+                        println(*p)
+                        rtn
+                    }
+                    """.trimIndent(),
+                ),
+            )
+        }
+        assertTrue(error.message!!.contains("'&' 取地址"), error.message)
+    }
 
+    @Test
+    fun `指针只在 native 侧：target native 的文件放行`() {
+        val text = """
+            target native
+            fn bump(p : Int*, by : Int) -> void {
+                *p = *p + by
+            }
             fn main() -> void {
-                var x : Int = 1
-                var p : Int* = &x
-                *p = 7
-                bump(p)
-                println(x)
-                println(*p)
-                var q : Int* = p + 1
-                println(q == (p + 1))
+                var x : Int = 7
+                bump(&x, 5)
+                println(*&x)
+                rtn
             }
         """.trimIndent()
-        val want = listOf("8", "8", "true")
-        assertEquals(want, lines(runInterpreted(text)))
-        assertEquals(want, lines(runCompiled(text)))
+        val file = java.io.File.createTempFile("rsf-ptr", ".rsf")
+        file.deleteOnExit()
+        file.writeText(text, Charsets.UTF_8)
+        // 用 native 构建目标加载：整份文件都进编译，检查通过才算数
+        val loaded = Rsf.load(file, target = BuildTarget.NATIVE)
+        Rsf.analyze(loaded)
+    }
+
+    @Test
+    fun `指针只在 native 侧：native fn 的签名在 JVM 构建里只留签名`() {
+        val text = """
+            native fn poke(p : Int*) -> void {
+                *p = 0
+            }
+
+            fn main() -> void {
+                println(1)
+                rtn
+            }
+        """.trimIndent()
+        val file = java.io.File.createTempFile("rsf-ptr-native", ".rsf")
+        file.deleteOnExit()
+        file.writeText(text, Charsets.UTF_8)
+        // JVM 目标加载：native 函数只有签名（体在 C 侧），检查不该报指针错误
+        val model = Rsf.analyze(Rsf.load(file, target = BuildTarget.JVM))
+        assertTrue(model.entry != null, "JVM 构建里应该认得出 main")
     }
 
     @Test
@@ -8744,47 +8755,23 @@ class RsfTest {
     }
 
     @Test
-    fun `指针 L3：字段与数组元素取地址、指针偏移（解释器）`() {
+    fun `指针 L3：字段与数组元素取地址也只能在 native 侧`() {
         val text = """
             class Point(x0 : Int) {
                 var x : Int = x0
                 var y : Int = 0
             }
 
-            fn bump(p : Int*, by : Int) -> void {
-                *p = *p + by
-            }
-
             fn main() -> void {
                 var pt = Point(7)
                 var fp : Int* = &pt.x
-                println(*fp)
                 *fp = 9
                 println(pt.x)
-                bump(&pt.x, 1)
-                println(pt.x)
-                var xs = new Int[3]
-                xs[0] = 10
-                xs[1] = 20
-                xs[2] = 30
-                var ep : Int* = &xs[1]
-                println(*ep)
-                *ep = 25
-                println(xs[1])
-                var walk : Int* = &xs[0]
-                println(*(walk + 1))
-                println(*(walk + 2))
-                *(walk + 2) = 99
-                println(xs[2])
-                println(walk + 1 == ep)
                 rtn
             }
         """.trimIndent()
-        val nl = Character.toString(10)
-        val expected = listOf("7", "9", "10", "20", "25", "25", "30", "99", "true")
-            .joinToString(nl) + nl
-        val actual = runInterpreted(text).replace(Character.toString(13), "")
-        assertEquals(expected, actual)
+        val error = assertFailsWith<RsfError> { Rsf.analyze(source(text)) }
+        assertTrue(error.message!!.contains("只能用 native 侧"), error.message)
     }
 
     @Test
@@ -8801,16 +8788,10 @@ class RsfTest {
                 rtn
             }
         """.trimIndent()
-        val model = Rsf.analyze(source(text))
-        val dir = File.createTempFile("rsf-test", "").let {
-            it.delete()
-            it.mkdirs()
-            it
-        }
-        val error = assertFailsWith<RsfError> {
-            Rsf.build(model, source(text), "RsfPtrFieldJvm", dir)
-        }
-        assertTrue(error.message!!.contains("还不支持对字段/数组元素取地址"), error.message)
+        // 阶段 70：这条现在在**检查期**就被拒（指针类型本身就不许出现在非 native 声明里），
+        // 不再等到字节码后端。
+        val error = assertFailsWith<RsfError> { Rsf.analyze(source(text)) }
+        assertTrue(error.message!!.contains("只能用 native 侧"), error.message)
     }
 
     // ---------------------------------------------------------------- 阶段 60：构建目标

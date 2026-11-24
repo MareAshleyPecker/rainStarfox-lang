@@ -223,7 +223,7 @@ class Interpreter(
      * 一个函数值（阶段 30b）。
      *
      * [captures] 是**创建那一刻**的值快照（DESIGN-30 §4：值捕获）。捕获 `var` 已被
-     * Checker 拒掉，剩下的 imutvar / 形参 / `this` 在闭包活着的时候都不会再变，所以
+     * Checker 拒掉，剩下的 val / 形参 / `this` 在闭包活着的时候都不会再变，所以
      * 快照和「引用」在可观察行为上没有区别。
      */
     private class Closure(val plan: LambdaClosure, val captures: List<Any?>)
@@ -747,7 +747,7 @@ class Interpreter(
             // 阶段 30a：`lam` 只做到前端。闭包值（抓到外层变量的那一份环境）是 30b
             // 的活，这里明确拒绝——不编一个「能跑但什么都不做」的空实现。
             // 阶段 30b：lambda 求值成一个函数值——当场把捕获项取成**值快照**。
-            // 捕获 `var` 已被 Checker 拒掉，剩下的 imutvar / 形参 / this 之后都不会再变。
+            // 捕获 `var` 已被 Checker 拒掉，剩下的 val / 形参 / this 之后都不会再变。
             is LambdaExpr -> {
                 val plan = ClosureScopes.of(model, body.function).lambdaOf(expr)
                     ?: throw RsfError(

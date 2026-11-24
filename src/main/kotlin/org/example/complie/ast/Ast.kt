@@ -606,7 +606,7 @@ data class EnumValue(
 // ------------------------------------------------------------------ 类
 
 /**
- * 字段声明：`var 名字 : 类型 = 0` / `imutvar 名字 : String = "?"`。
+ * 字段声明：`var 名字 : 类型 = 0` / `val 名字 : String = "?"`。
  *
  * 类型和初值都必须写：类型用 **Kotlin 后缀风格**（跟局部变量 `var 名字 : 类型 = 初值`
  * 一致，类型写在名字后面），初值必填是为了避开「字段没初始化」这种 JVM 上
@@ -822,7 +822,7 @@ data class Block(
  * 变量声明。
  *
  * - `var x = 1`   → [mutable] = true，之后可以 `x = 2`
- * - `imutvar x = 1` → [mutable] = false，重新赋值会被 Checker 拦住
+ * - `val x = 1` → [mutable] = false，重新赋值会被 Checker 拦住
  *
  * [declaredType] 是可选的类型标注，**Kotlin 后缀风格**：`var s : ?String = null`、
  * `var b : Box&<Int> = ...`、`var a : Int[] = new Int[3]`。
@@ -842,7 +842,7 @@ data class AssignStmt(    val name: String,
     override val at: SourceLine,
     /**
      * 编译器解糖生成的赋值（例如 `for (i in a..b)` 的步进）。
-     * 这类赋值跳过 `imutvar` 的可变性检查——循环变量对用户是不可变的，
+     * 这类赋值跳过 `val` 的可变性检查——循环变量对用户是不可变的，
      * 但循环本身得能推进它。
      */
     val synthetic: Boolean = false,

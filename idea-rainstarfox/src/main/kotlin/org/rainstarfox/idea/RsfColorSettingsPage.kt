@@ -65,7 +65,7 @@ class RsfColorSettingsPage : ColorSettingsPage {
 
             fn main() -> void {
                 var who : String = "rainStarfox"   // 可变；类型写在名字后面
-                imutvar pi : Double = Math.PI        // 不可变
+                val pi : Double = Math.PI        // 不可变
                 var p : Point = Point(3, 4)        // 构造对象时 new 可以省
                 println("hi " + who + "，sum = " + p.sum())
 

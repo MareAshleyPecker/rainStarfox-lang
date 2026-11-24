@@ -216,6 +216,29 @@ class Checker(
     private val labels = HashSet<String>()
 
     /**
+     * 阶段 70：指针是 **native 侧**特性。
+     *
+     * 指针在 JVM 字节码上是「`Object[]{ 帧, 格子号 }`」这套模拟实现（阶段 63），
+     * 与 C 侧的真内存模型是两套东西；两边混着用迟早出事。现在的口径是：
+     * 只有标了 `native` 的声明（`native fn` / `native class` …）或整份文件写了
+     * `target native` 才准出现指针，其余地方在**检查期**就报错，不再等到后端。
+     *
+     * 取值在每个「解析声明签名」的点刷新（见 declareFunctions / 类字段 / 接口方法），
+     * 函数体里沿用声明上的那个值（[checkFunctionBody] 再刷一次，lambda 自然继承）。
+     */
+    private var currentTarget: BuildTarget = BuildTarget.BOTH
+
+    /** 指针只能出现在 native 侧；[at] 是报错位置，[what] 是「哪一处用了指针」。 */
+    private fun nativeOnly(at: SourceLine, what: String) {
+        if (currentTarget == BuildTarget.NATIVE || program.target == BuildTarget.NATIVE) return
+        throw err(
+            "$what 只能用 native 侧：把所在声明标成 'native'（例如 'native fn poke(p : Int*)'），" +
+                "或在这份文件头写 'target native'。指针是 C 的内存模型，JVM 侧没有对应物。",
+            at,
+        )
+    }
+
+    /**
      * 当前是不是在 `try` 块里（> 0 是，按嵌套层数计数）。
      *
      * 它放行两件事：块里的 `fail`（错误由这个 try 接住）、块里未做处理的 `!T` 调用。
@@ -390,6 +413,8 @@ class Checker(
 
             // 阶段 31：泛型函数自己的类型参数要先并进解析环境（`x : T` 才认得出 T 是占位）
             val savedTypeParams = pushTypeParams(fn)
+            // 阶段 70：签名里的指针类型也要按这个声明的构建目标判（native fn 才准写 `Int*`）
+            currentTarget = if (fn.target == BuildTarget.NATIVE) BuildTarget.NATIVE else BuildTarget.BOTH
 
             // 参数：解析类型、建绑定、查量
             val types = ArrayList<RsfType>(fn.params.size)
@@ -404,7 +429,7 @@ class Checker(
                     throw err("函数 '${fn.name}' 的参数 '${p.name}' 重名了", p.at)
                 }
                 types.add(paramType)
-                // 参数按 C/C++/Java 的惯例是可变的：语法里没有给参数写 var/imutvar 的位置，
+                // 参数按 C/C++/Java 的惯例是可变的：语法里没有给参数写 var/val 的位置，
                 // 设成不可变就再也表达不出「我要改这个参数」了（只能先拷一份到局部变量）
                 bindings.add(
                     Binding(p.name, paramType, mutable = true, paramIndex = index, at = p.at),
@@ -1676,6 +1701,10 @@ class Checker(
      */
     private fun annotationElementsOf(info: AnnotationInfo): List<AnnotationElementSpec> {
         val decl = info.decl
+        // 阶段 70：注解声明没有 native 变体（`AnnotationDecl` 上就没有 target），
+        // 这里的类型一律按「不是 native 侧」判——否则会蹭到上一个类的 native 状态，
+        // 让 `Int*` 这种元素类型蒙混过关。
+        currentTarget = BuildTarget.BOTH
         val out = ArrayList<AnnotationElementSpec>(decl.elements.size)
         for (el in decl.elements) {
             val type = resolveType(el.type)
@@ -1870,6 +1899,8 @@ class Checker(
         ctor: FuncDecl,
         elements: List<AnnotationElementSpec>,
     ): FuncDecl {
+        // 阶段 70：还是按这个构造器自己的构建目标判（注解伴生类没有 native 变体时就是 BOTH）
+        currentTarget = if (ctor.target == BuildTarget.NATIVE) BuildTarget.NATIVE else BuildTarget.BOTH
         for ((index, el) in elements.withIndex()) {
             val p = ctor.params.getOrNull(index)
                 ?: throw err(
@@ -2325,6 +2356,8 @@ class Checker(
             for (m in decl.methods) {
                 interfaceOwnerTable[m] = decl
                 val what = "接口 '${decl.name}' 里的方法 '${m.name}'"
+                // 阶段 70：接口方法签名里的指针类型也按声明目标判（native 接口方法才准写 `Int*`）
+                currentTarget = if (m.target == BuildTarget.NATIVE) BuildTarget.NATIVE else BuildTarget.BOTH
                 val bindings = ArrayList<Binding>(m.params.size)
                 val seen = HashSet<String>()
                 for ((index, p) in m.params.withIndex()) {
@@ -3374,6 +3407,8 @@ class Checker(
                 throw err("类 '${cls.name}' 里的字段 '${f.name}' 重复定义", f.at)
             }
         }
+        // 阶段 70：字段里的指针类型也按这个类自己的构建目标判（`native class` 才准写 `Int*`）
+        currentTarget = if (cls.target == BuildTarget.NATIVE) BuildTarget.NATIVE else BuildTarget.BOTH
         classFieldTypes[cls] = cls.fields.map { resolveType(it.type) }
 
         val methods = LinkedHashMap<String, MutableList<FuncDecl>>()
@@ -3411,6 +3446,8 @@ class Checker(
             val savedTypeParams = pushTypeParams(m)
             // 报错时的称呼：构造器就说「构造器 '类名'」，方法就说「方法 '名字'」
             val what = if (m.isConstructor) "构造器 '${cls.name}'" else "方法 '${m.name}'"
+            // 阶段 70：方法签名里的指针类型按**这个方法**的构建目标判（native 方法才准写 `Int*`）
+            currentTarget = if (m.target == BuildTarget.NATIVE) BuildTarget.NATIVE else BuildTarget.BOTH
             val bindings = ArrayList<Binding>(m.params.size)
             val seen = HashSet<String>()
             for ((index, p) in m.params.withIndex()) {
@@ -4488,7 +4525,7 @@ class Checker(
     ) {
         if (!field.mutable) {
             throw err(
-                "字段 '${field.name}' 是 imutvar（不可变），声明时就定了值，不能重新赋值",
+                "字段 '${field.name}' 是 val（不可变），声明时就定了值，不能重新赋值",
                 at,
             )
         }
@@ -4931,6 +4968,8 @@ class Checker(
         // 函数体是 C 侧的，不能在 JVM 侧做语义检查。
         if (fn.target == BuildTarget.NATIVE && program.target == BuildTarget.JVM) return
         currentFn = fn
+        // 阶段 70：函数体里沿用声明上的构建目标（指针只在 native 侧）
+        currentTarget = if (fn.target == BuildTarget.NATIVE) BuildTarget.NATIVE else BuildTarget.BOTH
         currentSource = sourceOfFunction[fn] ?: currentClass?.source ?: source
         // 返回类型直接从签名算，不查 returnTypes 表：那张表只装了顶层函数，
         // 类的方法不在里面（同名方法还会互相打架）
@@ -5061,6 +5100,7 @@ class Checker(
 
             is DerefAssignStmt -> {
                 // `*p = v`：target 已经过 type()，所以它的类型就是「指针指向的东西」。
+                nativeOnly(stmt.at, "'*p = v' 写入指针目标")
                 val pointee = type(stmt.target)
                 val valueType = type(stmt.value)
                 if (pointee.isVoid) {
@@ -5097,7 +5137,7 @@ class Checker(
                 checkMemberVisible(owner, target.name, stmt.at)
                 if (!field.mutable) {
                     throw err(
-                        "字段 '${target.name}' 是 imutvar（不可变），声明时就定了值，不能重新赋值",
+                        "字段 '${target.name}' 是 val（不可变），声明时就定了值，不能重新赋值",
                         stmt.at,
                     )
                 }
@@ -5139,7 +5179,7 @@ class Checker(
                 }
                 val bound = binding
                     ?: throw err("未声明的变量 '${stmt.name}'", stmt.at)
-                // 解糖生成的赋值（for-in 的步进）不受 imutvar 约束
+                // 解糖生成的赋值（for-in 的步进）不受 val 约束
                 if (!stmt.synthetic && !bound.mutable) {
                     if (bound.catchVar) {
                         throw err(
@@ -5148,7 +5188,7 @@ class Checker(
                         )
                     }
                     throw err(
-                        "变量 '${stmt.name}' 是 'imutvar' 声明的，不能重新赋值。" +
+                        "变量 '${stmt.name}' 是 'val' 声明的，不能重新赋值。" +
                             "想改值就把它声明成 'var'。",
                         stmt.at,
                     )
@@ -5953,6 +5993,7 @@ class Checker(
                     }
                     // 阶段 53：`&x` 取地址（结果多一层指针），`*p` 解引用（少一层）
                     TokenKind.AMP -> {
+                        nativeOnly(expr.at, "'&' 取地址")
                         if (!isAddressable(expr.operand)) {
                             throw err(
                                 "只能对变量、字段、数组元素或指针目标取地址（'&'）：" +
@@ -5974,6 +6015,7 @@ class Checker(
                     }
 
                     TokenKind.STAR -> {
+                        nativeOnly(expr.at, "'*' 解引用")
                         usesPointers = true
                         if (!operand.isPointer) {
                             throw err(
@@ -6059,7 +6101,7 @@ class Checker(
      *
      * 形参类型和 `-> 返回类型` 都能省：省了就借**期望类型**（`var f : (Int) -> Int = lam(x) …`
      * 里那个 `(Int) -> Int`）——借不到就是 §5 第 2 条。捕获一律**按值**：
-     * 体里读到外层的 `var` 就是 §5 第 1 条（`imutvar` / 形参 / `this` 都行）。
+     * 体里读到外层的 `var` 就是 §5 第 1 条（`val` / 形参 / `this` 都行）。
      */
     private fun checkLambda(expr: LambdaExpr): RsfType {
         val expected = expectation?.takeIf { it.isFunctionType }
@@ -6103,7 +6145,7 @@ class Checker(
             if (scope.declares(p.name)) {
                 throw err("lambda 的形参 '${p.name}' 重名了", p.at)
             }
-            // 形参不能赋值，所以一律按 imutvar 记——lambda 体里再读它就是普通参数
+            // 形参不能赋值，所以一律按 val 记——lambda 体里再读它就是普通参数
             scope.declare(p.name, Binding(p.name, paramTypes[i], false, i, p.at))
         }
 
@@ -6131,7 +6173,7 @@ class Checker(
             if (binding.mutable) {
                 throw err(
                     "lambda 只能值捕获：'${binding.name}' 是 var（DESIGN-30）——" +
-                        "改成 imutvar，或者把它当参数传进来",
+                        "改成 val，或者把它当参数传进来",
                     use.at,
                 )
             }
@@ -7165,6 +7207,7 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
         // 阶段 53b：指针算术（`p + n` / `p - n`）与指针判等。指针只能「走 n 个槽」，
         // 不支持两个指针相减（没有「元素个数」这层语义），也不支持 `ptr * / %`。
         if (left.isPointer || right.isPointer) {
+            nativeOnly(expr.at, "指针运算")
             return checkPointerBinary(expr, left, right, op)
         }
 
@@ -7311,6 +7354,8 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
     private fun resolveType(ref: TypeRef, env: Map<String, RsfType> = typeParams): RsfType {
         val base = resolveBaseType(ref, env)
         if (ref.ptrDepth == 0) return base
+        // 阶段 70：指针只在 native 侧；先报这条，再说「能不能指向数组/void」
+        nativeOnly(ref.at, "指针类型（'${ref.display()}'）")
         if (base.isArray) {
             throw err(
                 "指针不能指向数组（'${ref.display()}'）：L1/L2 只做「指向单个值」，" +

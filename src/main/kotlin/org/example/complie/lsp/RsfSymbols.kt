@@ -249,7 +249,7 @@ object RsfSymbols {
                 RsfSymbol(
                     name = node.name,
                     kind = "variable",
-                    detail = "${if (node.mutable) "var" else "imutvar"} ${node.name} : ${node.declaredType?.display() ?: "?"}",
+                    detail = "${if (node.mutable) "var" else "val"} ${node.name} : ${node.declaredType?.display() ?: "?"}",
                     doc = docAt(file, node.at.line),
                     file = file.path,
                     line = node.at.line,
@@ -297,7 +297,7 @@ object RsfSymbols {
         return RsfSymbol(
             name = field.name,
             kind = "field",
-            detail = "${if (field.mutable) "var" else "imutvar"} ${field.name} : ${field.type.display()}",
+            detail = "${if (field.mutable) "var" else "val"} ${field.name} : ${field.type.display()}",
             doc = docAt(file, field.at.line),
             file = file.path,
             line = span.first,

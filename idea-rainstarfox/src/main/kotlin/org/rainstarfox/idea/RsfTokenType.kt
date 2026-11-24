@@ -99,7 +99,7 @@ object RsfKeywords {
         // 阶段 6a 的 pkg —— 这张表一直漏着它，于是 `pkg demo.util` 里的 pkg
         // 在编辑器里跟普通名字一个颜色。和 Lexer.KEYWORDS 对齐时补上
         "pkg",
-        "var", "imutvar", "let", "true", "false", "null",
+        "var", "val", "let", "true", "false", "null",
         // 阶段 12：类
         "class", "new", "this",
         // 阶段 25：`super`。它**不是**修饰词——它写在表达式位置上（`super.成员` 或

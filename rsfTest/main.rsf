@@ -14,6 +14,6 @@ class vecf() : vec() {
 
 annotation output(x : str){
     companion entity input {
-        imutvar s : str = x
+        val s : str = x
     }
 }

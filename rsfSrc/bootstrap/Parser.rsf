@@ -52,7 +52,7 @@
 //
 // `for (i in a..b step n)` 在 Kotlin 版里是**解析期解糖**成
 //
-//     { imutvar __rsf_forEnd<k> = b; imutvar __rsf_forStep<k> = n; imutvar i = a;
+//     { val __rsf_forEnd<k> = b; val __rsf_forStep<k> = n; val i = a;
 //       for (步长 >= 0 ? i <= 终点 : i >= 终点 ; i = i + 步长) 循环体 }
 //
 // rsf 版**照做**，连合成名字的计数器 `__rsf_forEnd<k>` 的编号顺序都一样。理由是
@@ -412,7 +412,7 @@ fn isModifierKeyword(kind : String) -> Bool {
 
 fn isVarKeyword(kind : String) -> Bool {
     if (kind == "KW_VAR") { rtn true }
-    rtn kind == "KW_IMUTVAR"
+    rtn kind == "KW_VAL"
 }
 
 fn isReturnKeyword(kind : String) -> Bool {
@@ -2235,7 +2235,7 @@ pub class Parser(tokens : Token[]) {
         if (k == "LBRACE") { rtn parseBlock() }
         if (isVarKeyword(k)) { rtn parseVarDecl() }
         if (k == "KW_LET") {
-            failAt(t, "'let' 已经换成两个关键字了：'var'（可变）和 'imutvar'（不可变）")
+            failAt(t, "'let' 已经换成两个关键字了：'var'（可变）和 'val'（不可变）")
             rtn errorNode()
         }
         if (isReturnKeyword(k)) { rtn parseReturn() }
@@ -2806,7 +2806,7 @@ pub class Parser(tokens : Token[]) {
         var t = peek()
         if (isVarKeyword(t.kind)) { rtn parseVarDecl() }
         if (t.kind == "KW_LET") {
-            failAt(t, "'let' 已经换成两个关键字了：'var'（可变）和 'imutvar'（不可变）")
+            failAt(t, "'let' 已经换成两个关键字了：'var'（可变）和 'val'（不可变）")
             rtn errorNode()
         }
         if (t.kind == "IDENT" && checkAt(1, "ASSIGN")) { rtn parseAssign() }
@@ -2883,9 +2883,9 @@ pub class Parser(tokens : Token[]) {
     }
 
     // `for (x in 数组)`：解糖成下标循环，与 Kotlin 版逐字对应：
-    //   { imutvar __rsf_each<k> = 数组
+    //   { val __rsf_each<k> = 数组
     //     var __rsf_i<k> = 0
-    //     for (__rsf_i<k> < __rsf_each<k>.length; __rsf_i<k> = __rsf_i<k> + 1) { imutvar x = __rsf_each<k>[__rsf_i<k>]; 循环体 } }
+    //     for (__rsf_i<k> < __rsf_each<k>.length; __rsf_i<k> = __rsf_i<k> + 1) { val x = __rsf_each<k>[__rsf_i<k>]; 循环体 } }
     // 编号顺序：先递增 synth，再建节点（与 Kotlin 的 desugarEachLoop 一致）。
     fn desugarEachLoop(nameTok : Token, iterable : Node, body : Node, forTok : Token) -> Node {
         var k = synth

@@ -9,7 +9,7 @@
 class Point {
     var x : Int = 0
     var y : Int = 0
-    imutvar label : String = "point"   // 不可变字段：声明时定值，之后不能改
+    val label : String = "point"   // 不可变字段：声明时定值，之后不能改
 
     // 次构造：constructor(参数) { ... }，不写返回类型、不能写 stc、可以按参数写多个
     constructor(x0 : Int, y0 : Int) {

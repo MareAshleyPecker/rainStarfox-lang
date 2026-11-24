@@ -82,7 +82,7 @@ import org.example.complie.lexing.TokenKind
  * 语句：
  * ```
  * var x : Int = 1        声明变量（Kotlin 后缀类型；类型可省）
- * imutvar name = "hi"      不可变变量
+ * val name = "hi"      不可变变量
  * x = 2                    赋值
  * rtn / return expr        返回（两个关键字等价）
  * 名字:                    标签（goto 落点）
@@ -418,7 +418,7 @@ class Parser(
      * ```
      *
      * 元素表可省（`annotation Marker { }`）。注解体里**至多一个** `companion entity`，
-     * 别的成员（`fun`/`var`/`imutvar`/`constructor`）是语法错误——在 parser 层就报，
+     * 别的成员（`fun`/`var`/`val`/`constructor`）是语法错误——在 parser 层就报，
      * 不留给语义层（DESIGN-21.md §4）。
      */
     private fun parseAnnotationDecl(annotations: List<AnnotationUse> = emptyList()): AnnotationDecl {
@@ -1136,7 +1136,7 @@ class Parser(
      * 接口**没有主构造括号**（不能 `new`，也就没有构造参数可写）。
      *
      * 接口体里有三条硬规则，都在这里拦住，别让它们掉到后面变成一句看不懂的通用报错：
-     * - 只能写方法（D3）：`var` / `imutvar` 一律报「接口没有字段」；
+     * - 只能写方法（D3）：`var` / `val` 一律报「接口没有字段」；
      * - 不能写构造器：接口没有构造器，也没有字段要初始化；
      * - 不能写 `static` 方法：本批不支持（抽象静态方法没有调用点，默认静态方法也没有语义）。
      *
@@ -1470,7 +1470,7 @@ class Parser(
      * 字段：`var 名字 : 类型 = 初值`（Kotlin 后缀风格，和局部变量一致；初值必填）。
      */
     private fun parseFieldDecl(annotations: List<AnnotationUse> = emptyList()): FieldDecl {
-        val kwTok = advance() // var / imutvar
+        val kwTok = advance() // var / val
         val mutable = kwTok.kind == TokenKind.KW_VAR
         val nameTok = if (check(TokenKind.IDENT)) {
             advance()
@@ -1523,7 +1523,7 @@ class Parser(
      * 从当前位置往前看，接下来是不是一个字段声明。
      *
      * 类体/伴生实体体的调用方**已经先收过注解**（`@M var x` 里的 `@M`），所以这里只看
-     * 落地的记号是不是 `var`/`imutvar`——**不跳修饰词**：字段不写权限修饰词，
+     * 落地的记号是不是 `var`/`val`——**不跳修饰词**：字段不写权限修饰词，
      * `override var x` 要照旧掉进 parseFuncDecl 去撞那句「override 只能写在方法前面」，
      * 而不是被当成字段后报一句「字段缺少名字」。
      */
@@ -2308,7 +2308,7 @@ class Parser(
 
             t.kind == TokenKind.KW_LET -> throw error(
                 t,
-                "'let' 已经换成两个关键字了：'var'（可变）和 'imutvar'（不可变）",
+                "'let' 已经换成两个关键字了：'var'（可变）和 'val'（不可变）",
             )
 
             t.kind.isReturnKeyword -> parseReturn()
@@ -2723,7 +2723,7 @@ class Parser(
         return when {
             t.kind.isVarKeyword -> parseVarDecl()
             t.kind == TokenKind.KW_LET -> throw error(
-                t, "'let' 已经换成两个关键字了：'var'（可变）和 'imutvar'（不可变）",
+                t, "'let' 已经换成两个关键字了：'var'（可变）和 'val'（不可变）",
             )
             t.kind == TokenKind.IDENT && peek(1).kind == TokenKind.ASSIGN -> parseAssign()
             // `a[i] = x` / `p.x = 1` 这种后缀目标：交给和语句位置同一套收尾逻辑
@@ -2737,9 +2737,9 @@ class Parser(
      * 解糖（`k` 是保证不重名的计数器）：
      * ```
      * {
-     *     imutvar __rsf_forEnd<k> = 终点
-     *     imutvar __rsf_forStep<k> = 步长
-     *     imutvar i = 起点
+     *     val __rsf_forEnd<k> = 终点
+     *     val __rsf_forStep<k> = 步长
+     *     val i = 起点
      *     for (if __rsf_forStep<k> >= 0 ? i <= __rsf_forEnd<k> : i >= __rsf_forEnd<k> ; i = i + __rsf_forStep<k>) 循环体
      * }
      * ```
@@ -2813,14 +2813,14 @@ class Parser(
      * 解糖成下标循环（`k` 是保证不重名的计数器）：
      * ```
      * {
-     *     imutvar __rsf_each<k> = 数组
+     *     val __rsf_each<k> = 数组
      *     for (var __rsf_i<k> = 0; __rsf_i<k> < __rsf_each<k>.length; __rsf_i<k> = __rsf_i<k> + 1) {
-     *         imutvar x = __rsf_each<k>[__rsf_i<k>]
+     *         val x = __rsf_each<k>[__rsf_i<k>]
      *         循环体
      *     }
      * }
      * ```
-     * 数组表达式只求值一次；循环变量是 `imutvar`（与 Kotlin 的 `for (x in xs)` 一致）。
+     * 数组表达式只求值一次；循环变量是 `val`（与 Kotlin 的 `for (x in xs)` 一致）。
      * **只认数组**：`Vec`/`Deque` 这类容器先 `toArray()`，或者自己写 `while (it.hasNext())`。
      * 放在 parser 里解糖的好处是：两个后端、自举链、解释器都不需要认识「for-each」这个新东西。
      */
@@ -2868,7 +2868,7 @@ class Parser(
      * 这是纯语法迁移里最容易被漏掉的一处。
      */
     private fun parseVarDecl(): Stmt {
-        val kwTok = advance() // var / imutvar
+        val kwTok = advance() // var / val
         val mutable = kwTok.kind == TokenKind.KW_VAR
         val nameTok = if (check(TokenKind.IDENT)) {
             advance()

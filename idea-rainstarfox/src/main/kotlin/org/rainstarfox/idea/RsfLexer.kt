@@ -284,7 +284,7 @@ class RsfLexer : Lexer() {
             val t = raw[n]
             if (t.type != RsfTokens.CONTROL_KEYWORD) continue
             val w = lexemeOf(t)
-            if (w != "var" && w != "imutvar") continue
+            if (w != "var" && w != "val") continue
             val name = nextIndex(raw, n)
             if (name < 0 || raw[name].type != RsfTokens.IDENTIFIER) continue
             val colon = nextIndex(raw, name)

@@ -10,7 +10,7 @@
 //   可空         = 类型名前加 ?，例如 ?String / ?Int
 //
 // 变量：  var      = 可变（可以重新赋值）
-//         imutvar  = 不可变（重新赋值是编译错误）
+//         val  = 不可变（重新赋值是编译错误）
 //
 // 控制流：if / else / else if / while / for（两种写法）/ switch / try + catch /
 //         break / continue / goto + 标签 / 三目 / ?: / !!
@@ -122,8 +122,8 @@ fn main() -> void {
     println("declared = " + declared)
 
     // ---- 三目（表达式，可以喂给 rtn） ----
-    imutvar x = 3
-    imutvar label = if x > 2 ? "big" : "small"
+    val x = 3
+    val label = if x > 2 ? "big" : "small"
     println("x = " + x + " -> " + label)
 
     // ---- while + break / continue ----
@@ -173,9 +173,9 @@ countdown:
 finished:
 
     // ---- 块作用域 ----
-    imutvar outer = 1
+    val outer = 1
     {
-        imutvar inner = 10
+        val inner = 10
         println("inner block: " + (outer + inner))
     }
 
