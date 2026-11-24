@@ -3480,6 +3480,16 @@ class Checker(
             if (fields.put(f.name, f) != null) {
                 throw err("类 '${cls.name}' 里的字段 '${f.name}' 重复定义", f.at)
             }
+            // 阶段 79：语法（`{ get; set }`）已经能解析，但「展开成方法 + 访问侧改写」
+            // 还没接线。这里显式拦住，而不是把访问器当没写——静默忽略语义是最坏的错。
+            if (f.accessors.isNotEmpty()) {
+                throw err(
+                    "属性访问器还没接线：'${f.name}' 上的 { ${f.accessors.joinToString("; ") { it.kind.keyword }} } " +
+                        "已经能解析（AST 里有），但「展开成 getX/setX 方法 + 把 p.x 改写成方法调用」这一步还没实现。" +
+                        "现在要么先写成普通字段 + 手写 getX/setX 方法，要么等阶段 79 的下一步（见 design/DESIGN-79.md）",
+                    f.at,
+                )
+            }
         }
         // 阶段 70：字段里的指针类型也按这个类自己的构建目标判（`native class` 才准写 `Int*`）
         currentTarget = if (cls.target == BuildTarget.NATIVE) BuildTarget.NATIVE else BuildTarget.BOTH

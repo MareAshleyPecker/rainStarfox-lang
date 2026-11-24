@@ -1601,6 +1601,7 @@ class Parser(
                 "'${kwTok.lexeme} ${nameTok.lexeme} : ${type.name} = 初值'",
         )
         val init = parseExpr()
+        val accessors = if (check(TokenKind.LBRACE)) parseAccessors() else emptyList()
         return FieldDecl(
             name = nameTok.lexeme,
             type = type,
@@ -1609,7 +1610,52 @@ class Parser(
             at = kwTok.at,
             annotations = annotations,
             control = control,
+            accessors = accessors,
         )
+    }
+
+    /**
+     * 属性访问器块（阶段 79）：`{ get; set }` / `{ get; set(v) { ... } }` / `{ is }`。
+     *
+     * 分号可有可无（换行就够了），四种写法都在这里认：
+     * - `get` / `get { ... }`：读访问器，`{ ... }` 缺省就是自动读后备字段；
+     * - `is` / `is { ... }`：`Bool` 字段的读访问器（展开成 `isXxx()`），与 `get` 互斥；
+     * - `set` / `set(v)` / `set(v) { ... }`：写访问器，缺省自动写后备字段。
+     */
+    private fun parseAccessors(): List<Accessor> {
+        expect(TokenKind.LBRACE, "属性访问器要用 '{' 开始（写法：{ get; set }）")
+        val list = ArrayList<Accessor>()
+        while (!check(TokenKind.RBRACE) && !check(TokenKind.EOF)) {
+            val tok = peek()
+            val kind = when {
+                tok.kind == TokenKind.KW_IS -> { advance(); AccessorKind.IS }
+                tok.kind == TokenKind.IDENT && tok.lexeme == "get" -> { advance(); AccessorKind.GET }
+                tok.kind == TokenKind.IDENT && tok.lexeme == "set" -> { advance(); AccessorKind.SET }
+                else -> throw error(
+                    tok,
+                    "属性访问器只能写 'get' / 'set' / 'is'（例：var x : Int = 0 { get; set }），" +
+                        "实际读到 ${tok.describe()}",
+                )
+            }
+            val previous = list.firstOrNull { it.kind == kind }
+            if (previous != null) {
+                throw error(tok, "'${kind.keyword}' 只能写一次（上一个在第 ${previous.at.line} 行）")
+            }
+            var param: String? = null
+            if (check(TokenKind.LPAREN)) {
+                if (kind != AccessorKind.SET) {
+                    throw error(peek(), "'${kind.keyword}' 不带参数表；只有 'set(v)' 能写")
+                }
+                advance()
+                if (check(TokenKind.IDENT)) param = advance().lexeme
+                expect(TokenKind.RPAREN, "'set(' 后面要写参数名，然后 ')'（例：set(v)）")
+            }
+            val body = if (check(TokenKind.LBRACE)) parseBlock() else null
+            list.add(Accessor(kind, param, body, tok.at))
+            match(TokenKind.SEMI)
+        }
+        expect(TokenKind.RBRACE, "属性访问器缺少 '}'")
+        return list
     }
 
     /**

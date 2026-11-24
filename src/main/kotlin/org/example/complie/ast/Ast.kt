@@ -652,6 +652,35 @@ data class FieldDecl(
      * `prv` 只在检查期生效——C 的 struct 没有可见性这一说。
      */
     val control: ControlType = ControlType.DEFAULT,
+    /**
+     * 属性访问器（阶段 79）：`pub var hp : Int = 100 { get; set }` 里的 `{ get; set }`。
+     *
+     * AST 这里**只记录源码写了什么**，不合成方法：合成发生在 Checker 之前的一道
+     * 纯 AST 变换里（`PropertyDesugar`），这样后端看到的永远是普通字段 + 普通方法，
+     * 而报错行号仍然指向用户真正写的那一行。
+     */
+    val accessors: List<Accessor> = emptyList(),
+) : Node
+
+/** 访问器的三种形态（阶段 79）。`is` 只对 `Bool` 字段合法，展开成 `isXxx()`。 */
+enum class AccessorKind(val keyword: String) {
+    GET("get"),
+    SET("set"),
+    IS("is"),
+    ;
+}
+
+/**
+ * 一个访问器：`get` / `get { ... }` / `set(v) { ... }` / `is`。
+ *
+ * [param] 只有 `set` 用得上（`set(v)` 里的 `v`；写 `set` 不写参数表就落回 `v`）；
+ * [body] 为 null 表示「自动」——getter 直接读后备字段、setter 直接写后备字段。
+ */
+data class Accessor(
+    val kind: AccessorKind,
+    val param: String? = null,
+    val body: Block? = null,
+    override val at: SourceLine,
 ) : Node
 
 /**
