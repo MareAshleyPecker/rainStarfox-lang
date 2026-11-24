@@ -12,14 +12,14 @@ editor/zed-rainstarfox/
 ├── Cargo.toml
 ├── src/lib.rs
 ├── README.md
-├── grammars/                                                 # 安装时 Zed 从这里 clone + 编译（已 gitignore）
-└── languages/rsf/                                            # 独立的 grammar git 仓库（内嵌 .git）
-    ├── config.toml                                           # Zed 语言配置（不进内嵌仓库）
+├── grammars/                                                # 安装时 Zed 的 clone + wasm（已 gitignore）
+└── languages/rsf/
+    ├── config.toml                                          # Zed 语言配置
     ├── grammar.js
     ├── tree-sitter.json
-    ├── highlights.scm  brackets.scm  indents.scm  locals.scm  # Zed 实际加载的副本
-    ├── queries/                                               # 同内容，供 tree-sitter CLI / tree-sitter.json
-    └── src/parser.c  src/grammar.json  src/node-types.json    # 已生成，无需本机 tree-sitter
+    ├── highlights.scm  brackets.scm  indents.scm  locals.scm # Zed 实际加载的副本
+    ├── queries/                                              # 同内容，供 tree-sitter CLI / tree-sitter.json
+    └── src/parser.c  src/grammar.json  src/node-types.json   # 已生成，无需本机 tree-sitter
 ```
 
 ## 1. LSP 的真实启动方式
@@ -69,25 +69,27 @@ java -jar build\libs\rainStarfox-0.9.0.jar lsp
 
 ```toml
 [grammars.rsf]
-repository = "file:///D:/java/rainStarfox/editor/zed-rainstarfox/languages/rsf"
-rev = "2e2b4f59cd8f5b69d45622577b8fba51ba17355c"
+repository = "file:///D:/java/rainStarfox"
+rev = "277028741410f8b465362309e6a2c1cafffb3618"
+path = "editor/zed-rainstarfox/languages/rsf"
 ```
 
 安装时 Zed 会：把 `repository` clone 到本扩展目录下的 `grammars\rsf\`，`git fetch --depth 1 origin <rev>`
-+ `git checkout <rev>`，再把该 checkout 根目录（或 `path` 子目录）里的 `src/parser.c` 编译成
-`grammars\rsf.wasm`。因此 `languages\rsf` 被初始化成了一个**独立的小 git 仓库**（只跟踪 `grammar.js`、
-`tree-sitter.json`、`queries/`、`src/`；`config.toml` 和根目录 4 个 `.scm` 是 Zed 侧的配置，不进这个仓库），
-`rev` 钉在当前提交上，整个过程不需要网络。
++ `git checkout <rev>`，再把 `<checkout>/<path>/src/parser.c` 编译成 `grammars\rsf.wasm`。
+
+这里复用的是 rainStarfox 主仓库本身（`languages\rsf` 与扩展放在一起，没必要再拆一个仓库）：
+`repository` 指向主仓、`path` 指向主仓里的 grammar 目录、`rev` 钉住一个包含 `src/parser.c` 的提交。
+本地 `file://` 传输允许按 sha 取**历史**提交（实测非 tip 的提交也能浅取），所以之后再提交主仓也不会让
+已钉住的 `rev` 失效。
 
 注意：
 
 - `grammars\` 是 Zed 的 checkout 目录，已写进 `.gitignore`，不要提交。
-- 改完语法必须重新提交并更新 `rev`（见第 3 节），否则 Zed 仍编译旧的 `parser.c`。
-- 不要把 `languages\rsf` 当普通目录 `git add` 进主仓：它是内嵌 git 仓库，主仓只会得到一个 gitlink，内容不会上传。
-- 发布到 GitHub 时推荐把 grammar 单独做成公共仓库（`repository` 指向它、`rev` 用它的提交、不需要 `path`）；
-  若坚持放主仓，先删除 `languages\rsf\.git` 让内容变成普通文件再提交，然后写
-  `repository = "https://github.com/MareAshleyPecker/rainStarfox-lang"`、
-  `rev = "<含 grammar 的提交>"`、`path = "editor/zed-rainstarfox/languages/rsf"`（此时本地 `file://` 安装方式失效）。
+- 改完语法必须提交并更新 `rev`（见第 3 节），否则 Zed 仍编译旧的 `parser.c`。
+- 主仓没有 `dist/`、`build/` 里的大 jar 被跟踪（HEAD 树约 5.5 MB），浅取很快；如果以后加入了很大的
+  二进制文件，建议把 grammar 拆到独立仓库再指过去。
+- 发布到 GitHub 时把 `repository` 换成 `https://github.com/MareAshleyPecker/rainStarfox-lang`，`path` 不变；
+  若那边浅取报 `not our ref`，说明该提交不是可取的 tip，把 `rev` 换成已推送分支的最新提交。
 
 ## 3. 重新生成 parser（只有改 grammar.js 后才需要）
 
@@ -99,7 +101,8 @@ tree-sitter generate --abi 14
 tree-sitter parse D:\java\rainStarfox\examples\ui_app.rsf
 
 # 必须提交并更新 extension.toml 里的 rev，Zed 才会编译新 parser
-git add -A
+cd D:\java\rainStarfox
+git add editor/zed-rainstarfox/languages/rsf
 git commit -m "update rsf grammar"
 git rev-parse HEAD
 ```

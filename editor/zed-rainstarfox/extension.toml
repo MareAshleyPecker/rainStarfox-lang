@@ -14,17 +14,25 @@ capabilities = []
 kind = "Rust"
 version = "0.7.0"
 
-# Zed requires every grammar to be fetched from a git repository
-# (GrammarManifestEntry: `repository` and `rev` are mandatory, `path` is an
-# optional sub-directory inside the checkout). Because the grammar sources live
-# side by side with this extension, languages/rsf is its own small git repo and
-# Zed clones it into grammars/rsf/ (gitignored) during installation.
-# After changing grammar.js or regenerating src/, commit inside languages/rsf
-# and update `rev` to the new commit hash. To publish the extension, point
-# `repository` at the public GitHub URL instead (and drop the local path).
+# Zed requires every grammar to be fetched from a git repository: in
+# GrammarManifestEntry, `repository` and `rev` are mandatory and `path` is an
+# optional sub-directory inside that checkout. There is no "local directory
+# only" mode -- omitting `repository` fails with `missing field 'repository'`.
+#
+# The grammar sources live in this same repository, so the manifest points at
+# the repository root and narrows the checkout to editor/zed-rainstarfox/languages/rsf.
+# Zed clones it shallowly into grammars/rsf/ (gitignored) and compiles
+# <checkout>/editor/zed-rainstarfox/languages/rsf/src/parser.c.
+#
+# `rev` must be a commit that contains that src/parser.c. Local `file://` fetches
+# accept any reachable commit hash, so bumping the repo tip does not break an
+# already-pinned rev. After changing grammar.js or regenerating src/, commit and
+# update `rev`. For publishing, swap `repository` for the public GitHub URL and
+# pin `rev` to a commit pushed there.
 [grammars.rsf]
-repository = "file:///D:/java/rainStarfox/editor/zed-rainstarfox/languages/rsf"
-rev = "2e2b4f59cd8f5b69d45622577b8fba51ba17355c"
+repository = "file:///D:/java/rainStarfox"
+rev = "277028741410f8b465362309e6a2c1cafffb3618"
+path = "editor/zed-rainstarfox/languages/rsf"
 
 [language_servers.rainstarfox-lsp]
 language = "rainStarfox"
