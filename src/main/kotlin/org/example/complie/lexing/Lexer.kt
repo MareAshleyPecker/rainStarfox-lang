@@ -519,7 +519,12 @@ class Lexer(private val source: SourceFile) {
             '-' -> if (peek() == '>') two(TokenKind.ARROW) else one(TokenKind.MINUS)
             '=' -> if (peek() == '=') two(TokenKind.EQ) else one(TokenKind.ASSIGN)
             '!' -> if (peek() == '=') two(TokenKind.NE) else one(TokenKind.BANG)
-            '<' -> if (peek() == '=') two(TokenKind.LE) else one(TokenKind.LT)
+            '<' -> when (peek()) {
+                '=' -> two(TokenKind.LE)
+                // 阶段 74：&<T <: Comparable> 的上界记号，最长匹配优先于 '<'
+                ':' -> two(TokenKind.SUBTYPE)
+                else -> one(TokenKind.LT)
+            }
             '>' -> if (peek() == '=') two(TokenKind.GE) else one(TokenKind.GT)
             else -> throw RsfError("lexer", "不认识的字符 '$c'", at.line, at.column, source)
         }

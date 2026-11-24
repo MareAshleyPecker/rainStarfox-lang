@@ -286,7 +286,13 @@ data class RsfType(
             base == RsfBase.EXTERNAL -> "L$externalName;"
             // 类型参数擦除到 Object（`var value : T` → `Ljava/lang/Object; value`；
             // `T[]` → `[Ljava/lang/Object;`）
-            base == RsfBase.TYPE_PARAM -> "Ljava/lang/Object;"
+            //
+            // 阶段 74：**有上界**的类型参数按上界擦除（javac 的口径）——`T <: Animal` 的
+            // 参数描述符是 `LAnimal;`，不然方法体里 `x.speak()` 会编成 `invokevirtual Animal.speak`
+            // 而槽里声明的是 Object，校验期直接 `VerifyError`。上界就存在 `typeArgs[0]` 里
+            // （见 Checker.typeParamsFor）。
+            base == RsfBase.TYPE_PARAM ->
+                typeArgs.firstOrNull()?.descriptor ?: "Ljava/lang/Object;"
             nullable && base.isPrimitive -> base.boxedDescriptor
             else -> base.descriptor
         }

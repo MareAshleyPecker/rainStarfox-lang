@@ -449,6 +449,8 @@ data class FuncDecl(
      * `fn id&<T>(x : T)`：函数体里的 `T` 是函数自己的那个）。
      */
     val typeParams: List<String> = emptyList(),
+    /** 阶段 74：类型参数的上界（只有写了 `<:` 的才有条目）；`typeParams` 本身保持 `List<String>`。 */
+    val typeParamBounds: Map<String, TypeRef> = emptyMap(),
     /**
      * 阶段 60：这一刀只编进哪一侧。
      *
@@ -681,6 +683,8 @@ data class ClassDecl(
      * 没有 `&<...>` 子句的类是空表，所以非泛型类的代码一行都不用改。
      */
     val typeParams: List<String> = emptyList(),
+    /** 阶段 74：类型参数的上界（只有写了 `<:` 的才有条目）；`typeParams` 本身保持 `List<String>`。 */
+    val typeParamBounds: Map<String, TypeRef> = emptyMap(),
     /**
      * 父类型列表（阶段 20）：`class Dog(name : String) : Greeter, Runnable { ... }`。
      *
@@ -812,6 +816,8 @@ data class InterfaceDecl(
      * 不做类型实参推导增强，擦除后一律 `L接口名;`。
      */
     val typeParams: List<String> = emptyList(),
+    /** 阶段 74：类型参数的上界（只有写了 `<:` 的才有条目）；`typeParams` 本身保持 `List<String>`。 */
+    val typeParamBounds: Map<String, TypeRef> = emptyMap(),
     /**
      * 写在 `interface` 前面的注解（阶段 21）：`@Marker interface I { }`。缺省空表。
      */

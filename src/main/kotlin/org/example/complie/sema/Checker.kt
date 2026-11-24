@@ -700,7 +700,7 @@ class Checker(
      * 保持原样（它们在类体里就是类型变量），只把祖先那一层代换成具体类型。
      */
     private fun substitutionFromInside(info: ClassInfo, owner: ClassInfo): Map<String, RsfType> =
-        substitutionAlongChain(info, info.decl.typeParams.associateWith { RsfType.typeParam(it) }, owner)
+        substitutionAlongChain(info, typeParamsFor(info.decl.typeParams, info.decl.typeParamBounds), owner)
 
     /**
      * 解析类头 `: Base(实参)` 里的**父类名字**（阶段 25 K1），在 [declareClassBody] 里调用。
@@ -780,6 +780,7 @@ class Checker(
             return
         }
         checkArity(ref.name, parentInfo.decl.typeParams.size, args, ref.at, parentInfo.decl.typeParams)
+        checkTypeArgBounds(parentInfo.decl.typeParams, parentInfo.decl.typeParamBounds, args, ref.name, ref.at)
         classParents[cls] = SuperClass(
             name = ref.name,
             internalName = ref.name,
@@ -802,7 +803,7 @@ class Checker(
         for (cls in program.classes) {
             currentSource = sourceOfClass[cls] ?: source
             // 父类的泛型实参要用**这个类**的类型参数来解析（`class D&<T> : Base&<T>(...)`）
-            typeParams = cls.typeParams.associateWith { RsfType.typeParam(it) }
+            typeParams = typeParamsFor(cls.typeParams, cls.typeParamBounds)
             cls.superClass?.let { registerParentClass(cls, it) }
         }
         typeParams = emptyMap()
@@ -1437,6 +1438,7 @@ class Checker(
         }
         val args2 = target.typeArgs.map { resolveType(it) }
         checkArity(iface.decl.name, iface.decl.typeParams.size, args2, target.at, iface.decl.typeParams)
+        checkTypeArgBounds(iface.decl.typeParams, iface.decl.typeParamBounds, args2, iface.decl.name, target.at)
         val subst = substitutionFor(iface.decl.typeParams, args2)
         val required = LinkedHashMap<String, MutableList<RequiredMethod>>()
         collectRsfRequired(iface, args2, required, HashSet())
@@ -2287,7 +2289,7 @@ class Checker(
         for (decl in program.interfaces) {
             currentSource = sourceOfInterface[decl] ?: source
             // 这个接口的类型参数只在它自己的签名里有意义
-            typeParams = decl.typeParams.associateWith { RsfType.typeParam(it) }
+            typeParams = typeParamsFor(decl.typeParams, decl.typeParamBounds)
 
             val methods = interfaceTable.getValue(decl.name).methods
             for (m in decl.methods) {
@@ -2401,6 +2403,7 @@ class Checker(
         interfaceTable[ref.name]?.let { info ->
             val args = ref.typeArgs.map { resolveType(it) }
             checkArity(ref.name, info.decl.typeParams.size, args, ref.at, info.decl.typeParams)
+            checkTypeArgBounds(info.decl.typeParams, info.decl.typeParamBounds, args, ref.name, ref.at)
             return SuperRef.Rsf(info, args)
         }
         if (classTable.containsKey(ref.name) || enumTable.containsKey(ref.name)) {
@@ -3208,7 +3211,7 @@ class Checker(
             currentInterface = info
             currentClass = null
             scope = Scope(null)
-            typeParams = info.decl.typeParams.associateWith { RsfType.typeParam(it) }
+            typeParams = typeParamsFor(info.decl.typeParams, info.decl.typeParamBounds)
             for (m in info.decl.methods) {
                 if (!m.isAbstract) checkFunction(m)
             }
@@ -3275,9 +3278,111 @@ class Checker(
     private fun pushTypeParams(fn: FuncDecl): Map<String, RsfType> {
         val saved = typeParams
         if (fn.typeParams.isNotEmpty()) {
-            typeParams = saved + fn.typeParams.associateWith { RsfType.typeParam(it) }
+            typeParams = saved + typeParamsFor(fn.typeParams, fn.typeParamBounds)
         }
         return saved
+    }
+
+    /**
+     * 阶段 74：类型参数 → 类型。
+     *
+     * 有上界的用**上界本身**（`T <: Comparable` 的 `T` 就是 `Comparable`）：这样成员解析、
+     * 擦除描述符、`Signature` 全都与 javac 的口径一致，而且一件新机制都不用加。
+     * 没上界的仍是占位 `T` —— 判据 4 专门钉这条：加了上界机制**不能**顺手放宽无上界的情形。
+     */
+    private fun typeParamsFor(
+        names: List<String>,
+        bounds: Map<String, TypeRef>,
+    ): Map<String, RsfType> = names.associateWith { name ->
+        val bound = bounds[name]
+        if (bound == null) {
+            RsfType.typeParam(name)
+        } else {
+            // 上界挂在类型参数的 `typeArgs` 上：`T` 本身仍是占位（推断照旧能工作），
+            // 成员解析时再把上界取出来当接收者（见 checkMember 的 TYPE_PARAM 分支）。
+            RsfType.typeParam(name).withArgs(listOf(resolveBoundType(bound)))
+        }
+    }
+
+    /**
+     * 解析一个**上界**（`T <: X` 里的 `X`）。
+     *
+     * 和普通类型位置的差别只有一条：允许只写泛型类的名字、不写实参。
+     * JDK 的 `Comparable` 其实是 `Comparable&<T>`，可 `T <: Comparable` 这种写法到处都是，
+     * 强制写 `Comparable&<T>` 既难看又会和类型参数列表末尾的 `>` 打架。
+     *
+     * 这里按**擦除**当上界（`java/lang/Comparable` 本身）：成员解析用的是 JDK 的擦除签名
+     * （`compareTo(Ljava/lang/Object;)I`），够用；真要代换就把实参写全。
+     */
+    private fun resolveBoundType(ref: TypeRef): RsfType {
+        if (ref.typeArgs.isNotEmpty() || ref.arrayDepth != 0 || ref.ptrDepth != 0) {
+            return resolveType(ref)
+        }
+        val rsfCount = declaredTypeParams(ref.name)?.size ?: 0
+        if (rsfCount == 0) {
+            val jvm = resolveJvmClass(ref.name)
+            if (jvm != null && (jvm.typeParamCount ?: 0) > 0) {
+                return RsfType.external(jvm.internalName)
+            }
+        }
+        return resolveType(ref)
+    }
+
+    /**
+     * 阶段 74：显式实例化时查上界（`Box&<Point>` 里 `Point` 必须满足 `T <: Comparable`）。
+     *
+     * 只在**有上界**的声明上动手；实参本身还是类型参数（`class D&<T> : Base&<T>`）时无从判定，
+     * 直接放行——那是"约束传递"，v1 不做。
+     */
+    private fun checkTypeArgBounds(
+        names: List<String>,
+        bounds: Map<String, TypeRef>,
+        args: List<RsfType>,
+        owner: String,
+        at: SourceLine,
+    ) {
+        if (bounds.isEmpty()) return
+        for (i in names.indices) {
+            val declared = bounds[names[i]] ?: continue
+            val arg = args.getOrNull(i) ?: continue
+            if (arg.base == RsfBase.TYPE_PARAM) continue
+            val bound = resolveType(declared)
+            if (!subtypeOf(arg, bound)) {
+                throw err(
+                    "类型参数 ${names[i]} 的上界是 ${declared.display()}，" +
+                        "但 ${arg.rsfName} 不是它的子类型（'$owner' 的实例化）",
+                    at,
+                )
+            }
+        }
+    }
+
+    /**
+     * 阶段 74：`sub <: sup`。收在一处是因为阶段 71 的重载打分「具体 > 子类型 > Any」要复用同一个判定。
+     *
+     * 值类型按它的**包装类**参与判定（`Int` → `java/lang/Integer`），所以 `Int` 满足
+     * `T <: Comparable`；类型参数一律放行（无法判定就不误报）。
+     */
+    private fun subtypeOf(sub: RsfType, sup: RsfType): Boolean {
+        if (sub == sup) return true
+        if (sub.base == RsfBase.TYPE_PARAM || sup.base == RsfBase.TYPE_PARAM) return true
+        val subName = boxedJvmNameOf(sub) ?: return false
+        val supName = boxedJvmNameOf(sup) ?: return false
+        return isSubtypeName(subName, supName)
+    }
+
+    /** 上界判定用的「JVM 名字」：值类型映射到包装类，其余取 [RsfType.externalName]。 */
+    private fun boxedJvmNameOf(type: RsfType): String? = when (type.base) {
+        RsfBase.STRING -> "java/lang/String"
+        RsfBase.INT -> "java/lang/Integer"
+        RsfBase.LONG -> "java/lang/Long"
+        RsfBase.FLOAT -> "java/lang/Float"
+        RsfBase.DOUBLE -> "java/lang/Double"
+        RsfBase.BOOL -> "java/lang/Boolean"
+        RsfBase.BYTE -> "java/lang/Byte"
+        RsfBase.CHAR -> "java/lang/Character"
+        RsfBase.EXTERNAL -> type.externalName
+        else -> null
     }
 
     /**
@@ -3368,7 +3473,7 @@ class Checker(
     ) {
         currentSource = src
         // 这个类的类型参数只在它自己的签名与类体里有意义
-        typeParams = cls.typeParams.associateWith { RsfType.typeParam(it) }
+        typeParams = typeParamsFor(cls.typeParams, cls.typeParamBounds)
 
         val fields = LinkedHashMap<String, FieldDecl>()
         for (f in cls.fields) {
@@ -3574,7 +3679,7 @@ class Checker(
             currentSource = info.source
             scope = Scope(null)
             // 类体里 `T` 就是类型：字段、参数、返回、局部变量都能写
-            typeParams = info.decl.typeParams.associateWith { RsfType.typeParam(it) }
+            typeParams = typeParamsFor(info.decl.typeParams, info.decl.typeParamBounds)
 
             // 主构造的参数在**字段初值**里可见（`class P(x0 : Int) { var x : Int = x0 }`）：
             // 主构造的「体」就是字段初值，这段作用域等价于主构造的函数体。
@@ -3797,6 +3902,7 @@ class Checker(
             }
             // 泛型用户类：先查元数，再按实参替换 T 之后检查构造器实参
             checkArity(className, info.decl.typeParams.size, args, key.at, info.decl.typeParams)
+            checkTypeArgBounds(info.decl.typeParams, info.decl.typeParamBounds, args, className, key.at)
             val subst = substitutionFor(info, args)
             // 挑构造器（阶段 18：可能有好几个）；选中的那个记进 newCtors，
             // 两个后端都读这一份，选重载的结果不可能分叉
@@ -6366,6 +6472,26 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
         }
     }
 
+    /**
+     * 阶段 74：成员访问落在**上界**上（`fn f&<T <: Animal>(x : T)` 里 `x.speak()`）。
+     *
+     * v1 只认 rsf 自己的类和接口当上界（够用：JDK 类型当上界时，成员只能按擦除签名找，
+     * 而 `resolveBoundType` 已经把 `Comparable` 这类 JDK 泛型上界解析成擦除类型了）。
+     * 其余情况给一句能看懂的话，而不是「既不是 JVM 类」。
+     */
+    private fun checkMemberOnBound(bound: RsfType, expr: MemberExpr): RsfType {
+        userClassOf(bound)?.let {
+            return checkUserMember(it, expr, wantStatic = false, subst = substitutionFor(it, bound.typeArgs))
+        }
+        interfaceOf(bound)?.let {
+            return checkInterfaceMember(it, expr, subst = substitutionFor(it.decl.typeParams, bound.typeArgs))
+        }
+        throw err(
+            "上界 '${bound.rsfName}' 上没有成员 '${expr.name}'：类型参数的上界目前只认 rsf 自己的类和接口" +
+                "（JDK 类型当上界时成员按擦除签名找，找不到就是这个原因）",
+            expr.at,
+        )
+    }
     private fun checkMember(expr: MemberExpr): RsfType {
         val receiver = expr.receiver
 
@@ -6426,6 +6552,11 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
         // `external(名字)`，JVM 那一侧不认识这个名字，会一路报到「既不是 JVM 类」。
         interfaceOf(receiverType)?.let {
             return checkInterfaceMember(it, expr, subst = substitutionFor(it.decl.typeParams, receiverType.typeArgs))
+        }
+        // 阶段 74：`T <: Animal` 的 `T` 上没有成员，就去**上界**上找（`x.speak()` 能解析）。
+        // 无上界的 `T` 的 typeArgs 是空的，照旧报「上没有成员」——判据 4 钉的就是这条。
+        if (receiverType.isTypeParam && receiverType.typeArgs.isNotEmpty()) {
+            return checkMemberOnBound(receiverType.typeArgs[0], expr)
         }
         val className = resolver.classOf(receiverType)
             ?: throw err(

@@ -3355,6 +3355,77 @@ class RsfTest {
     }
 
     @Test
+    fun `有界泛型的上界让成员可用，两端一致`() {
+        // 用**类**当上界、并且不引入子类：`programLoader` 是把用户类逐个 define、
+        // 最后 define 程序类的，子类先于父类 define 会炸 `NoClassDefFoundError`（那是测试台的
+        // 顺序问题，不是语言的问题），所以这里只用到 `Animal` 自己。
+        val program = """
+            class Animal() {
+                fn speak() -> String { rtn "woof" }
+            }
+
+            class Box&<T <: Animal> {
+                var value : ?T = null
+            }
+
+            fn tell&<T <: Animal>(x : T) -> String {
+                rtn x.speak()
+            }
+
+            fn main() -> void {
+                val b = Box&<Animal>()
+                b.value = Animal()
+                println("box=" + b.value!!.speak())
+                println("tell=" + tell(Animal()))
+                rtn
+            }
+        """.trimIndent() + "\n"
+        assertEquals(listOf("box=woof", "tell=woof"), lines(runInterpreted(program)))
+        assertEquals(
+            normalize(runInterpreted(program)),
+            normalize(runCompiledClasses(program, "RsfBoundedGeneric")),
+        )
+    }
+
+    @Test
+    fun `有界泛型：实参不满足上界就报错`() {
+        val program = """
+            interface Animal { fn speak() -> String }
+            class P() { var x : Int = 0 }
+            class Box&<T <: Animal> { var value : ?T = null }
+            fn main() -> void {
+                val b = Box&<P>()
+                rtn
+            }
+        """.trimIndent() + "\n"
+        val failure = assertFailsWith<RsfError> { Rsf.analyze(SourceFile.of("g.rsf", program)) }
+        assertTrue(failure.message!!.contains("上界"), failure.message)
+        assertTrue(failure.message!!.contains("P"), failure.message)
+    }
+
+    @Test
+    fun `有界泛型：没写上界的 T 仍然没有成员`() {
+        val program = """
+            fn f&<T>(x : T) -> String {
+                rtn x.speak()
+            }
+            fn main() -> void { rtn }
+        """.trimIndent() + "\n"
+        val failure = assertFailsWith<RsfError> { Rsf.analyze(SourceFile.of("g.rsf", program)) }
+        assertTrue(failure.message!!.contains("上没有成员"), failure.message)
+    }
+
+    @Test
+    fun `有界泛型：JDK 泛型上界可以不写实参`() {
+        val program = """
+            class Box&<T <: Comparable> {
+                var value : ?T = null
+            }
+            fn main() -> void { rtn }
+        """.trimIndent() + "\n"
+        Rsf.analyze(SourceFile.of("g.rsf", program))
+    }
+    @Test
     fun `泛型可以有多个类型参数`() {
         val program = """
             pub class Pair&<K, V> {
@@ -8047,7 +8118,7 @@ class RsfTest {
      * 两份 AST dump 逐行比。不一致时把**第一处不同的行号与两侧内容**打出来。
      *
      * 参照是 [AstDump] 打在 Kotlin 版 AST 上的文本（行尾 `\n`）；rsf 侧是它的
-     * `println`（Windows 上是 CRLF），所以两边都先做 `\r\n` → `\n`。
+     * `println`（Windows 上是 CRLF），所以两边都先做 `\n` → `\n`。
      */
     private fun assertAstsMatch(label: String, text: String, reference: String? = null): Int {
         val kotlinDump = normalize(reference ?: AstDump.dump(Rsf.parse(source(text))))
@@ -8212,7 +8283,7 @@ class RsfTest {
             val expected = runInterpreted(text)
             val (actual, stderr) = rsfInterpRun(file)
             // **逐字节**：两边都是同一个平台上的 `PrintStream(.., "UTF-8")`，
-            // 连行尾都该一样，所以这里不做 `\r\n` 归一化
+            // 连行尾都该一样，所以这里不做 `\n` 归一化
             assertEquals(expected, actual, "示例 $name 的 stdout 与 Kotlin 版不一致（rsf 侧 stderr: $stderr）")
             assertTrue(stderr.isEmpty(), "示例 $name 不该往 stderr 上写东西：$stderr")
             assertTrue(expected.isNotEmpty(), "示例 $name 的输出是空的，对拍没有意义")

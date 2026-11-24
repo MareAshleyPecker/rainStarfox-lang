@@ -222,6 +222,9 @@ enum class TokenKind(val text: String) {
     EQ("=="),
     NE("!="),
     LT("<"),
+
+    /** 阶段 74 起：类型参数的上界 `&<T <: Comparable>`（最长匹配，排在 [LT] 之前）。 */
+    SUBTYPE("<:"),
     GT(">"),
     LE("<="),
     GE(">="),

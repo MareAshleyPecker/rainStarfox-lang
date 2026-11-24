@@ -74,6 +74,7 @@ T[]                        // 数组，可嵌套：Int[][]
 ?T                         // 可空：?String、?Box&<Int>、?Int[]
 !T                         // 可能出错（错误返回）：!Int、!void
 Box&<Int>                  // 泛型实参（class 级泛型）
+Box&<T <: Animal>          // 类型参数的上界：T 必须是 Animal 的子类型（阶段 74）
 (Int, String) -> Bool      // 函数类型（阶段 30；后端 30b 在做）
 ```
 
@@ -81,8 +82,10 @@ Box&<Int>                  // 泛型实参（class 级泛型）
 - **隐式加宽只有这几条**：`Byte→Int→Long→Float→Double`；`Char` 谁都不转（要 `charToInt`）。
   窄化一律走内置函数（`toByte` / `toChar`），rsf 没有 `(Byte) x` 这号语法。
 - **可空**：`?T` 不接加宽（`var x : ?Long = 1` 报错，写 `1L`）；`?:` 兜底、`!!` 解包。
-- **泛型只在 class 上**：`class Box&<T>`、`new Box&<Int>(5)`；泛型**函数**还没有（写了报
-  「泛型函数还不支持：类型参数只能写在 class 上」）。
+- **泛型**：`class Box&<T>`、`new Box&<Int>(5)`、泛型函数 `fn first&<T>(xs : T[]) -> T`。
+- **上界**（阶段 74）：`class Box&<T <: Animal>`、`fn tell&<T <: Animal>(x : T)`——`T` 于是能调
+  `Animal` 的成员；实参不满足上界直接报错。上界只写一个；JDK 泛型类型当上界时可以省实参
+  （`T <: Comparable` 按擦除算）。
 - **函数类型**只写在类型位置；`as` / `is` 的目标**不能**是函数类型。
 
 ## 4. 声明
