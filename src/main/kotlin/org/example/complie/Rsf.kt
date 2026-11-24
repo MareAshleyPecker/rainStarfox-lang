@@ -12,6 +12,7 @@ import org.example.complie.loading.LoadedProgram
 import org.example.complie.loading.SourceLoader
 import org.example.complie.parsing.Parser
 import org.example.complie.sema.Checker
+import org.example.complie.sema.PropertyDesugar
 import org.example.complie.sema.SemanticModel
 import java.io.File
 import java.io.PrintStream
@@ -45,10 +46,10 @@ object Rsf {
 
     fun parse(source: SourceFile): Program = Parser(tokens(source), source).parseProgram()
 
-    fun analyze(source: SourceFile): SemanticModel = Checker(parse(source), source).check()
+    fun analyze(source: SourceFile): SemanticModel = analyze(parse(source), source)
 
     fun analyze(program: Program, source: SourceFile): SemanticModel =
-        Checker(program, source).check()
+        Checker(PropertyDesugar.apply(program), source).check()
 
     // ------------------------------------------------------------------ 多文件
 
@@ -63,7 +64,7 @@ object Rsf {
     /** 检查一个已经展开好的多文件程序。 */
     fun analyze(loaded: LoadedProgram): SemanticModel =
         Checker(
-            loaded.toProgram(),
+            PropertyDesugar.apply(loaded.toProgram()),
             loaded.root,
             loaded.sourceOfFunction,
             loaded.sourceOfClass,

@@ -120,7 +120,7 @@ class PropertySyntaxTest {
     }
 
     @Test
-    fun `访问器语义还没接线时 Checker 显式拦住，不静默忽略`() {
+    fun `访问器在 PropertyDesugar 里展开成真方法，不再拦`() {
         val src = SourceFile.of(
             "props.rsf",
             """
@@ -129,12 +129,16 @@ class PropertySyntaxTest {
             }
             fn main() -> void {
                 val a = A()
-                println(a.hp)
+                println(intToString(a.getHp()))
             }
             """.trimIndent(),
         )
-        val e = assertFailsWith<RsfError> { Rsf.analyze(src) }
-        assertTrue(e.message!!.contains("还没接线"), e.message)
-        assertTrue(e.message!!.contains("DESIGN-79"), e.message)
+        val model = Rsf.analyze(src)
+        val decl = model.classModel.classes.getValue("A")
+        val methods = decl.methods.map { it.name }
+        assertTrue("getHp" in methods, "应该有 getHp：$methods")
+        assertTrue("setHp" in methods, "应该有 setHp：$methods")
+        // 字段名不变（这一版不重命名成 _hp），所以 p.hp 仍是字段直读
+        assertTrue(decl.fields.any { it.name == "hp" })
     }
 }

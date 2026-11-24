@@ -113,6 +113,25 @@ var z = 3                // 类型可省（由初值推）
 
 字段写在类体里，权限修饰词可选（省略 = `pub`）；字段**不能**写 `final` / `abstract` / `open`。
 
+字段可以带**属性访问器**（阶段 79）：
+
+```rsf
+pub class Account() {
+    prv var secret : Int = 7                    // 只有本类能读
+    prot var half : Int = 3                     // 本类与子类能读
+    var hp : Int = 100 { get; set }             // 自动：生成 getHp() / setHp(v)
+    var alive : Bool = true { is }               // Bool 用 is：生成 isAlive()
+    var name : String = "x" { get { rtn "n" } }  // 手写 getter
+    var tag : String = "t" { set(v) { this.tag = "tag:" + v } }  // 手写 setter
+}
+```
+
+- 访问器在编译期（`PropertyDesugar`）展开成真方法：`getHp()` / `setHp(v)` / `isAlive()`，名字按 JavaBean 约定；Java 侧反射能直接认。
+- 不写体的自动访问器：getter 是 `rtn this.hp`，setter 是 `this.hp = v`。
+- **这一版只合成方法，不改使用侧**：`a.hp` 仍是字段直读、`a.hp = 5` 仍是字段直接赋值（不触发 setter）；访问器要显式调 `a.setHp(5)`。访问侧改写见 `design/DESIGN-79.md` 的后续步骤。
+- `val` 字段不能有 `set`；生成的 `getX`/`setX`/`isX` 与已有方法撞名会直接报错。
+- 访问器的可见性跟字段（字段写 `prv` 时访问器也是私有）；`prot` 在 native 侧只按检查期生效（C 没有可见性）。
+
 ### 4.3 类
 
 ```rsf

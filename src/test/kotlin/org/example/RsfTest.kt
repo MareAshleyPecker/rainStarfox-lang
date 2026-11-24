@@ -8145,6 +8145,85 @@ class RsfTest {
     }
 
     @Test
+    fun `属性访问器展开成 getHp setHp isAlive 三个真方法，三端一致`() {
+        val program = """
+            class Account() {
+                prv var secret : Int = 7
+                pub var owner : String = "nobody"
+                var hp : Int = 100 { get; set(v) { if (v < 0) { this.hp = 0 } else { this.hp = v } } }
+                var alive : Bool = true { is }
+                var name : String = "x" { get { rtn this.owner } }
+                var tag : String = "t" { set(v) { this.tag = "tag:" + v } }
+            }
+            fn main() -> void {
+                val a = Account()
+                println("hp=" + intToString(a.getHp()))
+                a.setHp(50)
+                println("field=" + intToString(a.hp))
+                println("hp=" + intToString(a.getHp()))
+                println("alive=" + a.isAlive())
+                println("name=" + a.getName())
+                a.setTag("z")
+                println("tag=" + a.tag)
+                a.setHp(-1)
+                println("clamped=" + intToString(a.getHp()))
+            }
+        """.trimIndent()
+        val expected = listOf("hp=100", "field=50", "hp=50", "alive=true", "name=nobody", "tag=tag:z", "clamped=0")
+        assertEquals(expected, lines(runInterpreted(program)))
+        assertEquals(
+            normalize(runInterpreted(program)),
+            normalize(runCompiledClasses(program, "RsfPropDesugar")),
+        )
+
+        // 真是普通公有方法（JavaBean 名字），Java 侧反射直接用
+        val dir = tempDir()
+        val src = SourceFile.of("prop.rsf", program)
+        Rsf.build(Rsf.analyze(src), src, "RsfPropDesugar", dir)
+        val loader = java.net.URLClassLoader(arrayOf(dir.toURI().toURL()), javaClass.classLoader)
+        val account = loader.loadClass("Account")
+        val names = account.declaredMethods
+            .filter { java.lang.reflect.Modifier.isPublic(it.modifiers) }
+            .map { it.name }
+            .toSet()
+        assertTrue("getHp" in names, "应该有 getHp：$names")
+        assertTrue("setHp" in names, "应该有 setHp：$names")
+        assertTrue("isAlive" in names, "应该有 isAlive：$names")
+        assertTrue("getName" in names, "应该有 getName：$names")
+        assertTrue("setTag" in names, "应该有 setTag：$names")
+
+        val instance = account.getDeclaredConstructor().newInstance()
+        val setter = account.getMethod("setHp", Int::class.javaPrimitiveType)
+        setter.invoke(instance, 42)
+        assertEquals(42, account.getField("hp").get(instance))
+        setter.invoke(instance, -5)
+        assertEquals(0, account.getField("hp").get(instance))
+        assertEquals("nobody", account.getMethod("getName").invoke(instance))
+    }
+
+    @Test
+    fun `属性访问器：val 不能有 set，方法名撞车直接报错`() {
+        val badVal = """
+            class A() {
+                val x : Int = 1 { get; set }
+            }
+            fn main() -> void { println(1) }
+        """.trimIndent()
+        val e1 = assertFailsWith<RsfError> { Rsf.analyze(SourceFile.of("p.rsf", badVal)) }
+        assertTrue(e1.message!!.contains("val"), e1.message)
+        assertTrue(e1.message!!.contains("set"), e1.message)
+
+        val clash = """
+            class A() {
+                var hp : Int = 1 { get }
+                fn getHp() -> Int { rtn 2 }
+            }
+            fn main() -> void { println(1) }
+        """.trimIndent()
+        val e2 = assertFailsWith<RsfError> { Rsf.analyze(SourceFile.of("p.rsf", clash)) }
+        assertTrue(e2.message!!.contains("getHp"), e2.message)
+    }
+    @Test
     fun `字段能写 prv 与 prot，跨类访问私有字段报错`() {
         val program = """
             class Account() {
