@@ -168,6 +168,9 @@ gcc out\hello.c -o out\hello.exe
   返回代理对，`substring` 切完仍是零拷贝切片（只挪指针）。字面量与拼接在创建时就把码元数
   一起存好（`units1`），所以 `length()` 是 O(1)。要字节视角用 `byteLength(s)` 和
   `stringBytes(s)`。
+- 切片 `s[a..b]`（阶段 73d）：半开区间，返回 `String`，`s[..b]` / `s[a..]` / `s[..]` 三种省略；
+  越界钳进 `[0, length]`，`b < a` 当空串；切在 emoji 中间时边界外扩到整个码点（三端一致）。
+  C 侧是零拷贝视图（只挪指针 + 记长度），JVM 侧是 `substring` 的拷贝。
 - 一处有意的差异：`a.substring(1, 2)` 正好切在 emoji 的代理对中间时，JVM 会留半个代理项
   （打印成替换符），native 存 UTF-8 存不下它，会把边界外扩到整个码点（打印 `😀`）——
   宁可让原生输出永远合法 UTF-8，也不去实现「半个字符」的编码。

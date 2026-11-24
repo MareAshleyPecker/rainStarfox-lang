@@ -1195,6 +1195,8 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
             "gcCollect" -> return "rsf_gc_collect()"
             "stringBytes" -> return "rsf_str_bytes(${expr(e.arguments[0])})"
             "byteLength" -> return "rsf_str_byte_len(${expr(e.arguments[0])})"
+        "slice" -> return "rsf_str_slice(${expr(e.arguments[0])}, " +
+            "(int32_t)(${expr(e.arguments[1])}), (int32_t)(${expr(e.arguments[2])}))"
             "charToInt" -> return "((int32_t)${expr(e.arguments[0])})"
             "toChar" -> return "((uint16_t)${expr(e.arguments[0])})"
             "toByte" -> return "((int8_t)${expr(e.arguments[0])})"
@@ -2693,6 +2695,7 @@ static inline void* rsf_grow(void* ptr, size_t oldSize, size_t newSize) {
 
             static int32_t rsf_str_len(rsf_str s) { return (int32_t)rsf_u16_len_of(s); }
 
+
             /* 阶段 73：byteLength(s) —— 字节数就是 rsf_str.len 本身，O(1)。 */
             static int32_t rsf_str_byte_len(rsf_str s) { return (int32_t)s.len; }
 
@@ -2757,6 +2760,16 @@ static inline void* rsf_grow(void* ptr, size_t oldSize, size_t newSize) {
                  * 才能 O(1) 推出来（ASCII 里码元数就是字节数），否则留 0 让 length() 现数。 */
                 r.units1 = (s.units1 > 0 && s.units1 - 1 == s.len) ? (r.len + 1) : 0;
                 return r;
+            }
+
+            /* 阶段 73d：`s[a..b]`（零拷贝视图）。越界钳进 [0, n]，to 负数当 n，to < from 当空串
+             * —— 与解释器、字节码后端的 `__rsf_slice` 同一套钳位规则。 */
+            static rsf_str rsf_str_slice(rsf_str s, int32_t from, int32_t to) {
+                int64_t units = rsf_u16_len_of(s);
+                int64_t f = from < 0 ? 0 : (from > units ? units : from);
+                int64_t t = to < 0 ? units : (to > units ? units : to);
+                if (t < f) t = f;
+                return rsf_str_substr(s, (int32_t)f, (int32_t)t);
             }
 
             static int32_t rsf_str_index_of(rsf_str s, rsf_str p) {

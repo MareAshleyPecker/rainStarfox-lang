@@ -146,6 +146,18 @@ object Builtins {
         doc = "UTF-8 字节数（length() 数的是 UTF-16 码元）",
     )
 
+    /**
+     * 阶段 73d：`s[a..b]` 解糖成的内置函数（`to` 写 -1 表示到末尾）。
+     *
+     * 三端都**钳到合法区间**（不抛越界）：`from` 负当 0、超长当长度；`to` 同上，
+     * 且 `to < from` 时当空串。这样 `s[a..b]` 不会因为「a 比 b 大」这种常见写法炸掉。
+     * native 侧是零拷贝视图（`rsf_str_slice`），JVM 侧是 `String.substring` 的拷贝。
+     */
+    val SLICE = Builtin(
+        "slice", listOf(RsfType.STRING, RsfType.INT, RsfType.INT), RsfType.STRING,
+        doc = "取一段文本：slice(s, from, to)，to 写 -1 表示一直到末尾",
+    )
+
     // ------------------------------------------------------------------ 文件读写（阶段 16b）
 
     /** `Byte[]` 的 rsf 类型：`readBytes` 的返回、`writeBytes` 的参数都用它。 */
@@ -237,7 +249,7 @@ object Builtins {
     /** 带签名的内置函数（`print` / `println` 是单参数特例，签名不在这里表达）。 */
     val ALL: List<Builtin> = listOf(
         TO_BYTE, TO_CHAR, CHAR_TO_INT, INT_TO_STRING, PARSE_INT,
-        IS_DIGIT, IS_LETTER, IS_WHITESPACE, TO_UPPER, TO_LOWER, STRING_BYTES, BYTE_LENGTH,
+        IS_DIGIT, IS_LETTER, IS_WHITESPACE, TO_UPPER, TO_LOWER, STRING_BYTES, BYTE_LENGTH, SLICE,
         READ_TEXT, WRITE_TEXT, READ_BYTES, WRITE_BYTES,
         JVM_CALL, JVM_NEW, JVM_CALL_ON,
         MEM_BYTES, MEM_PEAK, GC_COLLECT,

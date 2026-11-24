@@ -1193,6 +1193,7 @@ class RsfTest {
         assertEquals(normalize(runInterpreted(program)), normalize(runCompiled(program)))
     }
 
+
     @Test
     fun `goto 与标签两端一致`() {
         val program = """
@@ -1211,6 +1212,7 @@ class RsfTest {
         assertEquals(expected, lines(runInterpreted(program)))
         assertEquals(normalize(runInterpreted(program)), normalize(runCompiled(program)))
     }
+
 
     @Test
     fun `break 与 continue 两端一致`() {
@@ -1232,6 +1234,7 @@ class RsfTest {
         assertEquals(normalize(runInterpreted(program)), normalize(runCompiled(program)))
     }
 
+
     @Test
     fun `三目是表达式两端一致`() {
         val program = """
@@ -1251,6 +1254,7 @@ class RsfTest {
         assertEquals(listOf("100", "y", "1"), lines(runInterpreted(program)))
         assertEquals(normalize(runInterpreted(program)), normalize(runCompiled(program)))
     }
+
 
     @Test
     fun `块引入新作用域`() {
@@ -1315,6 +1319,7 @@ class RsfTest {
         assertEquals(listOf("big", "big"), lines(runInterpreted(program)))
         assertEquals(normalize(runInterpreted(program)), normalize(runCompiled(program)))
     }
+
 
     @Test
     fun `else 分支也会参与所有路径返回的判断`() {
@@ -1382,6 +1387,7 @@ class RsfTest {
         assertEquals(listOf("42"), lines(runInterpreted(program)))
         assertEquals(normalize(runInterpreted(program)), normalize(runCompiled(program)))
     }
+
 
     @Test
     fun `val 与 var 生成的指令序列一致`() {
@@ -1536,6 +1542,7 @@ class RsfTest {
         assertEquals(normalize(runInterpreted(program)), normalize(runCompiled(program)))
     }
 
+
     @Test
     fun `break 与 continue 必须在循环里`() {
         val b = assertFailsWith<RsfError> {
@@ -1679,6 +1686,7 @@ class RsfTest {
         assertEquals(normalize(runInterpreted(program)), normalize(runCompiled(program)))
     }
 
+
     @Test
     fun `for 的 continue 落到步进而不是条件`() {
         // 如果解糖成 while，continue 会跳过 `i = i + 1`，这里就会死循环
@@ -1703,6 +1711,7 @@ class RsfTest {
         assertEquals(listOf("for-in odd = 25", "classic odd = 25"), lines(runInterpreted(program)))
         assertEquals(normalize(runInterpreted(program)), normalize(runCompiled(program)))
     }
+
 
     @Test
     fun `Java 式 for 的 break 与嵌套两端一致`() {
@@ -1730,6 +1739,7 @@ class RsfTest {
         assertEquals(normalize(runInterpreted(program)), normalize(runCompiled(program)))
     }
 
+
     @Test
     fun `for 三段都可以省略`() {
         val program = """
@@ -1746,6 +1756,7 @@ class RsfTest {
         assertEquals(listOf("n = 3"), lines(runInterpreted(program)))
         assertEquals(normalize(runInterpreted(program)), normalize(runCompiled(program)))
     }
+
 
     @Test
     fun `for 的初始化变量出了循环就不可见`() {
@@ -1842,6 +1853,7 @@ class RsfTest {
         assertEquals(normalize(runInterpreted(program)), normalize(runCompiled(program)))
     }
 
+
     @Test
     fun `实参会按形参类型加宽`() {
         val program = """
@@ -1864,6 +1876,7 @@ class RsfTest {
         assertEquals(normalize(runInterpreted(program)), normalize(runCompiled(program)))
     }
 
+
     @Test
     fun `参数默认可变`() {
         val program = """
@@ -1880,6 +1893,7 @@ class RsfTest {
         assertEquals(listOf("42"), lines(runInterpreted(program)))
         assertEquals(normalize(runInterpreted(program)), normalize(runCompiled(program)))
     }
+
 
     @Test
     fun `参数个数不对会报错`() {
@@ -1956,6 +1970,7 @@ class RsfTest {
         assertEquals(normalize(runInterpreted(program)), normalize(runCompiled(program)))
     }
 
+
     @Test
     fun `main 带参数时 run 会报错但函数本身可用`() {
         val source = source(
@@ -2000,6 +2015,7 @@ class RsfTest {
         assertEquals(normalize(runInterpreted(program)), normalize(runCompiled(program)))
     }
 
+
     @Test
     fun `null 比较与强制解包两端一致`() {
         val program = """
@@ -2025,6 +2041,7 @@ class RsfTest {
         )
         assertEquals(normalize(runInterpreted(program)), normalize(runCompiled(program)))
     }
+
 
     @Test
     fun `可空基本类型会装箱两端一致`() {
@@ -2060,6 +2077,7 @@ class RsfTest {
         assertEquals(normalize(runInterpreted(program)), normalize(runCompiled(program)))
     }
 
+
     @Test
     fun `显式类型标注可以声明可空变量`() {
         val program = """
@@ -2077,6 +2095,7 @@ class RsfTest {
         assertEquals(listOf("s = null", "s = set", "k = 7"), lines(runInterpreted(program)))
         assertEquals(normalize(runInterpreted(program)), normalize(runCompiled(program)))
     }
+
 
     @Test
     fun `非空函数不能 rtn null`() {
@@ -2436,6 +2455,7 @@ class RsfTest {
         assertEquals(normalize(runInterpreted(program)), normalize(runCompiled(program)))
     }
 
+
     @Test
     fun `实例方法两端一致`() {
         val program = """
@@ -2456,6 +2476,7 @@ class RsfTest {
         )
         assertEquals(normalize(runInterpreted(program)), normalize(runCompiled(program)))
     }
+
 
     @Test
     fun `length 数码元 byteLength 数字节，两端一致`() {
@@ -2487,6 +2508,33 @@ class RsfTest {
     }
 
     @Test
+    fun `切片按码元取，越界钳住、代理对不劈开，两端一致`() {
+        // 阶段 73d：`s[a..b]` 解糖成 slice(s, from, to)（to 是开区间，省略写 -1）。
+        // 越界钳进 [0, len]；切在 emoji 中间时外扩到整个码点（三端同一套规则）。
+        val program = """
+            fn main() -> void {
+                val s : String = "中文😀abc"
+                println(s[0..2])
+                println(s[2..4])
+                println(s[4..])
+                println(s[..2])
+                println(s[2..2])
+                println("[" + s[5..2] + "]")
+                println(s[0..99])
+                val v = s[1..3]
+                println(v)
+                println(s.length())
+                rtn
+            }
+        """.trimIndent() + "\n"
+        assertEquals(
+            listOf("中文", "😀", "abc", "中文", "", "[]", "中文😀abc", "文😀", "7"),
+            lines(runInterpreted(program)),
+        )
+        assertEquals(normalize(runInterpreted(program)), normalize(runCompiled(program)))
+    }
+
+    @Test
     fun `substring 切在代理对中间时 JVM 留半个字符，native 对齐到码点`() {
         // "😀" 是 U+1F600，UTF-16 里占两个码元（高代理 55357 + 低代理 56832）。
         // a.substring(1, 2) 正好把它劈开：JVM 的 String 允许只留高代理（打印出来是替换符），
@@ -2505,6 +2553,7 @@ class RsfTest {
         assertEquals(normalize(runInterpreted(program)), normalize(runCompiled(program)))
     }
 
+
     @Test
     fun `静态字段加实例方法链两端一致`() {
         // System.out 是静态字段，println 是它上面的实例方法
@@ -2520,6 +2569,7 @@ class RsfTest {
         assertEquals(normalize(runInterpreted(program)), normalize(runCompiled(program)))
     }
 
+
     @Test
     fun `引用类型之间按类层次匹配 CharSequence`() {
         // String 能当 CharSequence 用，靠的是遍历接口链
@@ -2534,6 +2584,7 @@ class RsfTest {
         assertEquals(listOf("true", "1"), lines(runInterpreted(program)))
         assertEquals(normalize(runInterpreted(program)), normalize(runCompiled(program)))
     }
+
 
     @Test
     fun `找不到方法时列出候选签名`() {
@@ -2598,6 +2649,7 @@ class RsfTest {
         )
         assertEquals(normalize(runInterpreted(program)), normalize(runCompiled(program)))
     }
+
 
     @Test
     fun `反向调用 Java 能直接调 rsf 的 public 函数`() {
@@ -2798,6 +2850,7 @@ class RsfTest {
         assertEquals(normalize(runInterpreted(program)), normalize(runCompiled(program)))
     }
 
+
     @Test
     fun `数值加宽赋值两端一致`() {
         val program = """
@@ -2814,6 +2867,7 @@ class RsfTest {
         assertEquals(listOf("7", "2", "2.5"), lines(runInterpreted(program)))
         assertEquals(normalize(runInterpreted(program)), normalize(runCompiled(program)))
     }
+
 
     @Test
     fun `没有 main 时解释执行会报错`() {

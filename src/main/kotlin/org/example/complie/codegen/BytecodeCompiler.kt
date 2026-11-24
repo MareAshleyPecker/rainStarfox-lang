@@ -81,6 +81,10 @@ import java.io.File
 private const val CONCAT_HELPER = "__rsf_concat2"
 private const val CONCAT_HELPER_DESC = "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;"
 
+/** 阶段 73d：`s[a..b]` 的钳位辅助方法（只在程序用过切片时才发）。 */
+private const val SLICE_HELPER = "__rsf_slice"
+private const val SLICE_DESC = "(Ljava/lang/String;II)Ljava/lang/String;"
+
 class BytecodeCompiler(
     private val model: SemanticModel,
     private val sourceName: String,
@@ -378,6 +382,9 @@ class BytecodeCompiler(
         walk(internal)
     }
 
+    /** 阶段 73d：本程序用过切片 ⇒ 程序类里要发一个 `__rsf_slice` 辅助方法（没用过就不发，旧产物逐字节不变）。 */
+    private var usedSlice = false
+
     /** 程序类：顶层函数编译成它的静态方法，文件名主名就是类名。 */
     private fun programClass(className: String): ClassWriter {
         val cw = newClassWriter()
@@ -426,6 +433,8 @@ class BytecodeCompiler(
             emitPtrAddHelper(cw)
             emitPtrEqHelper(cw)
         }
+        // 阶段 73d：切片越界钳位（只有本程序用过 `s[a..b]` 才发）
+        if (usedSlice) emitSliceHelper(cw)
         cw.visitEnd()
         return cw
     }
@@ -500,6 +509,94 @@ class BytecodeCompiler(
      * 两个方法都放在**程序类**上并且是 public：用户类里的下标访问也要跨类调用它们。
      * 名字带 `$`，rsf 的标识符语法写不出，绝不会跟用户代码撞车。
      */
+    /**
+     * 阶段 73d：`__rsf_slice(String s, int from, int to) -> String`。
+     *
+     * 越界一律钳进 `[0, n]`（`to` 负当 n，`to < from` 当空串）——**不抛越界**，
+     * 与解释器、C 后端 `rsf_str_slice` 的行为逐字一致。
+     */
+    private fun emitSliceHelper(cw: ClassWriter) {
+        val mv = cw.visitMethod(ACC_PUBLIC or ACC_STATIC, SLICE_HELPER, SLICE_DESC, null, null)
+        mv.visitCode()
+        // n = s.length()，槽 3
+        mv.visitVarInsn(ALOAD, 0)
+        mv.visitMethodInsn(INVOKEVIRTUAL, "java/lang/String", "length", "()I", false)
+        mv.visitVarInsn(ISTORE, 3)
+        // from = clamp(from)
+        val l1 = Label()
+        mv.visitVarInsn(ILOAD, 1)
+        mv.visitJumpInsn(IFGE, l1)
+        mv.visitInsn(ICONST_0)
+        mv.visitVarInsn(ISTORE, 1)
+        mv.visitLabel(l1)
+        val l2 = Label()
+        mv.visitVarInsn(ILOAD, 1)
+        mv.visitVarInsn(ILOAD, 3)
+        mv.visitJumpInsn(IF_ICMPLE, l2)
+        mv.visitVarInsn(ILOAD, 3)
+        mv.visitVarInsn(ISTORE, 1)
+        mv.visitLabel(l2)
+        // to：负数当 n，再钳
+        val l3 = Label()
+        mv.visitVarInsn(ILOAD, 2)
+        mv.visitJumpInsn(IFGE, l3)
+        mv.visitVarInsn(ILOAD, 3)
+        mv.visitVarInsn(ISTORE, 2)
+        mv.visitLabel(l3)
+        val l4 = Label()
+        mv.visitVarInsn(ILOAD, 2)
+        mv.visitVarInsn(ILOAD, 3)
+        mv.visitJumpInsn(IF_ICMPLE, l4)
+        mv.visitVarInsn(ILOAD, 3)
+        mv.visitVarInsn(ISTORE, 2)
+        mv.visitLabel(l4)
+        val l5 = Label()
+        mv.visitVarInsn(ILOAD, 2)
+        mv.visitVarInsn(ILOAD, 1)
+        mv.visitJumpInsn(IF_ICMPGE, l5)
+        mv.visitVarInsn(ILOAD, 1)
+        mv.visitVarInsn(ISTORE, 2)
+        mv.visitLabel(l5)
+        // 切在代理对中间时外扩到整个码点（与 native 的 rsf_str_substr 一致：
+        // 那里按码点走，落不到半个 emoji 上）：
+        //   from 指到低代理项 ⇒ from--；to 指到低代理项 ⇒ to++。
+        val lf = Label()
+        mv.visitVarInsn(ILOAD, 1)
+        mv.visitJumpInsn(IFLE, lf)
+        mv.visitVarInsn(ALOAD, 0)
+        mv.visitVarInsn(ILOAD, 1)
+        mv.visitMethodInsn(INVOKEVIRTUAL, "java/lang/String", "charAt", "(I)C", false)
+        mv.visitMethodInsn(
+            INVOKESTATIC, "java/lang/Character", "isLowSurrogate", "(C)Z", false,
+        )
+        mv.visitJumpInsn(IFEQ, lf)
+        mv.visitIincInsn(1, -1)
+        mv.visitLabel(lf)
+        val lt = Label()
+        mv.visitVarInsn(ILOAD, 2)
+        mv.visitVarInsn(ILOAD, 3)
+        mv.visitJumpInsn(IF_ICMPGE, lt)
+        mv.visitVarInsn(ALOAD, 0)
+        mv.visitVarInsn(ILOAD, 2)
+        mv.visitMethodInsn(INVOKEVIRTUAL, "java/lang/String", "charAt", "(I)C", false)
+        mv.visitMethodInsn(
+            INVOKESTATIC, "java/lang/Character", "isLowSurrogate", "(C)Z", false,
+        )
+        mv.visitJumpInsn(IFEQ, lt)
+        mv.visitIincInsn(2, 1)
+        mv.visitLabel(lt)
+        mv.visitVarInsn(ALOAD, 0)
+        mv.visitVarInsn(ILOAD, 1)
+        mv.visitVarInsn(ILOAD, 2)
+        mv.visitMethodInsn(
+            INVOKEVIRTUAL, "java/lang/String", "substring",
+            "(II)Ljava/lang/String;", false,
+        )
+        mv.visitInsn(ARETURN)
+        mv.visitMaxs(0, 0)
+        mv.visitEnd()
+    }
+
     private fun emitArrayHelpers(cw: ClassWriter) {
         // __rsf_arrayIndex(Int length, Int index) -> Int
         // 不越界就把下标原样返回，于是调用点可以写成
@@ -4413,6 +4510,15 @@ class BytecodeCompiler(
             }
 
             // 阶段 73：byteLength(s) = s.getBytes(UTF_8).length
+            // 阶段 73d：`s[a..b]` 解糖成 slice(s, from, to)。越界钳进合法区间，
+            // 钳位逻辑在程序类的辅助方法 `__rsf_slice` 里（与解释器/C 后端一字不差）。
+            "slice" -> {
+                usedSlice = true
+                mv.visitMethodInsn(
+                    INVOKESTATIC, programInternalName, SLICE_HELPER, SLICE_DESC, false,
+                )
+            }
+
             "byteLength" -> {
                 mv.visitFieldInsn(GETSTATIC, "java/nio/charset/StandardCharsets", "UTF_8", "Ljava/nio/charset/Charset;")
                 mv.visitMethodInsn(

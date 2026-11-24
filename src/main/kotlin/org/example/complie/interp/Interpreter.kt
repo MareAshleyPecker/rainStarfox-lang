@@ -2230,6 +2230,19 @@ class Interpreter(
             "stringBytes" -> (args[0] as String).toByteArray(Charsets.UTF_8)
             // 阶段 73：length() 数 UTF-16 码元，字节数要显式问
             "byteLength" -> (args[0] as String).toByteArray(Charsets.UTF_8).size
+            // 阶段 73d：`s[a..b]` 解糖成 slice(s, from, to)；越界钳进合法区间（三端一致）
+            "slice" -> {
+                val text = args[0] as String
+                val n = text.length
+                var from = (args[1] as Number).toInt().coerceIn(0, n)
+                val raw = (args[2] as Number).toInt()
+                var to = (if (raw < 0) n else raw).coerceIn(from, n)
+                // 切在代理对中间时外扩到整个码点（与另两端一致：落不到半个 emoji 上）
+                if (from > 0 && Character.isLowSurrogate(text[from])) from -= 1
+                if (to < n && Character.isLowSurrogate(text[to])) to += 1
+                if (to < from) to = from
+                text.substring(from, to)
+            }
             "readBytes" -> fileCall(builtin.name, args[0] as String) {
                 Files.readAllBytes(Paths.get(it))
             }

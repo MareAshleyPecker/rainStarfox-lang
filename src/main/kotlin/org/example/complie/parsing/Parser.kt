@@ -3226,6 +3226,10 @@ class Parser(
      * 下标在**同一个循环**里，所以 `a[i][j]`、`p.items[0].name`、`f()[0]` 会自然
      * 一层层套起来，不需要任何额外的语法。
      */
+    /** 阶段 73d：`s[a..b]` 解糖成 `slice(s, a, b)`（`b` 为 -1 表示到末尾）。 */
+    private fun sliceOf(target: Expr, from: Expr, to: Expr, at: SourceLine): Expr =
+        CallExpr("slice", listOf(target, from, to), at)
+
     private fun parsePostfix(): Expr {
         var expr = parsePrimary()
         while (true) {
@@ -3255,9 +3259,25 @@ class Parser(
             }
             if (check(TokenKind.LBRACKET)) {
                 val bracket = advance()
-                val index = parseExpr()
+                // 阶段 73d：切片 `s[a..b]`，两端都可以省（`s[a..]`、`s[..b]`、`s[..]`）。
+                // 解糖成内置函数 `slice(s, from, to)`，`to` 写 -1 表示「一直到末尾」；
+                // 越界按「钳到合法区间」处理，三端一致（见 Interpreter / BytecodeCompiler / CBackend）。
+                if (check(TokenKind.RANGE)) {
+                    advance()
+                    val to = if (check(TokenKind.RBRACKET)) IntLit(-1, bracket.at) else parseExpr()
+                    expect(TokenKind.RBRACKET, "切片缺少 ']'（写法是 s[a..b]，两端都可以省）")
+                    expr = sliceOf(expr, IntLit(0, bracket.at), to, bracket.at)
+                    continue
+                }
+                val first = parseExpr()
+                if (match(TokenKind.RANGE)) {
+                    val to = if (check(TokenKind.RBRACKET)) IntLit(-1, bracket.at) else parseExpr()
+                    expect(TokenKind.RBRACKET, "切片缺少 ']'（写法是 s[a..b]，两端都可以省）")
+                    expr = sliceOf(expr, first, to, bracket.at)
+                    continue
+                }
                 expect(TokenKind.RBRACKET, "下标访问缺少 ']'（写法是 数组[下标]，例如 a[0]）")
-                expr = IndexExpr(expr, index, bracket.at)
+                expr = IndexExpr(expr, first, bracket.at)
                 continue
             }
             // 阶段 24：类型转换 / 类型判断。四种写法都在 postfix 这一层

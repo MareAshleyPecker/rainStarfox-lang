@@ -218,6 +218,10 @@ class Greeter { }
 - 类型运算（阶段 24）：`x as A`、`x ?as A`、`x is A`、`x !is A`。
 - 创建对象：`new Point(3, 4)`，**`new` 可省**（`Point(3, 4)`）。
 - 成员/静态：`obj.f`、`Cls.staticFn()`、`obj.field`、`arr.length`、`arr[i]`。
+- 切片（阶段 73d）：`s[a..b]` 取 UTF-16 码元的半开区间，返回 `String`，等价于
+  `slice(s, a, b)`；两端都可以省：`s[..b]`（从头）、`s[a..]`（到末尾）、`s[..]`（整份）。
+  越界钳进 `[0, length]`（不抛越界），`b < a` 当空串；切在 emoji 的代理对中间时
+  边界外扩到整个码点，所以三端都不会产出「半个字符」。native 侧是零拷贝视图。
 - 数组只有 `new T[n]` / `new T[n][m]`，**没有**数组字面量 `{1, 2}`。
 - **lambda（阶段 30 前端已可用）**：`lam(x : Int) -> Int { rtn x + 1 }`，
   参数类型与返回子句都可省（靠期望类型）；捕获是**值快照**，只许捕获 `val` / 形参 / `this`，

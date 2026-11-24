@@ -515,6 +515,21 @@ class CBackendTest {
     }
 
     @Test
+    fun `切片摊成 rsf_str_slice，越界与倒序都在运行时钳住`() {
+        val c = emit(
+            "fn main() -> void { println(\"中文😀abc\"[1..3]) }",
+        )
+        assertTrue(c.contains("rsf_str_slice("), c.take(600))
+        val rt = CBackend(Rsf.analyze(SourceFile.of("c.kt", "fn main() -> void { rtn }"))).runtimeLibSource()
+        assertTrue(
+            rt.contains("static inline rsf_str rsf_str_slice(rsf_str s, int32_t from, int32_t to)"),
+            rt.take(600),
+        )
+        assertTrue(rt.contains("if (t < f) t = f;"), rt.take(600))
+        assertTrue(rt.contains("return rsf_str_substr(s, (int32_t)f, (int32_t)t);"), rt.take(600))
+    }
+
+    @Test
     fun `gc on 才在 main 里装内置 GC`() {
         val on = emit(
             """
