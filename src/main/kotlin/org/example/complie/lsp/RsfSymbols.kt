@@ -1,19 +1,6 @@
 package org.example.complie.lsp
 
-import org.example.complie.ast.AnnotationDecl
-import org.example.complie.ast.ClassDecl
-import org.example.complie.ast.EnumDecl
-import org.example.complie.ast.FieldDecl
-import org.example.complie.ast.FuncDecl
-import org.example.complie.ast.InterfaceDecl
-import org.example.complie.ast.VarDeclStmt
-import org.example.complie.ast.Node
-import org.example.complie.ast.Block
-import org.example.complie.ast.IfStmt
-import org.example.complie.ast.WhileStmt
-import org.example.complie.ast.ForStmt
-import org.example.complie.ast.TryStmt
-import org.example.complie.ast.SwitchStmt
+import org.example.complie.ast.*
 import org.example.complie.diag.SourceFile
 import org.example.complie.lexing.Lexer
 import org.example.complie.lexing.TokenKind

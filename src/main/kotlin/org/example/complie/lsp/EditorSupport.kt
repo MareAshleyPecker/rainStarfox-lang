@@ -1,15 +1,7 @@
 package org.example.complie.lsp
 
 import org.example.complie.Rsf
-import org.example.complie.ast.ClassImport
-import org.example.complie.ast.FuncDecl
-import org.example.complie.ast.Program
-import org.example.complie.ast.VarDeclStmt
-import org.example.complie.ast.Block
-import org.example.complie.ast.ForStmt
-import org.example.complie.ast.IfStmt
-import org.example.complie.ast.Stmt
-import org.example.complie.ast.WhileStmt
+import org.example.complie.ast.*
 import org.example.complie.diag.RsfError
 import org.example.complie.diag.SourceFile
 import org.example.complie.interop.ClassPath
