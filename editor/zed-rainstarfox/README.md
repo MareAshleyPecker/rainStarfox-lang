@@ -4,7 +4,7 @@
 
 - 语法：`languages/rsf/grammar.js`（附已生成的 `src/parser.c`）
 - 查询：`languages/rsf/highlights.scm`、`brackets.scm`、`indents.scm`、`locals.scm`
-- LSP：`src/lib.rs` 用 `java -jar <worktree>/build/libs/rainStarfox-0.9.0.jar lsp` 启动编译器自带的语言服务器
+- LSP：`src/lib.rs` 用 `<PATH 里的 java> -jar <worktree>/build/libs/rainStarfox-0.9.0.jar lsp` 启动编译器自带的语言服务器
 
 ```
 editor/zed-rainstarfox/
@@ -62,6 +62,21 @@ java -jar build\libs\rainStarfox-0.9.0.jar lsp
 3. 等待编译；首次会从 crates.io 拉取 `zed_extension_api`，离线环境会失败。
 4. 打开任意 `.rsf` 文件，状态栏语言应显示 `rainStarfox`；高亮生效。
 5. 排查：命令面板 `zed: open log` 看扩展/LSP 报错；LSP 相关日志会带 `rainstarfox-lsp`。
+
+### 已踩过的坑
+
+- **`failed to spawn command Command("...\extensions\work\rainstarfox\java" ...): 系统找不到指定的文件 (os error 2)`**
+  —— Zed 会把扩展返回的**裸命令名**当作相对于扩展 work 目录的路径（`extensions/work/<id>/java`），
+  不会去 `$PATH` 里找。所以 `src/lib.rs` 必须先 `worktree.which("java")` 解析成绝对路径再返回；
+  报这个错说明装的是旧版扩展，重新 `zed: install dev extension` 即可。
+- `java` 不在 PATH 里时，扩展会显式报「找不到 java」而不是静默失败；把 JDK 的 `bin` 加进 PATH 后重启 Zed。
+- **`block_comment ... data did not match any variant of untagged enum BlockCommentConfigHelper`**
+  —— `languages/rsf/config.toml` 的 `block_comment` 里 `tab_size` 是**必填**字段（`BlockCommentConfig`
+  没有给默认值；kotlin/html/java 扩展也都是这个形状），缺了就整份语言配置反序列化失败。
+  本仓库的块注释不用 ` * ` 续行，所以写成 `{ start = "/*", prefix = "", end = "*/", tab_size = 0 }`。
+- 扩展的 wasm 运行在 WASI 沙箱里，**只能访问自己的 `extensions/work/<id>/` 目录**（Zed 的 `build_wasi_ctx`
+  只 preopen 这一个目录），所以不能在扩展里用 `std::fs` 探测 jar 是否存在——jar 路径只能是常量
+  （见第 5 节）。
 
 扩展清单里 `[grammars.rsf]` **必须**指向一个 git 仓库 —— Zed 的 `GrammarManifestEntry`
 （`crates/extension/src/extension_manifest.rs`）把 `repository` 和 `rev` 都定义为必填字段
@@ -158,13 +173,14 @@ tree-sitter parse --stat $files
 - 标识符目前只匹配 ASCII（`[A-Za-z_][A-Za-z0-9_]*`）和反引号标签；Unicode 标识符未支持。
 - `op` 是软关键字，按普通标识符处理，不做关键字高亮；`default`、`target` 不是关键字。
 - 服务端未实现格式化、workspace symbol，扩展也没有对应配置。
-- `src/lib.rs` 里 jar 路径固定为 `build/libs/rainStarfox-0.9.0.jar`，版本升级需改常量（或改这里改成扫描目录）。
-- 扩展的 wasm 已在 `wasm32-wasip1` 上编过（`cargo build --release --target wasm32-wasip1` →
-  `target/wasm32-wasip1/release/zed_rainstarfox.wasm`，113 827 字节），但**没有在 Zed 里实际装起来跑过**：
-  安装步骤（命令面板选目录、日志排查）仍未端到端验证。
-  已验证的部分：`tree-sitter generate --abi 14` 零冲突、61/61 个 `.rsf` 解析通过、4 个 `.scm`
-  查询编译通过、3 个 TOML 可被 `tomllib` 解析、`rustfmt --check` 与 `cargo metadata` 通过、
-  以及用 `build\tmp_zed\zsim` 完整模拟了 Zed 的 grammar 安装流程（`file://` + `git fetch --depth 1
-  origin <rev>` + `git checkout <rev>` 后 checkout 内含 `src/parser.c`）。
+- `src/lib.rs` 里 jar 路径固定为 `build/libs/rainStarfox-0.9.0.jar`，版本升级需改常量；若更想用发布产物，
+  把它改成 `dist/rainStarfox-0.9.0.jar` 即可（扩展沙箱读不到 worktree，无法自动探测哪个存在）。
+- 实机安装已验证：Zed 能 `compiling Rust extension` → `compiling grammar rsf` → `checking out rsf parser`
+  → `encoding wasm component`，写出 `extension.wasm` 与 `grammars/rsf.wasm`（约 138 KB）；`.rsf` 文件能识别为
+  rainStarfox 并高亮。Zed 自带的工具链会编译扩展 wasm（本机 rustup 里装了 `wasm32-wasip1`/`wasm32-wasip2`）。
+- 其他已验：`tree-sitter generate --abi 14` 零冲突、61/61 个 `.rsf` 解析通过、4 个 `.scm` 查询编译通过、
+  3 个 TOML 可被 `tomllib` 解析、`cargo check --target wasm32-wasip2` 与
+  `cargo build --release --target wasm32-wasip2` 通过、`java -jar build\libs\rainStarfox-0.9.0.jar lsp`
+  的 initialize/shutdown 握手通过（`serverInfo = {name: "rainStarfox", version: "0.9.0"}`，exit 0）。
 - 如果 Zed 日志里 grammar 编译失败，先确认 `extension.toml` 的 `rev` 对应的提交里**有**
   `editor/zed-rainstarfox/languages/rsf/src/parser.c`（`git cat-file -e <rev>:editor/zed-rainstarfox/languages/rsf/src/parser.c` 应成功）。
