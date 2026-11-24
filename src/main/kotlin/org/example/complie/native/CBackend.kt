@@ -612,14 +612,14 @@ class CBackend(
     private val RuntimeErase = """
 /* ---- 泛型擦除：类型参数的值盒子 ---- */
 typedef struct { int64_t tag; int32_t i; int64_t l; void* p; rsf_str s; double d; } rsf_val;
-static rsf_val rsf_box_int(int32_t v) { rsf_val b; b.tag = 1; b.i = v; b.l = 0; b.p = 0; b.s.len = 0; b.s.data = 0; return b; }
-static rsf_val rsf_box_long(int64_t v) { rsf_val b; b.tag = 2; b.i = 0; b.l = v; b.p = 0; b.s.len = 0; b.s.data = 0; return b; }
-static rsf_val rsf_box_bool(bool v) { rsf_val b; b.tag = 3; b.i = v ? 1 : 0; b.l = 0; b.p = 0; b.s.len = 0; b.s.data = 0; return b; }
-static rsf_val rsf_box_double(double v) { rsf_val b; b.tag = 7; b.i = 0; b.l = 0; b.p = 0; b.s.len = 0; b.s.data = 0; b.d = v; b.l = 0; return b; }
-static rsf_val rsf_box_char(uint16_t v) { rsf_val b; b.tag = 4; b.i = v; b.l = 0; b.p = 0; b.s.len = 0; b.s.data = 0; return b; }
-static rsf_val rsf_val_null(void) { rsf_val b; b.tag = 0; b.i = 0; b.l = 0; b.p = 0; b.s.len = 0; b.s.data = 0; b.d = 0; return b; }
+static rsf_val rsf_box_int(int32_t v) { rsf_val b; b.tag = 1; b.i = v; b.l = 0; b.p = 0; b.s.len = 0; b.s.units1 = 0; b.s.data = 0; return b; }
+static rsf_val rsf_box_long(int64_t v) { rsf_val b; b.tag = 2; b.i = 0; b.l = v; b.p = 0; b.s.len = 0; b.s.units1 = 0; b.s.data = 0; return b; }
+static rsf_val rsf_box_bool(bool v) { rsf_val b; b.tag = 3; b.i = v ? 1 : 0; b.l = 0; b.p = 0; b.s.len = 0; b.s.units1 = 0; b.s.data = 0; return b; }
+static rsf_val rsf_box_double(double v) { rsf_val b; b.tag = 7; b.i = 0; b.l = 0; b.p = 0; b.s.len = 0; b.s.units1 = 0; b.s.data = 0; b.d = v; b.l = 0; return b; }
+static rsf_val rsf_box_char(uint16_t v) { rsf_val b; b.tag = 4; b.i = v; b.l = 0; b.p = 0; b.s.len = 0; b.s.units1 = 0; b.s.data = 0; return b; }
+static rsf_val rsf_val_null(void) { rsf_val b; b.tag = 0; b.i = 0; b.l = 0; b.p = 0; b.s.len = 0; b.s.units1 = 0; b.s.data = 0; b.d = 0; return b; }
 static rsf_val rsf_box_str(rsf_str v) { rsf_val b; b.tag = 5; b.i = 0; b.l = 0; b.p = 0; b.s = v; return b; }
-static rsf_val rsf_box_ptr(void* v) { rsf_val b; b.tag = 6; b.i = 0; b.l = 0; b.p = v; b.s.len = 0; b.s.data = 0; return b; }
+static rsf_val rsf_box_ptr(void* v) { rsf_val b; b.tag = 6; b.i = 0; b.l = 0; b.p = v; b.s.len = 0; b.s.units1 = 0; b.s.data = 0; return b; }
 static int32_t rsf_unbox_int(rsf_val b) { return b.i; }
 static int64_t rsf_unbox_long(rsf_val b) { return b.l; }
 static bool rsf_unbox_bool(rsf_val b) { return b.i != 0; }
@@ -1264,7 +1264,7 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
     /** 字符串字面量按 UTF-8 逐字节写成八进制转义，长度也按字节算（与 JVM/解释器一致）。 */
     private fun stringLit(value: String): String {
         val bytes = value.toByteArray(Charsets.UTF_8)
-        val sb = StringBuilder("rsf_str_lit(\"")
+        val sb = StringBuilder("rsf_str_lit_u(\"")
         for (b in bytes) {
             val v = b.toInt() and 0xFF
             if (v == '"'.code || v == '\\'.code) {
@@ -1275,7 +1275,8 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
                 sb.append('\\').append(String.format("%03o", v))
             }
         }
-        sb.append("\", ").append(bytes.size).append("LL)")
+        // 码元数：Kotlin 的 String.length 本来就是 UTF-16 码元数，直接当三参发出去
+        sb.append("\", ").append(bytes.size).append("LL, ").append(value.length + 1).append("LL)")
         return sb.toString()
     }
 
@@ -1304,7 +1305,7 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
         }
         sb.append("#ifndef RSF_STR_DEFINED").append(NL)
         sb.append("#define RSF_STR_DEFINED").append(NL)
-        sb.append("typedef struct { int64_t len; const char* data; } rsf_str;").append(NL)
+        sb.append("typedef struct { int64_t len; int64_t units1; const char* data; } rsf_str;").append(NL)
         sb.append(RuntimeErase).append(NL)
         sb.append("#endif").append(NL).append(NL)
         sb.append(JNI_UTF8).append(NL)
@@ -1533,7 +1534,7 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
             }
 
             static rsf_str rsf_jstr_of(const char* p) {
-                rsf_str out;
+                rsf_str out = {0, 0, NULL};
                 size_t n = strlen(p);
                 char* copy = (char*)malloc(n + 1);
                 memcpy(copy, p, n + 1);
@@ -1640,7 +1641,7 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
                 free(utf);
                 (*rsf_env)->DeleteLocalRef(rsf_env, js);
                 (*rsf_env)->DeleteLocalRef(rsf_env, c);
-                rsf_str out;
+                rsf_str out = {0, 0, NULL};
                 out.len = n;
                 out.data = keep;
                 return out;
@@ -2069,7 +2070,8 @@ static inline rsf_ctx* rsf_ctx_get(void) {
         c->gc.user = NULL;
         c->err = false;
         c->err_msg.len = 0;
-        c->err_msg.data = NULL;
+        c->err_msg.units1 = 0;
+            c->err_msg.data = NULL;
         rsf_ctx_cur = c;
         atexit(rsf_ctx_process_exit);
         return c;
@@ -2088,7 +2090,8 @@ static inline void rsf_ctx_init(rsf_ctx* c, rsf_allocator a) {
     c->gc.user = NULL;
     c->err = false;
     c->err_msg.len = 0;
-    c->err_msg.data = NULL;
+    c->err_msg.units1 = 0;
+            c->err_msg.data = NULL;
 }
 
 /* ---- GC 插座（阶段 77）：把「怎么回收」交给宿主，运行时只负责问你 ----
@@ -2494,7 +2497,7 @@ static inline void* rsf_grow(void* ptr, size_t oldSize, size_t newSize) {
 
             #ifndef RSF_STR_DEFINED
             #define RSF_STR_DEFINED
-            typedef struct { int64_t len; const char* data; } rsf_str;
+            typedef struct { int64_t len; int64_t units1; const char* data; } rsf_str;
             #endif
             typedef struct { int64_t len; void* data; } rsf_arr;
 
@@ -2502,8 +2505,14 @@ static inline void* rsf_grow(void* ptr, size_t oldSize, size_t newSize) {
                 rsf_arr a; a.len = len; a.data = calloc((size_t)(len > 0 ? len : 0), (size_t)elem); return a;
             }
 
+            /* 阶段 73：units1 = UTF-16 码元数 + 1，0 表示「还不知道」（用到时再数一遍）。
+             * 存 +1 是为了让漏初始化的地方退化成 O(n) 而不是算错 0 个码元。 */
+            static rsf_str rsf_str_lit_u(const char* data, int64_t len, int64_t units1) {
+                rsf_str s; s.len = len; s.units1 = units1; s.data = data; return s;
+            }
+
             static rsf_str rsf_str_lit(const char* data, int64_t len) {
-                rsf_str s; s.len = len; s.data = data; return s;
+                return rsf_str_lit_u(data, len, 0);
             }
 
             /* 末尾补一个 0：rsf 的 string 是长度前缀、不保证以 0 结尾，但宿主 shim
@@ -2513,7 +2522,9 @@ static inline void* rsf_grow(void* ptr, size_t oldSize, size_t newSize) {
                 if (a.len > 0) memcpy(p, a.data, (size_t)a.len);
                 if (b.len > 0) memcpy(p + a.len, b.data, (size_t)b.len);
                 p[a.len + b.len] = 0;
-                rsf_str s; s.len = a.len + b.len; s.data = p; return s;
+                rsf_str s; s.len = a.len + b.len; s.data = p;
+                s.units1 = (a.units1 > 0 && b.units1 > 0) ? a.units1 + b.units1 - 1 : 0;
+                return s;
             }
 
             static rsf_str rsf_force_str(rsf_str v) {
@@ -2534,11 +2545,11 @@ static inline void* rsf_grow(void* ptr, size_t oldSize, size_t newSize) {
             }
 
             static rsf_str rsf_str_c(const char* s) {
-                rsf_str r; r.data = s; r.len = (int64_t)strlen(s); return r;
+                rsf_str r = {0, 0, NULL}; r.data = s; r.len = (int64_t)strlen(s); return r;
             }
 
             static rsf_str rsf_str_null(void) {
-                rsf_str s; s.len = 0; s.data = NULL; return s;
+                rsf_str s = {0, 0, NULL}; s.len = 0; s.data = NULL; return s;
             }
 
             static bool rsf_str_eq(rsf_str a, rsf_str b) {
@@ -2598,7 +2609,13 @@ static inline void* rsf_grow(void* ptr, size_t oldSize, size_t newSize) {
             /* 阶段 73：String 的成员方法。length/charAt/substring/indexOf 一律按 UTF-16
              * 码元算（与 java.lang.String 一致），字节视图走 stringBytes()。ASCII 之外
              * 一个汉字算 1 个码元、一个 emoji 算 2 个。 */
-            static int32_t rsf_str_len(rsf_str s) { return (int32_t)rsf_u16_len(s.data, s.len); }
+            /* 码元数：字面量与拼接在创建时就算好（units1 = 码元数 + 1），
+             * 其余来源（文件、trim、大小写转换…）留 0，这里退化成数一遍。 */
+            static int64_t rsf_u16_len_of(rsf_str s) {
+                return s.units1 > 0 ? s.units1 - 1 : rsf_u16_len(s.data, s.len);
+            }
+
+            static int32_t rsf_str_len(rsf_str s) { return (int32_t)rsf_u16_len_of(s); }
 
             /* 阶段 73：byteLength(s) —— 字节数就是 rsf_str.len 本身，O(1)。 */
             static int32_t rsf_str_byte_len(rsf_str s) { return (int32_t)s.len; }
@@ -2640,9 +2657,15 @@ static inline void* rsf_grow(void* ptr, size_t oldSize, size_t newSize) {
                 if (from < 0) from = 0;
                 if ((int64_t)to > units) to = (int32_t)units;
                 if (to < from) to = from;
+                /* 边界落在代理对中间时（a.substring(1, 3) 切在 emoji 里），
+                 * UTF-8 存不下孤立代理项，这里会外扩到整个码点：native 侧的
+                 * substring 只以码点边界收尾，永远不产生非法 UTF-8。 */
                 a = rsf_u16_to_byte(s.data, s.len, from);
                 b = rsf_u16_to_byte(s.data, s.len, to);
-                rsf_str r; r.len = b - a; r.data = (char*)s.data + a; return r;
+                rsf_str r = {0, 0, NULL};
+                r.len = b - a; r.data = (char*)s.data + a;
+                r.units1 = rsf_u16_len(r.data, r.len) + 1;
+                return r;
             }
 
             static int32_t rsf_str_index_of(rsf_str s, rsf_str p) {
@@ -2666,7 +2689,7 @@ static inline void* rsf_grow(void* ptr, size_t oldSize, size_t newSize) {
                 int64_t b = s.len;
                 while (a < b && (s.data[a] == 32 || s.data[a] == 9 || s.data[a] == 10 || s.data[a] == 13)) { a++; }
                 while (b > a && (s.data[b - 1] == 32 || s.data[b - 1] == 9 || s.data[b - 1] == 10 || s.data[b - 1] == 13)) { b--; }
-                rsf_str r; r.data = s.data + a; r.len = b - a; return r;
+                rsf_str r = {0, 0, NULL}; r.data = s.data + a; r.len = b - a; return r;
             }
 
             static rsf_str rsf_str_repeat(rsf_str s, int32_t times) {
@@ -2674,7 +2697,7 @@ static inline void* rsf_grow(void* ptr, size_t oldSize, size_t newSize) {
                 char* buf = (char*)malloc((size_t)n + 1);
                 for (int32_t i = 0; i < times; i++) { memcpy(buf + s.len * i, s.data, (size_t)s.len); }
                 buf[n] = 0;
-                rsf_str r; r.data = buf; r.len = n; return r;
+                rsf_str r = {0, 0, NULL}; r.data = buf; r.len = n; return r;
             }
 
             static bool rsf_str_starts(rsf_str s, rsf_str p) {
@@ -2709,7 +2732,7 @@ static inline void* rsf_grow(void* ptr, size_t oldSize, size_t newSize) {
                     char c = ((const char*)s.data)[i];
                     p[i] = (c >= 'a' && c <= 'z') ? (char)(c - 32) : c;
                 }
-                rsf_str r; r.len = s.len; r.data = p; return r;
+                rsf_str r = {0, 0, NULL}; r.len = s.len; r.data = p; return r;
             }
 
             static rsf_str rsf_str_lower(rsf_str s) {
@@ -2718,7 +2741,7 @@ static inline void* rsf_grow(void* ptr, size_t oldSize, size_t newSize) {
                     char c = ((const char*)s.data)[i];
                     p[i] = (c >= 'A' && c <= 'Z') ? (char)(c + 32) : c;
                 }
-                rsf_str r; r.len = s.len; r.data = p; return r;
+                rsf_str r = {0, 0, NULL}; r.len = s.len; r.data = p; return r;
             }
 
             static bool rsf_str_empty(rsf_str s) { return s.len == 0; }
@@ -2730,7 +2753,7 @@ static inline void* rsf_grow(void* ptr, size_t oldSize, size_t newSize) {
             static rsf_str rsf_long_to_str(int64_t v) {
                 char* buf = (char*)malloc(32);
                 int n = snprintf(buf, 32, "%lld", (long long)v);
-                rsf_str s; s.len = n; s.data = buf; return s;
+                rsf_str s = {0, 0, NULL}; s.len = n; s.data = buf; return s;
             }
 
             static void rsf_print_s(rsf_str s) { fwrite(s.data, 1, (size_t)s.len, stdout); }
@@ -2770,7 +2793,7 @@ static inline void* rsf_grow(void* ptr, size_t oldSize, size_t newSize) {
                     b[n++] = (char)(0x80 | ((ch >> 6) & 0x3F));
                     b[n++] = (char)(0x80 | (ch & 0x3F));
                 }
-                rsf_str s; s.len = n; s.data = b; return s;
+                rsf_str s = {0, 0, NULL}; s.len = n; s.data = b; return s;
             }
 
             /* rsf 的 string 带长度、不一定以 0 结尾：调 libc 前先拷成 C 字符串 */
@@ -2806,7 +2829,7 @@ static inline void* rsf_grow(void* ptr, size_t oldSize, size_t newSize) {
                 int64_t n = 0;
                 char* b = rsf_read_all(path, &n);
                 if (!b) { rsf_set_err(rsf_str_c("readText: 文件读不出来")); }
-                rsf_str s;
+                rsf_str s = {0, 0, NULL};
                 s.len = n; s.data = b;
                 return s;
             }
@@ -2844,7 +2867,7 @@ static inline void* rsf_grow(void* ptr, size_t oldSize, size_t newSize) {
                     int cap = (int)s.len + 48;
                     char* m = (char*)malloc((size_t)cap);
                     int n = snprintf(m, (size_t)cap, "parseInt: 不是合法的整数：'%s'", (const char*)s.data);
-                    rsf_str msg; msg.data = m; msg.len = n;
+                    rsf_str msg = {0, 0, NULL}; msg.data = m; msg.len = n;
                     rsf_set_err(msg);
                     return 0;
                 }
@@ -2864,13 +2887,13 @@ static inline void* rsf_grow(void* ptr, size_t oldSize, size_t newSize) {
             static rsf_str rsf_float_to_str(float v) {
                 char* buf = (char*)malloc(64);
                 int n = snprintf(buf, 64, "%g", (double)v);
-                rsf_str s; s.len = n; s.data = buf; return s;
+                rsf_str s = {0, 0, NULL}; s.len = n; s.data = buf; return s;
             }
 
             static rsf_str rsf_double_to_str(double v) {
                 char* buf = (char*)malloc(64);
                 int n = snprintf(buf, 64, "%.17g", v);
-                rsf_str s; s.len = n; s.data = buf; return s;
+                rsf_str s = {0, 0, NULL}; s.len = n; s.data = buf; return s;
             }
 
             static rsf_str rsf_str_replace(rsf_str s, rsf_str from, rsf_str to) {
@@ -2903,12 +2926,12 @@ static inline void* rsf_grow(void* ptr, size_t oldSize, size_t newSize) {
                     }
                 }
                 out[n] = 0;
-                rsf_str r; r.len = n; r.data = out; return r;
+                rsf_str r = {0, 0, NULL}; r.len = n; r.data = out; return r;
             }
 
             static rsf_str rsf_str_remove_prefix(rsf_str s, rsf_str prefix) {
                 if (prefix.len > 0 && prefix.len <= s.len && memcmp(s.data, prefix.data, (size_t)prefix.len) == 0) {
-                    rsf_str r;
+                    rsf_str r = {0, 0, NULL};
                     r.len = s.len - prefix.len;
                     r.data = s.data + prefix.len;
                     return r;
@@ -2918,7 +2941,7 @@ static inline void* rsf_grow(void* ptr, size_t oldSize, size_t newSize) {
 
             static rsf_str rsf_get_prop(rsf_str key) {
                 const char* v = getenv(rsf_zstr(key));
-                rsf_str s;
+                rsf_str s = {0, 0, NULL};
                 if (!v) { s.len = 0; s.data = NULL; return s; }
                 s.data = v;
                 s.len = (int64_t)strlen(v);
@@ -2940,7 +2963,7 @@ static inline void* rsf_grow(void* ptr, size_t oldSize, size_t newSize) {
             static rsf_str rsf_int_to_str(int32_t v) {
                 char* buf = (char*)malloc(16);
                 int n = snprintf(buf, 16, "%d", (int)v);
-                rsf_str s; s.len = n; s.data = buf; return s;
+                rsf_str s = {0, 0, NULL}; s.len = n; s.data = buf; return s;
             }
 
         """.trimIndent()

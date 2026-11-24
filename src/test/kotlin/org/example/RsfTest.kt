@@ -2487,6 +2487,25 @@ class RsfTest {
     }
 
     @Test
+    fun `substring 切在代理对中间时 JVM 留半个字符，native 对齐到码点`() {
+        // "😀" 是 U+1F600，UTF-16 里占两个码元（高代理 55357 + 低代理 56832）。
+        // a.substring(1, 2) 正好把它劈开：JVM 的 String 允许只留高代理（打印出来是替换符），
+        // native 侧存的是 UTF-8，存不下孤立代理项，所以会把边界外扩到整个码点。
+        // 这里钉住 JVM/解释器这一侧的行为；native 的那半条写在 CBackendTest 里。
+        val program = """
+            fn main() -> void {
+                var a = "文😀b"
+                var cut = a.substring(1, 2)
+                println(cut.length())
+                println(charToInt(cut.charAt(0)))
+                rtn
+            }
+        """.trimIndent() + "\n"
+        assertEquals(listOf("1", "55357"), lines(runInterpreted(program)))
+        assertEquals(normalize(runInterpreted(program)), normalize(runCompiled(program)))
+    }
+
+    @Test
     fun `静态字段加实例方法链两端一致`() {
         // System.out 是静态字段，println 是它上面的实例方法
         val program = """

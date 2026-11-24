@@ -188,7 +188,7 @@ class CBackendTest {
             """.trimIndent(),
         )
         // "中" 的 UTF-8 是 E4 B8 AD（三个字节，八进制转义）
-        assertTrue(c.contains("""rsf_str_lit("\344\270\255", 3LL)"""), c)
+        assertTrue(c.contains("""rsf_str_lit_u("\344\270\255", 3LL, 2LL)"""), c)
     }
 
     @Test
@@ -202,8 +202,8 @@ class CBackendTest {
             }
             """.trimIndent(),
         )
-        assertTrue(c.contains("rsf_concat(rsf_str_lit(\"x\", 1LL), rsf_str_lit(\"y\", 1LL))"), c)
-        assertTrue(c.contains("rsf_str_eq(v_a, rsf_str_lit(\"xy\", 2LL))"), c)
+        assertTrue(c.contains("rsf_concat(rsf_str_lit_u(\"x\", 1LL, 2LL), rsf_str_lit_u(\"y\", 1LL, 2LL))"), c)
+        assertTrue(c.contains("rsf_str_eq(v_a, rsf_str_lit_u(\"xy\", 2LL, 3LL))"), c)
     }
 
     @Test
@@ -240,8 +240,8 @@ class CBackendTest {
         assertTrue(c.contains("rsf_str_len(v_s)"), c)
         assertTrue(c.contains("rsf_str_substr(v_s, 1, rsf_str_len(v_s))"), c)
         assertTrue(c.contains("rsf_str_upper(v_s)"), c)
-        assertTrue(c.contains("rsf_str_starts(v_s, rsf_str_lit(\"ab\", 2LL))"), c)
-        assertTrue(c.contains("rsf_str_contains(v_s, rsf_str_lit(\"b\", 1LL))"), c)
+        assertTrue(c.contains("rsf_str_starts(v_s, rsf_str_lit_u(\"ab\", 2LL, 3LL))"), c)
+        assertTrue(c.contains("rsf_str_contains(v_s, rsf_str_lit_u(\"b\", 1LL, 2LL))"), c)
     }
 
     @Test
@@ -400,7 +400,7 @@ class CBackendTest {
         // 主体只求值一次：先落临时变量，再逐标签比较
         assertTrue(c.contains("int32_t sw_0 = v_n;"), c)
         assertTrue(c.contains("if ((sw_0 == 1) || (sw_0 == 2)) {"), c)
-        assertTrue(c.contains("rsf_str_eq(sw_1, rsf_str_lit(\"ok\", 2LL))"), c)
+        assertTrue(c.contains("rsf_str_eq(sw_1, rsf_str_lit_u(\"ok\", 2LL, 3LL))"), c)
     }
 
 
@@ -483,8 +483,17 @@ class CBackendTest {
         assertTrue(lib.contains("0xD800"), lib.take(200))
         assertTrue(lib.contains("0xDC00"), lib.take(200))
         // length 走码元数，substring 仍零拷贝（只算两次字节偏移再挪指针）
-        assertTrue(lib.contains("static inline int32_t rsf_str_len(rsf_str s) { return (int32_t)rsf_u16_len(s.data, s.len); }"), lib.take(200))
+        assertTrue(lib.contains("static inline int32_t rsf_str_len(rsf_str s) { return (int32_t)rsf_u16_len_of(s); }"), lib.take(200))
         assertTrue(lib.contains("r.len = b - a; r.data = (char*)s.data + a;"), lib.take(200))
+        // 码元数缓存：units1 = 码元数 + 1（0 = 还不知道），字面量与拼接在创建时就算好
+        assertTrue(lib.contains("static inline int64_t rsf_u16_len_of(rsf_str s) {"), lib.take(200))
+        assertTrue(lib.contains("return s.units1 > 0 ? s.units1 - 1 : rsf_u16_len(s.data, s.len);"), lib.take(200))
+        assertTrue(lib.contains("static inline rsf_str rsf_str_lit_u(const char* data, int64_t len, int64_t units1) {"), lib.take(200))
+        assertTrue(lib.contains("s.units1 = (a.units1 > 0 && b.units1 > 0) ? a.units1 + b.units1 - 1 : 0;"), lib.take(200))
+        assertTrue(lib.contains("r.units1 = rsf_u16_len(r.data, r.len) + 1;"), lib.take(200))
+        // 切在代理对中间时 native 外扩到码点（UTF-8 存不下孤立代理项），注释要留着
+        assertTrue(lib.contains("native 侧的"), lib.take(200))
+        assertTrue(lib.contains("只以码点边界收尾，永远不产生非法 UTF-8"), lib.take(200))
         // 字节数走 rsf_str.len（O(1)），不再数一遍 UTF-8
         assertTrue(
             lib.contains("static inline int32_t rsf_str_byte_len(rsf_str s) { return (int32_t)s.len; }"),

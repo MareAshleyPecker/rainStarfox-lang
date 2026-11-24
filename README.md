@@ -164,6 +164,13 @@ gcc out\hello.c -o out\hello.exe
 - 已支持：Int / Long / Bool / String、一维数组、类（字段 / 实例方法 / `stc` 静态方法 / 主次构造 / 单继承与覆盖，虚表分派）、接口（默认方法与虚表回落）、枚举与 `switch`（Int/Long/String 字面量、一个分支可写多个值）、指针（`T*` / `&x` / `&o.f` / `&a[i]` / `*p` / `*p = v` / `p + n`）、顶层函数、`if` / `while` / `for` / 递归。
 - 还没接：JDK 接口 / JDK 父类、泛型、lambda、多维数组、浮点参与字符串拼接、`goto` / 标签——遇到会报 `error[native]`。
 - 判据：解释器 stdout vs 原生 exe stdout 逐字节相同（`bash build/verify52/run-probes.sh all`，16 份语料）。
+- 字符串按 **UTF-16 码元**算下标（跟 Java 一致）：`length()` 数的是码元，`charAt` 对 emoji
+  返回代理对，`substring` 切完仍是零拷贝切片（只挪指针）。字面量与拼接在创建时就把码元数
+  一起存好（`units1`），所以 `length()` 是 O(1)。要字节视角用 `byteLength(s)` 和
+  `stringBytes(s)`。
+- 一处有意的差异：`a.substring(1, 2)` 正好切在 emoji 的代理对中间时，JVM 会留半个代理项
+  （打印成替换符），native 存 UTF-8 存不下它，会把边界外扩到整个码点（打印 `😀`）——
+  宁可让原生输出永远合法 UTF-8，也不去实现「半个字符」的编码。
 
 ### 构建目标：native / jvm
 
