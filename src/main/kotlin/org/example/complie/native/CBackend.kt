@@ -107,13 +107,13 @@ class CBackend(
         checkProgram()
         nameEverything()
         val sb = StringBuilder()
-        // fix: 运行时拆到 rsfRuntimelib.h，不再随每份生成代码携带 RUNTIME + RuntimeErase 全文。
-        // 多文件一起 build 只出一个 lib.h（实际文件名 rsfRuntimelib.h），多个 .c 共同包含它；
+        // fix: 运行时拆到 rsf_runtime.h，不再随每份生成代码携带 RUNTIME + RuntimeErase 全文。
+        // 多文件一起 build 只出一个 lib.h（实际文件名 rsf_runtime.h），多个 .c 共同包含它；
         // 共享状态走 extern + 单一定义，全程序恰好一个编译单元 define RSF_RUNTIME_IMPL。
         // 头文件由构建侧调 ensureRuntimeLib(outDir) 写出（内容不同才重写）；
         // emitImpl=true 交给其中**一个**实例。RuntimeErase 仍被 emitJni 使用，故常量保留。
         if (emitImpl) sb.append("#define RSF_RUNTIME_IMPL\n")
-        sb.append("#include \"rsfRuntimelib.h\"\n")
+        sb.append("#include \"rsf_runtime.h\"\n")
         val runtimeEnd = sb.length
         for (e in model.enums.values) sb.append(enumBlock(e))
         for (cls in classes.values) sb.append(struct(cls))
@@ -171,7 +171,7 @@ class CBackend(
     }
 
     /**
-     * fix: 运行时头文件 rsfRuntimelib.h 的唯一来源（RUNTIME + RuntimeErase 仍是单一事实源）。
+     * fix: 运行时头文件 rsf_runtime.h 的唯一来源（RUNTIME + RuntimeErase 仍是单一事实源）。
      * 机械变换四步：
      *   1) 去掉两行文件级 error 变量（改由 ctx 持有，extern + RSF_RUNTIME_IMPL 提供唯一份）；
      *   2) 顶层 static 函数 -> static inline（多 TU 包含安全、消 unused-function 告警）；
@@ -204,7 +204,7 @@ class CBackend(
     }
 
     /**
-     * 把 rsfRuntimelib.h 写进 out 目录（多文件 build 只出一个 lib.h）。
+     * 把 rsf_runtime.h 写进 out 目录（多文件 build 只出一个 lib.h）。
      *
      * 判定标准从「存在就跳过」改成「**内容不同就重写**」：运行时是编译器的一部分，
      * 升级编译器却沿用 out 里的旧头文件，会得到最难查的一类失败（生成代码与运行时
@@ -214,7 +214,7 @@ class CBackend(
      * 后者每次 build 仍须恰好一个（构建侧给其中一个 CBackend 传 emitImpl=true）。
      */
     fun ensureRuntimeLib(outDir: java.io.File): Boolean {
-        val f = java.io.File(outDir, "rsfRuntimelib.h")
+        val f = java.io.File(outDir, "rsf_runtime.h")
         val want = runtimeLibSource()
         if (f.exists() && f.readText() == want) return false
         outDir.mkdirs()
@@ -1762,8 +1762,8 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
             }
         """
 
-        /** fix: rsfRuntimelib.h 顶部注释 + 包含守卫开头（runtimeLibSource 用）。 */
-        private val LIB_PREFIX = """/* rsfRuntimelib.h —— rsf C 后端运行时库（头文件版 · 多文件 build 安全 · 含内存 fix）
+        /** fix: rsf_runtime.h 顶部注释 + 包含守卫开头（runtimeLibSource 用）。 */
+        private val LIB_PREFIX = """/* rsf_runtime.h —— rsf C 后端运行时库（头文件版 · 多文件 build 安全 · 含内存 fix）
  * 由 CBackend.runtimeLibSource() 从 RUNTIME + RuntimeErase 机械变换生成。
  * 多个 .c 可共同包含；共享状态走 extern + 单一定义：恰好一个 .c 在 include 前
  * #define RSF_RUNTIME_IMPL。所有 fix 处以 fix 注释标明。

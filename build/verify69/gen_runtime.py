@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""从 CBackend.kt 反推 rsfRuntimelib.h（复刻 runtimeLibSource 的四步变换）。
+"""从 CBackend.kt 反推 rsf_runtime.h（复刻 runtimeLibSource 的四步变换）。
 
 为什么要有这个脚本：运行时只有一个事实源（Kotlin 里的 RUNTIME / RuntimeErase /
 SHARED_STATE / FIX_FUNCS 四个原始字符串），但 native 线需要能**在没有 JDK 的机器上**
@@ -7,7 +7,7 @@ SHARED_STATE / FIX_FUNCS 四个原始字符串），但 native 线需要能**在
 于是 C 侧的改动可以只用 gcc 验证；Kotlin 侧只要保证同样的字符串就等价。
 
 用法：
-  python3 gen_runtime.py <CBackend.kt> -o rsfRuntimelib.h
+  python3 gen_runtime.py <CBackend.kt> -o rsf_runtime.h
   python3 gen_runtime.py <CBackend.kt> --self-check   # 与仓库里的旧头文件对拍
 """
 

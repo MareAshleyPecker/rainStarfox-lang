@@ -12,7 +12,7 @@ ROOT=$(cd "$HERE/../.." && pwd)
 OUT="$HERE/out"
 
 mkdir -p "$OUT"
-python3 "$HERE/gen_runtime.py" "$ROOT/src/main/kotlin/org/example/complie/native/CBackend.kt" -o "$OUT/rsfRuntimelib.h"
+python3 "$HERE/gen_runtime.py" "$ROOT/src/main/kotlin/org/example/complie/native/CBackend.kt" -o "$OUT/rsf_runtime.h"
 
 cd "$OUT"
 for flags in "-std=c11 -Wall -Wextra -Werror" \

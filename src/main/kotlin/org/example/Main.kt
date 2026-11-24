@@ -120,8 +120,14 @@ class Cli {
 
         if (cMode) {
             for (warning in model.warnings) System.err.println("[rsf] 警告: $warning")
-            val text = CBackend(model, withEntry = !cLib).emit()
+            // 运行时是共享头文件（rsf_runtime.h），不再随每份 .c 携带：
+            // 先确保 out 里的头文件与当前编译器同源，再让这份 .c 做唯一的 RSF_RUNTIME_IMPL 定义。
+            val backend = CBackend(model, withEntry = !cLib, emitImpl = true)
             outDir.mkdirs()
+            if (backend.ensureRuntimeLib(outDir)) {
+                println("[rsf] 已生成 ${File(outDir, "rsf_runtime.h").path}")
+            }
+            val text = backend.emit()
             val out = File(outDir, "$name.c")
             out.writeText(
                 if (metaBlob != null) text + RsfMeta.cDeclaration(metaBlob) else text,
