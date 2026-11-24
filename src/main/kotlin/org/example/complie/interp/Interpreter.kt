@@ -2228,6 +2228,8 @@ class Interpreter(
                 null
             }
             "stringBytes" -> (args[0] as String).toByteArray(Charsets.UTF_8)
+            // 阶段 73：length() 数 UTF-16 码元，字节数要显式问
+            "byteLength" -> (args[0] as String).toByteArray(Charsets.UTF_8).size
             "readBytes" -> fileCall(builtin.name, args[0] as String) {
                 Files.readAllBytes(Paths.get(it))
             }

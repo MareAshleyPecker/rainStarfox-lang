@@ -485,6 +485,19 @@ class CBackendTest {
         // length 走码元数，substring 仍零拷贝（只算两次字节偏移再挪指针）
         assertTrue(lib.contains("static inline int32_t rsf_str_len(rsf_str s) { return (int32_t)rsf_u16_len(s.data, s.len); }"), lib.take(200))
         assertTrue(lib.contains("r.len = b - a; r.data = (char*)s.data + a;"), lib.take(200))
+        // 字节数走 rsf_str.len（O(1)），不再数一遍 UTF-8
+        assertTrue(
+            lib.contains("static inline int32_t rsf_str_byte_len(rsf_str s) { return (int32_t)s.len; }"),
+            lib.take(200),
+        )
+    }
+
+    @Test
+    fun `byteLength 摊成 rsf_str_byte_len`() {
+        val c = emit(
+            "fn main() -> void { println(intToString(byteLength(\"中文abc\"))) }",
+        )
+        assertTrue(c.contains("rsf_str_byte_len("), c.take(600))
     }
 
     @Test

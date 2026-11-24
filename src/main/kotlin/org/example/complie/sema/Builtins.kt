@@ -134,6 +134,18 @@ object Builtins {
         doc = "字符串的 UTF-8 字节",
     )
 
+    /**
+     * `byteLength(s)`：UTF-8 字节数（阶段 73）。
+     *
+     * `s.length()` 数的是 **UTF-16 码元**（与 `java.lang.String` 一致），所以中文/emoji 上
+     * 它和字节数不一样：`"中文abc".length() == 5` 而 `byteLength("中文abc") == 9`。
+     * 要按下标扫字节就先 `stringBytes(s)` 取一次数组再 `bytes[i]`，别每步都重新取。
+     */
+    val BYTE_LENGTH = Builtin(
+        "byteLength", listOf(RsfType.STRING), RsfType.INT,
+        doc = "UTF-8 字节数（length() 数的是 UTF-16 码元）",
+    )
+
     // ------------------------------------------------------------------ 文件读写（阶段 16b）
 
     /** `Byte[]` 的 rsf 类型：`readBytes` 的返回、`writeBytes` 的参数都用它。 */
@@ -225,7 +237,7 @@ object Builtins {
     /** 带签名的内置函数（`print` / `println` 是单参数特例，签名不在这里表达）。 */
     val ALL: List<Builtin> = listOf(
         TO_BYTE, TO_CHAR, CHAR_TO_INT, INT_TO_STRING, PARSE_INT,
-        IS_DIGIT, IS_LETTER, IS_WHITESPACE, TO_UPPER, TO_LOWER, STRING_BYTES,
+        IS_DIGIT, IS_LETTER, IS_WHITESPACE, TO_UPPER, TO_LOWER, STRING_BYTES, BYTE_LENGTH,
         READ_TEXT, WRITE_TEXT, READ_BYTES, WRITE_BYTES,
         JVM_CALL, JVM_NEW, JVM_CALL_ON,
         MEM_BYTES, MEM_PEAK, GC_COLLECT,

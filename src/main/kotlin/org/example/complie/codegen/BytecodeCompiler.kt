@@ -4412,6 +4412,16 @@ class BytecodeCompiler(
                 )
             }
 
+            // 阶段 73：byteLength(s) = s.getBytes(UTF_8).length
+            "byteLength" -> {
+                mv.visitFieldInsn(GETSTATIC, "java/nio/charset/StandardCharsets", "UTF_8", "Ljava/nio/charset/Charset;")
+                mv.visitMethodInsn(
+                    INVOKEVIRTUAL, "java/lang/String", "getBytes",
+                    "(Ljava/nio/charset/Charset;)[B", false,
+                )
+                mv.visitInsn(ARRAYLENGTH)
+            }
+
             // 四个文件函数（阶段 16b）：调程序类上的辅助方法。方法体里发的是
             // 「Paths.get + Files.readXxx / write」那一串，失败换成 rsf 的消息
             // （和解释器一字不差）；签名与名字都登记在 Builtin.helperName 上。

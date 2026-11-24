@@ -2458,6 +2458,35 @@ class RsfTest {
     }
 
     @Test
+    fun `length 数码元 byteLength 数字节，两端一致`() {
+        // 阶段 73：String 的长度语义按 UTF-16 码元（与 java.lang.String 一致），
+        // 字节数要显式问 byteLength()；汉字 1 码元 3 字节，emoji 2 码元 4 字节。
+        val program = """
+            fn main() -> void {
+                var ascii = "abc"
+                var han = "中文abc"
+                var emoji = "😀"
+                println(ascii.length())
+                println(byteLength(ascii))
+                println(han.length())
+                println(byteLength(han))
+                println(emoji.length())
+                println(byteLength(emoji))
+                println(han.substring(1, 3))
+                println(charToInt(han.charAt(0)))
+                println(charToInt(emoji.charAt(0)))
+                println(charToInt(emoji.charAt(1)))
+                rtn
+            }
+        """.trimIndent() + "\n"
+        assertEquals(
+            listOf("3", "3", "5", "9", "2", "4", "文a", "20013", "55357", "56832"),
+            lines(runInterpreted(program)),
+        )
+        assertEquals(normalize(runInterpreted(program)), normalize(runCompiled(program)))
+    }
+
+    @Test
     fun `静态字段加实例方法链两端一致`() {
         // System.out 是静态字段，println 是它上面的实例方法
         val program = """

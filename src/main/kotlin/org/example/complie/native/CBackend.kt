@@ -1194,6 +1194,7 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
             "memPeak" -> return "rsf_mem_peak()"
             "gcCollect" -> return "rsf_gc_collect()"
             "stringBytes" -> return "rsf_str_bytes(${expr(e.arguments[0])})"
+            "byteLength" -> return "rsf_str_byte_len(${expr(e.arguments[0])})"
             "charToInt" -> return "((int32_t)${expr(e.arguments[0])})"
             "toChar" -> return "((uint16_t)${expr(e.arguments[0])})"
             "toByte" -> return "((int8_t)${expr(e.arguments[0])})"
@@ -2598,6 +2599,9 @@ static inline void* rsf_grow(void* ptr, size_t oldSize, size_t newSize) {
              * 码元算（与 java.lang.String 一致），字节视图走 stringBytes()。ASCII 之外
              * 一个汉字算 1 个码元、一个 emoji 算 2 个。 */
             static int32_t rsf_str_len(rsf_str s) { return (int32_t)rsf_u16_len(s.data, s.len); }
+
+            /* 阶段 73：byteLength(s) —— 字节数就是 rsf_str.len 本身，O(1)。 */
+            static int32_t rsf_str_byte_len(rsf_str s) { return (int32_t)s.len; }
 
             static rsf_arr rsf_str_bytes(rsf_str s) {
                 rsf_arr a;
