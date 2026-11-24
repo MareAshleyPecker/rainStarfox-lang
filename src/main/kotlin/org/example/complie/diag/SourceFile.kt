@@ -9,6 +9,14 @@ class SourceFile(val path: String, val text: String) {
 
     val lines: List<String> = text.split("\n")
 
+    /**
+     * 这份文件用 `#NoWarning!!(类型)` 压掉了哪些警告（见 [WarningDirectives]）。
+     *
+     * 在构造时解析并校验：类型名写错要**当场**报错，不能等到出警告时才静默失效。
+     * 只影响本文件的警告（诊断里带文件名，按文件匹配）。
+     */
+    val suppressedWarnings: Set<String> = WarningDirectives.kinds(this)
+
     /** 取第 [line] 行（1 基）的原文，越界返回 null。 */
     fun lineAt(line: Int): String? =
         if (line in 1..lines.size) lines[line - 1].trimEnd('\r') else null

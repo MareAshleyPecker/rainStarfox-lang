@@ -2,6 +2,7 @@ package org.example.complie.lexing
 
 import org.example.complie.diag.RsfError
 import org.example.complie.diag.SourceFile
+import org.example.complie.diag.WarningDirectives
 
 /**
  * 可变变量/字段的老关键字（2026-10-11 起唯一写法是 `var`）。
@@ -132,7 +133,12 @@ private val KEYWORDS: Map<String, TokenKind> = buildMap {
  */
 class Lexer(private val source: SourceFile) {
 
-    private val text: String = source.text
+    /**
+     * 词法器的输入是「挖掉了抑制指令行」的文本：`#NoWarning!!(...)` 整行变成空格，
+     * 长度与换行都不变，所以行列号与原文逐字对齐（[SourceFile.lineAt] 仍读原文，
+     * 报错时看到的是用户写的那一行）。
+     */
+    private val text: String = WarningDirectives.strip(source.text)
     private var pos = 0
     private var line = 1
     private var column = 1

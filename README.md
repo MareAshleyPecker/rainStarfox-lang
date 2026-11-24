@@ -262,9 +262,28 @@ BOOTSTRAP.md                          自举链的设计与现状
 design/                               各阶段设计笔记（本地，不入库；索引见 design/README.md）
 ```
 
+### 压掉某类警告（`#NoWarning!!`）
+
+有些警告是「你知道自己在干什么」，比如故意留一段死代码做哨兵。按类型压掉，别整个项目关警告：
+
+```rsf
+#NoWarning!!(unreachable)
+
+fn main() -> void {
+    rtn
+    println("永远跑不到，但我要留着提醒自己")
+}
+```
+
+- 只压**本文件**的、**指定类型**的警告：`unreachable` / `redundant-static` / `deprecated-case` / `erasure-cast`，`all` 是全压。
+- 逗号分隔多个：`#NoWarning!!(unreachable, redundant-static)`。
+- **压不掉 error**（报错是「代码不成立」，不是「可以接受的啰嗦」）；类型名写错会当场报错并列出可用类型。
+- 指令必须整行；它会在词法之前被挖成空格，所以行号列号与原文完全对齐。
+- 结构化诊断（`rsf check --json`、LSP）里每条警告都带 `code` 字段，就是这里的类型名。
+
 ## 当前限制
 
-- 没有垃圾回收之外的自动内存管理——JVM 那边靠 GC，C 那边字符串拼接 `malloc` 不释放。
+- 自动内存管理分两档：JVM 那边靠 JVM 的 GC；C 那边默认是 arena（只增不减），写 `gc on` 才装内置的标记-清扫 GC（也可以由宿主用 `rsf_ctx_set_gc` 换成自己的）。
 - 泛型按擦除实现，泛型函数有已知缺口。
 - 重载只按参数个数与类型，不玩隐式转换。
 - 指针只有解释器与 C 后端支持（取地址、解引用读写、`p + n` / `p - n` 偏移、指针判等）；JVM 字节码后端遇到 `&` / `*` / 指针运算直接报错。

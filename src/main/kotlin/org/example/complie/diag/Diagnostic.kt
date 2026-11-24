@@ -19,4 +19,11 @@ data class Diagnostic(
     val file: String,
     val line: Int,
     val col: Int,
+    /**
+     * 警告的**类型短名**（见 [WarningKind]），`#NoWarning!!(类型)` 按它匹配。
+     *
+     * error 用空串——抑制指令只压警告，压不掉错误（错误是「代码不成立」，
+     * 不是「可以接受的啰嗦」）。
+     */
+    val code: String = "",
 )

@@ -20,6 +20,24 @@ module "plugins"         // ③ 一个目录顶层的所有 .rsf（不递归，�
 - `rtn` / `return` 独占一行 = 不带值返回；带值就把值写在**同一行**（`rtn x + 1`）。
 - 一个程序就是**一个类**（类名取根文件名）；`import` 是包含式的，最终编成一个类。
 
+### 0.1 文件级指令
+
+```rsf
+target native             // 整份文件按 native 侧编（指针只有 native 侧能用）
+gc on                     // 这份产物要 GC（只认带 main 的文件）；默认 off
+#NoWarning!!(unreachable) // 压掉这一类型的警告；也可以写 (all) 或逗号分隔多个
+```
+
+| 指令 | 写在哪 | 说明 |
+| --- | --- | --- |
+| `target native` / `target jvm` | 文件头 | 两份都写报错；声明级的 `native` / `jvm` 修饰符可以覆盖单个声明 |
+| `gc on` / `gc off` | 文件头，且必须是带 `main` 的那份 | 整份产物一个开关；C 后端装内置标记-清扫 GC，JVM 侧是空操作 |
+| `#NoWarning!!(类型, …)` | 任意位置（整行） | 只压**本文件**的、**指定类型**的警告；压不掉 error；类型写错会报错 |
+
+`#NoWarning!!` 认识的类型：`unreachable`（不可达代码）、`redundant-static`（顶层函数上多余的 `stc`）、
+`deprecated-case`（switch 里老写法 `case`）、`erasure-cast`（`as`/`is` 写了泛型实参，按擦除判）、
+`all`（全部）。指令行在词法之前被整行挖空，所以**行列号与原文完全对齐**；写成别的 `#` 开头会报「不认识的字符 '#'」。
+
 ## 1. 关键字（57 个）
 
 | 类别 | 关键字（共 57，与两个词法器的表逐条对齐） |

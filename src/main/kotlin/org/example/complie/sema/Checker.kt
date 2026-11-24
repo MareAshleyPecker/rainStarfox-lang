@@ -6,6 +6,8 @@ import org.example.complie.diag.Diagnostic
 import org.example.complie.diag.RsfError
 import org.example.complie.diag.Severity
 import org.example.complie.diag.SourceFile
+import org.example.complie.diag.WarningKind
+import org.example.complie.diag.WarningDirectives
 import org.example.complie.interop.ClassPath
 import org.example.complie.interop.JvmClass
 import org.example.complie.interop.JvmMethod
@@ -195,6 +197,31 @@ class Checker(
 */
     private var currentSource: SourceFile = source
 
+    /**
+     * `#NoWarning!!(类型)` 的落地点。
+     *
+     * 诊断自带文件名，所以按「文件 → 抑制集合」查即可；只看 warning——
+     * error 是「代码不成立」，不属于「可以接受的啰嗦」，一条也压不掉。
+     */
+    private fun applyWarningSuppressions() {
+        if (diagnostics.isEmpty()) return
+        val byFile = LinkedHashMap<String, Set<String>>()
+        fun remember(file: SourceFile) {
+            if (file.suppressedWarnings.isNotEmpty()) byFile[file.name] = file.suppressedWarnings
+        }
+        remember(source)
+        sourceOfFunction.values.forEach(::remember)
+        sourceOfClass.values.forEach(::remember)
+        sourceOfEnum.values.forEach(::remember)
+        sourceOfInterface.values.forEach(::remember)
+        sourceOfAnnotation.values.forEach(::remember)
+        if (byFile.isEmpty()) return
+        diagnostics.removeAll { d ->
+            d.severity == Severity.WARNING && d.code.isNotEmpty() &&
+                (byFile[d.file]?.let { WarningKind.ALL in it || d.code in it } == true)
+        }
+    }
+
     fun check(): SemanticModel {
         // 阶段 77 步骤 C：`gc on` 现在是真的——C 后端会装一台内置的标记-清扫 GC（非移动、
         // 保守根、按需扫）。开关只表达「这份产物要不要 GC」，走到这里只把它落到模型上；
@@ -240,6 +267,9 @@ class Checker(
         // 使用点（`@Marker(...)`）放在最后：它要按元素的**已解析**类型表配对，
         // 也可能引用伴生类（`new Marker(...)` 的实参），所以等所有声明都查完再配对。
         checkAnnotationUses()
+
+        // `#NoWarning!!(类型)`：压掉本文件指定类型的警告（只压 warning，不压 error）
+        applyWarningSuppressions()
 
         // 阶段 12 分三步：语法 ✅ → 语义 ✅ → 后端 ✅（解释器与字节码都通了）
         // 类的 .class 用 BytecodeCompiler 按类逐个生成）。
@@ -345,6 +375,7 @@ class Checker(
                         Severity.WARNING, "checker",
                         "顶层函数本来就是静态的（按类名调用），这里的 'stc' 是多余的",
                         currentSource.name, fn.at.line, fn.at.column,
+                        WarningKind.REDUNDANT_STATIC,
                     ),
                 )
             }
@@ -5290,6 +5321,7 @@ class Checker(
                         currentSource.name,
                         deprecatedCaseAt.line,
                         deprecatedCaseAt.column,
+                        WarningKind.DEPRECATED_CASE,
                     ),
                 )
             }
@@ -5671,6 +5703,7 @@ class Checker(
                     Diagnostic(
                         Severity.WARNING, "checker", "不可达代码（永远执行不到）",
                         currentSource.name, at.line, at.column,
+                        WarningKind.UNREACHABLE,
                     ),
                 )
             }
@@ -6280,6 +6313,7 @@ class Checker(
                         currentSource.name,
                         at.line,
                         at.column,
+                        WarningKind.ERASURE_CAST,
                     ),
                 )
             }

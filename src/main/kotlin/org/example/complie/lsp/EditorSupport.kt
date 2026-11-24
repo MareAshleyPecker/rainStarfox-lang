@@ -42,6 +42,7 @@ object EditorSupport {
             sb.append(",\"endCol\":").append(d.endCol)
             sb.append(",\"severity\":\"").append(d.severity).append('"')
             sb.append(",\"phase\":\"").append(Json.escape(d.phase)).append('"')
+            sb.append(",\"code\":\"").append(Json.escape(d.code)).append('"')
             sb.append(",\"message\":\"").append(Json.escape(d.message)).append('"')
             sb.append('}')
         }
@@ -62,7 +63,7 @@ object EditorSupport {
             val model = Rsf.analyze(loaded)
             for (d in model.diagnostics) {
                 val src = loaded.files.firstOrNull { it.name == d.file } ?: loaded.root
-                out.add(Located(src.name, d.line, d.col, underlineEnd(src, d.line, d.col), d.severity.json, d.phase, d.message))
+                out.add(Located(src.name, d.line, d.col, underlineEnd(src, d.line, d.col), d.severity.json, d.phase, d.message, d.code))
             }
         } catch (e: RsfError) {
             val src = e.source ?: SourceFile.of(file)
@@ -81,7 +82,12 @@ object EditorSupport {
         return out
     }
 
-    /** 一条带位置的诊断。[severity] 与编译器 JSON 的取值一致：`error` / `warning` / `info`。 */
+    /**
+     * 一条带位置的诊断。[severity] 与编译器 JSON 的取值一致：`error` / `warning` / `info`。
+     *
+     * [code] 是警告的类型短名（`unreachable` 之类，见 `WarningKind`），error 为空串；
+     * 编辑器可以按它做「这类警告静音」的快速修复（生成 `#NoWarning!!(类型)`）。
+     */
     data class Located(
         val file: String,
         val line: Int,
@@ -90,6 +96,7 @@ object EditorSupport {
         val severity: String,
         val phase: String,
         val message: String,
+        val code: String = "",
     )
 
     /** 插入符该有多长：把出错位置那个「词」整体划出来，比只划一个字符好看得多。 */
