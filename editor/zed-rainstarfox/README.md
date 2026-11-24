@@ -56,7 +56,8 @@ java -jar build\libs\rainStarfox-0.9.0.jar lsp
 
 安装步骤：
 
-1. 打开 Zed → 命令面板执行 `zed: install dev extension`（或 `Ctrl+Shift+X` 打开 Extensions → 右上角 `Install Dev Extension`）。
+1. 打开 Zed → 命令面板（`Ctrl+Shift+P`）执行 `zed: install dev extension`；扩展面板（命令面板里的
+   `zed: extensions`）右上角也有 `Install Dev Extension` 按钮。
 2. 选择目录 `D:\java\rainStarfox\editor\zed-rainstarfox`（**不要**选 `languages` 子目录）。
 3. 等待编译；首次会从 crates.io 拉取 `zed_extension_api`，离线环境会失败。
 4. 打开任意 `.rsf` 文件，状态栏语言应显示 `rainStarfox`；高亮生效。
@@ -103,8 +104,8 @@ git commit -m "update rsf grammar"
 git rev-parse HEAD
 ```
 
-把 `git rev-parse HEAD` 的输出填回 `extension.toml` 的 `[grammars.rsf].rev`，再在 Zed 里重新
-`zed: install dev extension`（或命令面板 `zed: reload extensions`）。
+把 `git rev-parse HEAD` 的输出填回 `extension.toml` 的 `[grammars.rsf].rev`，再执行一次
+`zed: install dev extension`（指向同一目录）让 Zed 重新编译扩展。
 
 也可以整仓自检：
 
