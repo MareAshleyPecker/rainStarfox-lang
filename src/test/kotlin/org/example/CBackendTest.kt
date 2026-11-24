@@ -6,6 +6,7 @@ import org.example.complie.diag.RsfError
 import org.example.complie.diag.SourceFile
 import org.example.complie.native.CBackend
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
@@ -331,9 +332,14 @@ class CBackendTest {
         val jni = backend.emitJni("Main")
         assertTrue(jni.contains("extern int32_t rsf_fn_add(int32_t, int32_t);"), jni)
         assertTrue(jni.contains("JNIEXPORT jint JNICALL Java_Main_add(JNIEnv* env, jclass cls, jint j0, jint j1)"), jni)
-        assertTrue(jni.contains("GetStringUTFChars(env, j0, 0)"), jni)
-        assertTrue(jni.contains("ReleaseStringUTFChars(env, j0, c0)"), jni)
-        assertTrue(jni.contains("NewStringUTF(env, t)"), jni)
+        // 字符串不许走 modified UTF-8（CESU-8）：emoji 会被编成两对代理项。
+        assertTrue(jni.contains("rsf_jni_utf8_of_jstring(env, j0, &n0)"), jni)
+        assertTrue(jni.contains("rsf_jni_jchar_of_utf8(r.data, r.len, &rn)"), jni)
+        assertTrue(jni.contains("NewString(env, ru, rn)"), jni)
+        assertFalse(jni.contains("GetStringUTFChars"), jni)
+        assertFalse(jni.contains("NewStringUTF"), jni)
+        // 入参缓冲要在交给 JVM 之后再释放（返回的 r 可能就是入参的切片）。
+        assertTrue(jni.indexOf("NewString(env, ru, rn)") < jni.indexOf("free(c0);"), jni)
     }
 
     @Test

@@ -1340,6 +1340,7 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
         sb.append("typedef struct { int64_t len; const char* data; } rsf_str;").append(NL)
         sb.append(RuntimeErase).append(NL)
         sb.append("#endif").append(NL).append(NL)
+        sb.append(JNI_UTF8).append(NL)
 
         val natives = model.functions.filter { it.target == BuildTarget.NATIVE }
         for (fn in natives) {
@@ -1365,11 +1366,14 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
             for ((i, t) in ps.withIndex()) {
                 when (t.base) {
                     RsfBase.STRING -> {
-                        sb.append("    const char* c").append(i)
-                            .append(" = (*env)->GetStringUTFChars(env, j").append(i).append(", 0);").append(NL)
+                        // 不用 GetStringUTFChars：它给的是 modified UTF-8（CESU-8），
+                        // BMP 之外的字符会变成两对代理项，rsf 侧看到的字节与长度都不对。
+                        sb.append("    int64_t n").append(i).append(" = 0;").append(NL)
+                        sb.append("    char* c").append(i)
+                            .append(" = (char*)rsf_jni_utf8_of_jstring(env, j").append(i).append(", &n").append(i).append(");").append(NL)
                         sb.append("    rsf_str a").append(i)
-                            .append("; a").append(i).append(".len = (int64_t)strlen(c").append(i)
-                            .append("); a").append(i).append(".data = c").append(i).append(";").append(NL)
+                            .append("; a").append(i).append(".len = n").append(i)
+                            .append("; a").append(i).append(".data = c").append(i).append(";").append(NL)
                     }
                     else -> sb.append("    ").append(cType(t)).append(" a").append(i)
                         .append(" = (").append(cType(t)).append(")j").append(i).append(";").append(NL)
@@ -1380,18 +1384,18 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
                 RsfBase.VOID -> sb.append("    rsf_fn_").append(fn.name).append("(").append(args).append(");").append(NL)
                 RsfBase.STRING -> {
                     sb.append("    rsf_str r = rsf_fn_").append(fn.name).append("(").append(args).append(");").append(NL)
-                    sb.append("    char* t = (char*)malloc((size_t)r.len + 1);").append(NL)
-                    sb.append("    if (r.len > 0) memcpy(t, r.data, (size_t)r.len);").append(NL)
-                    sb.append("    t[r.len] = 0;").append(NL)
-                    sb.append("    jstring out = (*env)->NewStringUTF(env, t);").append(NL)
-                    sb.append("    free(t);").append(NL)
+                    // 返回的 r 可能就是入参的切片（rtn s），所以先把内容交给 JVM，再释放入参缓冲。
+                    sb.append("    jsize rn = 0;").append(NL)
+                    sb.append("    jchar* ru = rsf_jni_jchar_of_utf8(r.data, r.len, &rn);").append(NL)
+                    sb.append("    jstring out = (*env)->NewString(env, ru, rn);").append(NL)
+                    sb.append("    free(ru);").append(NL)
                 }
                 else -> sb.append("    ").append(cType(ret)).append(" r = rsf_fn_").append(fn.name)
                     .append("(").append(args).append(");").append(NL)
             }
             for ((i, t) in ps.withIndex()) {
                 if (t.base == RsfBase.STRING) {
-                    sb.append("    (*env)->ReleaseStringUTFChars(env, j").append(i).append(", c").append(i).append(");").append(NL)
+                    sb.append("    free(c").append(i).append(");").append(NL)
                 }
             }
             when (ret.base) {
@@ -1431,6 +1435,106 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
 
     companion object {
         /**
+         * JNI 字符串的双向转换（阶段 77 步骤 A）。
+         *
+         * JNI 的 `GetStringUTFChars` / `NewStringUTF` 走的是 **modified UTF-8**（CESU-8）：
+         * BMP 之外的字符（emoji）会被编成两对代理项，`\0` 编成 `C0 80`。
+         * 直接用会让 rsf 侧的字节长度与内容都错，所以这里自己做 UTF-16 ↔ UTF-8 转换。
+         *
+         * 约定：非法 UTF-8 / 孤立代理项一律换成 U+FFFD，不做静默截断。
+         */
+        private val JNI_UTF8 = """
+            #ifndef RSF_JNI_UTF8_DEFINED
+            #define RSF_JNI_UTF8_DEFINED
+            /* JVM 的 jstring → rsf 的 UTF-8 字节（调用方负责 free） */
+            static void* rsf_jni_utf8_of_jstring(JNIEnv* env, jstring js, int64_t* outLen) {
+                jsize n = (*env)->GetStringLength(env, js);
+                jchar* u = (jchar*)malloc(sizeof(jchar) * (size_t)(n > 0 ? n : 1));
+                if (n > 0) (*env)->GetStringRegion(env, js, 0, n, u);
+                size_t bytes = 0;
+                for (jsize i = 0; i < n; i++) {
+                    unsigned int c = (unsigned int)u[i];
+                    if (c < 0x80) bytes += 1;
+                    else if (c < 0x800) bytes += 2;
+                    else if (c >= 0xD800 && c <= 0xDBFF && i + 1 < n && (unsigned int)u[i + 1] >= 0xDC00
+                             && (unsigned int)u[i + 1] <= 0xDFFF) { bytes += 4; i++; }
+                    else bytes += 3;
+                }
+                char* out = (char*)malloc(bytes + 1);
+                size_t at = 0;
+                for (jsize i = 0; i < n; i++) {
+                    unsigned int c = (unsigned int)u[i];
+                    if (c >= 0xD800 && c <= 0xDBFF && i + 1 < n && (unsigned int)u[i + 1] >= 0xDC00
+                        && (unsigned int)u[i + 1] <= 0xDFFF) {
+                        unsigned int cp = 0x10000u + ((c - 0xD800u) << 10) + ((unsigned int)u[i + 1] - 0xDC00u);
+                        out[at++] = (char)(0xF0u | (cp >> 18));
+                        out[at++] = (char)(0x80u | ((cp >> 12) & 0x3Fu));
+                        out[at++] = (char)(0x80u | ((cp >> 6) & 0x3Fu));
+                        out[at++] = (char)(0x80u | (cp & 0x3Fu));
+                        i++;
+                    } else if (c >= 0xD800 && c <= 0xDFFF) {
+                        out[at++] = (char)0xEF; out[at++] = (char)0xBF; out[at++] = (char)0xBD;
+                    } else if (c < 0x80) {
+                        out[at++] = (char)c;
+                    } else if (c < 0x800) {
+                        out[at++] = (char)(0xC0u | (c >> 6));
+                        out[at++] = (char)(0x80u | (c & 0x3Fu));
+                    } else {
+                        out[at++] = (char)(0xE0u | (c >> 12));
+                        out[at++] = (char)(0x80u | ((c >> 6) & 0x3Fu));
+                        out[at++] = (char)(0x80u | (c & 0x3Fu));
+                    }
+                }
+                out[at] = 0;
+                free(u);
+                *outLen = (int64_t)at;
+                return out;
+            }
+
+            /* rsf 的 UTF-8 字节 → JVM 的 UTF-16 码元（调用方负责 free） */
+            static jchar* rsf_jni_jchar_of_utf8(const char* s, int64_t n, jsize* outLen) {
+                size_t units = 0;
+                for (int64_t i = 0; i < n;) {
+                    unsigned char b = (unsigned char)s[i];
+                    int len = (b < 0x80) ? 1 : (((b >> 5) == 6) ? 2 : (((b >> 4) == 14) ? 3 : (((b >> 3) == 30) ? 4 : 0)));
+                    if (len == 0 || i + len > n) { units += 1; i += 1; }
+                    else { units += (len == 4) ? 2 : 1; i += len; }
+                }
+                jchar* out = (jchar*)malloc(sizeof(jchar) * (units > 0 ? units : 1));
+                size_t at = 0;
+                for (int64_t i = 0; i < n;) {
+                    unsigned char b = (unsigned char)s[i];
+                    if (b < 0x80) { out[at++] = (jchar)b; i += 1; continue; }
+                    int len = ((b >> 5) == 6) ? 2 : (((b >> 4) == 14) ? 3 : (((b >> 3) == 30) ? 4 : 0));
+                    if (len == 0 || i + len > n) { out[at++] = (jchar)0xFFFD; i += 1; continue; }
+                    unsigned int cp = (len == 2) ? (unsigned int)(b & 0x1F)
+                                    : (len == 3) ? (unsigned int)(b & 0x0F)
+                                                 : (unsigned int)(b & 0x07);
+                    int ok = 1;
+                    for (int k = 1; k < len; k++) {
+                        unsigned char c = (unsigned char)s[i + k];
+                        if ((c & 0xC0) != 0x80) { ok = 0; break; }
+                        cp = (cp << 6) | (unsigned int)(c & 0x3F);
+                    }
+                    if (!ok || cp > 0x10FFFFu || (cp >= 0xD800u && cp <= 0xDFFFu)) {
+                        out[at++] = (jchar)0xFFFD; i += 1; continue;
+                    }
+                    if (cp >= 0x10000u) {
+                        unsigned int v = cp - 0x10000u;
+                        out[at++] = (jchar)(0xD800u + (v >> 10));
+                        out[at++] = (jchar)(0xDC00u + (v & 0x3FFu));
+                    } else {
+                        out[at++] = (jchar)cp;
+                    }
+                    i += len;
+                }
+                *outLen = (jsize)at;
+                return out;
+            }
+            #endif
+        """.trimIndent()
+
+        /**
          * `jvmCall` 的运行时（阶段 62）：native 程序自己起一个 JVM 再回头调 Java。
          *
          * 为什么用 `LoadLibrary("jvm.dll")` 而不是链接 `-ljvm`：MinGW 没有 jvm.lib，
@@ -1441,6 +1545,7 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
             /* ---- native -> JVM（jvmCall / jvmNew / jvmCallOn）：用到才编 ---- */
             #include <windows.h>
             #include <jni.h>
+            ${JNI_UTF8}
             typedef jint (JNICALL *rsf_create_vm_t)(JavaVM**, void**, void*);
             static JavaVM* rsf_jvm = 0;
             static JNIEnv* rsf_env = 0;
@@ -1537,9 +1642,10 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
                 jclass oc = (*rsf_env)->FindClass(rsf_env, "java/lang/Object");
                 jobjectArray arr = (*rsf_env)->NewObjectArray(rsf_env, argc, oc, 0);
                 for (int i = 0; i < argc; i++) {
-                    char* t = rsf_cstr(argv[i]);
-                    jstring js = (*rsf_env)->NewStringUTF(rsf_env, t);
-                    free(t);
+                    jsize n = 0;
+                    jchar* u = rsf_jni_jchar_of_utf8(argv[i].data, argv[i].len, &n);
+                    jstring js = (*rsf_env)->NewString(rsf_env, u, n);
+                    free(u);
                     (*rsf_env)->SetObjectArrayElement(rsf_env, arr, i, js);
                     (*rsf_env)->DeleteLocalRef(rsf_env, js);
                 }
@@ -1553,9 +1659,17 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
                     "()Ljava/lang/String;");
                 jstring js = (jstring)(*rsf_env)->CallObjectMethod(rsf_env, o, ts);
                 rsf_jvm_check();
-                const char* utf = (*rsf_env)->GetStringUTFChars(rsf_env, js, 0);
-                rsf_str out = rsf_jstr_of(utf);
-                (*rsf_env)->ReleaseStringUTFChars(rsf_env, js, utf);
+                int64_t n = 0;
+                char* utf = (char*)rsf_jni_utf8_of_jstring(rsf_env, js, &n);
+                char* keep = (char*)malloc((size_t)n + 1);
+                if (n > 0) memcpy(keep, utf, (size_t)n);
+                keep[n] = 0;
+                free(utf);
+                (*rsf_env)->DeleteLocalRef(rsf_env, js);
+                (*rsf_env)->DeleteLocalRef(rsf_env, c);
+                rsf_str out;
+                out.len = n;
+                out.data = keep;
                 return out;
             }
 
