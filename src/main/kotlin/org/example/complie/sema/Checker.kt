@@ -82,6 +82,7 @@ import org.example.complie.interop.JvmField
 import org.example.complie.interop.ResolvedField
 import org.example.complie.interop.ResolvedMember
 import org.example.complie.interop.ResolvedMethod
+import org.example.complie.interop.VarargPack
 import org.example.complie.ir.ControlFlow
 import org.example.complie.ir.IAssign
 import org.example.complie.ir.IBranch
@@ -6503,8 +6504,20 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
         val declared = method.paramTypes.mapIndexed { i, p ->
             erasedActual(p, method.paramTypeVars.getOrNull(i), typeArgs) ?: substituteElement(p, element)
         }
+        // varargs：尾巴上的实参逐个对**元素类型**，不对数组类型
+        val pack = VarargPack.of(method, argTypes)
         for ((i, arg) in args.withIndex()) {
             val argType = argTypes[i]
+            if (pack != null && i >= pack.fixedCount) {
+                if (!resolver.acceptsArgument(pack.elementType, argType)) {
+                    throw err(
+                        "第 ${i + 1} 个实参类型不匹配：'${expr.name}' 是可变参数方法，" +
+                            "打包的数组元素要 ${pack.elementType.rsfName}，实际给了 ${argType.rsfName}",
+                        arg.at,
+                    )
+                }
+                continue
+            }
             // 只在**确实替换过**的位置上再查一遍：没替换的位置 findMethod 的打分已经保证过
             // 兼容（它的规则比 accepts 宽——`String → CharSequence` 那种靠类层次匹配）。
             // 单类型实参时保持老口径（所有位置都查），免得动到既有行为。

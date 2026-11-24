@@ -3323,6 +3323,99 @@ class RsfTest {
         )
     }
 
+    // ------------------------------------------------------------------ 阶段 70：Java 可变参数
+
+    @Test
+    fun `JVM 可变参数方法能调用，两端一致`() {
+        // Java 的 `String.format(String, Object...)` 在 class 文件里的描述符是
+        // `(Ljava/lang/String;[Ljava/lang/Object;)`——形参本来就是数组，`ACC_VARARGS`
+        // 只是给编译器看的。所以调用点要自己打包 + 装箱，两端都得这么办。
+        val program = """
+            import java.util.List
+
+            fn main() -> void {
+                println(String.format("%d-%s", 1, "a"))
+                println(String.join("-", "x", "y", "z"))
+                println(String.format("%s|%s", "l", "r"))
+                // 静态接口方法 + 装箱：List.of(1, 2, 3) 的元素类型是 Object
+                println(List.of(1, 2, 3).size())
+                // 最后一个实参本来就能当那个数组用 ⇒ 不打包，直接把数组传进去
+                val parts = new String[2]
+                parts[0] = "p"
+                parts[1] = "q"
+                println(String.format("<%s:%s>", parts))
+                rtn
+            }
+        """.trimIndent() + "\n"
+        assertEquals(
+            listOf("1-a", "x-y-z", "l|r", "3", "<p:q>"),
+            lines(runInterpreted(program)),
+        )
+        assertEquals(
+            normalize(runInterpreted(program)),
+            normalize(runCompiledClasses(program, "RsfVarargs")),
+        )
+    }
+
+    @Test
+    fun `JVM 可变参数：尾部元素类型对不上就报没有匹配的方法`() {
+        // `String.join(CharSequence, CharSequence...)` 打包的元素类型是 CharSequence，
+        // 数字装箱成 Integer 之后并不是它的子类型——打包路走不通，就该老实报错，
+        // 而不是悄悄编出一份会 VerifyError 的字节码。
+        val program = """
+            fn main() -> void {
+                println(String.join("-", "a", 1))
+                rtn
+            }
+        """.trimIndent() + "\n"
+        val error = assertFailsWith<RsfError> { Rsf.analyze(source(program)) }
+        assertTrue(error.message!!.contains("join"), error.message)
+    }
+
+    // ------------------------------------------------------------------ 阶段 70：try 也接 Java 异常
+
+    @Test
+    fun `try 能接住 Java 抛的异常，两端一致`() {
+        // 阶段 14 的 try 只接 rsf 自己的失败（`fail` / 没接住的 `!T`）。阶段 70 起
+        // Java 互调抛出来的异常也归它管：文案是 `完整类名: 消息`，rsf 自己的失败
+        // 则仍然只有消息本身（不带前缀）——这条口径两端必须一致。
+        val program = """
+            import java.util.ArrayList
+            import java.lang.Integer
+
+            fn main() -> void {
+                try {
+                    println(Integer.parseInt("abc"))
+                } catch (e : String) {
+                    println("parse: " + e)
+                }
+                try {
+                    val xs = new ArrayList&<Int>()
+                    println(xs.get(3))
+                } catch (e : String) {
+                    println("index: " + e)
+                }
+                try {
+                    fail "boom"
+                } catch (e : String) {
+                    println("rsf: " + e)
+                }
+                println("done")
+                rtn
+            }
+        """.trimIndent() + "\n"
+        val out = lines(runInterpreted(program))
+        assertEquals(4, out.size, out.joinToString("\n"))
+        assertTrue(out[0].startsWith("parse: java.lang.NumberFormatException"), out[0])
+        assertTrue(out[1].startsWith("index: java.lang.IndexOutOfBoundsException"), out[1])
+        assertEquals("rsf: boom", out[2])
+        assertEquals("done", out[3])
+        assertEquals(
+            normalize(runInterpreted(program)),
+            normalize(runCompiledClasses(program, "RsfCatchJava")),
+        )
+    }
+
     // ------------------------------------------------------------------ 阶段 16：Byte / Char
 
     @Test

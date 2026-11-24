@@ -160,7 +160,7 @@ class Greeter { }
 | for（经典） | `for (var i : Int = 0; i < n; i = i + 1) { ... }` |
 | for（区间） | `for (i in 0..9) { ... }`、`for (i in 0..9 step 2) { ... }`（数组**不能** for-in） |
 | switch | `switch (k) { Color.RED : ... Color.BLUE : { ... } else : ... }`——分支**只收枚举常量**（`枚举名.值名`），不收字面量/区间/比较；`case` 老写法可选（会发弃用警告），写 `default` 会报错提示改用 `else` |
-| try / catch | `try { ... } catch (e : String) { ... }`（老写法 `catch (e String)`） |
+| try / catch | `try { ... } catch (e : String) { ... }`（老写法 `catch (e String)`）；`e` 是消息文本——rsf 自己的失败是原文，Java 互调抛出来的异常是 `完整类名: 消息` |
 | fail | `fail "消息"`——只能在 `!T` 函数里或 `try` 里 |
 | 跳转 | `loop:` + `goto loop`；标签名可用反引号 `` `step-one`: `` |
 | 循环控制 | `break`、`continue` |

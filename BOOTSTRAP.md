@@ -554,8 +554,10 @@ rsf 没有异常，只有 `fail` / `!T`。解释器需要四种「跳出去」�
 | 函数调用    | `return`（值放在 `retVal` 字段上，信号消息只能是字符串）                        |
 
 另外还有一个**不可接**的信号 `X`：`!!` 打到 null、除以零。Kotlin 版那边抛的是
-`NullPointerException` / `ArithmeticException`，而解释器的 `try` **只接 rsf 自己的错误**，
-所以它必须穿过去，由入口打印成 `运行期错误: …`。
+`NullPointerException` / `ArithmeticException`，而**自举解释器**（`rsfSrc/bootstrap/Interp.rsf`）
+的 `try` 只接 rsf 自己的错误，所以它必须穿过去，由入口打印成 `运行期错误: …`。
+（Kotlin 解释器与编译产物从阶段 70 起接 Java 互调抛出来的异常，但那是 JVM 侧的事，
+自举链没有 Java 互调，这条口径不变。）
 
 #### 覆盖与结果
 

@@ -69,6 +69,8 @@ import org.example.complie.interop.ClassPath
 import org.example.complie.interop.JvmMethod
 import org.example.complie.interop.ResolvedField
 import org.example.complie.interop.ResolvedMethod
+import org.example.complie.interop.Thrown
+import org.example.complie.interop.VarargPack
 import org.example.complie.lexing.TokenKind
 import org.example.complie.sema.AnnotationAccessor
 import org.example.complie.sema.AnnotationElementSpec
@@ -771,6 +773,59 @@ class BytecodeCompiler(
         mv.visitMethodInsn(
             INVOKESTATIC, "java/lang/String", "valueOf", "(I)Ljava/lang/String;", false,
         )
+    }
+
+    /**
+     * catch 处理体的入口：栈上是刚接住的 Throwable，把它换成写进 catch 变量的消息字符串。
+     *
+     * 规则必须与 `Thrown.message` 逐字一致（解释器走那条，这里不能调 Kotlin）：
+     *
+     * - 裸的 `java.lang.RuntimeException`（rsf 自己的 `fail` / `!T` / 越界）⇒ 拿 `getMessage()`，
+     *   null 当空串。**不加前缀**，这样阶段 14 以来的错误文案一字不改。
+     * - 其它异常（`IOException`、`NumberFormatException`……）⇒ `类名 + ": " + 消息`；
+     *   没消息就只留类名。
+     *
+     * [temp] 起两个临时槽放类名与消息。进来时栈：[t]，出去时栈：[]（t 被 POP 掉）。
+     */
+    private fun emitCaughtMessage(mv: MethodVisitor, slot: Int, temp: Int) {
+        val hasText = Label()
+        val isPlain = Label()
+
+        // 类名 = t.getClass().getName()
+        mv.visitInsn(DUP)
+        mv.visitMethodInsn(INVOKEVIRTUAL, "java/lang/Object", "getClass", "()Ljava/lang/Class;", false)
+        mv.visitMethodInsn(INVOKEVIRTUAL, "java/lang/Class", "getName", "()Ljava/lang/String;", false)
+        mv.visitVarInsn(ASTORE, temp)
+        // 消息 = t.getMessage()，null 当空串
+        mv.visitInsn(DUP)
+        mv.visitMethodInsn(INVOKEVIRTUAL, "java/lang/Throwable", "getMessage", "()Ljava/lang/String;", false)
+        mv.visitVarInsn(ASTORE, temp + 1)
+        mv.visitVarInsn(ALOAD, temp + 1)
+        mv.visitJumpInsn(IFNONNULL, hasText)
+        mv.visitLdcInsn("")
+        mv.visitVarInsn(ASTORE, temp + 1)
+        mv.visitLabel(hasText)
+
+        // rsf 自己的失败保持原文（不加前缀）；别的异常补 `类名: `
+        mv.visitVarInsn(ALOAD, temp)
+        mv.visitLdcInsn(Thrown.PLAIN)
+        mv.visitMethodInsn(INVOKEVIRTUAL, "java/lang/String", "equals", "(Ljava/lang/Object;)Z", false)
+        mv.visitJumpInsn(IFNE, isPlain)
+        mv.visitVarInsn(ALOAD, temp)
+        mv.visitLdcInsn(": ")
+        mv.visitMethodInsn(
+            INVOKEVIRTUAL, "java/lang/String", "concat", "(Ljava/lang/String;)Ljava/lang/String;", false,
+        )
+        mv.visitVarInsn(ALOAD, temp + 1)
+        mv.visitMethodInsn(
+            INVOKEVIRTUAL, "java/lang/String", "concat", "(Ljava/lang/String;)Ljava/lang/String;", false,
+        )
+        mv.visitVarInsn(ASTORE, temp + 1)
+        mv.visitLabel(isPlain)
+
+        mv.visitVarInsn(ALOAD, temp + 1)
+        storeSlot(mv, RsfType.STRING, slot)
+        mv.visitInsn(POP)
     }
 
     // ------------------------------------------------------------------ 用户自定义类（阶段 12-C2）
@@ -2488,6 +2543,8 @@ class BytecodeCompiler(
             }
         val frameSlot = if (promoted.isEmpty()) -1 else body.slotCount + localOffset
         val tmpSlot = frameSlot + 1
+        // handler 里格式化「接住了什么」要两个临时槽（异常类名、异常消息），排在帧后面
+        val handlerTemp = body.slotCount + localOffset + (if (frameSlot >= 0) 2 else 0)
         val ctx = ExprCtx(mv, owner, body, localOffset, closures, closure, promoted, frameSlot)
         if (frameSlot >= 0) {
             pushInt(mv, body.slotCount)
@@ -2531,7 +2588,9 @@ class BytecodeCompiler(
                 labels[h.startLabel]!!,
                 labels[h.endLabel]!!,
                 labels[h.handlerLabel]!!,
-                "java/lang/RuntimeException",
+                // 阶段 70：接 Throwable 而不是 RuntimeException——Java 互调抛的
+                // `IOException` 这类受检异常也要能接住（它们不是 RuntimeException）。
+                "java/lang/Throwable",
             )
         }
 
@@ -2550,11 +2609,7 @@ class BytecodeCompiler(
                 // catch 处理体的入口：进这里时栈上正好是异常对象，取出消息写进 catch 变量。
                 // （解释器在查表命中时做同一件事：把错误消息写进同一个槽位。）
                 handlerSlots[instr.label]?.let { slot ->
-                    mv.visitMethodInsn(
-                        INVOKEVIRTUAL, "java/lang/RuntimeException", "getMessage",
-                        "()Ljava/lang/String;", false,
-                    )
-                    storeSlot(mv, RsfType.STRING, slot + localOffset)
+                    emitCaughtMessage(mv, slot + localOffset, handlerTemp)
                 }
                 continue
             }
@@ -3199,10 +3254,7 @@ class BytecodeCompiler(
                             is ResolvedMethod -> {
                                 val m = target.method
                                 if (!m.isStatic) emitExpr(ctx, expr.receiver)
-                                for ((i, arg) in expr.arguments.orEmpty().withIndex()) {
-                                    emitExpr(ctx, arg)
-                                    emitWiden(mv, model.typeOf(arg), m.paramTypes[i])
-                                }
+                                emitJvmArguments(ctx, m, expr.arguments.orEmpty())
                                 // owner 是接口（`Iterator` / `List` / `Comparator`…）只能发 INVOKEINTERFACE：
                                 // 发 INVOKEVIRTUAL 会在运行期抛 IncompatibleClassChangeError（Find interface ...,
                                 // but class was expected），而解释器那条路照常能跑——两端就背离了。
@@ -3239,6 +3291,43 @@ class BytecodeCompiler(
         expr.arguments == null &&
             expr.name == "length" &&
             model.exprTypes[expr.receiver]?.isArray == true
+
+    /**
+     * 压入一次 **JVM 方法调用**的实参（成员调用、继承来的 JDK 方法调用都走这里）。
+     *
+     * 普通情形就是「逐个求值 + 加宽/装箱」（[emitWiden] 已经管装箱）；varargs 的尾巴
+     * 要**现打包成一个数组**——`String.format("%d-%s", 1, "a")` 在 class 文件里的描述符
+     * 是 `(Ljava/lang/String;[Ljava/lang/Object;)Ljava/lang/String;`，最后一个形参
+     * 本来就是个数组，`ACC_VARARGS` 只是给编译器看的提示。
+     *
+     * 打包规则与 Checker、解释器共用 [VarargPack]：三处各写一遍的话，
+     * `rsf run` 与 `java -cp out` 迟早会分叉。
+     */
+    private fun emitJvmArguments(ctx: ExprCtx, method: JvmMethod, args: List<Expr>) {
+        val mv = ctx.mv
+        val argTypes = args.map { model.typeOf(it) }
+        val pack = VarargPack.of(method, argTypes)
+        val fixed = pack?.fixedCount ?: method.paramTypes.size
+        for (i in 0 until fixed) {
+            emitExpr(ctx, args[i])
+            emitWiden(mv, argTypes[i], method.paramTypes[i])
+        }
+        if (pack == null) return
+        val tail = args.drop(fixed)
+        pushInt(mv, tail.size)
+        if (pack.elementType.isPrimitive) {
+            mv.visitIntInsn(NEWARRAY, primitiveArrayType(pack.elementType.base))
+        } else {
+            mv.visitTypeInsn(ANEWARRAY, internalNameOf(pack.elementType))
+        }
+        for ((j, arg) in tail.withIndex()) {
+            mv.visitInsn(DUP)
+            pushInt(mv, j)
+            emitExpr(ctx, arg)
+            emitWiden(mv, model.typeOf(arg), pack.elementType)
+            mv.visitInsn(arrayStoreOpcode(pack.elementType))
+        }
+    }
 
     /**
      * 数组的创建（阶段 13）：`new T[n]` / `new T[n][m]`。
@@ -4201,10 +4290,7 @@ class BytecodeCompiler(
             if (!m.isStatic) {
                 emitThis(ctx, "'${expr.name}(...)'（隐式 this 调用继承来的 JDK 方法）")
             }
-            for ((i, arg) in expr.arguments.withIndex()) {
-                emitExpr(ctx, arg)
-                emitWiden(mv, model.typeOf(arg), m.paramTypes[i])
-            }
+            emitJvmArguments(ctx, m, expr.arguments)
             // owner 是**声明**这个方法的 JDK 类（Checker 记的），不是当前类：
             // 解析从接收者的真实类开始，所以 this 是 MyError 也能落到 Throwable.getMessage。
             // 返回值不做泛型收敛——Checker 记的返回类型就是这个 JvmMethod.returnType

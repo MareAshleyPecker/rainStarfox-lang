@@ -33,6 +33,8 @@ import org.example.complie.diag.RsfError
 import org.example.complie.interop.JvmMethod
 import org.example.complie.interop.ResolvedField
 import org.example.complie.interop.ResolvedMethod
+import org.example.complie.interop.Thrown
+import org.example.complie.interop.VarargPack
 import org.example.complie.ir.Capture
 import org.example.complie.ir.ClosureScopes
 import org.example.complie.ir.IAssign
@@ -81,11 +83,12 @@ import java.util.IdentityHashMap
  * 为什么解释器内部不用 JVM 现成的异常当载体：解释器得能分清「rsf 自己 fail 出来的错误」
  * 和「JVM 互操作抛出来的 RuntimeException」。内部异常类就是一个标记。
  *
- * **边界（照实说清楚）**：解释器里的 `try` / `?:` **只**接 [RsfFailure]。
- * Java 互操作抛出来的异常（比如 `Integer.parseInt("abc")` 的 NumberFormatException）
- * 不会被解释器的 try 接住；而编译产物那边 `catch (RuntimeException)` 会接住它——
- * 这种跨语言异常的差异本版**不做**（要做就得把 JVM 的异常表整张搬进解释器，
- * 等于把 Java 异常也纳入 rsf 的语义）。本版只保证 rsf 自己的 `fail` 两端一致。
+ * **边界（阶段 70 起）**：`try` 接得住 rsf 自己的失败，也接得住 Java 互调抛出来的异常
+ * （`Integer.parseInt("abc")` 的 NumberFormatException、`FileInputStream` 的
+ * FileNotFoundException……）。两者的区别只体现在**文案**上：前者是原文，后者是
+ * `完整类名: 消息`（规则见 `org.example.complie.interop.Thrown`，字节码侧内联的是同一套）。
+ * 编译产物那边接的是 `java/lang/Throwable`，所以连受检异常也归 `try` 管。
+ * `?:` 仍然**只**接 rsf 自己的失败——它是错误传播语法，不是 Java 的 try。
  */
 /**
  * 阶段 53 的「指针值」：指向某个栈帧的某个槽。
@@ -540,6 +543,15 @@ class Interpreter(
             slots[handler.catchSlot] = failure.msg
             // 从 handler 接着跑；嵌套的 catch 也走这条路，所以 endPc 要一起带过去
             return execute(body, slots, handler.handlerPc, endPc)
+        } catch (thrown: Throwable) {
+            // 阶段 70：Java 互调抛出来的异常也归 `try` 管。rsf 自己的失败上面那条已经接走了，
+            // 这里剩下的是 Java 异常（IO、解析、反射……）。文案规则见 [Thrown.message]：
+            // 字节码侧内联的是同一套，两端因此逐字节一致。
+            // 编译器自己的 [RsfError]（内部错误/诊断）不归用户程序管，原样往上穿。
+            if (thrown is RsfError) throw thrown
+            val handler = body.handlerAt(pc) ?: throw thrown
+            slots[handler.catchSlot] = Thrown.message(thrown)
+            return execute(body, slots, handler.handlerPc, endPc)
         }
         // 走到函数末尾：void 函数正常结束
         return null
@@ -882,9 +894,8 @@ class Interpreter(
                 // 在 rsf 对象上按 rsf 的语义算，不反射打到配对出来的 JDK 父类实例上
                 val family = rsfObjectFamily(receiver, target.method.name, rawArgs)
                 if (family !== NOT_OBJECT_FAMILY) return family
-                val args = rawArgs.mapIndexed { i, v ->
-                    adaptJdkArg(v, target.method.paramTypes.getOrNull(i))
-                }.toTypedArray()
+                // varargs 的尾巴在这里打包成数组（判据与 Checker / 字节码共用 [VarargPack]）
+                val args = jvmCallArguments(target.method, rawArgs)
                 val result = method.invoke(jdkReceiver(receiver), *args)
                 // 泛型互操作：JVM 给回来的是擦除后的 Object，按静态类型还原成 Int/String/…
                 // 结果被丢弃时（表达式语句）不还原——`m.put(k, v)` 的旧值可能是 null
@@ -1150,10 +1161,7 @@ class Interpreter(
         val owner = Class.forName(target.method.owner.replace('/', '.'))
         val paramClasses = target.method.paramTypes.map { toJavaClass(it) }.toTypedArray()
         val method = publicMethod(owner, target.method.name, paramClasses)
-        val adapted = args.mapIndexed { i, v ->
-            adaptJdkArg(v, target.method.paramTypes.getOrNull(i))
-        }.toTypedArray()
-        return method.invoke(receiver, *adapted)
+        return method.invoke(receiver, *jvmCallArguments(target.method, args))
     }
 
     /**
@@ -1380,6 +1388,38 @@ class Interpreter(
 
     /** 回调再进来的代理认回它代表的 rsf 对象；不是我们造的代理就原样返回。 */
     private fun unwrapProxy(value: Any?): Any? = proxiedObjects[value] ?: value
+
+    /**
+     * 一次 JDK 反射调用的实参表：**varargs 的尾巴在这里打包成数组**。
+     *
+     * `String.format("%d-%s", 1, "a")` 在 class 文件里的最后一个形参是 `Object[]`，
+     * 所以解释器也得像 javac 那样现造一个数组——不然反射会报
+     * `argument type mismatch`（个数都对不上）。判据与 Checker、字节码后端共用
+     * [VarargPack]：那两处看的是**静态类型**，这里只有运行期的值，所以「最后一个实参
+     * 是不是本来就能当那个数组用」要按值的实际 Class 判。
+     */
+    private fun jvmCallArguments(method: JvmMethod, raw: List<Any?>): Array<Any?> {
+        val want = method.paramTypes.lastOrNull()
+        val directArray = want != null && want.isArray && raw.size == method.paramTypes.size &&
+            raw.lastOrNull()?.let { it.javaClass.isArray && toJavaClass(want).isInstance(it) } == true
+        val pack = VarargPack.atRuntime(method, raw.size, directArray)
+        if (pack == null) {
+            return raw.mapIndexed { i, v ->
+                adaptJdkArg(v, method.paramTypes.getOrNull(i))
+            }.toTypedArray()
+        }
+        val out = ArrayList<Any?>(method.paramTypes.size)
+        for (i in 0 until pack.fixedCount) out.add(adaptJdkArg(raw[i], method.paramTypes[i]))
+        val n = raw.size - pack.fixedCount
+        // Array.newInstance 也认基本类型（`pack.elementType` 是 `Int` 时给 int[]）：
+        // 打包完直接塞给反射，JVM 自己会按形参描述符接住
+        val array = java.lang.reflect.Array.newInstance(toJavaClass(pack.elementType), n)
+        for (i in 0 until n) {
+            java.lang.reflect.Array.set(array, i, adaptJdkArg(raw[pack.fixedCount + i], pack.elementType))
+        }
+        out.add(array)
+        return out.toTypedArray()
+    }
 
     /**
      * 造（并缓存）一个实现 rsf 类身上那些 JDK 接口的代理。

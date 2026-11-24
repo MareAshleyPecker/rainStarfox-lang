@@ -15,10 +15,10 @@
 //       (c) f(...)!!                                 往上抛：本函数也得是 !T
 //   * `fail "消息"` 只能写在 !T 函数里，或者 try 块里。
 //
-// 一条边界照实写清楚：try / `?:` 只接 **rsf 自己的**错误。别的 Java 互操作异常
-// （例如 `Integer.valueOf("abc")` 的 NumberFormatException）不在这一版的范围里。
-// 阶段 16 起语言自带的 `parseInt` 算例外：它内部会把 Java 的异常换成 rsf 的错误
-// 消息，所以它是两端一致的（见 rsfSrc/lang/stdlib.rsf）。
+// 一条边界写清楚（阶段 70 有变）：`try` 现在也接得住 Java 互调抛出来的异常——
+// 文案是 `完整类名: 消息`（例如 `java.lang.NumberFormatException: For input string: "abc"`），
+// 而 rsf 自己的失败仍然只是消息原文。`?:` 不变，还是只认 rsf 自己的错误。
+// 语言自带的 `parseInt` 阶段 16 起就把 Java 异常换成了 rsf 消息（见 rsfSrc/lang/stdlib.rsf）。
 
 // ---------------------------------------------------------------- 可能失败的函数
 

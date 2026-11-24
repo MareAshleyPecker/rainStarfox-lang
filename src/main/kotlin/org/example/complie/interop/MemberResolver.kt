@@ -103,8 +103,7 @@ class MemberResolver(
             for (m in cls.methods) {
                 if (m.name != name) continue
                 if (m.isStatic != wantStatic) continue
-                if (m.paramTypes.size != argTypes.size) continue
-                val score = score(m.paramTypes, argTypes) ?: continue
+                val score = scoreCall(m, argTypes) ?: continue
                 if (score < bestScore) {
                     bestScore = score
                     best = m
@@ -168,8 +167,7 @@ class MemberResolver(
         var best: JvmMethod? = null
         var bestScore = Int.MAX_VALUE
         for (ctor in cls.constructors) {
-            if (ctor.paramTypes.size != argTypes.size) continue
-            val score = score(ctor.paramTypes, argTypes) ?: continue
+            val score = scoreCall(ctor, argTypes) ?: continue
             if (score < bestScore) {
                 bestScore = score
                 best = ctor
@@ -181,6 +179,36 @@ class MemberResolver(
     /** 构造器候选签名，用于「没有匹配的构造器」时的提示。 */
     fun constructorsOf(cls: JvmClass): List<String> =
         cls.constructors.map { "new ${cls.simpleName}(${it.paramTypes.joinToString(", ") { p -> p.rsfName }})" }
+
+    /**
+     * 这一个候选要不要打包 varargs、以及打包的代价；null = 这个候选接不住这些实参。
+     *
+     * 两条路都试：**先按字面元数**（`format("%d", arr)` 直接把数组传进去），
+     * 不成就按 varargs 形态（尾部打包成数组，见 [VarargPack]）。打包要加 1 分代价，
+     * 这样 `String.valueOf(x)` 这种既有精确重载、又有 varargs 兄弟的方法仍然选精确的。
+     */
+    private fun scoreCall(method: JvmMethod, argTypes: List<RsfType>): Int? {
+        if (method.paramTypes.size == argTypes.size) {
+            score(method.paramTypes, argTypes)?.let { return it }
+        }
+        val pack = VarargPack.of(method, argTypes) ?: return null
+        var total = 1
+        for (i in 0 until pack.fixedCount) {
+            total += argCost(method.paramTypes[i], argTypes[i]) ?: return null
+        }
+        for (i in pack.fixedCount until argTypes.size) {
+            total += argCost(pack.elementType, argTypes[i]) ?: return null
+        }
+        return total
+    }
+
+    /**
+     * 单个实参能不能当 [param] 用（含装箱与数值加宽）。
+     *
+     * 与 [scoreCall] 同一条判据——Checker 在**类型实参替换过**的位置上要复核一遍，
+     * 那时不能再用 `RsfType.accepts`（它只管 rsf 自己的类型关系，不认装箱、不认类层次）。
+     */
+    fun acceptsArgument(param: RsfType, arg: RsfType): Boolean = argCost(param, arg) != null
 
     /** 候选签名对实参的代价；null 表示不兼容。 */
     private fun score(params: List<RsfType>, args: List<RsfType>): Int? {
@@ -209,6 +237,19 @@ class MemberResolver(
         if (argClass != null && paramClass != null && ClassPath.isSubtype(argClass, paramClass)) {
             return 1
         }
+        // 装箱：基本类型实参可以当引用类型形参用（`String.format("%d", 1)` 的尾巴就是
+        // `Object`）。判据是「装箱之后的那个包装类」是不是形参的子类型——`Int` → `Integer`
+        // → `Object` 成立；`Int` → `String` 不成立。代价记 1（和加宽同一档）。
+        //
+        // 只在形参**确实是引用类型**时才走：`?(Int)` 这种「可空基本类型」自己就是包装类，
+        // 上面那条 classOf 已经处理了（它把可空基本类型映射成包装类）。
+        if (arg.isPrimitive && !param.isPrimitive && !param.isArray && param.base != RsfBase.NULL) {
+            val boxed = classOf(arg.asNullable())
+            if (boxed != null && paramClass != null && ClassPath.isSubtype(boxed, paramClass)) return 1
+        }
+        // 数组协变：`String[]` 能当 `Object[]` 用（`String.format("%s", 数组)` 直接把数组
+        // 传进去就是靠这条）。基本类型数组不协变，那条在 [VarargPack.arrayAssignable] 里。
+        if (VarargPack.arrayAssignable(param, arg)) return 1
         // 源码里的实现类 → JDK 接口（`new ByValue()` 当 `Comparator` 用，阶段 20 M4）：
         // ClassPath 上查不到 ByValue，只能靠 Checker 注入的判据兜底
         if (sourceSubtype(param, arg)) return 1
