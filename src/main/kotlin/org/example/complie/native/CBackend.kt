@@ -73,7 +73,13 @@ import org.example.complie.sema.UserMember
  * `intToString` 等少数内置。
  * 类继承、接口、枚举、泛型、多维数组、浮点、错误返回都还没接，遇到**显式报错**。
  */
-class CBackend(private val model: SemanticModel, private val withEntry: Boolean = true) {
+class CBackend(
+    private val model: SemanticModel,
+    private val withEntry: Boolean = true,
+    // fix: 多文件 build 时，全程序恰好一个实例传 true，由它 #define RSF_RUNTIME_IMPL
+    // 提供共享状态（错误旗标/内存登记簿）的唯一定义；其余实例保持 false。
+    private val emitImpl: Boolean = false,
+) {
 
     /** 换行符用码点拼，避免源码里的转义在工具链里被二次解析。 */
     private val NL: Char = 10.toChar()
@@ -101,9 +107,13 @@ class CBackend(private val model: SemanticModel, private val withEntry: Boolean 
         checkProgram()
         nameEverything()
         val sb = StringBuilder()
-        sb.append(RUNTIME)
-        // 泛型擦除的盒子运行时：无条件带上（未用到时只是几个 static 函数，-w 下无告警）
-        sb.append(RuntimeErase)
+        // fix: 运行时拆到 rsfRuntimelib.h，不再随每份生成代码携带 RUNTIME + RuntimeErase 全文。
+        // 多文件一起 build 只出一个 lib.h（实际文件名 rsfRuntimelib.h），多个 .c 共同包含它；
+        // 共享状态走 extern + 单一定义，全程序恰好一个编译单元 define RSF_RUNTIME_IMPL。
+        // 头文件由构建侧调 ensureRuntimeLib(outDir) 写出（out 里已存在则跳过）；
+        // emitImpl=true 交给其中**一个**实例。RuntimeErase 仍被 emitJni 使用，故常量保留。
+        if (emitImpl) sb.append("#define RSF_RUNTIME_IMPL\n")
+        sb.append("#include \"rsfRuntimelib.h\"\n")
         val runtimeEnd = sb.length
         for (e in model.enums.values) sb.append(enumBlock(e))
         for (cls in classes.values) sb.append(struct(cls))
@@ -158,6 +168,45 @@ class CBackend(private val model: SemanticModel, private val withEntry: Boolean 
         }
         sb.append("}\n")
         return sb.toString()
+    }
+
+    /**
+     * fix: 运行时头文件 rsfRuntimelib.h 的唯一来源（RUNTIME + RuntimeErase 仍是单一事实源）。
+     * 机械变换四步：
+     *   1) 去掉两行文件级 error 变量（改由 extern + RSF_RUNTIME_IMPL 提供全程序唯一份）；
+     *   2) 顶层 static 函数 -> static inline（多 TU 包含安全、消 unused-function 告警）；
+     *   3) malloc/calloc/realloc -> 登记包装（退出集中回收，修内存泄漏）；
+     *   4) 在 rsf_arr_new 前插入共享状态 extern 块与回收函数块。
+     * 此变换已用等价脚本产出头文件并经 gcc 多 TU / LeetCode 1352 + ASan 验证（0 泄漏）。
+     */
+    fun runtimeLibSource(): String {
+        var body = RUNTIME + RuntimeErase
+        body = body.replace("static bool rsf_err = false;\n", "")
+        body = body.replace("static rsf_str rsf_err_msg;\n", "")
+        body = body.replace(Regex("(?m)^static "), "static inline ")
+        body = body.replace("malloc(", "rsf_malloc(")
+        body = body.replace("calloc(", "rsf_calloc(")
+        body = body.replace("realloc(", "rsf_reg_realloc(")
+        val marker = "static inline rsf_arr rsf_arr_new"
+        val idx = body.indexOf(marker)
+        check(idx >= 0) { "运行时里找不到 rsf_arr_new，无法定位共享状态插入点" }
+        val head = body.substring(0, idx)
+        val tail = body.substring(idx)
+        return LIB_PREFIX + head + SHARED_STATE + FIX_FUNCS + tail + "#endif /* RSF_RUNTIME_LIB_H */\n"
+    }
+
+    /**
+     * fix: 把 rsfRuntimelib.h 写进 out 目录；**已存在则跳过生成**（多文件 build 只出一个 lib.h）。
+     * 返回本次是否真正写出。注意：跳过的是“头文件重写”，与“哪个 .c 定义 RSF_RUNTIME_IMPL”无关——
+     * 后者每次 build 仍须恰好一个（构建侧给其中一个 CBackend 传 emitImpl=true）。
+     * 运行时升级后请删掉 out 里的旧 rsfRuntimelib.h（或干净重建），否则会沿用旧头文件。
+     */
+    fun ensureRuntimeLib(outDir: java.io.File): Boolean {
+        val f = java.io.File(outDir, "rsfRuntimelib.h")
+        if (f.exists()) return false // fix: out 里已有 lib.h，跳过生成
+        outDir.mkdirs()
+        f.writeText(runtimeLibSource())
+        return true
     }
 
     private fun nameEverything() {
@@ -548,7 +597,8 @@ class CBackend(private val model: SemanticModel, private val withEntry: Boolean 
         val args = fn.params.joinToString(", ") { paramName(it.name) }
         val sb = StringBuilder()
         sb.append("void* $name(${list.joinToString(", ").ifEmpty { "void" }}) {").append(NL)
-        sb.append("    void* self = calloc(1, sizeof(rsf_cls_${cls.name}));").append(NL)
+        // fix: 对象分配走 rsf_calloc，纳入共享内存登记簿（退出集中回收）
+        sb.append("    void* self = rsf_calloc(1, sizeof(rsf_cls_${cls.name}));").append(NL)
         sb.append("    *(void***)self = rsf_vtbl_${cls.name};").append(NL)
         sb.append("    $init(self").append(if (args.isEmpty()) "" else ", $args").append(");").append(NL)
         sb.append("    return self;").append(NL).append("}").append(NL).append(NL)
@@ -569,7 +619,8 @@ class CBackend(private val model: SemanticModel, private val withEntry: Boolean 
         }
         sb.append("}").append(NL).append(NL)
         sb.append("void* $name(void) {").append(NL)
-        sb.append("    void* self = calloc(1, sizeof(rsf_cls_${cls.name}));").append(NL)
+        // fix: 对象分配走 rsf_calloc，纳入共享内存登记簿（退出集中回收）
+        sb.append("    void* self = rsf_calloc(1, sizeof(rsf_cls_${cls.name}));").append(NL)
         sb.append("    *(void***)self = rsf_vtbl_${cls.name};").append(NL)
         sb.append("    $init(self);").append(NL)
         sb.append("    return self;").append(NL).append("}").append(NL).append(NL)
@@ -1685,7 +1736,7 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
                     if (strcmp(e->d_name, ".") == 0 || strcmp(e->d_name, "..") == 0) continue;
                     int64_t plen = f->path.len;
                     int64_t nlen = (int64_t)strlen(e->d_name);
-                    char* buf = (char*)malloc((size_t)(plen + nlen + 2));
+                    char* buf = (char*)rsf_malloc((size_t)(plen + nlen + 2));
                     memcpy(buf, f->path.data, (size_t)plen);
                     buf[plen] = '/';
                     memcpy(buf + plen + 1, e->d_name, (size_t)nlen);
@@ -1697,6 +1748,82 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
                 return a;
             }
         """
+
+        /** fix: rsfRuntimelib.h 顶部注释 + 包含守卫开头（runtimeLibSource 用）。 */
+        private val LIB_PREFIX = """/* rsfRuntimelib.h —— rsf C 后端运行时库（头文件版 · 多文件 build 安全 · 含内存 fix）
+ * 由 CBackend.runtimeLibSource() 从 RUNTIME + RuntimeErase 机械变换生成。
+ * 多个 .c 可共同包含；共享状态走 extern + 单一定义：恰好一个 .c 在 include 前
+ * #define RSF_RUNTIME_IMPL。所有 fix 处以 fix 注释标明。
+ */
+#ifndef RSF_RUNTIME_LIB_H
+#define RSF_RUNTIME_LIB_H
+
+"""
+
+        /** fix: 共享状态 extern 声明 + RSF_RUNTIME_IMPL 唯一定义（多文件 build 安全）。 */
+        private val SHARED_STATE = """/* ============ fix: 共享状态 extern + 单一定义（多文件 build 安全）============
+ * rsf 多文件一起 build 只出一个 lib.h：多个 .c 包含同一头文件（多 TU）。
+ * 错误旗标与内存登记簿必须全程序唯一，否则：
+ *   - 跨文件 try/catch 失效（A 置的 rsf_err，B 查不到）；
+ *   - 跨文件内存泄漏（A 登记的块，main 在 B 时退出没人收）。
+ * 用法（stb 风格单头库）：恰好一个 .c 在 include 前 #define RSF_RUNTIME_IMPL，
+ *   由它提供这些变量的唯一定义；其余 .c 只拿 extern 声明。
+ *   例：  #define RSF_RUNTIME_IMPL
+ *         #include "rsfRuntimelib.h"
+ * ========================================================================= */
+extern bool rsf_err;
+extern rsf_str rsf_err_msg;
+extern void** rsf_alloc_reg;
+extern size_t rsf_alloc_reg_len;
+extern size_t rsf_alloc_reg_cap;
+extern int rsf_alloc_atexit_armed;
+
+#ifdef RSF_RUNTIME_IMPL
+bool rsf_err = false;
+rsf_str rsf_err_msg;
+void** rsf_alloc_reg = NULL;
+size_t rsf_alloc_reg_len = 0;
+size_t rsf_alloc_reg_cap = 0;
+int rsf_alloc_atexit_armed = 0;
+#endif
+
+"""
+
+        /** fix: 内存回收函数（登记 + atexit 集中释放；状态见 SHARED_STATE 的 extern 块）。 */
+        private val FIX_FUNCS = """/* ---- fix: 内存回收函数（登记 + atexit 集中释放；状态见上方 extern 块）----
+ * 运行期只登记不释放，退出统一 free。局限：非运行中途 GC；realloc 追踪 O(n)。
+ */
+static inline void rsf_free_all(void) {
+    for (size_t i = 0; i < rsf_alloc_reg_len; i++) free(rsf_alloc_reg[i]);
+    free(rsf_alloc_reg);
+    rsf_alloc_reg = NULL; rsf_alloc_reg_len = 0; rsf_alloc_reg_cap = 0;
+}
+static inline void rsf_reg_add(void* p) {
+    if (!p) return;
+    if (rsf_alloc_reg_len == rsf_alloc_reg_cap) {
+        size_t ncap = rsf_alloc_reg_cap ? rsf_alloc_reg_cap * 2 : 64;
+        void** nreg = (void**)realloc(rsf_alloc_reg, ncap * sizeof(void*));
+        if (!nreg) return; /* OOM：放弃登记，退化为原行为 */
+        rsf_alloc_reg = nreg; rsf_alloc_reg_cap = ncap;
+    }
+    rsf_alloc_reg[rsf_alloc_reg_len++] = p;
+    if (!rsf_alloc_atexit_armed) { atexit(rsf_free_all); rsf_alloc_atexit_armed = 1; }
+}
+static inline void* rsf_malloc(size_t n) { void* p = malloc(n); rsf_reg_add(p); return p; }
+static inline void* rsf_calloc(size_t a, size_t b) { void* p = calloc(a, b); rsf_reg_add(p); return p; }
+static inline void* rsf_reg_realloc(void* old, size_t n) {
+    void* np = realloc(old, n);
+    if (!np) return NULL;
+    if (old) {
+        for (size_t i = 0; i < rsf_alloc_reg_len; i++) {
+            if (rsf_alloc_reg[i] == old) { rsf_alloc_reg[i] = np; return np; }
+        }
+    }
+    rsf_reg_add(np);
+    return np;
+}
+
+"""
 
         private val RUNTIME = """
             /* 由 rsf build --c 生成（阶段 52 的 C 后端，native 线第一刀） */
