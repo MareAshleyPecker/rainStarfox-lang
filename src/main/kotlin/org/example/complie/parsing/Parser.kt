@@ -119,14 +119,51 @@ class Parser(
         var packageName: String? = null
         // 阶段 60：文件级构建目标，写在最前面（pkg 前后都可以）
         var fileTarget = BuildTarget.BOTH
-        if (check(TokenKind.IDENT) && peek().lexeme == "target") {
-            fileTarget = parseTargetDirective()
+        // 阶段 77：文件级 GC 开关，同样写在最前面
+        var gcDirective: GcDirective? = null
+        var targetAt: SourceLine? = null
+
+        // 文件头指令（`target` / `gc`）任意顺序、pkg 前后都行，但**每条只能写一次**——
+        // 写两次多半是复制粘贴，静默取最后一个会让用户以为另一处生效了。
+        fun takeHeaderDirective(): Boolean {
+            if (!check(TokenKind.IDENT)) return false
+            when (peek().lexeme) {
+                "target" -> {
+                    val previous = targetAt
+                    if (previous != null) {
+                        throw error(
+                            peek(),
+                            "'target' 一份文件只能写一次（上一处在第 ${previous.line} 行）",
+                        )
+                    }
+                    targetAt = peek().at
+                    fileTarget = parseTargetDirective()
+                }
+
+                "gc" -> {
+                    val previous = gcDirective
+                    if (previous != null) {
+                        throw error(
+                            peek(),
+                            "'gc' 一份文件只能写一次（上一处在第 ${previous.at.line} 行）",
+                        )
+                    }
+                    gcDirective = parseGcDirective()
+                }
+
+                else -> return false
+            }
+            return true
+        }
+
+        while (takeHeaderDirective()) {
+            // 指令之间允许夹注释/空行，词法层已经滤掉
         }
         if (check(TokenKind.KW_PKG)) {
             packageName = parsePackageDecl()
         }
-        if (fileTarget == BuildTarget.BOTH && check(TokenKind.IDENT) && peek().lexeme == "target") {
-            fileTarget = parseTargetDirective()
+        while (takeHeaderDirective()) {
+            // pkg 之后还能再写指令（与 target 的既有位置规则一致）
         }
 
         while (!check(TokenKind.EOF)) {
@@ -140,6 +177,14 @@ class Parser(
             } else if (check(TokenKind.KW_PKG)) {
                 val t = peek()
                 throw error(t, "'pkg' 只能写在文件最前面（在所有 import 之前）")
+            } else if (check(TokenKind.IDENT) && (peek().lexeme == "target" || peek().lexeme == "gc")) {
+                // 文件头指令写在声明之后：这里显式拦下，否则会掉进 parseFuncDecl 报一句
+                // 关于 `fun` 的错（用户看不懂「我只想写 gc off」为什么提到 fn）。
+                val t = peek()
+                throw error(
+                    t,
+                    "'${t.lexeme}' 是文件头指令，只能写在最前面（在 pkg / import / 任何声明之前）",
+                )
             } else if (check(TokenKind.KW_ENUM) || isEnumDeclAhead()) {
                 // 枚举**不是** v1 的可标注位置（DESIGN-21.md §2.3 的可标注位置只有
                 // 类 / 接口 / 注解声明 / 方法 / 字段）。这里明确拦下，别让 `@Marker`
@@ -188,6 +233,7 @@ class Parser(
             classes = classes,
             packageName = packageName,
             target = fileTarget,
+            gc = gcDirective,
             enums = enums,
             interfaces = interfaces,
             annotations = annotations,
@@ -222,6 +268,35 @@ class Parser(
                     "实际读到 ${next.describe()}（'target' 只在这里当指令，其它位置仍是普通标识符）",
             )
         }
+    }
+
+    /**
+     * 阶段 77：文件级 GC 开关 `gc on` / `gc off`。
+     *
+     * `gc` / `on` / `off` 都是**软关键字**（`gc` 在别的场合仍是普通标识符），所以词法层
+     * 一行都没改。粒度上它只声明意图：真 GC 是整程序的事，合并多文件时取「或」。
+     */
+    private fun parseGcDirective(): GcDirective {
+        val kw = advance() // gc
+        val next = peek()
+        val enabled = when {
+            next.kind == TokenKind.IDENT && next.lexeme == "on" -> {
+                advance()
+                true
+            }
+
+            next.kind == TokenKind.IDENT && next.lexeme == "off" -> {
+                advance()
+                false
+            }
+
+            else -> throw error(
+                next,
+                "'gc' 后面要写 on 或 off（例：gc off），实际读到 ${next.describe()}" +
+                    "（'gc' 只在文件头当指令，其它位置仍是普通标识符）",
+            )
+        }
+        return GcDirective(enabled, kw.at)
     }
 
     private fun parsePackageDecl(): String {

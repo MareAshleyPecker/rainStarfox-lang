@@ -264,6 +264,18 @@ class Checker(
     private var currentSource: SourceFile = source
 
     fun check(): SemanticModel {
+        // 阶段 77：`gc on` 只解析不实现。放在最前面报，别让用户先改一堆别的错再撞上它；
+        // 也绝不静默忽略——静默比不实现更糟，会让人以为已经有 GC 了。
+        program.gc?.let { gc ->
+            if (gc.enabled) {
+                throw err(
+                    "'gc on' 还没实现：GC 是阶段 77 步骤 C 的事（见 design/DESIGN-77.md），" +
+                        "现在只有 arena（只增不减，进程退出才整块还回去）。现在要做的要么是删掉这一行，" +
+                        "要么写 'gc off'（也是默认值）；想看内存涨了多少用 memBytes() / memPeak()。",
+                    gc.at,
+                )
+            }
+        }
         collectImports()
         // 注解名最先占住（阶段 21）：注解和类/枚举/接口共用类型命名空间，先占住名字，
         // 后面三趟才能报出「重名」——反过来的顺序只能报一半（谁先谁后报谁）。

@@ -1234,6 +1234,7 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
             "intToString" -> return "rsf_int_to_str(${expr(e.arguments[0])})"
             "memBytes" -> return "rsf_mem_bytes()"
             "memPeak" -> return "rsf_mem_peak()"
+            "gcCollect" -> return "rsf_gc_collect()"
             "stringBytes" -> return "rsf_str_bytes(${expr(e.arguments[0])})"
             "charToInt" -> return "((int32_t)${expr(e.arguments[0])})"
             "toChar" -> return "((uint16_t)${expr(e.arguments[0])})"
@@ -1915,8 +1916,28 @@ typedef struct rsf_allocator {
     void* user;
 } rsf_allocator;
 
+/* ---- GC 插件接口（阶段 77）：GC 怎么做是**用户的事**，运行时只留插座 ----
+ * 运行时答应三件事：① 所有分配都经过 rsf_allocator（所以你的 GC 能看到每一次分配）；
+ * ② 提供一个「现在扫一轮」的入口（rsf_gc_collect / 内置函数 gcCollect()）；
+ * ③ 不假设你的 GC 是标记-清扫还是引用计数、移不移动对象——那是你的设计。
+ *
+ * 最短实现（保守 mark-sweep）：alloc/resize/free 里记账，collect 里从根开始扫。
+ * 保守 GC 需要「根 = 线程栈上的指针 + 全局变量」，栈边界用平台 API 自己取
+ * （Windows: NtCurrentTeb()->StackBase / StackLimit；Linux: pthread_getattr_np），
+ * 运行时**不替你猜**，因为它不该长平台头文件的依赖。
+ *
+ * 只填 collect 也能用：那时 memBytes()/memPeak() 会返回 -1（不知道你占了多少），
+ * 想知道就再填 bytes。
+ */
+typedef struct rsf_gc {
+    void   (*collect)(void* user);   /* 必填：扫一轮（可以什么都不做） */
+    size_t (*bytes)(void* user);     /* 可选：当前占用字节，给 memBytes() 用 */
+    void*  user;
+} rsf_gc;
+
 typedef struct rsf_ctx {
     rsf_allocator alloc;
+    rsf_gc gc;
     bool err;
     rsf_str err_msg;
 } rsf_ctx;
@@ -2073,6 +2094,9 @@ static inline rsf_ctx* rsf_ctx_get(void) {
         c->alloc.resize = rsf_arena_resize;
         c->alloc.free = rsf_arena_release;
         c->alloc.user = &rsf_ctx_arena;
+        c->gc.collect = NULL;
+        c->gc.bytes = NULL;
+        c->gc.user = NULL;
         c->err = false;
         c->err_msg.len = 0;
         c->err_msg.data = NULL;
@@ -2089,9 +2113,34 @@ static inline void rsf_ctx_process_exit(void) {
 /* 宿主注入分配器（--lib / 嵌入）：上下文由调用方持有，这里一次分配都不做。 */
 static inline void rsf_ctx_init(rsf_ctx* c, rsf_allocator a) {
     c->alloc = a;
+    c->gc.collect = NULL;
+    c->gc.bytes = NULL;
+    c->gc.user = NULL;
     c->err = false;
     c->err_msg.len = 0;
     c->err_msg.data = NULL;
+}
+
+/* ---- GC 插座（阶段 77）：把「怎么回收」交给宿主，运行时只负责问你 ----
+ * 语义约定：
+ *   1) 只登记 collect 也行；bytes 不填则 memBytes()/memPeak() 返回 -1。
+ *   2) 你的 collect 自己决定扫哪些根。运行时不会偷偷替你扫栈——那是平台相关的。
+ *   3) 没有登记 GC 时 rsf_gc_collect() 返回 false（rsf 侧 gcCollect() 拿到 false），
+ *      所以同一份源码在「有 GC / 没 GC」两种宿主下都能跑，只是返回值告诉它有没有真扫。
+ */
+static inline void rsf_ctx_set_gc(rsf_ctx* c, rsf_gc g) {
+    c->gc = g;
+}
+
+static inline bool rsf_gc_enabled(void) {
+    return rsf_ctx_get()->gc.collect != NULL;
+}
+
+static inline bool rsf_gc_collect(void) {
+    rsf_ctx* c = rsf_ctx_get();
+    if (c->gc.collect == NULL) return false;
+    c->gc.collect(c->gc.user);
+    return true;
 }
 
 static inline void rsf_ctx_use(rsf_ctx* c) {
@@ -2105,12 +2154,14 @@ static inline void rsf_ctx_use(rsf_ctx* c) {
  */
 static inline int64_t rsf_mem_bytes(void) {
     rsf_ctx* c = rsf_ctx_get();
+    if (c->gc.bytes != NULL) return (int64_t)c->gc.bytes(c->gc.user);
     if (c->alloc.alloc != rsf_arena_alloc) return -1;
     return (int64_t)((rsf_arena*)c->alloc.user)->used;
 }
 
 static inline int64_t rsf_mem_peak(void) {
     rsf_ctx* c = rsf_ctx_get();
+    if (c->gc.bytes != NULL) return (int64_t)c->gc.bytes(c->gc.user);
     if (c->alloc.alloc != rsf_arena_alloc) return -1;
     return (int64_t)((rsf_arena*)c->alloc.user)->peak;
 }

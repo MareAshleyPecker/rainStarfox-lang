@@ -383,6 +383,16 @@ enum class BuildTarget {
     }
 }
 
+/**
+ * 阶段 77：文件头指令 `gc on` / `gc off` 的解析结果。
+ *
+ * [at] 是 `gc` 那个词的源码位置——`gc on` 现在还只解析不实现，报错要指回用户写的那一行。
+ */
+data class GcDirective(
+    val enabled: Boolean,
+    val at: SourceLine,
+)
+
 data class FuncDecl(
     val control: ControlType,
     val mainType: TypeRef,
@@ -514,6 +524,14 @@ data class Program(
     val packageName: String? = null,
     /** 阶段 60：文件级 `target native|jvm`；缺省两边都编。 */
     val target: BuildTarget = BuildTarget.BOTH,
+    /**
+     * 阶段 77：文件级 GC 开关（`gc on` / `gc off`），没写就是 null。
+     *
+     * 它只表达**意图**：真正的粒度是整个程序——任一文件写 `gc on`，整份产物就得走
+     * GC 运行时；全 off 就是今天的纯 arena。所以合并多文件时取「或」，混用要报 warning。
+     * 现在 `gc on` 只被解析下来（语义在阶段 77 步骤 C），Checker 会明确报「还没实现」。
+     */
+    val gc: GcDirective? = null,
     /**
      * 阶段 60：被构建目标过滤掉的名字 → 它属于哪一侧。
      *

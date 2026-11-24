@@ -179,6 +179,14 @@ fn both(x : Int) -> Int { rtn x }              // 两侧都有
 
 调到「对面才有」的函数会报清楚（「函数 'fast' 只写在 native 侧」），而不是「未定义的函数」。两边互调（JNI 桥）还没接，见 `design/DESIGN-60.md`。
 
+文件头还能写 GC 开关（阶段 77）：`gc off`（默认，纯 arena）或 `gc on`（要 GC 运行时）。**现在写 `gc on` 会明确报「还没实现」**——语义在 `design/DESIGN-77.md` 步骤 C，先别写。粒度提醒：它只是"意图"，真 GC 是整程序的事（任一文件 on 就得整份产物走 GC），所以多文件混用会取「或」。
+
+```rsf
+gc off                          // 与不写等价：arena，只增不减
+```
+
+GC 的**策略**可以由宿主自己实现（阶段 77）：C 侧把 `rsf_gc { collect, bytes, user }` 交给 `rsf_ctx_set_gc`，rsf 侧就能用 `gcCollect() -> Bool` 主动要求扫一轮（没登记 GC 时返回 `false`，所以同一份源码两种宿主都能跑）。所有分配都走分配器 vtable，所以你自己写的 GC 不会漏分配；保守 mark-sweep 今天就能写（栈边界自己用平台 API 取），精确 GC 要等 `gc on` 落地后补布局/根登记。见 `design/DESIGN-77.md`。
+
 ### JVM 字节码后端
 
 `rsf build x.rsf`（不带 `--c`）出 class：

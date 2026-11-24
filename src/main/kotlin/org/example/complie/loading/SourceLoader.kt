@@ -6,6 +6,7 @@ import org.example.complie.ast.ClassDecl
 import org.example.complie.ast.ClassImport
 import org.example.complie.ast.EnumDecl
 import org.example.complie.ast.FuncDecl
+import org.example.complie.ast.GcDirective
 import org.example.complie.ast.ImportDecl
 import org.example.complie.ast.InterfaceDecl
 import org.example.complie.ast.ModuleImport
@@ -57,6 +58,13 @@ class LoadedProgram(
     val target: BuildTarget = BuildTarget.JVM,
     /** 阶段 60：被过滤掉的名字 → 它属于哪一侧。 */
     val otherSide: Map<String, BuildTarget> = emptyMap(),
+    /**
+     * 阶段 77：文件头的 `gc on` / `gc off`。
+     *
+     * **整程序一份**：任一参与编译的文件写 `gc on` 就取 on（混合时取「或」）——GC 要求所有分配
+     * 走同一套分配器、根集合全局一致，按文件分不可能对。都没写就是 null（等于 `gc off`）。
+     */
+    val gc: GcDirective? = null,
 ) {
     /** 合成一个 Program 交给 Checker。 */
     fun toProgram(): Program =
@@ -70,6 +78,7 @@ class LoadedProgram(
             enums = enums,
             interfaces = interfaces,
             annotations = annotations,
+            gc = gc,
         )
 }
 
@@ -107,6 +116,9 @@ class SourceLoader {
 
     /** 阶段 60：被过滤掉的名字 → 它属于哪一侧（给 Checker 报错用）。 */
     private val otherSide = LinkedHashMap<String, BuildTarget>()
+
+    /** 阶段 77：整程序的 GC 意图（任一文件 `gc on` 即 on），见 [mergeGc]。 */
+    private var gc: GcDirective? = null
 
     /**
      * [baseDir] 给根文件用：编辑器会把「未保存的缓冲区」写成临时文件再拿来分析，
@@ -148,7 +160,25 @@ class SourceLoader {
             packageName = rootPackage,
             target = target,
             otherSide = otherSide.toMap(),
+            gc = gc,
         )
+    }
+
+    /**
+     * 阶段 77：`gc on` / `gc off` 是**整程序**的意图，合并取「或」。
+     *
+     * 理由：GC 的两条硬要求——所有分配走同一套运行时、根集合全局一致。A 文件 `gc on` 造出的
+     * 对象被 B 文件（`gc off`）的局部变量指着时，B 的栈帧没登记根，扫描就会把它当垃圾收掉。
+     * 所以只要有一份文件要 GC，整份产物都得按 GC 编；反过来（不同文件都 off）没有损失。
+     */
+    private fun mergeGc(directive: GcDirective) {
+        val existing = gc
+        gc = when {
+            existing == null -> directive
+            existing.enabled == directive.enabled -> existing
+            existing.enabled -> existing
+            else -> directive // 混用时保留 on
+        }
     }
 
     // ------------------------------------------------------------------ 内部
@@ -179,6 +209,9 @@ class SourceLoader {
             checkPackage(pkg, file, source)
             if (files.first() === source) rootPackage = pkg
         }
+
+        // 阶段 77：gc 指令按「取或」合并（放在 target 过滤之后——不参与编译的文件不算数）
+        program.gc?.let { mergeGc(it) }
 
         for (fn in program.functions) {
             // 阶段 60b：JVM 构建里 native 函数**保留声明**（编成 ACC_NATIVE 方法，由 JNI 桥实现），

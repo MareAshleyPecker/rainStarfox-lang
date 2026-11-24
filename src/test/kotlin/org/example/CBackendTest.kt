@@ -63,6 +63,37 @@ class CBackendTest {
     }
 
     @Test
+    fun `gcCollect 摊成运行时的 GC 插座`() {
+        val backend = nativeBackend(
+            """
+            target native
+            fn main() -> void {
+                if (gcCollect()) { println("gc") }
+            }
+            """.trimIndent(),
+            withEntry = true,
+        )
+        val c = backend.emit()
+        assertTrue(c.contains("rsf_gc_collect()"), c)
+        // 插座本身在运行时库里：C 侧宿主用它登记自己的 GC。
+        val runtime = backend.runtimeLibSource()
+        assertTrue(runtime.contains("typedef struct rsf_gc {"), runtime)
+        assertTrue(runtime.contains("void   (*collect)(void* user);"), runtime)
+        assertTrue(runtime.contains("size_t (*bytes)(void* user);"), runtime)
+        assertTrue(runtime.contains("static inline void rsf_ctx_set_gc(rsf_ctx* c, rsf_gc g)"), runtime)
+        assertTrue(runtime.contains("static inline bool rsf_gc_collect(void)"), runtime)
+        // 没登记 GC 时必须返回 false，而不是悄悄成功。
+        assertTrue(runtime.contains("if (c->gc.collect == NULL) return false;"), runtime)
+    }
+
+    @Test
+    fun `gcCollect 在 JVM 目标里被检查期挡住`() {
+        val source = SourceFile.of("c.kt", "fn main() -> void { println(gcCollect()) }")
+        val e = assertThrows<RsfError> { Rsf.analyze(source) }
+        assertTrue(e.message!!.contains("只有 native 侧"), e.message!!)
+    }
+
+    @Test
     fun `库模式不生成 main`() {
         val source = SourceFile.of(
             "lib.kt",

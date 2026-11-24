@@ -211,13 +211,24 @@ object Builtins {
         doc = "native 侧峰值占用（上次 reset 之后的最大值；宿主自备分配器时返回 -1）",
     )
 
+    /**
+     * `gcCollect() -> Bool`：让宿主登记的 GC 扫一轮；返回「真的扫了没有」。
+     *
+     * 没有登记 GC（默认 arena）时返回 `false`，所以同一份源码在两种宿主下都能跑。
+     * 触发时机由你定（每个 tick、每 N 次分配、内存超过阈值……），运行时不会偷偷扫。
+     */
+    val GC_COLLECT = Builtin(
+        "gcCollect", emptyList(), RsfType.BOOL, nativeOnly = true,
+        doc = "让 GC 扫一轮（宿主用 rsf_ctx_set_gc 登记的）；没登记 GC 时返回 false",
+    )
+
     /** 带签名的内置函数（`print` / `println` 是单参数特例，签名不在这里表达）。 */
     val ALL: List<Builtin> = listOf(
         TO_BYTE, TO_CHAR, CHAR_TO_INT, INT_TO_STRING, PARSE_INT,
         IS_DIGIT, IS_LETTER, IS_WHITESPACE, TO_UPPER, TO_LOWER, STRING_BYTES,
         READ_TEXT, WRITE_TEXT, READ_BYTES, WRITE_BYTES,
         JVM_CALL, JVM_NEW, JVM_CALL_ON,
-        MEM_BYTES, MEM_PEAK,
+        MEM_BYTES, MEM_PEAK, GC_COLLECT,
     )
 
     private val BY_NAME: Map<String, Builtin> = ALL.associateBy { it.name }
