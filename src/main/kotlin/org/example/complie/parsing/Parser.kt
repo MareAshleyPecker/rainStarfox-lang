@@ -1555,9 +1555,13 @@ class Parser(
     }
 
     /**
-     * 字段：`var 名字 : 类型 = 初值`（Kotlin 后缀风格，和局部变量一致；初值必填）。
+     * 字段：`[prv|prot|pub] var 名字 : 类型 = 初值`（Kotlin 后缀风格，和局部变量一致；初值必填）。
+     *
+     * 阶段 79 起字段能写权限修饰词（`prv var secret : Int = 1`），省略就是 `pub`；
+     * 修饰词排在 `var`/`val` 前面，和方法的写法一致。
      */
     private fun parseFieldDecl(annotations: List<AnnotationUse> = emptyList()): FieldDecl {
+        val control = if (peek().kind.isControlKeyword) ControlType.of(advance().kind) else ControlType.DEFAULT
         val kwTok = advance() // var / val
         val mutable = kwTok.kind == TokenKind.KW_VAR
         val nameTok = if (check(TokenKind.IDENT)) {
@@ -1604,6 +1608,7 @@ class Parser(
             mutable = mutable,
             at = kwTok.at,
             annotations = annotations,
+            control = control,
         )
     }
 
@@ -1611,17 +1616,26 @@ class Parser(
      * 从当前位置往前看，接下来是不是一个字段声明。
      *
      * 类体/伴生实体体的调用方**已经先收过注解**（`@M var x` 里的 `@M`），所以这里只看
-     * 落地的记号是不是 `var`/`val`——**不跳修饰词**：字段不写权限修饰词，
-     * `override var x` 要照旧掉进 parseFuncDecl 去撞那句「override 只能写在方法前面」，
+     * 跳过权限修饰词之后落地的记号是不是 `var`/`val`（阶段 79 起字段能写 `prv`/`prot`/`pub`）。
+     * `override var x` 照旧掉进 parseFuncDecl 去撞那句「override 只能写在方法前面」，
      * 而不是被当成字段后报一句「字段缺少名字」。
      */
-    private fun isFieldDeclAhead(): Boolean = peek().kind.isVarKeyword
+    private fun isFieldDeclAhead(): Boolean = peekAfterControls().kind.isVarKeyword
 
-    /** [isFieldDeclAhead] 的带继承修饰词版本：`final var x`（阶段 27 后只剩它会走到这里）。 */
-    private fun isFieldDeclAheadAfterInherit(): Boolean = peek().kind.isInheritKeyword && run {
+    /** 跳过 [skip] 个权限修饰词之后的记号（`prv var x` 里返回 `var`）。 */
+    private fun peekAfterControls(skip: Int = 0): Token {
+        var n = skip
+        while (peek(n).kind.isControlKeyword) n++
+        return peek(n)
+    }
+
+    /** [isFieldDeclAhead] 的带继承修饰词版本：`final var x` / `pub final var x`（阶段 27 后只剩它会走到这里）。 */
+    private fun isFieldDeclAheadAfterInherit(): Boolean {
         var n = 0
+        while (peek(n).kind.isControlKeyword) n++
+        if (!peek(n).kind.isInheritKeyword) return false
         while (peek(n).kind.isInheritKeyword) n++
-        peek(n).kind.isVarKeyword
+        return peek(n).kind.isVarKeyword
     }
 
     // ------------------------------------------------------------------ import

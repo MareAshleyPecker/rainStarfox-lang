@@ -8144,6 +8144,68 @@ class RsfTest {
         return ktLines.size
     }
 
+    @Test
+    fun `字段能写 prv 与 prot，跨类访问私有字段报错`() {
+        val program = """
+            class Account() {
+                prv var secret : Int = 7
+                prot var half : Int = 3
+                fn peek() -> Int { rtn this.secret }
+            }
+            class Kid() : Account() {
+                fn look() -> Int { rtn this.half }
+            }
+            fn main() -> void {
+                val a = Account()
+                val k = Kid()
+                println(a.peek())
+                println(k.look())
+            }
+        """.trimIndent()
+        assertEquals(listOf("7", "3"), lines(runInterpreted(program)))
+        assertEquals(
+            normalize(runInterpreted(program)),
+            normalize(runCompiledClasses(program, "RsfFieldVisibility")),
+        )
+
+        // 字节码里真是 private / protected（不只是检查期拦）：落盘后反射读修饰词
+        val dir = tempDir()
+        val src = SourceFile.of("fields.rsf", program)
+        Rsf.build(Rsf.analyze(src), src, "RsfFieldVisibility", dir)
+        val loader = java.net.URLClassLoader(arrayOf(dir.toURI().toURL()), javaClass.classLoader)
+        val account = loader.loadClass("Account")
+        account.getDeclaredField("secret").let {
+            assertTrue(java.lang.reflect.Modifier.isPrivate(it.modifiers), "secret 应该是 private")
+        }
+        account.getDeclaredField("half").let {
+            assertTrue(java.lang.reflect.Modifier.isProtected(it.modifiers), "half 应该是 protected")
+        }
+
+        val bad = """
+            class Account() {
+                prv var secret : Int = 7
+            }
+            fn main() -> void {
+                val a = Account()
+                println(a.secret)
+            }
+        """.trimIndent()
+        val e = assertFailsWith<RsfError> { Rsf.analyze(SourceFile.of("priv.rsf", bad)) }
+        assertTrue(e.message!!.contains("prv 字段"), e.message)
+        // 反面：prot 字段在**不相干**的类里也要拦住
+        val bad2 = """
+            class Account() {
+                prot var half : Int = 3
+            }
+            class Other() {
+                fn peek(a : Account) -> Int { rtn a.half }
+            }
+            fn main() -> void { println(Other().peek(Account())) }
+        """.trimIndent()
+        val e2 = assertFailsWith<RsfError> { Rsf.analyze(SourceFile.of("prot.rsf", bad2)) }
+        assertTrue(e2.message!!.contains("prot 字段"), e2.message)
+    }
+
     private fun normalize(s: String): String = s.replace("\r\n", "\n")
 
     private fun lines(s: String): List<String> = normalize(s).trim().lines()

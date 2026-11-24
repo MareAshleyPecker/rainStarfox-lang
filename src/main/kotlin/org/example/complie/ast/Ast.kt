@@ -645,6 +645,13 @@ data class FieldDecl(
      * 一行都不用改，语义层也照旧忽略它。
      */
     val annotations: List<AnnotationUse> = emptyList(),
+    /**
+     * 字段的可见性（阶段 79）：`prv var x : Int = 0`。
+     *
+     * 同样加在末尾并带缺省值，既有构造点一行都不用改；`DEFAULT` 就是 `pub`。
+     * `prv` 只在检查期生效——C 的 struct 没有可见性这一说。
+     */
+    val control: ControlType = ControlType.DEFAULT,
 ) : Node
 
 /**

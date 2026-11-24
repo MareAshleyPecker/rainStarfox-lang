@@ -4699,9 +4699,40 @@ class Checker(
         return null
     }
 
+    /**
+     * 字段可见性（阶段 79）：`prv` 只许本类用，`prot` 许本类与子类用。
+     *
+     * 和方法不同，字段的可见性是**声明处**说了算（方法还允许 override 放宽），
+     * 所以这里不需要沿父链合并，只要拿声明它的那个类跟当前类比一比。
+     * 报错文案里给出路：要公开就改 `pub`，或者给它写属性访问器（阶段 79 的属性）。
+     */
+    private fun checkFieldVisible(owner: ClassInfo, field: FieldDecl, at: SourceLine) {
+        val here = currentClass
+        when (field.control) {
+            ControlType.PRIVATE -> {
+                if (here === owner) return
+                throw err(
+                    "'${field.name}' 是类 '${owner.decl.name}' 的 prv 字段，只能在这个类内部使用。" +
+                        "要让外面也能读，把它改成 prot 或 pub，或者给它写属性访问器" +
+                        "（'pub var ${field.name} : 类型 = 初值 { get }'）",
+                    at,
+                )
+            }
+            ControlType.PROTECTED -> {
+                val allowed = here != null && (here === owner || ancestorsOf(here).any { it === owner })
+                if (allowed) return
+                throw err(
+                    "'${field.name}' 是类 '${owner.decl.name}' 的 prot 字段，只有它自己和它的子类能用。" +
+                        "要让外面也能读，把它改成 pub",
+                    at,
+                )
+            }
+            else -> return
+        }
+    }
+
     /** JDK 父类链上的实例字段（G5）；没有就是 null。 */
-    private fun inheritedJvmField(info: ClassInfo, name: String): JvmField? {
-        val jvm = jvmParentOf(info) ?: return null
+    private fun inheritedJvmField(info: ClassInfo, name: String): JvmField? {        val jvm = jvmParentOf(info) ?: return null
         return resolver.findField(jvm.internalName, name, wantStatic = false)
     }
 
@@ -4748,6 +4779,7 @@ class Checker(
             }
             val (owner, field) = found
             checkMemberVisible(owner, expr.name, expr.at)
+            checkFieldVisible(owner, field, expr.at)
             // 字段声明在祖先上时，要把接收者的实参一路代换到**声明类**那一层（G4）：
             // `class IntHolder : Holder&<Int>` 的 `h.v` 是 Int，不是 Holder 的 T。
             val member = fieldMember(info, field, substitutionAlongChain(info, subst, owner))

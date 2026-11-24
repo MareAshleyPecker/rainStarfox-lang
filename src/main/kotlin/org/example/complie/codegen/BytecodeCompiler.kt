@@ -1002,7 +1002,7 @@ class BytecodeCompiler(
         val fieldTypes = fieldTypesOf(decl)
         for ((i, f) in decl.fields.withIndex()) {
             val type = fieldTypes.getOrElse(i) { RsfType.INT }
-            val fv = cw.visitField(ACC_PUBLIC, f.name, descriptorOfType(type), null, null)
+            val fv = cw.visitField(accessOfField(f.control), f.name, descriptorOfType(type), null, null)
             // 字段级注解使用点：写在 fv.visitEnd() 之前
             emitUseSites({ descriptor, visible -> fv.visitAnnotation(descriptor, visible) }, f)
             fv.visitEnd()
@@ -1960,6 +1960,13 @@ class BytecodeCompiler(
     }
 
     private fun accessOf(fn: FuncDecl): Int = when (fn.control) {
+        ControlType.PRIVATE -> ACC_PRIVATE
+        ControlType.PROTECTED -> ACC_PROTECTED
+        ControlType.PUBLIC, ControlType.DEFAULT -> ACC_PUBLIC
+    }
+
+    /** 字段的访问标志（阶段 79）：`prv`/`prot`/`pub` → `ACC_PRIVATE`/`ACC_PROTECTED`/`ACC_PUBLIC`。 */
+    private fun accessOfField(control: ControlType): Int = when (control) {
         ControlType.PRIVATE -> ACC_PRIVATE
         ControlType.PROTECTED -> ACC_PROTECTED
         ControlType.PUBLIC, ControlType.DEFAULT -> ACC_PUBLIC
