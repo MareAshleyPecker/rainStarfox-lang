@@ -33,6 +33,36 @@ class CBackendTest {
     }
 
     @Test
+    fun `memBytes 与 memPeak 摊成运行时统计`() {
+        val backend = nativeBackend(
+            """
+            target native
+            fn main() -> void {
+                println(memBytes())
+                println(memPeak())
+            }
+            """.trimIndent(),
+            withEntry = true,
+        )
+        val c = backend.emit()
+        assertTrue(c.contains("rsf_mem_bytes()"), c)
+        assertTrue(c.contains("rsf_mem_peak()"), c)
+        // 计数器必须在分配路径上真的被加：只声明不累加的话 memBytes 永远是 0。
+        // 运行时（含 arena）已拆到 rsf_runtime.h，所以这里查 runtimeLibSource()。
+        val runtime = backend.runtimeLibSource()
+        assertTrue(runtime.contains("static inline int64_t rsf_mem_bytes(void)"), runtime)
+        assertTrue(runtime.contains("a->used += pad + need;"), runtime)
+        assertTrue(runtime.contains("if (a->used > a->peak) a->peak = a->used;"), runtime)
+    }
+
+    @Test
+    fun `memBytes 在 JVM 目标里被检查期挡住`() {
+        val source = SourceFile.of("c.kt", "fn main() -> void { println(memBytes()) }")
+        val e = assertThrows<RsfError> { Rsf.analyze(source) }
+        assertTrue(e.message!!.contains("只有 native 侧"), e.message!!)
+    }
+
+    @Test
     fun `库模式不生成 main`() {
         val source = SourceFile.of(
             "lib.kt",

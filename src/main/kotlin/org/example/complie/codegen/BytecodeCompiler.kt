@@ -4467,6 +4467,13 @@ class BytecodeCompiler(
                 false,
             )
 
+            // 只有 native 侧才有（阶段 77 步骤 0）：Checker 在 JVM 目标里已经拦掉，
+            // 走到这里说明是 `target native` 却要出字节码，明确报错而不是内部错误。
+            "memBytes", "memPeak" -> throw RsfError(
+                "build",
+                "'${builtin.name}' 只有 native 侧才有，字节码后端产不出：用 'rsf build --c' 编这份文件",
+            )
+
             else -> throw IllegalStateException("内部错误：没实现的内置函数 '${builtin.name}'")
         }
     }

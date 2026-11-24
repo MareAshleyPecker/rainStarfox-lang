@@ -1232,6 +1232,8 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
         }
         when (e.name) {
             "intToString" -> return "rsf_int_to_str(${expr(e.arguments[0])})"
+            "memBytes" -> return "rsf_mem_bytes()"
+            "memPeak" -> return "rsf_mem_peak()"
             "stringBytes" -> return "rsf_str_bytes(${expr(e.arguments[0])})"
             "charToInt" -> return "((int32_t)${expr(e.arguments[0])})"
             "toChar" -> return "((uint16_t)${expr(e.arguments[0])})"
@@ -1967,6 +1969,8 @@ typedef struct rsf_arena_block {
 typedef struct rsf_arena {
     rsf_arena_block* head;
     size_t blockSize;
+    size_t used;    /* 所有块已用字节之和（可观测用） */
+    size_t peak;    /* 上次 reset 之后的峰值 */
 } rsf_arena;
 
 extern rsf_arena rsf_ctx_arena;
@@ -1989,6 +1993,8 @@ static inline void* rsf_arena_alloc(void* user, size_t size, size_t align) {
         size_t pad = (size_t)(((at + (align - 1)) & ~(align - 1)) - at);
         if (b->used + pad + need <= b->cap) {
             b->used += pad + need;
+            a->used += pad + need;
+            if (a->used > a->peak) a->peak = a->used;
             return (void*)(d + b->used - need);
         }
     }
@@ -2005,6 +2011,8 @@ static inline void* rsf_arena_alloc(void* user, size_t size, size_t align) {
             nb->cap = cap;
             a->head = nb;
         }
+        a->used += need;
+        if (a->used > a->peak) a->peak = a->used;
         return (void*)((unsigned char*)(nb + 1) + nb->start);
     }
 }
@@ -2021,6 +2029,8 @@ static inline void* rsf_arena_resize(void* user, void* ptr, size_t oldSize, size
             if ((unsigned char*)ptr + oldSize == d + b->used &&
                 b->used + (newSize - oldSize) <= b->cap) {
                 b->used += newSize - oldSize;
+                a->used += newSize - oldSize;
+                if (a->used > a->peak) a->peak = a->used;
                 return ptr;
             }
         }
@@ -2046,6 +2056,8 @@ static inline void rsf_arena_reset(rsf_arena* a) {
         b = n;
     }
     a->head = NULL;
+    a->used = 0;
+    a->peak = 0;
 }
 
 /* ---- 当前上下文 ---- */
@@ -2084,6 +2096,23 @@ static inline void rsf_ctx_init(rsf_ctx* c, rsf_allocator a) {
 
 static inline void rsf_ctx_use(rsf_ctx* c) {
     rsf_ctx_cur = c;
+}
+
+/* ---- 可观测（阶段 77 步骤 0）：只统计默认 arena；宿主换了分配器就返回 -1 ----
+ * 用途：`memBytes()` / `memPeak()` 内置函数，以及压力测试里断言「回调不涨内存」。
+ * 注意 arena 不做单块回收，所以 used 只增不减，直到 rsf_arena_reset（进程退出
+ * 或宿主显式调用）才归零。
+ */
+static inline int64_t rsf_mem_bytes(void) {
+    rsf_ctx* c = rsf_ctx_get();
+    if (c->alloc.alloc != rsf_arena_alloc) return -1;
+    return (int64_t)((rsf_arena*)c->alloc.user)->used;
+}
+
+static inline int64_t rsf_mem_peak(void) {
+    rsf_ctx* c = rsf_ctx_get();
+    if (c->alloc.alloc != rsf_arena_alloc) return -1;
+    return (int64_t)((rsf_arena*)c->alloc.user)->peak;
 }
 
 /* ---- 分配器入口：生成代码与运行时都走这里 ---- */

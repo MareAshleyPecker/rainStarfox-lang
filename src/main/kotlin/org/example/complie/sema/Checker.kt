@@ -7115,6 +7115,13 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
     }
 
     private fun checkBuiltinCall(expr: CallExpr, builtin: Builtin): RsfType {
+        if (builtin.nativeOnly && currentTarget != BuildTarget.NATIVE && program.target != BuildTarget.NATIVE) {
+            throw err(
+                "'${builtin.name}' 只有 native 侧才有：它读的是 native 运行时的内存统计，" +
+                    "JVM 侧由 JVM 自己管堆。把所在声明标成 'native'，或在这份文件头写 'target native'。",
+                expr.at,
+            )
+        }
         if (builtin.vararg) {
             if (expr.arguments.size < builtin.params.size) {
                 throw err(

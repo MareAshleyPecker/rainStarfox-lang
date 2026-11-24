@@ -37,6 +37,11 @@ class Builtin(
     val helperDesc: String? = null,
     /** 最后一个形参可以重复：`jvmCall("类", "方法", 参数…)` 的参数个数不固定。 */
     val vararg: Boolean = false,
+    /**
+     * 只有 native 目标才有：JVM 侧由 JVM 自己管堆，这些函数没有对应物。
+     * 在 JVM 目标里调用会让 Checker 直接报错（阶段 77 步骤 0）。
+     */
+    val nativeOnly: Boolean = false,
 ) {
     /** `charAt(Int) -> Char` 这种可读签名（可能失败的带 `!`）。补全列表也用它。 */
     fun display(): String {
@@ -187,12 +192,32 @@ object Builtins {
         vararg = true,
     )
 
+    // ------------------------------------------------------------- 运行时可观测（阶段 77 步骤 0）
+
+    /**
+     * `memBytes() -> Long`：native 运行时（默认 arena）当前占用的字节数。
+     *
+     * arena 不做单块回收，所以这个数是**单调增长**的，只有 `rsf_arena_reset`
+     * （进程退出或宿主显式调用）才归零。宿主用 `rsf_ctx_init` 注入了自己的分配器时返回 `-1`。
+     */
+    val MEM_BYTES = Builtin(
+        "memBytes", emptyList(), RsfType.LONG, nativeOnly = true,
+        doc = "native 侧当前占用的字节数（arena，只增不减；宿主自备分配器时返回 -1）",
+    )
+
+    /** `memPeak() -> Long`：上次 reset 之后的峰值占用。 */
+    val MEM_PEAK = Builtin(
+        "memPeak", emptyList(), RsfType.LONG, nativeOnly = true,
+        doc = "native 侧峰值占用（上次 reset 之后的最大值；宿主自备分配器时返回 -1）",
+    )
+
     /** 带签名的内置函数（`print` / `println` 是单参数特例，签名不在这里表达）。 */
     val ALL: List<Builtin> = listOf(
         TO_BYTE, TO_CHAR, CHAR_TO_INT, INT_TO_STRING, PARSE_INT,
         IS_DIGIT, IS_LETTER, IS_WHITESPACE, TO_UPPER, TO_LOWER, STRING_BYTES,
         READ_TEXT, WRITE_TEXT, READ_BYTES, WRITE_BYTES,
         JVM_CALL, JVM_NEW, JVM_CALL_ON,
+        MEM_BYTES, MEM_PEAK,
     )
 
     private val BY_NAME: Map<String, Builtin> = ALL.associateBy { it.name }

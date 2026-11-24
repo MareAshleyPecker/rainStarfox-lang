@@ -129,6 +129,29 @@ RSF_JVM_CP=out out/x.exe      # → java:bob
 
 类路径用 `RSF_JVM_CP`（缺省 `.`）；`jvm.dll` 从 `RSF_JVM_DLL` / `$JAVA_HOME/bin/server/jvm.dll` / PATH 找。构造器只收 `String` 参数，句柄上限 256 个；JVM 构建里这三个内置函数都会报错（那边直接调 Java 就行）。细节见 `design/DESIGN-62.md`。
 
+### 看 native 吃了多少内存（`memBytes` / `memPeak`）
+
+native 侧默认分配器是 arena（只增不减，进程退出才整块还回去），所以"到底涨了多少"得能自己读：
+
+```rsf
+target native
+
+fn main() -> void {
+    var s = "x"
+    var i = 0
+    while (i < 200) {
+        s = s + "abcdefghij"
+        i = i + 1
+    }
+    val peak = memPeak()          // 先取再打：拼接自己也会分配
+    val now = memBytes()
+    println("peak=" + peak)       // peak=202810
+    println("now=" + now)         // now=202810
+}
+```
+
+两个函数返回 `Long`，只有 native 侧有（JVM 构建里检查期就报 `只有 native 侧才有`）；宿主用 `rsf_ctx_init` 换了自己的分配器时返回 `-1`。它们只读计数、不改分配行为——要真正的回收得等 `design/DESIGN-77.md` 的步骤 B/C。
+
 ## C 后端（native 线）
 
 `rsf build x.rsf --c -o out` 把整份程序摊成**一个 C99 文件**，自带运行时（字符串拼接、`print`/`println`、`intToString`），不依赖任何 rsf 库：
@@ -139,7 +162,7 @@ gcc out\hello.c -o out\hello.exe
 ```
 
 - 已支持：Int / Long / Bool / String、一维数组、类（字段 / 实例方法 / `stc` 静态方法 / 主次构造 / 单继承与覆盖，虚表分派）、接口（默认方法与虚表回落）、枚举与 `switch`（Int/Long/String 字面量、一个分支可写多个值）、指针（`T*` / `&x` / `&o.f` / `&a[i]` / `*p` / `*p = v` / `p + n`）、顶层函数、`if` / `while` / `for` / 递归。
-- 还没接：JDK 接口 / JDK 父类、泛型、多维数组、浮点、错误返回——遇到会报 `error[native]`。
+- 还没接：JDK 接口 / JDK 父类、泛型、lambda、多维数组、浮点参与字符串拼接、`goto` / 标签——遇到会报 `error[native]`。
 - 判据：解释器 stdout vs 原生 exe stdout 逐字节相同（`bash build/verify52/run-probes.sh all`，16 份语料）。
 
 ### 构建目标：native / jvm

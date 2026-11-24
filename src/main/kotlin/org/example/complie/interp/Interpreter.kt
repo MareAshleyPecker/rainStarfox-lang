@@ -2264,6 +2264,12 @@ class Interpreter(
                 null
             }
 
+            // 只有 native 侧才有（阶段 77 步骤 0）：Checker 在 JVM 目标里已经拦掉，
+            // 走到这里说明是 `target native` 却在解释器里跑，给出明确消息而不是内部错误。
+            "memBytes", "memPeak" -> throw RsfFailure(
+                "'${builtin.name}' 只有 native 侧才有：解释器跑在 JVM 上，内存统计由 JVM 管",
+            )
+
             else -> throw IllegalStateException("内部错误：没实现的内置函数 '${builtin.name}'")
         }
     }
