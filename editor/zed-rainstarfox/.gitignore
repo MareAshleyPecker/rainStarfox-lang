@@ -1,3 +1,5 @@
 /target
 # Zed clones the grammar git repo into this directory at install time.
 /grammars
+# 手工复制到扩展根目录的编译产物；Zed 安装时会自己编，不用入库。
+/extension.wasm

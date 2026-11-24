@@ -159,11 +159,12 @@ tree-sitter parse --stat $files
 - `op` 是软关键字，按普通标识符处理，不做关键字高亮；`default`、`target` 不是关键字。
 - 服务端未实现格式化、workspace symbol，扩展也没有对应配置。
 - `src/lib.rs` 里 jar 路径固定为 `build/libs/rainStarfox-0.9.0.jar`，版本升级需改常量（或改这里改成扫描目录）。
-- 扩展的 wasm 编译未在本机端到端验证（本机 `rustup target list --installed` 只有
-  `x86_64-pc-windows-msvc`，执行 `cargo build --target wasm32-wasip1` 前必须先装 target）。
+- 扩展的 wasm 已在 `wasm32-wasip1` 上编过（`cargo build --release --target wasm32-wasip1` →
+  `target/wasm32-wasip1/release/zed_rainstarfox.wasm`，113 827 字节），但**没有在 Zed 里实际装起来跑过**：
+  安装步骤（命令面板选目录、日志排查）仍未端到端验证。
   已验证的部分：`tree-sitter generate --abi 14` 零冲突、61/61 个 `.rsf` 解析通过、4 个 `.scm`
   查询编译通过、3 个 TOML 可被 `tomllib` 解析、`rustfmt --check` 与 `cargo metadata` 通过、
   以及用 `build\tmp_zed\zsim` 完整模拟了 Zed 的 grammar 安装流程（`file://` + `git fetch --depth 1
   origin <rev>` + `git checkout <rev>` 后 checkout 内含 `src/parser.c`）。
-- 如果 Zed 日志里 grammar 编译失败，先确认 `extension.toml` 的 `rev` 是 `languages\rsf` 里**已提交**
-  的哈希（`git -C languages\rsf cat-file -e <rev>` 应成功），且该提交包含 `src\parser.c`。
+- 如果 Zed 日志里 grammar 编译失败，先确认 `extension.toml` 的 `rev` 对应的提交里**有**
+  `editor/zed-rainstarfox/languages/rsf/src/parser.c`（`git cat-file -e <rev>:editor/zed-rainstarfox/languages/rsf/src/parser.c` 应成功）。
