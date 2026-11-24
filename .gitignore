@@ -241,3 +241,6 @@ bin/
 !/build/verify69/**/*.c
 !/build/verify69/**/*.sh
 !/build/verify69/**/*.md
+
+### 性能剖析产物（gprof）不入库 ###
+gmon.out

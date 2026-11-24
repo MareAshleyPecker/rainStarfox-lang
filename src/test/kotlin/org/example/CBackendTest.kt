@@ -487,10 +487,15 @@ class CBackendTest {
         assertTrue(lib.contains("r.len = b - a; r.data = (char*)s.data + a;"), lib.take(200))
         // 码元数缓存：units1 = 码元数 + 1（0 = 还不知道），字面量与拼接在创建时就算好
         assertTrue(lib.contains("static inline int64_t rsf_u16_len_of(rsf_str s) {"), lib.take(200))
-        assertTrue(lib.contains("return s.units1 > 0 ? s.units1 - 1 : rsf_u16_len(s.data, s.len);"), lib.take(200))
+        assertTrue(lib.contains("if (s.units1 > 0) return s.units1 - 1;"), lib.take(200))
+        // 非 ASCII 的长串走码元表缓存，charAt / length 才不会是 O(n)
+        assertTrue(lib.contains("#define RSF_CP_MIN_LEN 256"), lib.take(200))
+        assertTrue(lib.contains("static inline rsf_cp_entry* rsf_cp_build(rsf_str s) {"), lib.take(200))
+        assertTrue(lib.contains("e->cps[u++] = 0xD800u + (v >> 10);"), lib.take(200))
+        assertTrue(lib.contains("rsf_cp_clear();   /* 扫掉的串可能就在码元表里 */"), lib.take(200))
         assertTrue(lib.contains("static inline rsf_str rsf_str_lit_u(const char* data, int64_t len, int64_t units1) {"), lib.take(200))
         assertTrue(lib.contains("s.units1 = (a.units1 > 0 && b.units1 > 0) ? a.units1 + b.units1 - 1 : 0;"), lib.take(200))
-        assertTrue(lib.contains("r.units1 = rsf_u16_len(r.data, r.len) + 1;"), lib.take(200))
+        assertTrue(lib.contains("r.units1 = (s.units1 > 0 && s.units1 - 1 == s.len) ? (r.len + 1) : 0;"), lib.take(200))
         // 切在代理对中间时 native 外扩到码点（UTF-8 存不下孤立代理项），注释要留着
         assertTrue(lib.contains("native 侧的"), lib.take(200))
         assertTrue(lib.contains("只以码点边界收尾，永远不产生非法 UTF-8"), lib.take(200))

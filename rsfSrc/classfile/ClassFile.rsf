@@ -165,29 +165,48 @@ pub class Buf {
 }
 
 // JVM 类文件里的字符串用「修改版 UTF-8」：0 写成 C0 80，代理对每个码元各 3 字节。
+// 常量池里的字符编码是「modified UTF-8」：按 UTF-16 码元编码，不是按 UTF-8 字节抄。
+// 两条与普通 UTF-8 不同：
+//   1. U+0000 写成 C0 80（两个字节），否则串会被截断；
+//   2. BMP 外的字符（emoji）拆成两个代理项各写三个字节（CESU-8），
+//      直接写 4 字节标准 UTF-8 会报 `ClassFormatError: Illegal UTF8 string in constant pool`。
+fn mutfUnitLen(u : Int) -> Int {
+    if (u == 0) { rtn 2 }
+    if (u < 128) { rtn 1 }
+    if (u < 2048) { rtn 2 }
+    rtn 3
+}
+
 fn mutfLen(s : String) -> Int {
-    // 常量池里的 UTF-8 是「modified UTF-8」：BMP 上与普通 UTF-8 逐字节相同，
-    // 只有 U+0000 例外——必须写成 C0 80（两个字节），否则 JVM 报
-    // `ClassFormatError: Illegal UTF8 string in constant pool`。
-    var bs = stringBytes(s)
     var i = 0
     var n = 0
-    while (i < bs.length) {
-        if ((bs[i] + 0) == 0) { n = n + 2 } else { n = n + 1 }
+    while (i < s.length()) {
+        n = n + mutfUnitLen(charToInt(s.charAt(i)))
         i = i + 1
     }
     rtn n
 }
 
 fn mutfWrite(b : Buf, s : String) -> void {
-    var bs = stringBytes(s)
     var i = 0
-    while (i < bs.length) {
-        if ((bs[i] + 0) == 0) {
+    while (i < s.length()) {
+        var u = charToInt(s.charAt(i))
+        if (u == 0) {
             b.u1(192)
             b.u1(128)
         } else {
-            b.u1(bs[i] + 0)
+            if (u < 128) {
+                b.u1(u)
+            } else {
+                if (u < 2048) {
+                    b.u1(192 + (u / 64))
+                    b.u1(128 + (u % 64))
+                } else {
+                    b.u1(224 + (u / 4096))
+                    b.u1(128 + ((u / 64) % 64))
+                    b.u1(128 + (u % 64))
+                }
+            }
         }
         i = i + 1
     }

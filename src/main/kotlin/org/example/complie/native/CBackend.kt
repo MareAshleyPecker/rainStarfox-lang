@@ -1946,7 +1946,30 @@ rsf_ctx rsf_ctx_default;
          * 交给 rsf_ctx_init（宿主持有上下文，运行时不做任何分配）。
          * checkRuntimeLib() 会盯住“分配点不要绕开分配器”。
          */
-        private val FIX_FUNCS = """/* ---- arena：默认分配器（bump 分配，整块释放；不做单块回收）----
+        private val FIX_FUNCS = """/* ---- 码元表缓存：非 ASCII 的长串按下标访问时建一张「码元下标 → 字符」表 ----
+ * 只在 >= 256 字节的串上用（源码、读进来的文件），最多 64 条；命中后 charAt / length 都是 O(1)。
+ * 不用 rsf_malloc：开启 gc on 时那是 GC 堆，缓存是 C 全局链表、GC 扫不到栈外引用，
+ * 会被提前回收。arena reset 与 GC 回收时都要 rsf_cp_clear()。
+ */
+#define RSF_CP_MIN_LEN 256
+#define RSF_CP_MAX_ENTRIES 64
+typedef struct rsf_cp_entry {
+    const char* data; int64_t len; int64_t units;
+    uint32_t* cps; struct rsf_cp_entry* next;
+} rsf_cp_entry;
+static rsf_cp_entry* rsf_cp_head = NULL;
+static int64_t rsf_cp_count = 0;
+
+static void* rsf_cp_raw_alloc(size_t n) { return malloc(n); }
+static void  rsf_cp_raw_free(void* p) { free(p); }
+
+static void rsf_cp_clear(void) {
+    rsf_cp_entry* e = rsf_cp_head;
+    while (e != NULL) { rsf_cp_entry* nx = e->next; rsf_cp_raw_free(e->cps); rsf_cp_raw_free(e); e = nx; }
+    rsf_cp_head = NULL; rsf_cp_count = 0;
+}
+
+/* ---- arena：默认分配器（bump 分配，整块释放；不做单块回收）----
  * 语义跟 Zig 的 ArenaAllocator 一样：分配只增不改，reset/free 一次性归还。
  * `free` 是空操作——这既是它的优点（几乎零开销），也是它的契约：
  * 长驻代码必须在循环里手动 reset，或者换一个真正的分配器（rsf_ctx_init）。
@@ -2050,6 +2073,7 @@ static inline void rsf_arena_reset(rsf_arena* a) {
     a->head = NULL;
     a->used = 0;
     a->peak = 0;
+    rsf_cp_clear();   /* 串的字节被整块还回去了，码元表跟着作废 */
 }
 
 /* ---- 当前上下文 ---- */
@@ -2363,6 +2387,7 @@ static bool rsf_gc_cycle(void) {
     }
     free(spans);
     rsf_gc_busy = false;
+    rsf_cp_clear();   /* 扫掉的串可能就在码元表里 */
     rsf_gc_cycles++;
     return true;
 }
@@ -2544,8 +2569,16 @@ static inline void* rsf_grow(void* ptr, size_t oldSize, size_t newSize) {
                 if (!rsf_err) { rsf_err = true; rsf_err_msg = msg; }
             }
 
+            /* 把码元数补上（就这一次 O(n)），之后 length() / charAt 都是 O(1)。
+             * 纯 ASCII 时「码元数 == 字节数」，charAt 可以直接按下标取字节。 */
+            static int64_t rsf_u16_len(const char* data, int64_t n);
+            static rsf_str rsf_str_settle(rsf_str s) {
+                if (s.units1 <= 0 && s.data != NULL && s.len > 0) { s.units1 = rsf_u16_len(s.data, s.len) + 1; }
+                return s;
+            }
+
             static rsf_str rsf_str_c(const char* s) {
-                rsf_str r = {0, 0, NULL}; r.data = s; r.len = (int64_t)strlen(s); return r;
+                rsf_str r = {0, 0, NULL}; r.data = s; r.len = (int64_t)strlen(s); return rsf_str_settle(r);
             }
 
             static rsf_str rsf_str_null(void) {
@@ -2593,6 +2626,44 @@ static inline void* rsf_grow(void* ptr, size_t oldSize, size_t newSize) {
                 return units;
             }
 
+            /* 长串的码元表：命中就 O(1)，没命中就建一张（一次 O(n)）。 */
+            static rsf_cp_entry* rsf_cp_find(rsf_str s) {
+                rsf_cp_entry* e = rsf_cp_head;
+                while (e != NULL) {
+                    if (e->data == s.data && e->len == s.len) return e;
+                    e = e->next;
+                }
+                return NULL;
+            }
+
+            static rsf_cp_entry* rsf_cp_build(rsf_str s) {
+                int64_t units = rsf_u16_len(s.data, s.len);
+                const unsigned char* p = (const unsigned char*)s.data;
+                int64_t at = 0, u = 0;
+                rsf_cp_entry* e;
+                if (units <= 0) return NULL;
+                if (rsf_cp_count >= RSF_CP_MAX_ENTRIES) rsf_cp_clear();
+                e = (rsf_cp_entry*)rsf_cp_raw_alloc(sizeof(rsf_cp_entry));
+                if (e == NULL) return NULL;
+                e->cps = (uint32_t*)rsf_cp_raw_alloc((size_t)units * sizeof(uint32_t));
+                if (e->cps == NULL) { rsf_cp_raw_free(e); return NULL; }
+                e->data = s.data; e->len = s.len; e->units = units;
+                while (at < s.len) {
+                    int64_t step = rsf_u16_step(p + at, s.len - at);
+                    uint32_t cp = rsf_u16_cp(p + at, step);
+                    if (cp > 0xFFFF) {
+                        uint32_t v = cp - 0x10000u;
+                        e->cps[u++] = 0xD800u + (v >> 10);
+                        e->cps[u++] = 0xDC00u + (v & 0x3FFu);
+                    } else {
+                        e->cps[u++] = cp;
+                    }
+                    at += step;
+                }
+                e->next = rsf_cp_head; rsf_cp_head = e; rsf_cp_count++;
+                return e;
+            }
+
             /* 码元下标 → 字节偏移（超出末尾就停在末尾） */
             static int64_t rsf_u16_to_byte(const char* data, int64_t n, int64_t units) {
                 const unsigned char* p = (const unsigned char*)data;
@@ -2612,7 +2683,12 @@ static inline void* rsf_grow(void* ptr, size_t oldSize, size_t newSize) {
             /* 码元数：字面量与拼接在创建时就算好（units1 = 码元数 + 1），
              * 其余来源（文件、trim、大小写转换…）留 0，这里退化成数一遍。 */
             static int64_t rsf_u16_len_of(rsf_str s) {
-                return s.units1 > 0 ? s.units1 - 1 : rsf_u16_len(s.data, s.len);
+                rsf_cp_entry* e;
+                if (s.units1 > 0) return s.units1 - 1;
+                if (s.len < RSF_CP_MIN_LEN) return rsf_u16_len(s.data, s.len);
+                e = rsf_cp_find(s);
+                if (e == NULL) e = rsf_cp_build(s);
+                return e != NULL ? e->units : rsf_u16_len(s.data, s.len);
             }
 
             static int32_t rsf_str_len(rsf_str s) { return (int32_t)rsf_u16_len_of(s); }
@@ -2632,6 +2708,18 @@ static inline void* rsf_grow(void* ptr, size_t oldSize, size_t newSize) {
                 const unsigned char* p = (const unsigned char*)s.data;
                 int64_t at = 0, unit = 0;
                 if (i < 0) return 0;
+                /* 码元数 == 字节数 ⇒ 全是 ASCII，码元下标就是字节下标（自举词法器全靠这条） */
+                if (s.units1 > 0 && s.units1 - 1 == s.len) {
+                    if ((int64_t)i >= s.len) return 0;
+                    return (uint16_t)(unsigned char)s.data[i];
+                }
+                /* 非 ASCII 的长串走码元表：自举编自己时源文件带中文注释，逐个 charAt
+                 * 现扫 UTF-8 会退化成 O(n²)（实测从 1 秒涨到两分钟以上）。 */
+                if (s.len >= RSF_CP_MIN_LEN) {
+                    rsf_cp_entry* e = rsf_cp_find(s);
+                    if (e == NULL) e = rsf_cp_build(s);
+                    if (e != NULL) return ((int64_t)i < e->units) ? (uint16_t)e->cps[i] : 0;
+                }
                 while (at < s.len) {
                     int64_t step = rsf_u16_step(p + at, s.len - at);
                     uint32_t cp = rsf_u16_cp(p + at, step);
@@ -2664,7 +2752,10 @@ static inline void* rsf_grow(void* ptr, size_t oldSize, size_t newSize) {
                 b = rsf_u16_to_byte(s.data, s.len, to);
                 rsf_str r = {0, 0, NULL};
                 r.len = b - a; r.data = (char*)s.data + a;
-                r.units1 = rsf_u16_len(r.data, r.len) + 1;
+                /* 码元数不在这里数：切一次数一遍会让「每认一个 token 切一刀」退化成 O(n²)
+                 * （实测自举编自己从 1 秒涨到两分钟以上）。只有父串已知是纯 ASCII 时
+                 * 才能 O(1) 推出来（ASCII 里码元数就是字节数），否则留 0 让 length() 现数。 */
+                r.units1 = (s.units1 > 0 && s.units1 - 1 == s.len) ? (r.len + 1) : 0;
                 return r;
             }
 
@@ -2831,7 +2922,7 @@ static inline void* rsf_grow(void* ptr, size_t oldSize, size_t newSize) {
                 if (!b) { rsf_set_err(rsf_str_c("readText: 文件读不出来")); }
                 rsf_str s = {0, 0, NULL};
                 s.len = n; s.data = b;
-                return s;
+                return rsf_str_settle(s);   /* 读一次数一遍，之后按下标扫才是 O(1) */
             }
 
             static rsf_arr rsf_read_bytes(rsf_str path) {
