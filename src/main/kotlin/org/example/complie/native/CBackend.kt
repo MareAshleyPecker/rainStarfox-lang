@@ -1923,7 +1923,7 @@ typedef struct rsf_allocator {
  *
  * 最短实现（保守 mark-sweep）：alloc/resize/free 里记账，collect 里从根开始扫。
  * 保守 GC 需要「根 = 线程栈上的指针 + 全局变量」，栈边界用平台 API 自己取
- * （Windows: NtCurrentTeb()->StackBase / StackLimit；Linux: pthread_getattr_np），
+ * （Windows: TIB 的 StackBase / StackLimit；Linux: pthread_getattr_np），
  * 运行时**不替你猜**，因为它不该长平台头文件的依赖。
  *
  * 只填 collect 也能用：那时 memBytes()/memPeak() 会返回 -1（不知道你占了多少），
@@ -2143,6 +2143,75 @@ static inline bool rsf_gc_collect(void) {
     return true;
 }
 
+/* ---- 栈边界：给保守 GC 用，**不碰任何平台 API** ----
+ * 做法是「锚点」：线程起来后调一次 rsf_gc_thread_attach()，它把当前帧地址记成 anchor
+ * （栈的**高地址**端，因为栈向下长）；分配器每次 rsf_alloc / rsf_grow 顺手把当时帧地址
+ * 记进 sp（低地址端）。当前线程的栈区间就是 [sp, anchor]。
+ *
+ * 为什么不用 NtCurrentTeb / pthread_getattr_np / pthread_get_stackaddr_np：
+ * 那些是**别的线程**的边界，只有等你把对方停住之后才有意义；而「停线程」在 JVM 宿主里
+ * 是事故源（JVM 自己用信号做安全点）。rsf 走协作式：每个线程在分配点自己发布 sp，GC 只
+ * 扫发布过的区间——不需要暂停、不需要信号、不需要平台头文件，Windows / Linux / Android /
+ * macOS 同一份代码。
+ *
+ * 约束（明写，不做隐藏假设）：可能持有 rsf 对象引用的线程，起来后必须调一次 attach。
+ * 唯一的盲区是「从不分配、却攥着别人给的引用」的线程——那种线程在 rsf 里不现实（任何 rsf
+ * 函数调用都可能分配）；真遇到就让它调一次 gcCollect()，那就有了发布点。
+ */
+extern RSF_TLS void* rsf_gc_anchor;
+extern RSF_TLS void* rsf_gc_sp;
+#ifdef RSF_RUNTIME_IMPL
+RSF_TLS void* rsf_gc_anchor = NULL;
+RSF_TLS void* rsf_gc_sp = NULL;
+#endif
+
+/* 不能内联：这几个函数要靠自己的栈帧当边界。内联进调用者之后，「当前帧」和「锚点」
+ * 落到同一帧里，谁高谁低就变成编译器的自由了（实测 -O1 下会反）。 */
+#if defined(_MSC_VER)
+#  define RSF_NOINLINE __declspec(noinline)
+#elif defined(__GNUC__) || defined(__clang__)
+#  define RSF_NOINLINE __attribute__((noinline))
+#else
+#  define RSF_NOINLINE
+#endif
+
+RSF_NOINLINE static void rsf_gc_thread_attach_at(void* anchor) {
+    rsf_gc_anchor = anchor;
+    rsf_gc_sp = anchor;
+}
+
+/* 用宏而不是函数：锚点必须是**调用者自己**的帧地址。写成函数的话，记下来的是 attach
+ * 自己的帧（比调用者低一格），GC 在调用者帧里跑时区间就反了——那是真的会漏扫。 */
+#define rsf_gc_thread_attach()                                                    \
+    do {                                                                          \
+        char rsf_gc_anchor_local_;                                                \
+        rsf_gc_thread_attach_at((void*)&rsf_gc_anchor_local_);                    \
+    } while (0)
+
+static inline void rsf_gc_thread_detach(void) {
+    rsf_gc_anchor = NULL;
+    rsf_gc_sp = NULL;
+}
+
+/* 当前线程的栈区间：*lo 低地址（往里扫的起点），*hi 高地址（anchor）。
+ * 没 attach 过、或者区间反了（GC 在比 anchor 更浅的帧里跑）就返回 false——
+ * 返回 false 时 GC 该把这条线程当成「不持有对象」，而不是猜个范围乱扫。 */
+RSF_NOINLINE static bool rsf_gc_stack_bounds(void** lo, void** hi) {
+    char here;
+    uintptr_t low;
+    uintptr_t high;
+    const uintptr_t step = (uintptr_t)sizeof(void*);
+    if (rsf_gc_anchor == NULL) return false;
+    low = (rsf_gc_sp != NULL && rsf_gc_sp < (void*)&here) ? (uintptr_t)rsf_gc_sp : (uintptr_t)&here;
+    high = (uintptr_t)rsf_gc_anchor;
+    if (!(low < high)) return false;
+    /* 对到指针宽度的边界再交出去：栈上取到的地址不一定是 8 的倍数，
+     * 调用者按 sizeof(void*) 步长扫时，没对齐会把紧挨着的那个槽跳过去。 */
+    *lo = (void*)(low & ~(step - 1));
+    *hi = (void*)(high & ~(step - 1));
+    return true;
+}
+
 static inline void rsf_ctx_use(rsf_ctx* c) {
     rsf_ctx_cur = c;
 }
@@ -2168,7 +2237,9 @@ static inline int64_t rsf_mem_peak(void) {
 
 /* ---- 分配器入口：生成代码与运行时都走这里 ---- */
 static inline void* rsf_alloc(size_t n) {
+    char rsf_gc_here;
     rsf_ctx* c = rsf_ctx_get();
+    rsf_gc_sp = (void*)&rsf_gc_here;  /* 发布栈指针：保守 GC 扫 [sp, anchor] 就够了 */
     void* p = c->alloc.alloc(c->alloc.user, n < 1 ? 1 : n, 16);
     if (!p) {
         fprintf(stderr, "rsf: 内存不足（%zu 字节）", n);
@@ -2200,8 +2271,10 @@ static inline void* rsf_calloc(size_t count, size_t elem) {
 static inline void* rsf_grow(void* ptr, size_t oldSize, size_t newSize) {
     rsf_ctx* c;
     void* p;
+    char rsf_gc_here;
     if (newSize < 1) return ptr;
     c = rsf_ctx_get();
+    rsf_gc_sp = (void*)&rsf_gc_here;
     p = c->alloc.resize(c->alloc.user, ptr, oldSize, newSize, 16);
     if (!p) {
         fprintf(stderr, "rsf: 内存不足（%zu 字节）", newSize);

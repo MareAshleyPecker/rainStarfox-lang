@@ -94,6 +94,28 @@ class CBackendTest {
     }
 
     @Test
+    fun `保守 GC 的栈边界靠锚点，不依赖平台 API`() {
+        val backend = nativeBackend("target native\nfn main() -> void { rtn }", withEntry = true)
+        val runtime = backend.runtimeLibSource()
+        // 锚点用宏记「调用者自己」的帧，不能用函数（否则记到 attach 自己的帧，区间会反）。
+        assertTrue(runtime.contains("#define rsf_gc_thread_attach()"), runtime)
+        assertTrue(runtime.contains("rsf_gc_thread_attach_at((void*)&rsf_gc_anchor_local_)"), runtime)
+        // 取边界和记锚点的实现都不能内联：内联进同一帧后「谁高谁低」归编译器管。
+        assertTrue(runtime.contains("RSF_NOINLINE static void rsf_gc_thread_attach_at(void* anchor)"), runtime)
+        assertTrue(runtime.contains("RSF_NOINLINE static bool rsf_gc_stack_bounds(void** lo, void** hi)"), runtime)
+        // 交出去的边界要对齐到指针宽度，否则按 sizeof(void*) 步长扫会跳过紧挨着的槽。
+        assertTrue(runtime.contains("low & ~(step - 1)"), runtime)
+        // 分配点要发布 sp，否则「分配完再由上层帧引用」的对象会被漏扫。
+        assertTrue(runtime.contains("rsf_gc_sp = (void*)&rsf_gc_here;"), runtime)
+        // 一行平台 API 都不许有：Windows / Linux / Android / macOS 同一份代码。
+        // （注释里会提到这些名字做对比，所以只盯「真的调用/真的 include」。）
+        assertFalse(runtime.contains("#include <windows.h>"), "不许拉 Windows 头文件")
+        assertFalse(runtime.contains("NtCurrentTeb()"), "不许调 Windows TIB")
+        assertFalse(runtime.contains("pthread_getattr_np("), "不许拉 pthread 栈边界")
+        assertFalse(runtime.contains("pthread_get_stackaddr_np("), "不许拉 macOS 栈边界")
+    }
+
+    @Test
     fun `库模式不生成 main`() {
         val source = SourceFile.of(
             "lib.kt",
