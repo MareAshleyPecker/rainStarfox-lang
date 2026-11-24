@@ -1,74 +1,6 @@
 package org.example.complie.sema
 
-import org.example.complie.ast.AnnotationArg
-import org.example.complie.ast.AnnotationDecl
-import org.example.complie.ast.AnnotationElement
-import org.example.complie.ast.AnnotationUse
-import org.example.complie.ast.AsExpr
-import org.example.complie.ast.AssignStmt
-import org.example.complie.ast.BinaryExpr
-import org.example.complie.ast.Block
-import org.example.complie.ast.BoolLit
-import org.example.complie.ast.BreakStmt
-import org.example.complie.ast.DerefAssignStmt
-import org.example.complie.ast.CallExpr
-import org.example.complie.ast.CharLit
-import org.example.complie.ast.BuildTarget
-import org.example.complie.ast.ClassDecl
-import org.example.complie.ast.ClassImport
-import org.example.complie.ast.CompanionEntityDecl
-import org.example.complie.ast.ContinueStmt
-import org.example.complie.ast.ControlType
-import org.example.complie.ast.DoubleLit
-import org.example.complie.ast.ElvisExpr
-import org.example.complie.ast.EnumDecl
-import org.example.complie.ast.EnumValue
-import org.example.complie.ast.Expr
-import org.example.complie.ast.ExprStmt
-import org.example.complie.ast.FailStmt
-import org.example.complie.ast.FieldDecl
-import org.example.complie.ast.FloatLit
-import org.example.complie.ast.ForceExpr
-import org.example.complie.ast.ForStmt
-import org.example.complie.ast.FuncDecl
-import org.example.complie.ast.GotoStmt
-import org.example.complie.ast.IfExpr
-import org.example.complie.ast.IfStmt
-import org.example.complie.ast.IndexAssignStmt
-import org.example.complie.ast.IndexExpr
-import org.example.complie.ast.IntLit
-import org.example.complie.ast.IsExpr
-import org.example.complie.ast.InterfaceDecl
-import org.example.complie.ast.LabelStmt
-import org.example.complie.ast.LambdaExpr
-import org.example.complie.ast.LongLit
-import org.example.complie.ast.MemberAssignStmt
-import org.example.complie.ast.MemberExpr
-import org.example.complie.ast.NamedAnnotationArg
-import org.example.complie.ast.NewArrayExpr
-import org.example.complie.ast.NewExpr
-import org.example.complie.ast.NullLit
-import org.example.complie.ast.Param
-import org.example.complie.ast.PositionalAnnotationArg
-import org.example.complie.ast.Program
-import org.example.complie.ast.ReturnSpec
-import org.example.complie.ast.ReturnStmt
-import org.example.complie.ast.ReturnStyle
-import org.example.complie.ast.Stmt
-import org.example.complie.ast.StringLit
-import org.example.complie.ast.SuperCallStmt
-import org.example.complie.ast.SuperExpr
-import org.example.complie.ast.SwitchLabel
-import org.example.complie.ast.SwitchStmt
-import org.example.complie.ast.ThisCallStmt
-import org.example.complie.ast.ThisExpr
-import org.example.complie.ast.TryStmt
-import org.example.complie.ast.TypeRef
-import org.example.complie.ast.UnaryExpr
-import org.example.complie.ast.VarDeclStmt
-import org.example.complie.ast.VarExpr
-import org.example.complie.ast.WhileStmt
-import org.example.complie.ast.exprText
+import org.example.complie.ast.*
 import org.example.complie.Rsf
 import org.example.complie.diag.Diagnostic
 import org.example.complie.diag.RsfError
@@ -264,18 +196,10 @@ class Checker(
     private var currentSource: SourceFile = source
 
     fun check(): SemanticModel {
-        // 阶段 77：`gc on` 只解析不实现。放在最前面报，别让用户先改一堆别的错再撞上它；
-        // 也绝不静默忽略——静默比不实现更糟，会让人以为已经有 GC 了。
-        program.gc?.let { gc ->
-            if (gc.enabled) {
-                throw err(
-                    "'gc on' 还没实现：GC 是阶段 77 步骤 C 的事（见 design/DESIGN-77.md），" +
-                        "现在只有 arena（只增不减，进程退出才整块还回去）。现在要做的要么是删掉这一行，" +
-                        "要么写 'gc off'（也是默认值）；想看内存涨了多少用 memBytes() / memPeak()。",
-                    gc.at,
-                )
-            }
-        }
+        // 阶段 77 步骤 C：`gc on` 现在是真的——C 后端会装一台内置的标记-清扫 GC（非移动、
+        // 保守根、按需扫）。开关只表达「这份产物要不要 GC」，走到这里只把它落到模型上；
+        // 解释器和字节码后端不参与（它们跑在 JVM 上，内存归 JVM 管），那边 `gc on` 是空操作。
+        val gcEnabled = program.gc?.enabled == true
         collectImports()
         // 注解名最先占住（阶段 21）：注解和类/枚举/接口共用类型命名空间，先占住名字，
         // 后面三趟才能报出「重名」——反过来的顺序只能报一半（谁先谁后报谁）。
@@ -321,6 +245,7 @@ class Checker(
         // 类的 .class 用 BytecodeCompiler 按类逐个生成）。
         return SemanticModel(
             functions = program.functions.toList(),
+            gcEnabled = gcEnabled,
             otherSide = program.otherSide,
             functionTable = functionTable,
             exprTypes = exprTypes,

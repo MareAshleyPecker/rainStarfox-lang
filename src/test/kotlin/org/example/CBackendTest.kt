@@ -470,4 +470,52 @@ class CBackendTest {
         assertTrue(code.contains("void* __rsf_recv"), code)
     }
 
+    @Test
+    fun `字符串的长度与下标按 UTF-16 码元算，不按字节`() {
+        val source = SourceFile.of("u.kt", "fn main() -> void { println(intToString(1)) }")
+        val lib = CBackend(Rsf.analyze(source)).runtimeLibSource()
+        // 码元视图的四个辅助：步长 / 码点 / 码元数 / 码元下标 -> 字节偏移
+        assertTrue(lib.contains("static inline int64_t rsf_u16_step("), lib.take(200))
+        assertTrue(lib.contains("static inline uint32_t rsf_u16_cp("), lib.take(200))
+        assertTrue(lib.contains("static inline int64_t rsf_u16_len("), lib.take(200))
+        assertTrue(lib.contains("static inline int64_t rsf_u16_to_byte("), lib.take(200))
+        // 星面字符按代理对分两个码元（与 Java charAt 对齐）
+        assertTrue(lib.contains("0xD800"), lib.take(200))
+        assertTrue(lib.contains("0xDC00"), lib.take(200))
+        // length 走码元数，substring 仍零拷贝（只算两次字节偏移再挪指针）
+        assertTrue(lib.contains("static inline int32_t rsf_str_len(rsf_str s) { return (int32_t)rsf_u16_len(s.data, s.len); }"), lib.take(200))
+        assertTrue(lib.contains("r.len = b - a; r.data = (char*)s.data + a;"), lib.take(200))
+    }
+
+    @Test
+    fun `gc on 才在 main 里装内置 GC`() {
+        val on = emit(
+            """
+            gc on
+            fn main() -> void { println(intToString(1)) }
+            """.trimIndent(),
+        )
+        assertTrue(on.contains("if (!rsf_gc_thread_attached()) rsf_gc_thread_attach();"), on.take(600))
+        assertTrue(on.contains("rsf_gc_heap_install();"), on.take(600))
+
+        val off = emit("fn main() -> void { println(intToString(1)) }")
+        assertFalse(off.contains("rsf_gc_heap_install();"), off.take(600))
+        assertFalse(off.contains("rsf_gc_thread_attach();"), off.take(600))
+    }
+
+    @Test
+    fun `内置 GC 的运行时也在头文件里，且只有 gc on 的产物会切分配器`() {
+        val source = SourceFile.of("gc.kt", "fn main() -> void { println(intToString(1)) }")
+        val backend = CBackend(Rsf.analyze(source))
+        val lib = backend.runtimeLibSource()
+        // 标记-清扫那套：对象头 + 链 + 标记 + 清扫 + install
+        assertTrue(lib.contains("typedef struct rsf_gc_obj {"), lib.take(200))
+        assertTrue(lib.contains("static inline void rsf_gc_heap_install(void)"), lib.take(200))
+        assertTrue(lib.contains("static bool rsf_gc_cycle(void)"), lib.take(200))
+        assertTrue(lib.contains("rsf_gc_live -= o->size;"), lib.take(200))
+        // 没 attach 就一块都不回收（宁可漏，不能把活对象当垃圾）
+        assertTrue(lib.contains("if (!rsf_gc_stack_bounds(&lo, &hi)) return false;"), lib.take(200))
+        // 宿主自己的 GC 优先
+        assertTrue(lib.contains("if (c->gc.collect != NULL) return;"), lib.take(200))
+    }
 }

@@ -1,17 +1,6 @@
 package org.example.complie.loading
 
-import org.example.complie.ast.AnnotationDecl
-import org.example.complie.ast.BuildTarget
-import org.example.complie.ast.ClassDecl
-import org.example.complie.ast.ClassImport
-import org.example.complie.ast.EnumDecl
-import org.example.complie.ast.FuncDecl
-import org.example.complie.ast.GcDirective
-import org.example.complie.ast.ImportDecl
-import org.example.complie.ast.InterfaceDecl
-import org.example.complie.ast.ModuleImport
-import org.example.complie.ast.Program
-import org.example.complie.ast.SourceImport
+import org.example.complie.ast.*
 import org.example.complie.diag.RsfError
 import org.example.complie.diag.SourceFile
 import org.example.complie.lexing.Lexer
@@ -59,10 +48,10 @@ class LoadedProgram(
     /** 阶段 60：被过滤掉的名字 → 它属于哪一侧。 */
     val otherSide: Map<String, BuildTarget> = emptyMap(),
     /**
-     * 阶段 77：文件头的 `gc on` / `gc off`。
+     * 阶段 77：文件头的 `gc on` / `gc off`，只取自**带 main 的那个文件**。
      *
-     * **整程序一份**：任一参与编译的文件写 `gc on` 就取 on（混合时取「或」）——GC 要求所有分配
-     * 走同一套分配器、根集合全局一致，按文件分不可能对。都没写就是 null（等于 `gc off`）。
+     * `gc on` = 产物带上内置的标记-清扫 GC（非移动、保守根、按需扫）；`gc off` / 不写 =
+     * 走 arena（只增不减）。写在别的文件里会报错（见 [SourceLoader.resolveGc]）。
      */
     val gc: GcDirective? = null,
 ) {
@@ -117,8 +106,8 @@ class SourceLoader {
     /** 阶段 60：被过滤掉的名字 → 它属于哪一侧（给 Checker 报错用）。 */
     private val otherSide = LinkedHashMap<String, BuildTarget>()
 
-    /** 阶段 77：整程序的 GC 意图（任一文件 `gc on` 即 on），见 [mergeGc]。 */
-    private var gc: GcDirective? = null
+    /** 阶段 77：收集到的 gc 指令 + 它写在哪个文件里，最后由 [resolveGc] 挑一份。 */
+    private val gcDecls = ArrayList<Pair<GcDirective, SourceFile>>()
 
     /**
      * [baseDir] 给根文件用：编辑器会把「未保存的缓冲区」写成临时文件再拿来分析，
@@ -160,25 +149,27 @@ class SourceLoader {
             packageName = rootPackage,
             target = target,
             otherSide = otherSide.toMap(),
-            gc = gc,
+            gc = resolveGc(root),
         )
     }
 
     /**
-     * 阶段 77：`gc on` / `gc off` 是**整程序**的意图，合并取「或」。
+     * 阶段 77：`gc` 只认**带 main 的那个文件**（`--lib` 没有 main 时认根文件）。
      *
-     * 理由：GC 的两条硬要求——所有分配走同一套运行时、根集合全局一致。A 文件 `gc on` 造出的
-     * 对象被 B 文件（`gc off`）的局部变量指着时，B 的栈帧没登记根，扫描就会把它当垃圾收掉。
-     * 所以只要有一份文件要 GC，整份产物都得按 GC 编；反过来（不同文件都 off）没有损失。
+     * 用户 2026-11-24 拍板的口径：GC 是「整份产物带不带运行时」的开关，写在哪份被 import
+     * 的文件里都会生效会让人猜不透；强制写在有 main 的那份里，读代码的人一眼就在入口处看到。
+     * 别的文件写了不是「默默忽略」——直接报错并指出去哪写。
      */
-    private fun mergeGc(directive: GcDirective) {
-        val existing = gc
-        gc = when {
-            existing == null -> directive
-            existing.enabled == directive.enabled -> existing
-            existing.enabled -> existing
-            else -> directive // 混用时保留 on
-        }
+    private fun resolveGc(root: SourceFile): GcDirective? {
+        if (gcDecls.isEmpty()) return null
+        val entry = functions.firstOrNull { it.name == "main" }
+        val home = entry?.let { sourceOfFunction[it] } ?: root
+        val stray = gcDecls.firstOrNull { it.second !== home } ?: return gcDecls.first().first
+        throw RsfError(
+            "gc",
+            "${stray.second.name}:${stray.first.at.line}: 'gc' 只能写在带 main 的文件里（${home.name}）；" +
+                "GC 是整份产物的开关，写在被 import 的文件里会让人猜不到最终用不用",
+        )
     }
 
     // ------------------------------------------------------------------ 内部
@@ -210,8 +201,9 @@ class SourceLoader {
             if (files.first() === source) rootPackage = pkg
         }
 
-        // 阶段 77：gc 指令按「取或」合并（放在 target 过滤之后——不参与编译的文件不算数）
-        program.gc?.let { mergeGc(it) }
+        // 阶段 77：先记下来，等全部文件读完再挑（要知道 main 在哪份文件里）。
+        // 放在 target 过滤之后——不参与编译的文件不算数。
+        program.gc?.let { gcDecls.add(it to source) }
 
         for (fn in program.functions) {
             // 阶段 60b：JVM 构建里 native 函数**保留声明**（编成 ACC_NATIVE 方法，由 JNI 桥实现），

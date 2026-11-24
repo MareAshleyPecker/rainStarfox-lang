@@ -179,13 +179,20 @@ fn both(x : Int) -> Int { rtn x }              // 两侧都有
 
 调到「对面才有」的函数会报清楚（「函数 'fast' 只写在 native 侧」），而不是「未定义的函数」。两边互调（JNI 桥）还没接，见 `design/DESIGN-60.md`。
 
-文件头还能写 GC 开关（阶段 77）：`gc off`（默认，纯 arena）或 `gc on`（要 GC 运行时）。**现在写 `gc on` 会明确报「还没实现」**——语义在 `design/DESIGN-77.md` 步骤 C，先别写。粒度提醒：它只是"意图"，真 GC 是整程序的事（任一文件 on 就得整份产物走 GC），所以多文件混用会取「或」。
+文件头还能写 GC 开关（阶段 77）：`gc off`（默认，纯 arena，只增不减）或 `gc on`（产物带上内置的标记-清扫 GC）。**`gc on` 只认带 `main` 的那个文件**——写在被 import 的文件里会直接报错，因为它是整份产物的开关，写在别处会让人猜不到最终用不用。
 
 ```rsf
-gc off                          // 与不写等价：arena，只增不减
+gc on                           // 产物带上内置 GC：非移动、保守根、按需扫
+
+fn main() -> void {
+    println("live=" + memBytes())   // gc on 时这里是 GC 堆的存活字节
+    val ok = gcCollect()            // 主动扫一轮，返回 true 表示真扫了
+}
 ```
 
-GC 的**策略**可以由宿主自己实现（阶段 77）：C 侧把 `rsf_gc { collect, bytes, user }` 交给 `rsf_ctx_set_gc`，rsf 侧就能用 `gcCollect() -> Bool` 主动要求扫一轮（没登记 GC 时返回 `false`，所以同一份源码两种宿主都能跑）。所有分配都走分配器 vtable，所以你自己写的 GC 不会漏分配；保守 mark-sweep 今天就能写：栈边界运行时直接给（`rsf_gc_thread_attach()` + `rsf_gc_stack_bounds(&lo, &hi)`，靠锚点，不拉任何平台头文件，Windows / Linux / Android / macOS 同一份代码），精确 GC 要等 `gc on` 落地后补布局/根登记。见 `design/DESIGN-77.md`。
+内置这台 GC 的模型照 Lua 的经典实现：**非移动**、标记-清扫、根是保守扫出来的（锚点区间 `[sp, anchor]`，不拉任何平台头文件），对象负载按字扫描，所以切片这种「指向大字符串中间的视图」也能被认成引用。三条不变量：install 之前分配的对象归 arena、拿不到栈区间时一块都不回收（宁可漏，不能把活对象当垃圾）、清扫期间不回调用户代码。局限（明写）：会漏收（保守根的假引用）、不做压缩/分代、只扫当前线程、没有 finalizer。
+
+GC 的**策略**也可以由宿主自己实现（阶段 77）：C 侧把 `rsf_gc { collect, bytes, user }` 交给 `rsf_ctx_set_gc`，rsf 侧就能用 `gcCollect() -> Bool` 主动要求扫一轮；**宿主登记的 GC 优先**——`rsf_gc_heap_install()` 发现 `c->gc.collect != NULL` 或分配器已被换过就不接管，所以你自己写的 GC 不会被内置的抢走。所有分配都走分配器 vtable，所以自写 GC 不会漏分配；栈边界运行时直接给（`rsf_gc_thread_attach()` + `rsf_gc_stack_bounds(&lo, &hi)`），精确 GC（要类型布局/根登记）仍是后面的事。见 `design/DESIGN-77.md`。
 
 ### JVM 字节码后端
 

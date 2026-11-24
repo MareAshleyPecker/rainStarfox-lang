@@ -1,54 +1,6 @@
 package org.example.complie.native
 
-import org.example.complie.ast.AssignStmt
-import org.example.complie.ast.BinaryExpr
-import org.example.complie.ast.Block
-import org.example.complie.ast.BoolLit
-import org.example.complie.ast.BuildTarget
-import org.example.complie.ast.BreakStmt
-import org.example.complie.ast.CallExpr
-import org.example.complie.ast.CharLit
-import org.example.complie.ast.ClassDecl
-import org.example.complie.ast.InterfaceDecl
-import org.example.complie.ast.ContinueStmt
-import org.example.complie.ast.DerefAssignStmt
-import org.example.complie.ast.EnumDecl
-import org.example.complie.ast.Expr
-import org.example.complie.ast.FailStmt
-import org.example.complie.ast.ForceExpr
-import org.example.complie.ast.FloatLit
-import org.example.complie.ast.DoubleLit
-import org.example.complie.ast.ElvisExpr
-import org.example.complie.ast.TryStmt
-import org.example.complie.ast.ExprStmt
-import org.example.complie.ast.FieldDecl
-import org.example.complie.ast.ForStmt
-import org.example.complie.ast.FuncDecl
-import org.example.complie.ast.IfExpr
-import org.example.complie.ast.IfStmt
-import org.example.complie.ast.IndexAssignStmt
-import org.example.complie.ast.IndexExpr
-import org.example.complie.ast.IntLit
-import org.example.complie.ast.LongLit
-import org.example.complie.ast.MemberAssignStmt
-import org.example.complie.ast.MemberExpr
-import org.example.complie.ast.NullLit
-import org.example.complie.ast.NewArrayExpr
-import org.example.complie.ast.NewExpr
-import org.example.complie.ast.ReturnStmt
-import org.example.complie.ast.Stmt
-import org.example.complie.ast.StringLit
-import org.example.complie.ast.SuperCallStmt
-import org.example.complie.ast.SuperExpr
-import org.example.complie.ast.SwitchLabel
-import org.example.complie.ast.SwitchStmt
-import org.example.complie.ast.ThisCallStmt
-import org.example.complie.ast.ThisExpr
-import org.example.complie.ast.TypeRef
-import org.example.complie.ast.UnaryExpr
-import org.example.complie.ast.VarDeclStmt
-import org.example.complie.ast.VarExpr
-import org.example.complie.ast.WhileStmt
+import org.example.complie.ast.*
 import org.example.complie.diag.RsfError
 import org.example.complie.lexing.TokenKind
 import org.example.complie.sema.RsfBase
@@ -160,6 +112,12 @@ class CBackend(
         }
         val entry = model.entry ?: throw RsfError("native", "没有 main 函数，C 后端不知道从哪开始跑")
         sb.append("int main(void) {\n")
+        if (model.gcEnabled) {
+            // 先发布根区间（锚点必须落在 main 自己的帧上），再换分配器：顺序反了的话
+            // install 之后的第一次分配就已经在 GC 管理的堆上了。
+            sb.append("    if (!rsf_gc_thread_attached()) rsf_gc_thread_attach();\n")
+            sb.append("    rsf_gc_heap_install();\n")
+        }
         if (returnType(entry).base == RsfBase.VOID) {
             sb.append("    ").append(fnName(entry)).append("();\n")
             sb.append("    return 0;\n")
@@ -1338,6 +1296,11 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
         sb.append("#include <stdbool.h>").append(NL)
         sb.append("#include <stdlib.h>").append(NL)
         sb.append("#include <string.h>").append(NL).append(NL)
+        if (model.gcEnabled) {
+            // gc on：桥里要调 rsf_gc_thread_attach / rsf_gc_heap_install，所以直接拿运行时头
+            // （它里面的 rsf_str 也有 RSF_STR_DEFINED 守卫，和下面的兜底块不冲突）。
+            sb.append("#include \"rsf_runtime.h\"").append(NL).append(NL)
+        }
         sb.append("#ifndef RSF_STR_DEFINED").append(NL)
         sb.append("#define RSF_STR_DEFINED").append(NL)
         sb.append("typedef struct { int64_t len; const char* data; } rsf_str;").append(NL)
@@ -1366,6 +1329,12 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
             for (i in ps.indices) sb.append(", ").append(jniType(ps[i])).append(" j").append(i)
             sb.append(") {").append(NL)
             sb.append("    (void)env; (void)cls;").append(NL)
+            if (model.gcEnabled) {
+                // --lib 没有 main，产物是被 JVM 加载的 dll/so：根区间与分配器在这里补上。
+                // 两个调用都幂等，所以每个导出函数前面写一遍没关系。
+                sb.append("    if (!rsf_gc_thread_attached()) rsf_gc_thread_attach();").append(NL)
+                sb.append("    rsf_gc_heap_install();").append(NL)
+            }
             for ((i, t) in ps.withIndex()) {
                 when (t.base) {
                     RsfBase.STRING -> {
@@ -2193,6 +2162,12 @@ static inline void rsf_gc_thread_detach(void) {
     rsf_gc_sp = NULL;
 }
 
+/* 这条线程发布过根区间没有。重复 attach 会把锚点往深处挪，扫的范围就变小了，
+ * 所以入口处统一写成 if (!attached) attach; */
+static inline bool rsf_gc_thread_attached(void) {
+    return rsf_gc_anchor != NULL;
+}
+
 /* 当前线程的栈区间：*lo 低地址（往里扫的起点），*hi 高地址（anchor）。
  * 没 attach 过、或者区间反了（GC 在比 anchor 更浅的帧里跑）就返回 false——
  * 返回 false 时 GC 该把这条线程当成「不持有对象」，而不是猜个范围乱扫。 */
@@ -2212,9 +2187,231 @@ RSF_NOINLINE static bool rsf_gc_stack_bounds(void** lo, void** hi) {
     return true;
 }
 
+/* ---- 内置标记-清扫 GC：`gc on` 时才装上（阶段 77 步骤 C）----
+ * 模型照 Lua 5.x 的经典实现：**非移动**、标记-清扫、根是保守扫出来的。
+ * 和 Lua 的两处差别都是环境逼出来的：
+ *   1) 根集合不靠类型元表，而是靠上一节的锚点区间扫当前线程的栈（[sp, anchor]）；
+ *   2) 对象没有类型布局，所以负载按字扫描（保守），内部指针（切片视图）也算引用。
+ *
+ * 只在 rsf_gc_heap_install() 之后接管分配：`gc off` 的产物一行都不会走到这里。
+ * 三条不变量：
+ *   1) 只有 install 之后分配的对象在链上；install 之前的归 arena 管，不归 GC 管。
+ *   2) 拿不到栈区间（没 attach）时**一块都不回收**——宁可漏，不能把活对象当垃圾。
+ *   3) 清扫期间不回调用户代码（没有 finalizer），所以不需要护栏。
+ */
+typedef struct rsf_gc_obj {
+    struct rsf_gc_obj* next;
+    struct rsf_gc_obj* prev;
+    size_t size;
+    int64_t mark;
+} rsf_gc_obj;
+
+typedef struct {
+    uintptr_t start;
+    uintptr_t end;
+    rsf_gc_obj* obj;
+} rsf_gc_span;
+
+static rsf_gc_obj* rsf_gc_objs = NULL;
+static bool rsf_gc_heap_active = false;
+static bool rsf_gc_busy = false;
+static size_t rsf_gc_live = 0;
+static size_t rsf_gc_live_peak = 0;
+static int64_t rsf_gc_cycles = 0;
+static rsf_gc_obj** rsf_gc_gray = NULL;
+static size_t rsf_gc_gray_len = 0;
+static size_t rsf_gc_gray_cap = 0;
+
+static void* rsf_gc_heap_alloc(void* user, size_t size, size_t align) {
+    rsf_gc_obj* o;
+    size_t bytes = size < 1 ? 1 : size;
+    (void)user;
+    (void)align;
+    o = (rsf_gc_obj*)malloc(sizeof(rsf_gc_obj) + bytes);
+    if (!o) return NULL;
+    o->size = bytes;
+    o->mark = 0;
+    o->prev = NULL;
+    o->next = rsf_gc_objs;
+    if (o->next) o->next->prev = o;
+    rsf_gc_objs = o;
+    rsf_gc_live += bytes;
+    if (rsf_gc_live > rsf_gc_live_peak) rsf_gc_live_peak = rsf_gc_live;
+    return (void*)(o + 1);
+}
+
+static void rsf_gc_heap_free(void* user, void* ptr, size_t size, size_t align) {
+    rsf_gc_obj* o;
+    (void)user;
+    (void)size;
+    (void)align;
+    if (!ptr) return;
+    o = ((rsf_gc_obj*)ptr) - 1;
+    if (o->prev) o->prev->next = o->next; else rsf_gc_objs = o->next;
+    if (o->next) o->next->prev = o->prev;
+    rsf_gc_live -= o->size;
+    free(o);
+}
+
+static void* rsf_gc_heap_resize(void* user, void* ptr, size_t oldSize, size_t newSize, size_t align) {
+    void* q;
+    size_t bytes;
+    if (newSize < 1) return ptr;
+    if (!ptr) return rsf_gc_heap_alloc(user, newSize, align);
+    bytes = oldSize < newSize ? oldSize : newSize;
+    q = rsf_gc_heap_alloc(user, newSize, align);
+    if (!q) return NULL;
+    memcpy(q, ptr, bytes);
+    rsf_gc_heap_free(user, ptr, oldSize, align);
+    return q;
+}
+
+static int rsf_gc_span_cmp(const void* a, const void* b) {
+    uintptr_t x = ((const rsf_gc_span*)a)->start;
+    uintptr_t y = ((const rsf_gc_span*)b)->start;
+    return x < y ? -1 : (x > y ? 1 : 0);
+}
+
+/* 内部指针也算（切片是指向大字符串中间的视图）：找包含 p 的那个对象。 */
+static rsf_gc_obj* rsf_gc_find(const rsf_gc_span* spans, size_t n, uintptr_t p) {
+    size_t lo = 0;
+    size_t hi = n;
+    if (n == 0) return NULL;
+    while (lo < hi) {
+        size_t mid = (lo + hi) / 2;
+        if (spans[mid].start <= p) lo = mid + 1; else hi = mid;
+    }
+    if (lo == 0) return NULL;
+    lo--;
+    return p < spans[lo].end ? spans[lo].obj : NULL;
+}
+
+static void rsf_gc_push(rsf_gc_obj* o) {
+    if (rsf_gc_gray_len == rsf_gc_gray_cap) {
+        size_t cap = rsf_gc_gray_cap ? rsf_gc_gray_cap * 2 : 128;
+        rsf_gc_obj** g = (rsf_gc_obj**)realloc(rsf_gc_gray, cap * sizeof(rsf_gc_obj*));
+        if (!g) return;
+        rsf_gc_gray = g;
+        rsf_gc_gray_cap = cap;
+    }
+    rsf_gc_gray[rsf_gc_gray_len++] = o;
+}
+
+static void rsf_gc_mark(const rsf_gc_span* spans, size_t n, void* w) {
+    rsf_gc_obj* o;
+    if (!w) return;
+    o = rsf_gc_find(spans, n, (uintptr_t)w);
+    if (!o || o->mark) return;
+    o->mark = 1;
+    rsf_gc_push(o);
+}
+
+/* 扫一轮：标根 -> 追灰 -> 清未标。返回 false 表示「这轮什么也没做」（没 attach 等）。 */
+static bool rsf_gc_cycle(void) {
+    rsf_gc_obj* o;
+    rsf_gc_span* spans;
+    size_t n = 0;
+    size_t i = 0;
+    void* lo = NULL;
+    void* hi = NULL;
+    if (!rsf_gc_heap_active || rsf_gc_busy) return false;
+    for (o = rsf_gc_objs; o; o = o->next) n++;
+    if (n == 0) {
+        rsf_gc_cycles++;
+        return true;
+    }
+    if (!rsf_gc_stack_bounds(&lo, &hi)) return false;
+    spans = (rsf_gc_span*)malloc(n * sizeof(rsf_gc_span));
+    if (!spans) return false;
+    for (o = rsf_gc_objs; o && i < n; o = o->next, i++) {
+        spans[i].start = (uintptr_t)(o + 1);
+        spans[i].end = (uintptr_t)(o + 1) + o->size;
+        spans[i].obj = o;
+        o->mark = 0;
+    }
+    qsort(spans, n, sizeof(rsf_gc_span), rsf_gc_span_cmp);
+    rsf_gc_busy = true;
+    rsf_gc_gray_len = 0;
+    {
+        void** p = (void**)lo;
+        void** end = (void**)hi;
+        for (; p < end; p++) rsf_gc_mark(spans, n, *p);
+    }
+    while (rsf_gc_gray_len > 0) {
+        rsf_gc_obj* cur = rsf_gc_gray[--rsf_gc_gray_len];
+        uintptr_t* w = (uintptr_t*)(cur + 1);
+        size_t words = cur->size / sizeof(uintptr_t);
+        size_t k;
+        for (k = 0; k < words; k++) rsf_gc_mark(spans, n, (void*)w[k]);
+    }
+    o = rsf_gc_objs;
+    while (o) {
+        rsf_gc_obj* nx = o->next;
+        if (o->mark) {
+            o->mark = 0;
+        } else {
+            if (o->prev) o->prev->next = nx; else rsf_gc_objs = nx;
+            if (nx) nx->prev = o->prev;
+            rsf_gc_live -= o->size;
+            free(o);
+        }
+        o = nx;
+    }
+    free(spans);
+    rsf_gc_busy = false;
+    rsf_gc_cycles++;
+    return true;
+}
+
+static void rsf_gc_builtin_collect(void* user) {
+    (void)user;
+    rsf_gc_cycle();
+}
+
+static size_t rsf_gc_builtin_bytes(void* user) {
+    (void)user;
+    return rsf_gc_live;
+}
+
+/* 装上内置 GC：换分配器 + 登记 collect/bytes。宿主之后再 rsf_ctx_set_gc 就是覆盖它
+ * （用户自己写的 GC 优先，见 DESIGN-77「让用户自己实现 GC」）。 */
+static inline void rsf_gc_heap_install(void) {
+    rsf_ctx* c = rsf_ctx_get();
+    rsf_gc g;
+    if (rsf_gc_heap_active) return;                  /* 幂等：重复调用无所谓 */
+    if (c->gc.collect != NULL) return;               /* 宿主已经装了自己的 GC：它优先 */
+    if (c->alloc.alloc != rsf_arena_alloc) return;   /* 宿主换过分配器：别抢 */
+    rsf_gc_heap_active = true;
+    c->alloc.alloc = rsf_gc_heap_alloc;
+    c->alloc.resize = rsf_gc_heap_resize;
+    c->alloc.free = rsf_gc_heap_free;
+    c->alloc.user = NULL;
+    g.collect = rsf_gc_builtin_collect;
+    g.bytes = rsf_gc_builtin_bytes;
+    g.user = NULL;
+    rsf_ctx_set_gc(c, g);
+}
+
+static inline bool rsf_gc_heap_enabled(void) {
+    return rsf_gc_heap_active;
+}
+
+static inline int64_t rsf_gc_heap_live(void) {
+    return (int64_t)rsf_gc_live;
+}
+
+static inline int64_t rsf_gc_heap_peak(void) {
+    return (int64_t)rsf_gc_live_peak;
+}
+
+static inline int64_t rsf_gc_heap_cycles(void) {
+    return rsf_gc_cycles;
+}
+
 static inline void rsf_ctx_use(rsf_ctx* c) {
     rsf_ctx_cur = c;
 }
+
 
 /* ---- 可观测（阶段 77 步骤 0）：只统计默认 arena；宿主换了分配器就返回 -1 ----
  * 用途：`memBytes()` / `memPeak()` 内置函数，以及压力测试里断言「回调不涨内存」。
@@ -2348,8 +2545,59 @@ static inline void* rsf_grow(void* ptr, size_t oldSize, size_t newSize) {
                 return a.len == b.len && memcmp(a.data, b.data, (size_t)a.len) == 0;
             }
 
-            // 阶段 58a：String 的成员方法（按 UTF-8 字节算，ASCII 之外一个汉字算 3 个）。
-            static int32_t rsf_str_len(rsf_str s) { return (int32_t)s.len; }
+            /* ---- 阶段 73：字符串的计数单位是 UTF-16 码元（与 java.lang.String 一致）----
+             * 存储仍然是 UTF-8 字节；下面几个小函数在「码元下标」和「字节偏移」之间换算。
+             * 于是：BMP 字符算 1 个码元、emoji 这类星面字符算 2 个码元，charAt 在代理对
+             * 上返回高/低代理——与 JVM 侧逐字一致。要按字节干活就显式用 stringBytes()。
+             */
+            static int64_t rsf_u16_step(const unsigned char* p, int64_t left) {
+                unsigned char c = p[0];
+                int64_t step = 1;
+                if (c >= 0x80) {
+                    if ((c & 0xE0) == 0xC0) step = 2;
+                    else if ((c & 0xF0) == 0xE0) step = 3;
+                    else if ((c & 0xF8) == 0xF0) step = 4;
+                }
+                return step <= left ? step : 1;
+            }
+
+            static uint32_t rsf_u16_cp(const unsigned char* p, int64_t step) {
+                uint32_t c = p[0];
+                if (step == 1) return c;
+                if (step == 2) return (uint32_t)(((c & 0x1Fu) << 6) | (p[1] & 0x3Fu));
+                if (step == 3) return (uint32_t)(((c & 0x0Fu) << 12) | ((p[1] & 0x3Fu) << 6) | (p[2] & 0x3Fu));
+                return (uint32_t)(((c & 0x07u) << 18) | ((p[1] & 0x3Fu) << 12) | ((p[2] & 0x3Fu) << 6) | (p[3] & 0x3Fu));
+            }
+
+            static int64_t rsf_u16_len(const char* data, int64_t n) {
+                const unsigned char* p = (const unsigned char*)data;
+                int64_t i = 0, units = 0;
+                while (i < n) {
+                    int64_t step = rsf_u16_step(p + i, n - i);
+                    uint32_t cp = rsf_u16_cp(p + i, step);
+                    units += (cp > 0xFFFF) ? 2 : 1;
+                    i += step;
+                }
+                return units;
+            }
+
+            /* 码元下标 → 字节偏移（超出末尾就停在末尾） */
+            static int64_t rsf_u16_to_byte(const char* data, int64_t n, int64_t units) {
+                const unsigned char* p = (const unsigned char*)data;
+                int64_t i = 0, u = 0;
+                while (i < n && u < units) {
+                    int64_t step = rsf_u16_step(p + i, n - i);
+                    uint32_t cp = rsf_u16_cp(p + i, step);
+                    u += (cp > 0xFFFF) ? 2 : 1;
+                    i += step;
+                }
+                return i;
+            }
+
+            /* 阶段 73：String 的成员方法。length/charAt/substring/indexOf 一律按 UTF-16
+             * 码元算（与 java.lang.String 一致），字节视图走 stringBytes()。ASCII 之外
+             * 一个汉字算 1 个码元、一个 emoji 算 2 个。 */
+            static int32_t rsf_str_len(rsf_str s) { return (int32_t)rsf_u16_len(s.data, s.len); }
 
             static rsf_arr rsf_str_bytes(rsf_str s) {
                 rsf_arr a;
@@ -2360,29 +2608,51 @@ static inline void* rsf_grow(void* ptr, size_t oldSize, size_t newSize) {
             }
 
             static uint16_t rsf_str_char_at(rsf_str s, int32_t i) {
-                if (i < 0 || (int64_t)i >= s.len) return 0;
-                return (uint16_t)((const unsigned char*)s.data)[i];
+                const unsigned char* p = (const unsigned char*)s.data;
+                int64_t at = 0, unit = 0;
+                if (i < 0) return 0;
+                while (at < s.len) {
+                    int64_t step = rsf_u16_step(p + at, s.len - at);
+                    uint32_t cp = rsf_u16_cp(p + at, step);
+                    if (cp > 0xFFFF) {
+                        uint32_t v = cp - 0x10000u;
+                        if (unit == (int64_t)i) return (uint16_t)(0xD800u + (v >> 10));
+                        if (unit + 1 == (int64_t)i) return (uint16_t)(0xDC00u + (v & 0x3FFu));
+                        unit += 2;
+                    } else {
+                        if (unit == (int64_t)i) return (uint16_t)cp;
+                        unit += 1;
+                    }
+                    at += step;
+                }
+                return 0;
             }
 
+            static int64_t rsf_str_unit_len(rsf_str s) { return rsf_u16_len(s.data, s.len); }
+
             static rsf_str rsf_str_substr(rsf_str s, int32_t from, int32_t to) {
+                int64_t units = rsf_str_unit_len(s);
+                int64_t a, b;
                 if (from < 0) from = 0;
-                if (to > s.len) to = (int32_t)s.len;
+                if ((int64_t)to > units) to = (int32_t)units;
                 if (to < from) to = from;
-                rsf_str r; r.len = to - from; r.data = (char*)s.data + from; return r;
+                a = rsf_u16_to_byte(s.data, s.len, from);
+                b = rsf_u16_to_byte(s.data, s.len, to);
+                rsf_str r; r.len = b - a; r.data = (char*)s.data + a; return r;
             }
 
             static int32_t rsf_str_index_of(rsf_str s, rsf_str p) {
                 if (p.len <= 0) { return 0; }
                 for (int64_t i = 0; i + p.len <= s.len; i++) {
-                    if (memcmp(s.data + i, p.data, (size_t)p.len) == 0) { return (int32_t)i; }
+                    if (memcmp(s.data + i, p.data, (size_t)p.len) == 0) { return (int32_t)rsf_u16_len(s.data, i); }
                 }
                 return -1;
             }
 
             static int32_t rsf_str_last_index_of(rsf_str s, rsf_str p) {
-                if (p.len <= 0) { return (int32_t)s.len; }
+                if (p.len <= 0) { return (int32_t)rsf_str_unit_len(s); }
                 for (int64_t i = s.len - p.len; i >= 0; i--) {
-                    if (memcmp(s.data + i, p.data, (size_t)p.len) == 0) { return (int32_t)i; }
+                    if (memcmp(s.data + i, p.data, (size_t)p.len) == 0) { return (int32_t)rsf_u16_len(s.data, i); }
                 }
                 return -1;
             }

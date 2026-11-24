@@ -2,25 +2,7 @@
 
 package org.example.complie.sema
 
-import org.example.complie.ast.AnnotationDecl
-import org.example.complie.ast.AnnotationElement
-import org.example.complie.ast.AnnotationUse
-import org.example.complie.ast.AssignStmt
-import org.example.complie.ast.CallExpr
-import org.example.complie.ast.ClassDecl
-import org.example.complie.ast.EnumDecl
-import org.example.complie.ast.Expr
-import org.example.complie.ast.FieldDecl
-import org.example.complie.ast.BuildTarget
-import org.example.complie.ast.FuncDecl
-import org.example.complie.ast.InterfaceDecl
-import org.example.complie.ast.MemberAssignStmt
-import org.example.complie.ast.MemberExpr
-import org.example.complie.ast.NewExpr
-import org.example.complie.ast.SuperCallStmt
-import org.example.complie.ast.ThisCallStmt
-import org.example.complie.ast.VarDeclStmt
-import org.example.complie.ast.VarExpr
+import org.example.complie.ast.*
 import org.example.complie.diag.Diagnostic
 import org.example.complie.diag.Severity
 import org.example.complie.interop.JvmMethod
@@ -673,6 +655,14 @@ data class GenericCallSite(
  */
 class SemanticModel(
     val functions: List<FuncDecl>,
+
+    /**
+     * 阶段 77 步骤 C：这份产物要不要带 GC（文件头 `gc on`）。
+     *
+     * 只对 C 后端有意义：它决定生成代码里要不要装内置的标记-清扫 GC。
+     * JVM 两侧（解释器 / 字节码）跑在 JVM 上，内存归 JVM 管，这个值它们不看。
+     */
+    val gcEnabled: Boolean = false,
 
     /**
      * 阶段 60：被构建目标过滤掉的名字 → 它属于哪一侧。
