@@ -1920,10 +1920,31 @@ class Parser(
             throw error(m, "修饰符 '${m.lexeme}' 要写在 fn 前面：改成 '${m.lexeme} fn ...'")
         }
 
-        // <MainType>：fun 之后、函数名之前的类型槽，缺省 void
+        // <MainType>：fun 之后、函数名之前的类型槽，缺省 void。
+        // 但 `fn Int.twice()` 里那个类型是**接收者**：后面跟 '.' 就按扩展函数解析。
         var mainType = TypeRef("void", funTok.at)
+        var receiver: TypeRef? = null
         if (peek().kind.isTypeKeyword) {
-            mainType = parseTypeRef()
+            val ty = parseTypeRef()
+            if (check(TokenKind.DOT)) {
+                advance() // 吃掉 '.'，否则后面读函数名时还停在它上面
+                if (!allowExport) {
+                    throw error(peek(), "扩展函数只能写在顶层：类/接口里请写成普通方法")
+                }
+                receiver = ty
+            } else {
+                mainType = ty
+            }
+        } else if (check(TokenKind.IDENT) && peek(1).kind == TokenKind.DOT &&
+            !peek(1).kind.isFunKeyword
+        ) {
+            // 用户类做接收者：`fn Foo.bar()`（Foo 不是类型关键字，得靠后面的 '.' 认出来）
+            if (!allowExport) {
+                throw error(peek(), "扩展函数只能写在顶层：类/接口里请写成普通方法")
+            }
+            val t = advance()
+            advance() // 吃掉 '.'
+            receiver = TypeRef(t.lexeme, t.at)
         }
 
         val nameTok = if (check(TokenKind.IDENT)) {
@@ -2031,6 +2052,7 @@ class Parser(
             typeParamBounds = typeParamSig.bounds,
             target = declTarget,
             exported = exported,
+            receiverType = receiver,
         )
     }
 

@@ -5065,6 +5065,16 @@ class Checker(
 
     // ------------------------------------------------------------------ 函数体
     private fun checkFunction(fn: FuncDecl) {
+        // 扩展函数：这一刀只做到「语法与工具链认识它」，语义解析是下一刀。
+        // 明确报错，不让它被当成普通无参函数悄悄编过去。
+        val recv = fn.receiverType
+        if (recv != null) {
+            throw org.example.complie.diag.RsfError(
+                "checker",
+                "扩展函数还没接语义：'fn ${recv.display()}.${fn.name}(...)'。",
+                fn.at.line, fn.at.column, null,
+            )
+        }
         // 阶段 31：泛型函数的类型参数并进解析环境（函数级遮蔽类级），查完就还原，
         // 否则 `fn id&<T>(x : T) -> T` 的 T 会漏给下一个被检查的函数。
         val savedTypeParams = pushTypeParams(fn)
