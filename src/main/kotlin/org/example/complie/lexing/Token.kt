@@ -119,6 +119,13 @@ enum class TokenKind(val text: String) {
 
     /** 阶段 60：只在 native（C）侧编译的函数修饰词。 */
     KW_NATIVE("native"),
+    /**
+     * 脚本/库的导出面：`export fn foo(...)`。
+     *
+     * 只允许写在**顶层函数**上（Parser 层就拦），意思是「这个函数是给宿主/别的模块调的」。
+     * 不影响语义，只影响 `rsf script` 列出的可调用面与将来 .so/.dll 的导出表。
+     */
+    KW_EXPORT("export"),
 
     /** 阶段 60：只在 JVM（class）侧编译的函数修饰词。 */
     KW_JVM("jvm"),
@@ -324,7 +331,7 @@ enum class TokenKind(val text: String) {
      */
     val isModifierKeyword: Boolean
         get() = isControlKeyword || isStaticKeyword || isInheritKeyword ||
-            this == KW_OVERRIDE || this == KW_NATIVE || this == KW_JVM
+            this == KW_OVERRIDE || this == KW_NATIVE || this == KW_JVM || this == KW_EXPORT
 }
 
 data class Token(

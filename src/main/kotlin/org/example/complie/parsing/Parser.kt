@@ -224,7 +224,7 @@ class Parser(
                         "（现在还只能当关键字用，不能当名字）",
                 )
             } else {
-                functions.add(parseFuncDecl(annotations = declAnnotations, allowLeadingAnnotations = true))
+                functions.add(parseFuncDecl(annotations = declAnnotations, allowLeadingAnnotations = true, allowExport = true))
             }
         }
         return Program(
@@ -1777,6 +1777,7 @@ class Parser(
         annotations: List<AnnotationUse> = emptyList(),
         allowLeadingAnnotations: Boolean = false,
         allowInheritModifiers: Boolean = false,
+        allowExport: Boolean = false,
     ): FuncDecl {
         val leading = ArrayList(annotations)
         // <注解> 与 <ControlType> 与 <override> 与 <static> 与 <open/final/abstract>：
@@ -1789,6 +1790,7 @@ class Parser(
         var inherit: InheritModifiers? = null
         var declTarget = BuildTarget.BOTH
         var targetTok: Token? = null
+        var exported = false
         while (true) {
             val m = peek()
             if (m.kind.isControlKeyword) {
@@ -1802,6 +1804,15 @@ class Parser(
                 }
                 declTarget = side
                 targetTok = advance()
+                continue
+            }
+            if (m.kind == TokenKind.KW_EXPORT) {
+                if (!allowExport) {
+                    throw error(m, "'export' 只能写在顶层函数上：类/接口里的方法用 pub/prot/prv 控制可见性")
+                }
+                if (exported) throw error(m, "'export' 写了两次")
+                exported = true
+                advance()
                 continue
             }
             if (consumeOverride(allowOverride)) {
@@ -2019,6 +2030,7 @@ class Parser(
             typeParams = typeParamSig.names,
             typeParamBounds = typeParamSig.bounds,
             target = declTarget,
+            exported = exported,
         )
     }
 

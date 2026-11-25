@@ -139,7 +139,11 @@ class Cli {
         val loaded = Rsf.load(file)
         val model = Rsf.analyze(loaded)
         for (warning in model.warnings) System.err.println("[rsf] 警告: $warning")
-        val names = model.functions.map { it.name }.distinct().sorted()
+        // 只要有一个 export，导出面就只算 export 的那些；一个都没有时退回「全部顶层函数」，
+        // 这样加上 export 之前的脚本还能照旧跑。
+        val exported = model.functions.filter { it.exported }
+        val names = (if (exported.isNotEmpty()) exported else model.functions)
+            .map { it.name }.distinct().sorted()
         if (model.entry == null) {
             println("[rsf] 脚本: ${file.path}（没有 main，可调用：）")
             for (fn in names) println("  $fn")

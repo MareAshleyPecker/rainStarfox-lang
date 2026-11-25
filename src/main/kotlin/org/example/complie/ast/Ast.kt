@@ -462,6 +462,8 @@ data class FuncDecl(
      * 所以 Checker 与两个后端看到的永远是「本侧该有的那部分」。
      */
     val target: BuildTarget = BuildTarget.BOTH,
+    /** `export fn`：这个顶层函数是给宿主/别的模块调的（只是导出面，不影响语义）。 */
+    val exported: Boolean = false,
 ) : Node {
     /**
      * 抽象方法：只有签名没有体（[body] == null）。

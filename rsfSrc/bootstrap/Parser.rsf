@@ -408,6 +408,7 @@ fn isModifierKeyword(kind : String) -> Bool {
     if (isControlKeyword(kind)) { rtn true }
     if (isStaticKeyword(kind)) { rtn true }
     if (isInheritKeyword(kind)) { rtn true }
+    if (kind == "KW_EXPORT") { rtn true }
     rtn isOverrideKeyword(kind)
 }
 
@@ -1805,7 +1806,15 @@ pub class Parser(tokens : Token[]) {
                             inherit = mergeInheritMods(inherit, "方法")
                             collectLeadingAnnotations(anns)
                         } else {
-                            going = false
+                            if (peek().kind == "KW_EXPORT") {
+                                // `export` 只影响导出面，不进 AST；自举侧收下即可
+                                // （Kotlin 侧在类/接口里写 export 会报错，这里只在顶层收）
+                                if (overrideOk) { failAt(peek(), "'export' 只能写在顶层函数上") }
+                                advance()
+                                collectLeadingAnnotations(anns)
+                            } else {
+                                going = false
+                            }
                         }
                     }
                 }

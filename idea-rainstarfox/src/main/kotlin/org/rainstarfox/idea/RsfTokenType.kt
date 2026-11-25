@@ -90,6 +90,8 @@ object RsfKeywords {
         "final", "abstract",
         // 阶段 60：构建目标（target 是软关键字，文件首部才是指令，普通位置当标识符）
         "native", "jvm",
+        // 阶段 79+：导出面（只允许写在顶层函数上）
+        "export",
     )
 
     val CONTROL = setOf(
