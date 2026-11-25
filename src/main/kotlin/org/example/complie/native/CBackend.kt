@@ -760,9 +760,18 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
         }
 
         is MemberAssignStmt -> {
-            val field = model.classModel.fieldWrites[s] ?: fail("成员赋值")
-            pad(indent) + fieldRef(expr(s.target.receiver), field.className, s.target.name) +
-                " = " + expr(s.value) + ";\n"
+            // 阶段 79 v2：字段写了 `{ set }` 时 `p.hp = v` 摊成 `p.setHp(v)`
+            val accessor = model.propertyWrites[s]
+            if (accessor != null) {
+                val name = methodNames[accessor.decl] ?: fail("属性 setter 命名")
+                val want = paramTypesOf(accessor.decl).firstOrNull() ?: RsfType.INT
+                pad(indent) + name + "(" + expr(s.target.receiver) + ", " +
+                    adapt(want, physicalType(s.value), expr(s.value)) + ");\n"
+            } else {
+                val field = model.classModel.fieldWrites[s] ?: fail("成员赋值")
+                pad(indent) + fieldRef(expr(s.target.receiver), field.className, s.target.name) +
+                    " = " + expr(s.value) + ";\n"
+            }
         }
         is SuperCallStmt, is ThisCallStmt -> ""
         // 阶段 66：fail "..." → 置错误旗标并立刻从当前函数返回（错误由 try/catch 或顶层兜底）
@@ -1095,6 +1104,12 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
             val rest = argsWithExpected(e.arguments.orEmpty(), params.drop(1))
             val all = if (rest.isEmpty()) first else "$first, $rest"
             return "${fnName(decl)}($all)"
+        }
+        // 阶段 79 v2：字段写了 `{ get }` / `{ is }` 时 `p.hp` 是**属性读**，摊成 `p.getHp()`。
+        // 判据来自 Checker 的表（三端同源）；访问器自己的体里不会记，所以不会递归。
+        model.propertyReads[e]?.let { accessor ->
+            val name = methodNames[accessor.decl] ?: fail("属性 getter 命名")
+            return "$name(${expr(e.receiver)})"
         }
         jdkMember(e)?.let { return it }
         // super.f(...)：**非虚**调用，直接打声明类那一份实现

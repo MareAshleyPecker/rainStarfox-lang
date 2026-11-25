@@ -291,6 +291,8 @@ class Checker(
             callTargets = callTargets,
             memberTargets = memberTargets,
             extensionCalls = extensionCalls,
+            propertyReads = propertyReads,
+            propertyWrites = propertyWrites,
             returnTypes = returnTypes,
             lowered = lowered,
             diagnostics = diagnostics.toList(),
@@ -4802,6 +4804,19 @@ class Checker(
             val (owner, field) = found
             checkMemberVisible(owner, expr.name, expr.at)
             checkFieldVisible(owner, field, expr.at)
+            // 阶段 79 v2：字段上写了 `{ get }`（Bool 是 `{ is }`）就走属性读——三端把
+            // `p.hp` 摊成 `p.getHp()`。**访问器自己的体里不摊**，否则 `rtn this.hp`
+            // 会调用自己。类型不变：生成的 getter 返回的就是字段类型。
+            val accessorName = PropertyDesugar.getterName(field)
+            val getter = accessorName?.let { name ->
+                owner.methods[name]?.firstOrNull { it.params.isEmpty() && !it.isStatic }
+            }
+            if (getter != null && !currentFnIsAccessorOf(field)) {
+                val member = fieldMember(info, field, substitutionAlongChain(info, subst, owner))
+                userMembers[expr] = member
+                propertyReads[expr] = UserMember.Method(owner.decl.name, getter, false)
+                return member.type
+            }
             // 字段声明在祖先上时，要把接收者的实参一路代换到**声明类**那一层（G4）：
             // `class IntHolder : Holder&<Int>` 的 `h.v` 是 Int，不是 Holder 的 T。
             val member = fieldMember(info, field, substitutionAlongChain(info, subst, owner))
@@ -5291,6 +5306,15 @@ class Checker(
                     )
                 }
                 fieldWrites[stmt] = fieldMember(info, field, subst)
+                // 阶段 79 v2：字段上写了 `{ set }` 就走属性写——三端把 `p.hp = v` 摊成
+                // `p.setHp(v)`。访问器自己的体里不摊（`this.hp = v` 必须真写字段）。
+                val setterName = PropertyDesugar.setterName(field)
+                val setter = setterName?.let { name ->
+                    owner.methods[name]?.firstOrNull { it.params.size == 1 && !it.isStatic }
+                }
+                if (setter != null && !currentFnIsAccessorOf(field)) {
+                    propertyWrites[stmt] = UserMember.Method(owner.decl.name, setter, false)
+                }
             }
 
             is AssignStmt -> {
@@ -6512,6 +6536,23 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
 
     /** 接收者类型名 → 这个类型上的扩展函数（按名字再挑一次）。 */
     private val extensionsByReceiver = LinkedHashMap<String, MutableList<FuncDecl>>()
+
+    // ------------------------------------------------------------- 属性访问器（阶段 79 v2）
+
+    /** `p.hp` → 选中的 getter（字段上写了 `{ get }` / `{ is }` 才有）。 */
+    private val propertyReads = IdentityHashMap<MemberExpr, UserMember.Method>()
+
+    /** `p.hp = v` → 选中的 setter（字段上写了 `{ set }` 才有）。 */
+    private val propertyWrites = IdentityHashMap<MemberAssignStmt, UserMember.Method>()
+
+    /**
+     * 当前正在检查的函数是不是 [field] 的访问器。
+     *
+     * 属性改写要跳过这条边：`getX(){ rtn this.x }` 里那句 `this.x` 必须**直读字段**，
+     * 摊成 `getX()` 就是无限递归（[PropertyDesugar.isAccessorOf] 只比名字，够了）。
+     */
+    private fun currentFnIsAccessorOf(field: FieldDecl): Boolean =
+        this::currentFn.isInitialized && PropertyDesugar.isAccessorOf(field, currentFn)
 
     /**
      * 把顶层扩展函数按**接收者类型名**收进 [extensionsByReceiver]。

@@ -152,7 +152,9 @@ pub class Account() {
 
 - 访问器在编译期（`PropertyDesugar`）展开成真方法：`getHp()` / `setHp(v)` / `isAlive()`，名字按 JavaBean 约定；Java 侧反射能直接认。
 - 不写体的自动访问器：getter 是 `rtn this.hp`，setter 是 `this.hp = v`。
-- **这一版只合成方法，不改使用侧**：`a.hp` 仍是字段直读、`a.hp = 5` 仍是字段直接赋值（不触发 setter）；访问器要显式调 `a.setHp(5)`。访问侧改写见 `design/DESIGN-79.md` 的后续步骤。
+- **使用侧也走访问器**（阶段 79 v2）：`a.hp` 摊成 `a.getHp()`、`a.hp = 5` 摊成 `a.setHp(5)`，三端都是真方法调用；所以 setter 里的钳位/校验对 `a.hp = -5` 一样生效。
+- 访问器**自己的体里**不做改写：自动体 `rtn this.hp` / `this.hp = v` 直读直写字段，不会递归。
+- 没写访问器的普通字段照旧直读直写（`fieldReads` / `fieldWrites` 那套不变）。
 - `val` 字段不能有 `set`；生成的 `getX`/`setX`/`isX` 与已有方法撞名会直接报错。
 - 访问器的可见性跟字段（字段写 `prv` 时访问器也是私有）；`prot` 在 native 侧只按检查期生效（C 没有可见性）。
 

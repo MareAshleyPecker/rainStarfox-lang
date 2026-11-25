@@ -8225,6 +8225,48 @@ class RsfTest {
     }
 
     @Test
+    fun `属性读写走访问器，三端一致`() {
+        val program = """
+            class Account() {
+                var hp : Int = 100 { get; set(v) { if (v < 0) { this.hp = 0 } else { this.hp = v } } }
+                val tag : String = "field" { get { rtn "tag:x" } }
+            }
+            fn main() -> void {
+                val a = new Account()
+                println(intToString(a.hp))
+                a.hp = 50
+                println(intToString(a.hp))
+                a.hp = -5
+                println(intToString(a.hp))
+                println(a.tag)
+            }
+        """.trimIndent()
+        val expected = listOf("100", "50", "0", "tag:x")
+        assertEquals(expected, lines(runInterpreted(program)))
+        assertEquals(expected, lines(runCompiledClasses(program, "RsfPropertyAccess")))
+    }
+
+    @Test
+    fun `属性访问器自己的体里直读直写，不会自递归`() {
+        // 自动访问器的体就是 `rtn this.hp` / `this.hp = v`：如果改写也作用在它们身上，
+        // 这里会直接爆栈（StackOverflowError），所以这条是防回归的哨兵。
+        val program = """
+            class Box2() {
+                var v : Int = 7 { get; set }
+            }
+            fn main() -> void {
+                val b = new Box2()
+                println(intToString(b.v))
+                b.v = 9
+                println(intToString(b.v))
+            }
+        """.trimIndent()
+        val expected = listOf("7", "9")
+        assertEquals(expected, lines(runInterpreted(program)))
+        assertEquals(expected, lines(runCompiledClasses(program, "RsfPropertyRecursion")))
+    }
+
+    @Test
     fun `扩展函数：接收者当 0 号实参，三端结果一致`() {
         val program = """
             fn Int.twice() -> Int { rtn this * 2 }

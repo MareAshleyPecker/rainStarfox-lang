@@ -2795,6 +2795,18 @@ class BytecodeCompiler(
                 // `对象.字段 = ...`：接收者先求值（`this.字段` 的接收者就是 0 号槽），
                 // 再求值右侧，最后 PUTFIELD。
                 is IFieldAssign -> {
+                    // 阶段 79 v2：字段写了 `{ set }` 时 `p.hp = v` 摊成 `p.setHp(v)`
+                    val setter = model.propertyWrites[instr.stmt]
+                    if (setter != null) {
+                        emitExpr(ctx, instr.stmt.target.receiver)
+                        emitExpr(ctx, instr.stmt.value)
+                        val want = model.paramTypesOf(setter.decl).firstOrNull()
+                        if (want != null) emitWiden(mv, model.typeOf(instr.stmt.value), want)
+                        mv.visitMethodInsn(
+                            INVOKEVIRTUAL, classInternalName(setter.className), setter.decl.name,
+                            descriptorOf(setter.decl), false,
+                        )
+                    } else {
                     val field = model.classModel.fieldWrites[instr.stmt]
                         ?: throw IllegalStateException(
                             "内部错误：字段赋值没有解析到字段（${instr.stmt.at.line} 行）",
@@ -2813,6 +2825,7 @@ class BytecodeCompiler(
                         PUTFIELD, classInternalName(field.className), target.name,
                         descriptorOfType(declared),
                     )
+                    }
                 }
 
                 is IExpr -> {
@@ -3359,6 +3372,16 @@ class BytecodeCompiler(
                     mv.visitMethodInsn(
                         INVOKESTATIC, programInternalName, extensionDecl.name,
                         descriptorOf(extensionDecl), false,
+                    )
+                    return
+                }
+                // 阶段 79 v2：字段上写了 `{ get }` / `{ is }` 时 `p.hp` 是**属性读**，
+                // 摊成 `p.getHp()`。判据同样来自 Checker 的表（三端同源）。
+                model.propertyReads[expr]?.let { accessor ->
+                    emitExpr(ctx, expr.receiver)
+                    mv.visitMethodInsn(
+                        INVOKEVIRTUAL, classInternalName(accessor.className), accessor.decl.name,
+                        descriptorOf(accessor.decl), false,
                     )
                     return
                 }

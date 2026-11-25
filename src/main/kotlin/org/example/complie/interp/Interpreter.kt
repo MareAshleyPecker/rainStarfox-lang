@@ -377,6 +377,20 @@ class Interpreter(
 
                     // `对象.字段 = ...`
                     is IFieldAssign -> {
+                        // 阶段 79 v2：字段写了 `{ set }` 时 `p.hp = v` 摊成 `p.setHp(v)`
+                        val setter = model.propertyWrites[instr.stmt]
+                        if (setter != null) {
+                            val target = instr.stmt.target
+                            val obj = if (target.receiver is ThisExpr) {
+                                thisObject(slots)
+                            } else {
+                                eval(target.receiver, slots, body) as RsfObject
+                            }
+                            val value = eval(instr.stmt.value, slots, body)
+                            invokeUserMethod(setter.className, setter.decl, obj, listOf(value))
+                            pc++
+                            continue
+                        }
                         val field = model.classModel.fieldWrites[instr.stmt]
                             ?: throw RsfError("interp", "内部错误：字段赋值没有解析到字段", instr.at.line, instr.at.column, null)
                         val target = instr.stmt.target
@@ -776,6 +790,12 @@ class Interpreter(
             args.add(eval(expr.receiver, slots, body))
             expr.arguments.orEmpty().forEach { args.add(eval(it, slots, body)) }
             return call(decl, args)
+        }
+        // 阶段 79 v2：`p.hp` 在字段写了 `{ get }` 时摊成 `p.getHp()`——和扩展函数一样，
+        // 判据来自 Checker 的表（三端同源），这里只负责求值接收者再调那个方法。
+        model.propertyReads[expr]?.let { accessor ->
+            val self = eval(expr.receiver, slots, body) as RsfObject
+            return invokeUserMethod(accessor.className, accessor.decl, self, emptyList())
         }
 
         // 阶段 19c：枚举常量 `TokenKind.IDENT`。

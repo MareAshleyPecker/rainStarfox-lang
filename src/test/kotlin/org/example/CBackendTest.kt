@@ -528,6 +528,25 @@ class CBackendTest {
     }
 
     @Test
+    fun `属性读写摊成 getHp 与 setHp 调用`() {
+        val c = emit(
+            "class A() {\n" +
+                "    var hp : Int = 1 { get; set }\n" +
+                "}\n" +
+                "fn main() -> void {\n" +
+                "    val a = new A()\n" +
+                "    a.hp = 2\n" +
+                "    println(intToString(a.hp))\n" +
+                "}",
+        )
+        // 读走 getter、写走 setter，都是普通方法调用
+        assertTrue(c.contains("rsf_m_A_getHp("), c.take(900))
+        assertTrue(c.contains("rsf_m_A_setHp("), c.take(900))
+        // 访问器自己的体里必须直读直写字段（否则自递归）：`return ((rsf_cls_A*)self)->f_A_hp;`
+        assertTrue(c.contains("->f_A_hp"), c.take(900))
+    }
+
+    @Test
     fun `切片摊成 rsf_str_slice，越界与倒序都在运行时钳住`() {
         val c = emit(
             "fn main() -> void { println(\"中文😀abc\"[1..3]) }",

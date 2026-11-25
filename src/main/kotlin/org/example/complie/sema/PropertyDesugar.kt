@@ -59,6 +59,31 @@ object PropertyDesugar {
         return program.copy(classes = program.classes.map { desugar(it) })
     }
 
+    /** 属性 `x` 的 getter 名：写了 `{ is }` 就是 `isX`，否则 `{ get }` 的 `getX`；没写返回 null。 */
+    fun getterName(field: FieldDecl): String? {
+        val suffix = field.name.replaceFirstChar { it.uppercaseChar() }
+        return when {
+            field.accessors.any { it.kind == AccessorKind.IS } -> "is$suffix"
+            field.accessors.any { it.kind == AccessorKind.GET } -> "get$suffix"
+            else -> null
+        }
+    }
+
+    /** 属性 `x` 的 setter 名 `setX`；字段上没写 `set` 返回 null。 */
+    fun setterName(field: FieldDecl): String? {
+        if (field.accessors.none { it.kind == AccessorKind.SET }) return null
+        return "set" + field.name.replaceFirstChar { it.uppercaseChar() }
+    }
+
+    /**
+     * [fn] 是不是 [field] 的访问器（自动生成的那份或用户手写的体都算）。
+     *
+     * 访问器自己的体里不许再改写：`getX(){ rtn this.x }` 若把 `this.x` 也摊成 `getX()`
+     * 就是无限递归。Checker 用它跳过这条边。
+     */
+    fun isAccessorOf(field: FieldDecl, fn: FuncDecl?): Boolean =
+        fn != null && (fn.name == getterName(field) || fn.name == setterName(field))
+
     /** 展开一个类里所有属性；方法按字段声明顺序追加，原方法顺序不变。 */
     private fun desugar(cls: ClassDecl): ClassDecl {
         if (cls.fields.none { it.accessors.isNotEmpty() }) return cls

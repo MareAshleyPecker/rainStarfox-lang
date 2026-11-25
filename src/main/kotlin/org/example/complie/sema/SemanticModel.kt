@@ -723,6 +723,17 @@ class SemanticModel(
      * 「普通静态调用 + 接收者当 0 号实参」（Parser 已经把接收者插成 `this` 那个形参）。
      */
     val extensionCalls: IdentityHashMap<MemberExpr, FuncDecl> = IdentityHashMap(),
+
+    /**
+     * 阶段 79 v2：**属性读** → 访问器。
+     *
+     * `p.hp` 在语法上是成员访问，但字段上写了 `{ get }`（Bool 是 `{ is }`）时它该触发
+     * getter。三端据此把它摊成一次方法调用（`p.hp` ⇒ `p.getHp()`）。访问器自己的体里
+     * 不记这张表——否则 `rtn this.hp` 会调用自己，无限递归。
+     */
+    val propertyReads: IdentityHashMap<MemberExpr, UserMember.Method> = IdentityHashMap(),
+    /** 阶段 79 v2：**属性写** → setter（`p.hp = v` ⇒ `p.setHp(v)`）。 */
+    val propertyWrites: IdentityHashMap<MemberAssignStmt, UserMember.Method> = IdentityHashMap(),
     /** 顶层函数 → 返回类型。 */
     val returnTypes: Map<FuncDecl, RsfType>,
     /** 顶层函数 → 降级后的指令序列。 */
