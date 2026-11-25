@@ -316,7 +316,34 @@ class SourceLoader {
         }
     }
 
+    /**
+     * `@/xxx`：相对**项目根**（最近的、含 build.rsfs 的祖先目录）。
+     *
+     * 这样跨层引用不用写 `../../..`，层级一变也不用改：`@/rsfSrc/core/Vec.rsf`。
+     * 工程里没有 build.rsfs 时退回本次加载的根目录。
+     */
+    private fun projectRoot(from: File): File {
+        var d: File? = from.absoluteFile
+        while (d != null) {
+            if (File(d, "build.rsfs").isFile) return d
+            d = d.parentFile
+        }
+        return rootDir ?: from.absoluteFile
+    }
+
     private fun resolvePath(path: String, fromDir: File, imp: ImportDecl): File {
+        if (path.startsWith("@/")) {
+            val root = projectRoot(fromDir)
+            val f = File(root, path.removePrefix("@/"))
+            if (!f.isFile) {
+                throw RsfError(
+                    "loader",
+                    "找不到被 import 的文件 '$path'：@/ 指项目根 ${root.path}",
+                    imp.at.line, imp.at.column, files.last(),
+                )
+            }
+            return f.canonicalFile
+        }
         val candidates = searchBases(path, fromDir)
         val hit = candidates.firstOrNull { it.isFile }
         if (hit == null) {
