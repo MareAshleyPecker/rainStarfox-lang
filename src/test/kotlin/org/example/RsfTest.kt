@@ -3093,15 +3093,15 @@ class RsfTest {
         assertEquals("codegen", e.phase)
         assertTrue(e.detail.contains("Point"), e.detail)
 
-        // static 方法里用裸字段名（需要 this）：编译期就说清楚，别让 JVM 甩 VerifyError
+        // static 方法里用裸字段名（需要 this）：**检查期**就说清楚，别让 JVM 甩 VerifyError、
+        // 也别让解释器抛「内部错误：这里没有 this」（阶段 86 修的那条用户报错）。
         val inStatic = source(
             "class S {\n    var x : Int = 5\n    pub stc fn bad() -> Int {\n" +
                 "        rtn x\n    }\n}\n\nfn main() -> void {\n    println(S.bad())\n    rtn\n}\n",
         )
-        val e2 = assertFailsWith<RsfError> {
-            Rsf.build(Rsf.analyze(inStatic), inStatic, "RsfStatic", tempDir())
-        }
-        assertEquals("codegen", e2.phase)
+        val e2 = assertFailsWith<RsfError> { Rsf.analyze(inStatic) }
+        assertEquals("checker", e2.phase)
+        assertTrue(e2.detail.contains("静态方法"), e2.detail)
         assertTrue(e2.detail.contains("stc"), e2.detail)
     }
 

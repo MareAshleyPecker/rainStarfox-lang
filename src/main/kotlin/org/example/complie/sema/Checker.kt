@@ -5411,7 +5411,14 @@ class Checker(
                         checkMemberVisible(owner, stmt.name, stmt.at)
                         val subst = substitutionFromInside(info, owner)
                         checkFieldWrite(owner, field, stmt.value, stmt.at, subst)
-                        bareFieldWrites[stmt] = fieldMember(info, field, subst)
+                        if (this::currentFn.isInitialized && currentFn.isStatic) {
+                        throw err(
+                            "静态方法里改不到实例字段 '${stmt.name}'：静态方法没有 this。" +
+                                "把方法改成非静态（去掉 'stc'），或者在静态方法里先拿到一个实例再写 实例.${stmt.name} = …",
+                            stmt.at,
+                        )
+                    }
+                    bareFieldWrites[stmt] = fieldMember(info, field, subst)
                         return
                     }
                 }
@@ -6183,6 +6190,16 @@ class Checker(
                     val found = info?.let { lookupField(it, expr.name) }
                     if (found != null && info != null) {
                         val (owner, field) = found
+                        // 静态方法没有 this：裸字段名在这里读不到任何实例字段。
+                        // 不拦的话解释器会在 thisObject() 里抛「内部错误：这里没有 this」，
+                        // 字节码/C 后端则是发一条 aload_0 / self——两边都是难查的错。
+                        if (this::currentFn.isInitialized && currentFn.isStatic) {
+                            throw err(
+                                "静态方法里读不到实例字段 '${expr.name}'：静态方法没有 this。" +
+                                    "把方法改成非静态（去掉 'stc'），或者在静态方法里先拿到一个实例再写 实例.${expr.name}",
+                                expr.at,
+                            )
+                        }
                         checkMemberVisible(owner, expr.name, expr.at)
                         val member = fieldMember(info, field, substitutionFromInside(info, owner))
                         fieldReads[expr] = member
