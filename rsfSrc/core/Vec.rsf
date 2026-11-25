@@ -67,14 +67,19 @@ pub class Vec&<T> {
         items = bigger
     }
 
-    // 只读快照（原生数组长度等于 n），方便 for 循环与对拍
-    pub fn toArray() -> T[] {
-        var out : T[] = new T[n]
+    // 只读快照：**数组由调用方给**。
+    //
+    // 不能自己 `new T[n]`：`T[]` 在 JVM 上擦成 `Object[]`，返回给 `String[]` 之类的
+    // 变量会在赋值处抛 ClassCastException（`[Ljava.lang.Object; cannot be cast to [Ljava.lang.String;`）。
+    // 让调用方传数组，运行时类型就由调用点决定，这正是 Java `toArray(T[])` 的做法。
+    //
+    //     var arr : String[] = v.copyInto(new String[v.size()])
+    pub fn copyInto(into : T[]) -> T[] {
         var i = 0
         while (i < n) {
-            out[i] = items[i]
+            into[i] = items[i]
             i = i + 1
         }
-        rtn out
+        rtn into
     }
 }

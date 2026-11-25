@@ -177,7 +177,7 @@ pub class Widget {
             i = i + 1
         }
         box.add(w)
-        kids = box.toArray()
+        kids = box.copyInto(new Widget[box.size()])
         rtn this
     }
 
