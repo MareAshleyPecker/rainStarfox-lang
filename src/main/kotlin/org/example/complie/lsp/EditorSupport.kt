@@ -218,16 +218,31 @@ class Completer(
         val base = m.groupValues[1]
 
         val resolver = MemberResolver(importedClasses())
-        val cls = resolver.resolveClass(base)
+        val program = fileProgram()
+
+        // `base` 有两种可能：**类型名**（`Math.`、`Box.`）或**变量名**（`b.`、`this.`）。
+        // 阶段 87 之前只按类型名解析，于是 `b.` 什么都补不出来（只剩扩展函数）——
+        // 这里先看是不是变量，把它的静态类型（写出来的类型，或者 `new X(...)` / 字面量推出来的）找出来。
+        val isTypeName = resolver.resolveClass(base) != null || isUserType(base, program)
+        val typeName = if (isTypeName) base else typeNameOf(base, program)
+        val cls = resolver.resolveClass(typeName ?: base)
 
         val out = ArrayList<CompletionItem>()
+        if (cls == null && typeName != null && program != null) {
+            // 用户自己的类/接口：按声明顺序列字段与方法，再顺着父类型往上走
+            userTypeItems(typeName, program, out)
+        }
         if (cls != null) for (c in ClassPath.hierarchy(cls.internalName)) {
+            // 只列 public：`s.` 以前会把 `COMPACT_STRINGS`、`newStringUTF8NoRepl` 这类
+            // JDK 内部成员也列出来（81 条），既吵又调不到——编译器那边也一样拒绝。
             for (f in c.fields) {
+                if (!f.isPublic) continue
                 if (!out.any { it.label == f.name }) {
                     out.add(CompletionItem(f.name, "field", "${f.type.rsfName}（${if (f.isStatic) "静态" else "实例"}字段）"))
                 }
             }
             for (mm in c.methods) {
+                if (!mm.isPublic) continue
                 if (out.any { it.label == mm.name && it.kind == "method" }) continue
                 out.add(
                     CompletionItem(
@@ -238,17 +253,12 @@ class Completer(
                 )
             }
         }
-        // 阶段 80：扩展函数也列进来。`base` 是类型名时只列接收者同名的（`Box.` → `fn Box.foo`）；
-        // 是变量时编辑器拿不到静态类型（LSP 只做语法索引，不做类型推断），就把本文件里的
-        // 扩展全列出来，详情里写清接收者——用户自己看得出哪个能用。
-        val program = fileProgram()
-        val isTypeName = cls != null ||
-            program?.classes?.any { it.name == base } == true ||
-            program?.interfaces?.any { it.name == base } == true ||
-            program?.enums?.any { it.name == base } == true
+        // 阶段 80：扩展函数也列进来。能确定接收者类型时只列匹配的（`Box.` → `fn Box.foo`）；
+        // 变量类型推不出来时就全列，详情里写清接收者——用户自己看得出哪个能用。
+        val receiverName0 = typeName
         for (fn in program?.functions.orEmpty()) {
             val receiverName = fn.receiverType?.name ?: continue
-            if (isTypeName && receiverName != base) continue
+            if (receiverName0 != null && receiverName != receiverName0) continue
             if (out.any { it.label == fn.name && it.kind == "method" }) continue
             out.add(
                 CompletionItem(
@@ -261,22 +271,135 @@ class Completer(
         return out.ifEmpty { null }
     }
 
+    /** 名字本身就是本文件（或 import 进来的）类 / 接口 / 枚举名时算类型名。 */
+    private fun isUserType(name: String, program: Program?): Boolean =
+        program != null && (
+            program.classes.any { it.name == name } ||
+                program.interfaces.any { it.name == name } ||
+                program.enums.any { it.name == name }
+            )
+
+    /**
+     * 把 `名字.` 里的名字解析成**类型名**：`this` → 所在类；参数 / 局部变量 / 字段 → 它们的静态类型。
+     *
+     * 类型写出来就用它；没写（`val b = new Base("s")`）就按初值推一个最粗的类型。
+     * 推不出来返回 null——那就只列扩展函数，不瞎猜。
+     */
+    private fun typeNameOf(name: String, program: Program?): String? {
+        if (program == null) return null
+        if (name == "this") {
+            val owner = program.classes.lastOrNull { cls ->
+                cls.methods.any { it.at.line <= line } && cls.at.line <= line
+            }
+            return owner?.name
+        }
+        val decls = program.functions +
+            program.classes.flatMap { it.methods } +
+            program.interfaces.flatMap { it.methods }
+        // 形参
+        for (fn in decls) {
+            if (fn.at.line > line) continue
+            for (p in fn.params) if (p.name == name) return p.type.name
+        }
+        // 局部变量（光标之前声明过的）
+        for (fn in decls) {
+            val body = fn.body ?: continue
+            val hit = localsBefore(body).lastOrNull { it.name == name } ?: continue
+            if (hit.at.line > line) continue
+            return hit.declaredType?.name ?: inferredTypeName(hit.initializer)
+        }
+        // 字段（`this.xxx` 之外，直接写字段名的地方也能推）
+        for (cls in program.classes) for (f in cls.fields) if (f.name == name) return f.type.name
+        return null
+    }
+
+    /** 按初值猜类型：只认最粗的那几种，猜不出返回 null。 */
+    private fun inferredTypeName(expr: Expr?): String? = when (expr) {
+        is NewExpr -> expr.className
+        is StringLit -> "String"
+        is IntLit -> "Int"
+        is LongLit -> "Long"
+        is DoubleLit -> "Double"
+        is FloatLit -> "Float"
+        is BoolLit -> "Bool"
+        is CharLit -> "Char"
+        else -> null
+    }
+
+    /** 用户自己声明的类型：字段 + 方法，再顺着父类 / 父接口往上走。 */
+    private fun userTypeItems(typeName: String, program: Program, out: MutableList<CompletionItem>) {
+        val seen = HashSet<String>()
+
+        fun walk(current: String, depth: Int) {
+            if (depth > 6) return
+            val cls = program.classes.firstOrNull { it.name == current }
+            if (cls != null) {
+                for (f in cls.fields) {
+                    if (seen.add("f:" + f.name)) {
+                        out.add(
+                            CompletionItem(
+                                f.name,
+                                "field",
+                                f.type.name + if (f.mutable) "（字段）" else "（只读字段）",
+                            ),
+                        )
+                    }
+                }
+                for (m in cls.methods) {
+                    if (m.isConstructor) continue
+                    if (seen.add("m:" + m.name)) {
+                        out.add(CompletionItem(m.name, "method", signature(m) + if (m.isStatic) "（静态）" else ""))
+                    }
+                }
+                cls.superClass?.let { walk(it.name, depth + 1) }
+                for (s in cls.supertypes) walk(s.name, depth + 1)
+            }
+            val iface = program.interfaces.firstOrNull { it.name == current }
+            if (iface != null) {
+                for (m in iface.methods) {
+                    if (seen.add("m:" + m.name)) out.add(CompletionItem(m.name, "method", signature(m)))
+                }
+                for (s in iface.supertypes) walk(s.name, depth + 1)
+            }
+        }
+
+        walk(typeName, 0)
+    }
+
     /**
      * 把当前这篇源码解析一次（解析不了就是 null，正在打字时很常见）。
      *
      * 补全这一层只看当前文件：跨文件的声明要靠 import，而它不做跨文件语义分析
      * （与 `importedClasses` 用的是同一份「文件内 + import 的类」视野）。
      */
-    private fun fileProgram(): Program? = runCatching {
-        org.example.complie.parsing.Parser(Lexer(source).tokenize(), source).parseProgram()
+    /**
+     * 解析当前文件（只用来出补全，不要求能过检查）。
+     *
+     * 用户打 `b.` 的那一瞬间文件是**语法不完整**的（`b.` 后面什么都没有），整份解析会直接抛错；
+     * 但类 / 函数 / 字段 / 形参都在别的行上，把光标那一行挖空再解析一次，补全照样有答案。
+     * 阶段 87 之前这里只解析一次，于是 `this.` / `b.` 全都退化成关键字表——那正是用户报的问题。
+     */
+    private fun fileProgram(): Program? {
+        parseText(source.text)?.let { return it }
+        val lines = source.text.split("\n").toMutableList()
+        val at = line - 1
+        if (at in lines.indices) lines[at] = ""
+        // 别的行也可能是半行（`p.`、`this.`）——凡是**以点结尾**的行都不可能合法，一并挖空。
+        for (i in lines.indices) {
+            if (i != at && lines[i].trimEnd().endsWith(".")) lines[i] = ""
+        }
+        return parseText(lines.joinToString("\n"))
+    }
+
+    private fun parseText(text: String): Program? = runCatching {
+        val file = SourceFile.of(source.path, text, source.script)
+        org.example.complie.parsing.Parser(Lexer(file).tokenize(), file).parseProgram()
     }.getOrNull()
 
     /** 显式 import 的类（简单名 → 内部名）。java.lang 由 MemberResolver 兜底。 */
     private fun importedClasses(): Map<String, String> {
         val out = LinkedHashMap<String, String>()
-        val program = runCatching {
-            org.example.complie.parsing.Parser(Lexer(source).tokenize(), source).parseProgram()
-        }.getOrNull() ?: return out
+        val program = fileProgram() ?: return out
         for (imp in program.imports) {
             if (imp is ClassImport) {
                 val full = imp.path.replace('.', '/')

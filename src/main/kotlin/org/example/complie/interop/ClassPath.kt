@@ -37,6 +37,8 @@ class JvmMethod(
      * 在描述符上完全一样，只有 ACC_ABSTRACT 能分开。
      */
     val isAbstract: Boolean = false,
+    /** 是不是 public：包私有 / protected 的成员在补全里不该出现（调不到）。 */
+    val isPublic: Boolean = true,
 ) {
     /** `max(Int, Int) -> Int` 这样的可读签名，用于报错。 */
     fun display(ownerSimple: String): String {
@@ -52,6 +54,8 @@ class JvmField(
     val isStatic: Boolean,
     val owner: String,
     val descriptor: String,
+    /** 是不是 public：包私有 / protected 的字段在补全里不该出现（读不到）。 */
+    val isPublic: Boolean = true,
 )
 
 /** 一个已加载的 JVM 类（只取签名，跳过方法体）。 */
@@ -247,6 +251,7 @@ object ClassPath {
                                     paramTypeVars = m.paramTypeVars,
                                     returnTypeVar = m.returnTypeVar,
                                     isAbstract = (access and Opcodes.ACC_ABSTRACT) != 0,
+                                    isPublic = (access and Opcodes.ACC_PUBLIC) != 0,
                                 ),
                             )
                         }
@@ -270,6 +275,7 @@ object ClassPath {
                                     isStatic = (access and Opcodes.ACC_STATIC) != 0,
                                     owner = internal,
                                     descriptor = descriptor,
+                                    isPublic = (access and Opcodes.ACC_PUBLIC) != 0,
                                 ),
                             )
                         }
