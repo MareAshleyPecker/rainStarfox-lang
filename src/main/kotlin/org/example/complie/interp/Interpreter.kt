@@ -768,6 +768,16 @@ class Interpreter(
         body: LoweredFunction,
         discard: Boolean = false,
     ): Any? {
+        // 阶段 80：`3.twice()` —— 扩展函数就是**普通顶层函数**，只是接收者被塞进
+        // 0 号形参（Parser 把 `this` 插成了首参）。所以这里不求值成员，直接把
+        // 接收者 + 实参拼成一次调用。判据是 Checker 记的那张表，和字节码/C 后端同源。
+        model.extensionCalls[expr]?.let { decl ->
+            val args = ArrayList<Any?>(decl.params.size)
+            args.add(eval(expr.receiver, slots, body))
+            expr.arguments.orEmpty().forEach { args.add(eval(it, slots, body)) }
+            return call(decl, args)
+        }
+
         // 阶段 19c：枚举常量 `TokenKind.IDENT`。
         // 放在**最前面**：Checker 已经把它和「JVM 静态字段访问」彻底分开了
         // （枚举名不是 classpath 上的类），所以不存在选错路的问题，

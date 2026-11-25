@@ -8223,6 +8223,52 @@ class RsfTest {
         val e2 = assertFailsWith<RsfError> { Rsf.analyze(SourceFile.of("p.rsf", clash)) }
         assertTrue(e2.message!!.contains("getHp"), e2.message)
     }
+
+    @Test
+    fun `扩展函数：接收者当 0 号实参，三端结果一致`() {
+        val program = """
+            fn Int.twice() -> Int { rtn this * 2 }
+            fn String.shout() -> String { rtn this + "!" }
+            fn Int.addUp(a : Int) -> Int { rtn this + a }
+            fn main() -> void {
+                println(intToString(3.twice()))
+                println("hi".shout())
+                println(intToString((5).twice() + 1.twice()))
+                println(intToString(10.addUp(5)))
+            }
+        """.trimIndent()
+        val expected = listOf("6", "hi!", "12", "15")
+        assertEquals(expected, lines(runInterpreted(program)))
+        assertEquals(expected, lines(runCompiledClasses(program, "RsfExtension")))
+    }
+
+    @Test
+    fun `扩展函数：同名成员优先，成员存在时不走扩展`() {
+        val program = """
+            fn String.length() -> Int { rtn -1 }
+            fn String.shout() -> String { rtn this + "!" }
+            fn main() -> void {
+                println(intToString("abc".length()))
+                println("ab".shout())
+            }
+        """.trimIndent()
+        // String.length() 是 JVM 的成员，扩展不该盖掉它——两边都必须是 3
+        val expected = listOf("3", "ab!")
+        assertEquals(expected, lines(runInterpreted(program)))
+        assertEquals(expected, lines(runCompiledClasses(program, "RsfExtensionShadow")))
+    }
+
+    @Test
+    fun `扩展函数：同一接收者类型上重名同参数个数直接报错`() {
+        val program = """
+            fn Int.plus(a : Int) -> Int { rtn this + a }
+            fn Int.plus(b : Int) -> Int { rtn this - b }
+            fn main() -> void { println(1) }
+        """.trimIndent()
+        val e = assertFailsWith<RsfError> { Rsf.analyze(SourceFile.of("ext.rsf", program)) }
+        assertTrue(e.message!!.contains("扩展函数"), e.message)
+        assertTrue(e.message!!.contains("Int.plus"), e.message)
+    }
     @Test
     fun `字段能写 prv 与 prot，跨类访问私有字段报错`() {
         val program = """

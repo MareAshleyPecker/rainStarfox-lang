@@ -714,6 +714,15 @@ class SemanticModel(
     val callTargets: IdentityHashMap<CallExpr, FuncDecl>,
     /** 成员访问 → 解析到的 JVM 成员。 */
     val memberTargets: IdentityHashMap<MemberExpr, ResolvedMember>,
+
+    /**
+     * 阶段 80：**扩展函数调用**（`fn Int.twice()` 之后写 `3.twice()`）。
+     *
+     * 这种调用在语法上是成员访问，但没有对应的类/接口成员——Checker 在成员链
+     * 全部落空之后回退到扩展函数表，把选中的声明记在这里。两个后端据此把它摊成
+     * 「普通静态调用 + 接收者当 0 号实参」（Parser 已经把接收者插成 `this` 那个形参）。
+     */
+    val extensionCalls: IdentityHashMap<MemberExpr, FuncDecl> = IdentityHashMap(),
     /** 顶层函数 → 返回类型。 */
     val returnTypes: Map<FuncDecl, RsfType>,
     /** 顶层函数 → 降级后的指令序列。 */

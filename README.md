@@ -211,6 +211,7 @@ GC 的**策略**也可以由宿主自己实现（阶段 77）：C 侧把 `rsf_gc
 - 已支持：类 / 继承 / 虚表分派、接口与默认方法、枚举（真 `java.lang.Enum`：`values()` / `valueOf` / `name` / `ordinal`，Java 的 `switch` 与 `EnumSet` 可直接用）、泛型（擦除 + 装箱）、`switch`（枚举用 `tableswitch`，Int/Long/String 用比较链）、浮点、注解、指针（`T*` / `&x` / `*p` / `*p = v` / `p + n` / `p == q`）。
 - 指针在 JVM 上表示成 `Object[]{ 帧, 格子号 }`：只有被 `&x` 取过地址的变量会被提升进帧数组，没用指针的函数字节码不受影响（`build/verify37/` 守着）。
 - 还不支持：`&obj.f`、`&a[i]`（显式报错）；`jvmCall` 只在 native 构建里可用（JVM 侧直接调 Java 即可）。
+- **扩展函数**（`fn Int.twice() -> Int { rtn this * 2 }`，`3.twice()`）三端都支持：摊成「静态调用 + 接收者当 0 号实参」；成员同名时成员优先，同接收者重名同参数个数会报错。
 
 ### C 自举（实验）
 

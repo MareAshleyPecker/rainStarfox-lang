@@ -2662,7 +2662,15 @@ class BytecodeCompiler(
         val tmpSlot = frameSlot + 1
         // handler 里格式化「接住了什么」要两个临时槽（异常类名、异常消息），排在帧后面
         val handlerTemp = body.slotCount + localOffset + (if (frameSlot >= 0) 2 else 0)
-        val ctx = ExprCtx(mv, owner, body, localOffset, closures, closure, promoted, frameSlot)
+        val ctx = ExprCtx(
+            mv, owner, body, localOffset, closures, closure, promoted, frameSlot,
+            // 阶段 80：扩展函数的 `this` 就是 0 号形参（接收者），不是对象引用
+            extensionReceiver = if (closure == null && fn.receiverType != null) {
+                model.paramTypesOf(fn).firstOrNull()
+            } else {
+                null
+            },
+        )
         if (frameSlot >= 0) {
             pushInt(mv, body.slotCount)
             mv.visitTypeInsn(ANEWARRAY, "java/lang/Object")
@@ -3110,6 +3118,11 @@ class BytecodeCompiler(
         val promoted: Map<Binding, Int> = emptyMap(),
         /** 帧数组 `Object[]` 的局部槽；-1 表示本帧没有指针。 */
         val frameSlot: Int = -1,
+        /**
+         * 阶段 80：正在发**扩展函数**的体时，`this` 的类型（= 0 号形参的接收者类型）。
+         * 非 null 时 `this` 按普通局部槽读，而不是 `aload 0`（那时 0 号槽是 `Int` 这类值类型）。
+         */
+        val extensionReceiver: RsfType? = null,
     ) {
 
         /** lambda 帧里 `this` 的捕获槽；不在 lambda 里就是 null（= 0 号槽）。 */
@@ -3182,7 +3195,12 @@ class BytecodeCompiler(
             }
 
             // 实例方法（含构造器）的 0 号槽就是 this；lambda 帧里它是第一个捕获槽
-            is ThisExpr -> emitThis(ctx, "this")
+            // 阶段 80：扩展函数里 `this` 是**接收者形参**（0 号槽，类型可能是 Int/String），
+            // 所以按普通局部读——发 ALOAD 会在校验期报 "Bad local variable type"。
+            is ThisExpr -> {
+                val receiver = ctx.extensionReceiver
+                if (receiver != null) loadSlot(mv, receiver, ctx.localOffset) else emitThis(ctx, "this")
+            }
 
             is CallExpr -> if (model.isConstruction(expr)) emitNew(ctx, expr) else emitCall(ctx, expr)
 
@@ -3326,6 +3344,24 @@ class BytecodeCompiler(
             is LambdaExpr -> emitLambda(ctx, expr)
 
             is MemberExpr -> {
+                // 阶段 80：`3.twice()` —— 扩展函数是**普通顶层静态方法**，接收者是 0 号实参。
+                // 判据是 Checker 记的表（和解释器、C 后端同一份），所以三端的选法一致。
+                val extensionDecl = model.extensionCalls[expr]
+                if (extensionDecl != null) {
+                    emitExpr(ctx, expr.receiver)
+                    val params = model.paramTypesOf(extensionDecl)
+                    emitWiden(mv, model.typeOf(expr.receiver), params[0])
+                    for ((i, arg) in expr.arguments.orEmpty().withIndex()) {
+                        emitExpr(ctx, arg)
+                        emitWiden(mv, model.typeOf(arg), params[i + 1])
+                    }
+                    // 顶层函数都在**程序类**里（和 emitCall 的顶端调用一致）
+                    mv.visitMethodInsn(
+                        INVOKESTATIC, programInternalName, extensionDecl.name,
+                        descriptorOf(extensionDecl), false,
+                    )
+                    return
+                }
                 // `super.方法(...)` / `super(接口).方法(...)`（阶段 25 K2）必须**最先**查这张表：
                 // Checker 把「super 调用到底落到哪一份」记在 superCalls 里（owner 是**声明**
                 // 那个方法的父类/接口；接口默认方法那一路 interfaceOwner = true），而

@@ -34,27 +34,28 @@ sh tools/dev/probe.sh --cmp /tmp/x.rsf   # 单文件探针 + 对拍
 规则：
 - `.rsfs` 与 `.rsf` 同语言，唯一差别是**允许没有 main**；
 - `export` 只允许顶层函数，语义为零（只影响导出面）；
-- 扩展函数现在会得到一句明确的 `error[checker]: 扩展函数还没接语义`。
+- 扩展函数语法齐了，调用侧语义在**本节之后已经做完**（见 §3，2026-11-25 补）。
 
-## 3. 下一刀：扩展函数语义（照着做）
+## 3. 扩展函数语义（✅ 已做完，2026-11-25）
 
-目标：`fn Int.twice() -> Int { rtn this * 2 }` 后，`3.twice()` 在**解释器**里返回 6。
+结果：`fn Int.twice() -> Int { rtn this * 2 }` 之后 `3.twice()` 在解释器 / JVM / C 三端
+都返回 6；成员同名时成员优先；同接收者重名同参数个数报错；LSP 的 `x.` 补全会列出扩展。
+细节与判据写在 `design/DESIGN-80.md`，回归 725 → 731。
 
-1. **Parser 加首参**：`receiverType != null` 时，在 `params` 前面插一个
-   `Param("this", receiverType)`。保留 `receiverType`（LSP 和「不能访问私有成员」要用）。
-2. **Checker 绑 `this`**：`checkFunctionBody` 里，扩展函数把名字 `this` 绑到 0 号形参，
-   让 `ThisExpr` 能解析（今天 `this` 只在类里有效）。
-3. **查找回退**：成员调用解析失败处（`Checker.kt:6534` / `6607` 附近），
-   若接收者静态类型命中某个扩展，记 `SemanticModel.extensionCalls[expr] = decl`，
-   实参按 `decl.params.drop(1)` 检查。
-4. **解释器**：`Interpreter.evalMember` 的调用路径里，命中扩展就以接收者为第一个实参调用。
-5. **字节码 + C**：调用点变成「static 调用 + 接收者在前」；没接之前**显式拒绝**，
-   不要错编。
-6. **LSP**：`lsp/RsfSymbols.kt` 把扩展挂到接收者类型下（文档符号分组 "Extensions"）；
-   `EditorSupport` 里 `x.` 之后补全该类型的扩展；悬停/跳转定位到 `fn Foo.bar` 那行。
-7. 规则同 Kotlin：**不能访问私有成员**；**静态解析**（按声明类型选）。
+落地方式（原计划 vs 实做）：
 
-验证口径：`rsf run /tmp/ext.rsf` 输出 6；`quick.sh` 仍 9/9（旧语料不含扩展，不该动）。
+1. Parser 首参 —— **上游已做**，`params[0]` 就是接收者，`this` 绑到它。
+2. Checker 绑 `this` —— 上游已做（`currentExtensionReceiver`）。
+3. 查找回退 —— 做了 5 处回退点（`checkUserMember` 字段/方法、`checkInterfaceMember`、
+   `checkMember` 尾巴、JVM 重载没匹配上），命中记 `SemanticModel.extensionCalls`；
+   扩展表键是「接收者类型名去泛型实参后的最后一段」，同键重名同参数个数在
+   `collectExtensions()` 里报错。
+4. 解释器 —— `evalMember` 开头查表，接收者当第一个实参。
+5. 字节码 + C —— 摊成静态调用；**坑**：JVM 侧 `this` 必须读局部变量 0
+   （`ExprCtx.extensionReceiver`），发 `aload_0` 会 `VerifyError`；C 侧读 `v_this`。
+6. LSP —— `EditorSupport.memberItems()` 现在会列扩展；`RsfSymbols` 的悬停/跳转**没做**
+   （扩展仍按普通函数索引）。
+7. 规则同 Kotlin —— 静态解析、不能碰私有成员；重名限制已实现。
 
 ## 4. 之后：`#dep` 与构建计划
 

@@ -304,6 +304,13 @@ class CBackend(
     private val JDK_CLASSES = setOf("Integer", "Long", "Float", "Double", "Math", "String", "System")
     private var currentReturn: RsfType? = null
 
+    /**
+     * 阶段 80：正在发**扩展函数**的体（`fn Int.twice()`）。
+     *
+     * 那种函数里 `this` 是 0 号形参（接收者），C 侧名字是 `v_this`，不是类方法的 `self`。
+     */
+    private var extensionFn = false
+
     private fun returnType(fn: FuncDecl): RsfType =
         model.returnTypes[fn] ?: model.classModel.methodReturns[fn] ?: RsfType.VOID
 
@@ -543,9 +550,13 @@ class CBackend(
             return sb.toString()
         }
         if (cls == null) {
+            // 阶段 80：扩展函数（`fn Int.twice()`）里 `this` 是 0 号形参 `v_this`
+            val savedExtension = extensionFn
+            extensionFn = fn.receiverType != null
             sb.append(protoTop(fn)).append(" {\n").append(h0)
             fn.body?.statements?.forEach { sb.append(stmt(it, 1)) }
             sb.append("}\n\n")
+            extensionFn = savedExtension
             currentClass = null
             return sb.toString()
         }
@@ -953,7 +964,8 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
             val field = model.classModel.fieldReads[e]
             if (field != null) fieldRef("self", field.className, e.name) else paramName(e.name)
         }
-        is ThisExpr -> "self"
+        // 阶段 80：扩展函数里 `this` 是 0 号形参（接收者），C 侧名字是 v_this
+        is ThisExpr -> if (extensionFn) paramName("this") else "self"
         is UnaryExpr -> unary(e)
         is ForceExpr -> forceOf(e)
         is BinaryExpr -> binary(e)
@@ -1075,6 +1087,15 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
     }
 
     private fun member(e: MemberExpr): String {
+        // 阶段 80：`3.twice()` —— 扩展函数就是普通顶层函数，接收者当 0 号实参。
+        // 放在最前面：它既不是 JVM 成员，也不在成员表里（Checker 记在 extensionCalls）。
+        model.extensionCalls[e]?.let { decl ->
+            val params = paramTypesOf(decl)
+            val first = adapt(params.getOrNull(0) ?: RsfType.INT, physicalType(e.receiver), expr(e.receiver))
+            val rest = argsWithExpected(e.arguments.orEmpty(), params.drop(1))
+            val all = if (rest.isEmpty()) first else "$first, $rest"
+            return "${fnName(decl)}($all)"
+        }
         jdkMember(e)?.let { return it }
         // super.f(...)：**非虚**调用，直接打声明类那一份实现
         if (e.receiver is SuperExpr) {

@@ -515,6 +515,19 @@ class CBackendTest {
     }
 
     @Test
+    fun `扩展函数摊成静态调用，接收者是 0 号实参`() {
+        val c = emit(
+            "fn Int.twice() -> Int { rtn this * 2 }\n" +
+                "fn main() -> void { println(intToString(3.twice())) }",
+        )
+        // 调用点是普通函数调用，接收者排在第一个实参
+        assertTrue(c.contains("rsf_fn_twice("), c.take(600))
+        // 函数体里的 this 落到形参上（形参名统一加 v_ 前缀）
+        assertTrue(c.contains("v_this"), c.take(600))
+        assertFalse(c.contains("self"), c.take(600))
+    }
+
+    @Test
     fun `切片摊成 rsf_str_slice，越界与倒序都在运行时钳住`() {
         val c = emit(
             "fn main() -> void { println(\"中文😀abc\"[1..3]) }",

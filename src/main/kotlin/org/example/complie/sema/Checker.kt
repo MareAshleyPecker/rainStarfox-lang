@@ -253,6 +253,9 @@ class Checker(
         // 伴生实体自己写的父接口可能是这份程序里的接口（要接口表已经填满）。
         declareAnnotationBodies()
         declareFunctions()
+        // 阶段 80：扩展函数按接收者类型收表（要在类/枚举/接口表填好之后，
+        // 否则 `fn Box&<Int>.foo()` 里的 `Box` 还解析不出来）。
+        collectExtensions()
         // 实现配对只看签名，不看方法体，所以放在查任何体之前：先把「你没实现 greet」
         // 这种错报出来，用户改完再看体里的错。
         checkImplementations()
@@ -287,6 +290,7 @@ class Checker(
             paramTypes = paramTypes,
             callTargets = callTargets,
             memberTargets = memberTargets,
+            extensionCalls = extensionCalls,
             returnTypes = returnTypes,
             lowered = lowered,
             diagnostics = diagnostics.toList(),
@@ -2556,7 +2560,11 @@ class Checker(
         }
 
         val named = interfaceMethodsByName(info)[expr.name]
-            ?: throw err("$who 里没有方法 '${expr.name}'" + interfaceMethodHint(info), expr.at)
+            ?: run {
+                // 阶段 80：接口上没这个成员时，也允许接收者是扩展函数的接收者
+                tryExtension(type(expr.receiver), expr)?.let { return it }
+                throw err("$who 里没有方法 '${expr.name}'" + interfaceMethodHint(info), expr.at)
+            }
 
         val candidates = named.map {
             OverloadCandidate(it, memberParamTypes(it).map { t -> t.substitute(memberSubstFor(it, subst)) })
@@ -3648,7 +3656,14 @@ class Checker(
                         d.at,
                     )
                 }
-                val where = if (owner == null) "函数 '$name'" else "$ownerWord '$owner' 里的方法 '$name'"
+                val where = if (owner == null) {
+                    // 阶段 80：扩展函数的「名字」里得带上接收者，否则
+                    // `fn Int.plus(a: Int)` 报「函数 'plus' 重复定义」会让人以为别的重载也算。
+                    val receiver = d.receiverType?.name
+                    if (receiver != null) "扩展函数 '$receiver.$name'" else "函数 '$name'"
+                } else {
+                    "$ownerWord '$owner' 里的方法 '$name'"
+                }
                 // 源码写法也完全一样 ⇒ 就是我们平时说的「重复定义」，沿用老文案
                 val source = params.joinToString(", ") { it.rsfName }
                 val prevSource = paramTypesOfDecl(prev).joinToString(", ") { it.rsfName }
@@ -4778,6 +4793,7 @@ class Checker(
                     memberTargets[expr] = ResolvedField(inherited)
                     return inherited.type
                 }
+                tryExtension(type(expr.receiver), expr)?.let { return it }
                 throw err(
                     "$who 里没有字段 '${expr.name}'" + memberNamesHint(info, fields = true),
                     expr.at,
@@ -4833,6 +4849,7 @@ class Checker(
                     expr.at,
                 )
             }
+            tryExtension(type(expr.receiver), expr)?.let { return it }
             throw err(
                 "$who 里没有方法 '${expr.name}'" + memberNamesHint(info, fields = false),
                 expr.at,
@@ -6488,6 +6505,71 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
     private val memberTargets = IdentityHashMap<MemberExpr, ResolvedMember>()
     private val resolver = MemberResolver(classImports, ::isSourceSubtype)
 
+    // ------------------------------------------------------------------ 扩展函数（阶段 80）
+
+    /** 这次成员调用选中的**扩展函数**声明（`3.twice()` → `fn Int.twice()`）。 */
+    private val extensionCalls = IdentityHashMap<MemberExpr, FuncDecl>()
+
+    /** 接收者类型名 → 这个类型上的扩展函数（按名字再挑一次）。 */
+    private val extensionsByReceiver = LinkedHashMap<String, MutableList<FuncDecl>>()
+
+    /**
+     * 把顶层扩展函数按**接收者类型名**收进 [extensionsByReceiver]。
+     *
+     * 调用点：`declareFunctions()` 之后（那时 `classTable` / `enumTable` 已经填好，
+     * `resolveType` 才认得 `String`、`Box&<Int>` 这些名字）。
+     *
+     * 键用 [extensionKey]：`Box&<Int>` 与 `Box&<String>` 收在同一格里——扩展函数是
+     * 「这个类型上的方法」，不按实参特化（Kotlin 也一样，泛型扩展在签名里自己声明）。
+     */
+    private fun collectExtensions() {
+        for (fn in program.functions) {
+            val receiver = fn.receiverType ?: continue
+            val type = runCatching { resolveType(receiver) }.getOrNull() ?: continue
+            val key = extensionKey(type)
+            val same = extensionsByReceiver.getOrPut(key) { ArrayList() }
+            // 同一个接收者类型上不允许重名同参数个数（否则调用点无从选择）
+            if (same.any { it.name == fn.name && it.params.size == fn.params.size }) {
+                throw err(
+                    "'${type.rsfName}' 上已经有扩展函数 '${fn.name}'（参数个数 ${fn.params.size - 1}），" +
+                        "不能重复声明——扩展函数按名字分派，重名会让调用点没有唯一答案",
+                    fn.at,
+                )
+            }
+            same.add(fn)
+        }
+    }
+
+    /** 接收者类型的查表键：去掉泛型实参与包前缀（`java.util.ArrayList&<Int>` → `ArrayList`）。 */
+    private fun extensionKey(type: RsfType): String =
+        type.rsfName.substringBefore("&<").substringAfterLast('.')
+
+    /**
+     * **成员链落空时**再试一次：接收者类型上有没有同名、参数个数对得上的扩展函数。
+     *
+     * 规则与 Kotlin 一致：**成员优先**——所以这个函数只在「成员确实不存在」的
+     * 抛错点被调用（真的找到了成员时根本走不到那儿）。命中就把声明记进
+     * [extensionCalls]，两个后端据此摊成普通静态调用。
+     */
+    private fun tryExtension(receiverType: RsfType, expr: MemberExpr): RsfType? {
+        // 扩展是**函数**，必须有调用括号；`x.foo` 这种取值不查扩展（rsf 没有扩展属性）
+        val args = expr.arguments ?: return null
+        val candidates = extensionsByReceiver[extensionKey(receiverType)] ?: return null
+        val named = candidates.filter { it.name == expr.name && it.params.size - 1 == args.size }
+        if (named.isEmpty()) return null
+        val argTypes = args.map { type(it) }
+        val picked = named.firstOrNull { decl ->
+            decl.params.drop(1).withIndex().all { (i, p) -> argFitsType(resolveType(p.type), argTypes[i]) }
+        } ?: named.singleOrNull() ?: named.first()
+        extensionCalls[expr] = picked
+        // 返回值类型按声明解析；泛型扩展（`fn Box&<Int>.get()`）暂不代入实参
+        return resolveType(picked.ret.type)
+    }
+
+    /** 实参能不能当这个形参（扩展函数的挑选用；宽松：完全相等、子类型、或形参是占位都算）。 */
+    private fun argFitsType(declared: RsfType, actual: RsfType): Boolean =
+        declared == actual || declared.base == RsfBase.TYPE_PARAM || subtypeOf(actual, declared)
+
     private fun collectImports() {
         for (imp in program.imports) {
             if (imp !is ClassImport) continue // 源文件 目录导入已经由 SourceLoader 处理掉了
@@ -6600,11 +6682,15 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
         if (receiverType.isTypeParam && receiverType.typeArgs.isNotEmpty()) {
             return checkMemberOnBound(receiverType.typeArgs[0], expr)
         }
-        val className = resolver.classOf(receiverType)
-            ?: throw err(
+        // 阶段 80：走到这里说明成员链上什么都没有——最后试一次**扩展函数**
+        // （`fn Int.twice()` 之后写 `3.twice()`）。成员优先：上面任何一支命中都会
+        // 提前 return，根本到不了这儿。
+        val className = resolver.classOf(receiverType) ?: return run {
+            tryExtension(receiverType, expr) ?: throw err(
                 "${receiverType.rsfName} 上没有成员——它既不是 JVM 类，也不是 String",
                 expr.at,
             )
+        }
 
         val args = expr.arguments
         if (args == null) {
@@ -6636,7 +6722,7 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
             } else {
                 null
             }
-            ?: throw err(
+            ?: return tryExtension(receiverType, expr) ?: throw err(
                 "'${receiverType.simpleExternalName}' 里没有匹配的方法 '${expr.name}'" +
                     describeArgs(argTypes) + describeCloseMatches(className, expr.name),
                 expr.at,
