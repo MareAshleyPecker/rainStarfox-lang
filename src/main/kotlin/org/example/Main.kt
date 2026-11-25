@@ -186,9 +186,23 @@ class Cli {
             i++
         }
 
+        // 不带文件名时：项目里若有 build.rsfs，就由它驱动构建（构建脚本必须有 main）。
+        // 这样 `rsf build` 在项目目录里和 `rsf build x.rsf` 在单文件模式下是同一个命令。
+        if (positional.isEmpty() && !cMode && !dump && !meta) {
+            val buildScript = File("build.rsfs")
+            if (buildScript.isFile) {
+                val loadedScript = Rsf.load(buildScript)
+                val scriptModel = Rsf.analyze(loadedScript)
+                for (warning in scriptModel.warnings) System.err.println("[rsf] 警告: $warning")
+                val problem = scriptModel.entryProblem
+                if (problem != null) throw RsfError("build", "build.rsfs 不能当构建脚本：$problem")
+                Rsf.interpret(scriptModel, System.out)
+                return 0
+            }
+        }
         val file = requireFile(
             positional.firstOrNull(),
-            "build <file.rsf> [-o <dir>] [-n <类名>] [--dump] [--c [--lib] [--jni]]",
+            "build [<file.rsf>] [-o <dir>] [-n <类名>] [--dump] [--c [--lib] [--jni]]",
         )
         // 阶段 60：`--c` 是 native 构建，只收 target native / 两侧都写的声明
         val loaded = Rsf.load(file, target = if (cMode) BuildTarget.NATIVE else BuildTarget.JVM)
@@ -677,7 +691,7 @@ class Cli {
             |  script <file.rsf|.rsfs> [--list]  脚本入口：允许没有 main，列出可调用函数
             |  init [目录]                      生成项目骨架（build.rsfs + src/main.rsf）
             |  script <file.rsf> [--list|--call F] 编译进内存、当场加载并调用（不落盘）
-            |  build <file.rsf> [选项]           编译，默认出 .class
+            |  build [<file.rsf>] [选项]         编译；不带文件时若项目里有 build.rsfs 就由它驱动
             |  decompile <产物> [选项]           从产物还原源码（产物要用 build --meta 编出）
             |  check <file.rsf> [选项]           只做词法、语法、类型检查
             |  lex <file.rsf>                   打印 token 流
