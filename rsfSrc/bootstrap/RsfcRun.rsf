@@ -1,3 +1,4 @@
+#NoWarning!!(all)
 // rainStarfox 阶段 36c：自举驱动的 `run` 子命令（对齐 Kotlin `rsf run`：成功时只打程序自己的 stdout）
 //
 // 跑：rsf build rsfSrc/bootstrap/RsfcRun.rsf -o build/verify36/self

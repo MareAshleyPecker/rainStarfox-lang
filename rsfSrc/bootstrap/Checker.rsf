@@ -1,3 +1,4 @@
+#NoWarning!!(all)
 // rainStarfox 阶段 33a：自举 Checker 的第一层（声明 + 最简单的表达式/语句检查）
 //
 // 判据：`build/verify32/run-parity.sh self` 里「语义已实现」的那几份必须与 Kotlin 的第一处错误

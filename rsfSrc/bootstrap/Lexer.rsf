@@ -1,3 +1,4 @@
+#NoWarning!!(all)
 // rainStarfox 阶段 17a：**用 rsf 自己写的词法器**（自举的第一步）
 //
 // 基准是 Kotlin 版 `src/main/kotlin/org/example/complie/lexing/Lexer.kt`：

@@ -1,3 +1,4 @@
+#NoWarning!!(all)
 // rainStarfox 阶段 32a：类型层的对拍探针（自举侧）
 //
 // 与 Kotlin 侧 `src/test/kotlin/org/example/TypeProbe.kt` 打出的文本必须逐字节相同。

@@ -1,3 +1,4 @@
+#NoWarning!!(all)
 // rainStarfox 阶段 17b：**用 rsf 自己写的语法分析器**（自举的第二步）
 //
 // 基准是 Kotlin 版 `src/main/kotlin/org/example/complie/parsing/Parser.kt`：

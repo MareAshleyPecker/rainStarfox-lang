@@ -1,3 +1,4 @@
+#NoWarning!!(all)
 // rainStarfox 阶段 36c：自举驱动的 `build` 子命令（输出口径对齐 Kotlin `rsf build`）
 //
 // 跑：rsf build rsfSrc/bootstrap/RsfcBuild.rsf -o build/verify36/self
