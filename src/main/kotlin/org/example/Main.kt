@@ -1,6 +1,7 @@
 package org.example
 
 import org.example.build.ProjectBuildHost
+import org.example.complie.BuildResult
 import org.example.complie.Rsf
 import org.example.complie.ast.BuildTarget
 import org.example.complie.codegen.disassemble
@@ -183,6 +184,8 @@ class Cli {
         var cLib = false
         var cJni = false
         var meta = false
+        var jar = false
+        var link = false
         val positional = ArrayList<String>()
 
         var i = 0
@@ -203,6 +206,8 @@ class Cli {
                 "--lib" -> cLib = true
                 "--jni" -> cJni = true
                 "--meta" -> meta = true
+                "--jar" -> jar = true
+                "--link" -> link = true
                 else -> positional.add(a)
             }
             i++
@@ -294,6 +299,15 @@ class Cli {
             }
             if (cLib) {
                 println("[rsf] 这是库（没有 main）: gcc -c ${out.path} -o ${File(outDir, "$name.o").path}")
+            } else if (link) {
+                // 直接调系统 C 编译器出可执行文件；失败时把命令原样打出来，方便手调
+                val exe = File(outDir, if (isWindows()) "$name.exe" else name)
+                val cc = System.getenv("CC") ?: "gcc"
+                val cmd = listOf(cc, "-std=c11", "-O1", "-w", out.path, "-o", exe.path, "-lm")
+                println("[rsf] 链接: ${cmd.joinToString(" ")}")
+                val rc = ProcessBuilder(cmd).inheritIO().start().waitFor()
+                if (rc != 0) throw RsfError("build", "链接失败（${cc} 退出码 $rc）")
+                println("[rsf] 已生成 ${exe.path}")
             } else {
                 println("[rsf] 编译: gcc ${out.path} -o ${File(outDir, "$name.exe").path} -lm")
             }
@@ -315,6 +329,16 @@ class Cli {
             println("[rsf] 运行: java -cp ${outDir.path} $launch")
         } else {
             System.err.println("[rsf] 警告: 源文件里没有 main 函数，生成的类不能用 java 直接启动")
+        }
+
+        if (jar) {
+            val launch = model.packageName
+                ?.takeIf { it.isNotEmpty() }
+                ?.let { "$it.${result.className}" }
+                ?: result.className
+            val f = writeJar(outDir, name, result, if (model.entry != null) launch else null)
+            println("[rsf] 已打包 ${f.path}")
+            if (model.entry != null) println("[rsf] 运行: java -jar ${f.path}")
         }
 
         if (dump) {
@@ -693,6 +717,28 @@ class Cli {
         val static = if (fn.isStatic) "stc " else ""
         return "$control ${static}fn$mainType ${fn.name}($params) ${fn.ret.display()}"
     }
+
+    /** 把这次生成的 .class 打成一个可执行 jar（有 main 就写 Main-Class）。 */
+    private fun writeJar(outDir: File, name: String, result: BuildResult, mainClass: String?): File {
+        val jar = File(outDir, "$name.jar")
+        val manifest = java.util.jar.Manifest()
+        manifest.mainAttributes[java.util.jar.Attributes.Name.MANIFEST_VERSION] = "1.0"
+        if (mainClass != null) {
+            manifest.mainAttributes[java.util.jar.Attributes.Name.MAIN_CLASS] = mainClass
+        }
+        java.util.jar.JarOutputStream(jar.outputStream(), manifest).use { out ->
+            for (f in result.classFiles) {
+                val rel = f.absoluteFile.relativeTo(outDir.absoluteFile).path.replace(File.separatorChar, '/')
+                out.putNextEntry(java.util.zip.ZipEntry(rel))
+                out.write(f.readBytes())
+                out.closeEntry()
+            }
+        }
+        return jar
+    }
+
+    private fun isWindows(): Boolean =
+        System.getProperty("os.name").lowercase().contains("win")
 
     private fun requireFile(path: String?, usage: String): File {
         if (path == null) throw RsfError("cli", "用法: rsf $usage")
