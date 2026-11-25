@@ -1920,7 +1920,9 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
                         char* p = (char*)rsf_malloc((size_t)(n > 0 ? n : 0) + 1);
                         if (n > 0) memcpy(p, f->path.data + last, (size_t)n);
                         p[n > 0 ? n : 0] = 0;
-                        rsf_str s; s.len = n > 0 ? n : 0; s.data = p; return s;
+                        rsf_str s; s.len = n > 0 ? n : 0; s.data = p;
+                        s.units1 = 0;
+                        return rsf_str_settle(s);
                     }
                 }
             }
@@ -1974,7 +1976,9 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
                         char* p = (char*)rsf_malloc((size_t)k + 1);
                         memcpy(p, out, (size_t)k + 1);
                         {
-                            rsf_str s; s.len = k; s.data = p; return s;
+                            rsf_str s; s.len = k; s.data = p;
+                            s.units1 = 0;
+                            return rsf_str_settle(s);
                         }
                     }
                 }
@@ -3231,7 +3235,7 @@ static inline void* rsf_grow(void* ptr, size_t oldSize, size_t newSize) {
                         if (strtod(buf, NULL) == v) break;
                     }
                 }
-                { rsf_str s = {0, 0, NULL}; s.len = n; s.data = buf; return s; }
+                { rsf_str s = {0, 0, NULL}; s.len = n; s.data = buf; return rsf_str_settle(s); }
             }
 
             static rsf_str rsf_float_to_str(float v) {
