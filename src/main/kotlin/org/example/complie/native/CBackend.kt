@@ -49,6 +49,12 @@ class CBackend(
 
     /** `switch` 的被分派值落在临时变量里，编号保证同一函数内不重名。 */
     private var switchSeq = 0
+    /** try 帧的编号。 */
+    private var trySeq = 0
+    /** 当前函数里有 try：局部变量要加 volatile（longjmp 之后寄存器值不可信）。 */
+    private var volatileLocals = false
+    /** 正在发射的 try 嵌套深度：return 时要把 handler 栈弹回去。 */
+    private var tryDepth = 0
     private var tempSeq = 0
 
     /** 用到 `jvmCall` 才把「起 JVM」那段运行时编进来（不用的人不背 windows.h/jni.h）。 */
@@ -276,6 +282,20 @@ class CBackend(
     private fun fail(what: String): Nothing =
         throw RsfError("native", "C 后端暂不支持：$what（阶段 52 的 C 后端只接了 int/long/bool/string/数组/类）")
 
+    /** 语句树里有没有 try（含嵌套块）。决定局部变量要不要 volatile。 */
+    private fun containsTry(st: Stmt?): Boolean = when (st) {
+        null -> false
+        is TryStmt -> true
+        is Block -> st.statements.any { containsTry(it) }
+        is IfStmt -> containsTry(st.body) || containsTry(st.elseBody)
+        is WhileStmt -> containsTry(st.body)
+        is ForStmt -> containsTry(st.body) || containsTry(st.step)
+        is SwitchStmt -> st.cases.any { containsTry(it.body) } || containsTry(st.elseBody)
+        else -> false
+    }
+
+    private fun hasTry(fn: FuncDecl): Boolean = fn.body?.statements?.any { containsTry(it) } == true
+
     // ------------------------------------------------------------------ 类型
 
     /** 「现在这个位置期望的类型」：只用于把 `null` 字面量落成对的 C 表示。 */
@@ -479,7 +499,8 @@ class CBackend(
 
     private fun protoTop(fn: FuncDecl): String {
         val params = paramTypesOf(fn)
-        val list = fn.params.mapIndexed { i, p -> "${cType(params[i])} ${paramName(p.name)}" }
+        val v = if (volatileLocals) "volatile " else ""
+        val list = fn.params.mapIndexed { i, p -> "$v${cType(params[i])} ${paramName(p.name)}" }
         return "${cType(returnType(fn))} ${fnName(fn)}(${list.joinToString(", ").ifEmpty { "void" }})"
     }
 
@@ -507,18 +528,22 @@ class CBackend(
 
     private fun definition(fn: FuncDecl, cls: ClassDecl?, iface: InterfaceDecl? = null): String {
         currentClass = cls
+        val withTry = hasTry(fn)
+        volatileLocals = withTry
+        tryDepth = 0
+        val h0 = if (withTry) "    rsf_handler* _rsf_h0 = rsf_ctx_get()->handler;\n" else ""
         val savedReturn = currentReturn
         currentReturn = returnType(fn)
         val sb = StringBuilder()
         if (iface != null) {
-            sb.append(ifaceProto(iface, fn)).append(" {").append(NL)
+            sb.append(ifaceProto(iface, fn)).append(" {").append(NL).append(h0)
             fn.body?.statements?.forEach { sb.append(stmt(it, 1)) }
             sb.append("}").append(NL).append(NL)
             currentClass = null
             return sb.toString()
         }
         if (cls == null) {
-            sb.append(protoTop(fn)).append(" {\n")
+            sb.append(protoTop(fn)).append(" {\n").append(h0)
             fn.body?.statements?.forEach { sb.append(stmt(it, 1)) }
             sb.append("}\n\n")
             currentClass = null
@@ -530,7 +555,7 @@ class CBackend(
             currentClass = null
             return sb.toString()
         }
-        sb.append(protoMember(cls, fn)).append(" {\n")
+        sb.append(protoMember(cls, fn)).append(" {\n").append(h0)
         fn.body?.statements?.forEach { sb.append(stmt(it, 1)) }
         sb.append("}\n\n")
         currentClass = null
@@ -545,6 +570,7 @@ class CBackend(
             fn.params.mapIndexed { i, p -> "${cType(params[i])} ${paramName(p.name)}" }
         val sb = StringBuilder()
         sb.append("void $name(${list.joinToString(", ")}) {").append(NL)
+        if (hasTry(fn)) sb.append("    rsf_handler* _rsf_h0 = rsf_ctx_get()->handler;").append(NL)
         val thisCall = model.classModel.delegationOf(fn)
         if (thisCall != null) {
             // this(...)：转给同类另一个构造器；字段初值只在那条链的根跑
@@ -706,7 +732,8 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
     private fun stmt(s: Stmt, indent: Int): String = when (s) {
         is VarDeclStmt -> {
             val type = model.typeOf(s)
-            pad(indent) + "${cType(type)} ${paramName(s.name)} = ${expr(s.initializer)};\n"
+            val v = if (volatileLocals) "volatile " else ""
+            pad(indent) + "$v${cType(type)} ${paramName(s.name)} = ${expr(s.initializer)};\n"
         }
         is AssignStmt -> {
             val field = model.classModel.bareFieldWrites[s]
@@ -728,7 +755,8 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
         }
         is SuperCallStmt, is ThisCallStmt -> ""
         // 阶段 66：fail "..." → 置错误旗标并立刻从当前函数返回（错误由 try/catch 或顶层兜底）
-        is FailStmt -> pad(indent) + "rsf_set_err(" + expr(s.message) + "); " + returnZero(currentReturn) + NL
+        is FailStmt -> pad(indent) + "rsf_set_err(" + expr(s.message) + "); rsf_throw(); " +
+            returnZero(currentReturn) + NL
         is IndexAssignStmt -> {
             val target = s.target
             val elem = elemCType(elementOf(model.typeOf(target.receiver)))
@@ -738,13 +766,14 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
         }
         is ExprStmt -> pad(indent) + expr(s.expr) + ";\n"
         is ReturnStmt -> {
+            val pop = if (tryDepth > 0) "rsf_ctx_get()->handler = _rsf_h0; " else ""
             val value = s.value
             if (value == null) {
-                pad(indent) + "return;\n"
+                pad(indent) + pop + "return;\n"
             } else {
                 expectedType = currentReturn
                 val code = expr(value)
-                pad(indent) + "return $code;\n"
+                pad(indent) + pop + "return $code;\n"
             }
         }
         is IfStmt -> {
@@ -770,29 +799,33 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
         }
         is SwitchStmt -> switchStmt(s, indent)
         is ForStmt -> forStmt(s, indent)
-        is BreakStmt -> pad(indent) + "break;\n"
-        is ContinueStmt -> pad(indent) + "continue;\n"
+        is BreakStmt -> {
+            if (tryDepth > 0) fail("try 块里的 break（第 ${s.at.line} 行）")
+            pad(indent) + "break;\n"
+        }
+        is ContinueStmt -> {
+            if (tryDepth > 0) fail("try 块里的 continue（第 ${s.at.line} 行）")
+            pad(indent) + "continue;\n"
+        }
         is TryStmt -> {
             val sb = StringBuilder()
-            sb.append(pad(indent)).append("rsf_err = false;\n")
+            val h = "h_${trySeq++}"
+            sb.append(pad(indent)).append("rsf_handler ").append(h).append(";\n")
+            sb.append(pad(indent)).append(h).append(".prev = rsf_ctx_get()->handler;\n")
+            sb.append(pad(indent)).append("rsf_ctx_get()->handler = &").append(h).append(";\n")
+            sb.append(pad(indent)).append("if (setjmp(").append(h).append(".jb) == 0) {\n")
+            tryDepth++
             for (inner in s.body.statements) {
-                if (inner is VarDeclStmt) {
-                    // 声明提到外面：否则变量被 if (!rsf_err) { } 关在块里，后面用不到
-                    val type = model.typeOf(inner)
-                    val name = paramName(inner.name)
-                    sb.append(pad(indent)).append("${cType(type)} $name;\n")
-                    sb.append(pad(indent)).append("if (!rsf_err) $name = ${expr(inner.initializer)};\n")
-                } else {
-                    sb.append(pad(indent)).append("if (!rsf_err) {\n")
-                    sb.append(stmt(inner, indent + 1))
-                    sb.append(pad(indent)).append("}\n")
-                }
+                sb.append(stmt(inner, indent + 1))
+                // 内置函数的失败不会自己跳：走到这里还挂着 rsf_err 就补一次 throw
+                sb.append(pad(indent + 1)).append("if (rsf_err) rsf_throw();\n")
             }
-            sb.append(pad(indent)).append("if (rsf_err) {\n")
+            tryDepth--
+            sb.append(pad(indent + 1)).append("rsf_ctx_get()->handler = ").append(h).append(".prev;\n")
+            sb.append(pad(indent)).append("} else {\n")
+            // longjmp 落到这里：错误已经置好，帧也已经弹回 prev（下面这行）
+            sb.append(pad(indent + 1)).append("rsf_ctx_get()->handler = ").append(h).append(".prev;\n")
             sb.append(pad(indent + 1)).append("rsf_str v_").append(s.catchName).append(" = rsf_err_msg;\n")
-            // 关键：接住之后必须清掉标志。否则 catch 体里继续执行时 rsf_err 还是 true，
-            // 外层 try 的 `if (rsf_err)` 会把这个**已经接住**的错误再抓一次，
-            // 表现就是「接住了又逃出来」——自举解释器里信号 R 满天飞就是这么来的。
             sb.append(pad(indent + 1)).append("rsf_err = false;\n")
             for (inner in s.catchBody.statements) sb.append(stmt(inner, indent + 1))
             sb.append(pad(indent)).append("}\n")
@@ -882,7 +915,16 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
             have.base == RsfBase.TYPE_PARAM && want.base != RsfBase.TYPE_PARAM -> unboxed(want, "_e")
             else -> "_e"
         }
-        return "({ ${cType(have)} _e = $code; ($test) ? ${expr(e.right)} : $pick; })"
+        // 左边可能 fail：`?:` 必须自己接住这次 longjmp，否则错误会穿过整个表达式。
+        // 语义：失败 → 取右边；成功但值为 null → 也取右边。
+        val h = "he_${trySeq++}"
+        val right = expr(e.right)
+        return "({ ${cType(want)} _out; ${cType(have)} _e; rsf_handler $h; " +
+            "$h.prev = rsf_ctx_get()->handler; rsf_ctx_get()->handler = &$h; " +
+            "if (setjmp($h.jb) == 0) { _e = $code; rsf_ctx_get()->handler = $h.prev; " +
+            "_out = ($test) ? (rsf_err = false, $right) : $pick; } " +
+            "else { rsf_ctx_get()->handler = $h.prev; rsf_err = false; _out = $right; } " +
+            "_out; })"
     }
 
     private fun floatLit(v: Float): String = if (v == Float.POSITIVE_INFINITY) "(1.0f/0.0f)" else if (v == Float.NEGATIVE_INFINITY) "(-1.0f/0.0f)" else v.toString() + "f"
@@ -1139,9 +1181,13 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
         val operand = e.operand
         val code = expr(operand)
         val t = model.typeOf(operand)
-        // 非可空值上的 !! 是编译期的空断言，C 里没有可做的
-        if (!t.nullable) return code
-        return if (t.base == RsfBase.STRING) "rsf_force_str($code)" else "rsf_force_ptr($code)"
+        // 非可空值上的 !! 是编译期的空断言，C 里没有可做的；
+        // 但内置函数（writeText 之类）的失败是「置错 + 返回零值」，
+        // 所以 !! 必须把待处理的失败转成真正的 throw，否则错误会被悄悄吞掉。
+        val raw = if (!t.nullable) code
+        else if (t.base == RsfBase.STRING) "rsf_force_str($code)"
+        else "rsf_force_ptr($code)"
+        return "({ ${cType(model.typeOf(e))} _f = $raw; if (rsf_err) rsf_throw(); _f; })"
     }
 
     private fun unary(e: UnaryExpr): String {
@@ -2053,11 +2099,15 @@ typedef struct rsf_gc {
     void*  user;
 } rsf_gc;
 
+typedef struct rsf_handler rsf_handler;
+
 typedef struct rsf_ctx {
     rsf_allocator alloc;
     rsf_gc gc;
     bool err;
     rsf_str err_msg;
+    /* 最近的 try 的 setjmp 帧；fail 用它做非局部跳转 */
+    rsf_handler* handler;
 } rsf_ctx;
 
 /* 线程局部当前上下文；-DRSF_NO_TLS 退回单线程全局（C99 编译器也能编）。 */
@@ -2242,7 +2292,8 @@ static inline rsf_ctx* rsf_ctx_get(void) {
         c->err = false;
         c->err_msg.len = 0;
         c->err_msg.units1 = 0;
-            c->err_msg.data = NULL;
+        c->err_msg.data = NULL;
+        c->handler = NULL;
         rsf_ctx_cur = c;
         atexit(rsf_ctx_process_exit);
         return c;
@@ -2667,6 +2718,7 @@ static inline void* rsf_grow(void* ptr, size_t oldSize, size_t newSize) {
             #include <stdlib.h>
             #include <string.h>
             #include <math.h>
+            #include <setjmp.h>
 
             #ifndef RSF_STR_DEFINED
             #define RSF_STR_DEFINED
@@ -2715,6 +2767,22 @@ static inline void* rsf_grow(void* ptr, size_t oldSize, size_t newSize) {
 
             static void rsf_set_err(rsf_str msg) {
                 if (!rsf_err) { rsf_err = true; rsf_err_msg = msg; }
+            }
+
+            /* try 压栈的 setjmp 帧。fail = 置错 + longjmp 到最近一帧，
+               语义上就是异常：嵌套调用里的失败会一层层跳过，不会拿零值继续算。 */
+            struct rsf_handler { jmp_buf jb; struct rsf_handler* prev; };
+
+            static inline void rsf_throw(void) {
+                rsf_ctx* c = rsf_ctx_get();
+                if (c->handler != NULL) { longjmp(c->handler->jb, 1); }
+                /* 没有 try 接：与 JVM 侧未捕获异常同一口径 */
+                fputs("运行期错误: ", stderr);
+                if (c->err_msg.len > 0 && c->err_msg.data != NULL) {
+                    fwrite(c->err_msg.data, 1, (size_t)c->err_msg.len, stderr);
+                }
+                fputc(10, stderr);
+                exit(1);
             }
 
             /* 把码元数补上（就这一次 O(n)），之后 length() / charAt 都是 O(1)。
