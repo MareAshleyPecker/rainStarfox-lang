@@ -234,22 +234,6 @@ class BytecodeCompiler(
 
     /** 编译成 .class 并落盘（`rsf build` 走这条）。 */
     fun compile(className: String, outDir: File, meta: ByteArray? = null): List<File> {
-        // 阶段 85 v1：const var / const val 目前只有解释器（含 build.rsfs）接了。
-        // 字节码后端要给它发程序类的静态字段 + <clinit>，那是下一步；先明确报出来，
-        // 别让人以为全局变量被静默丢掉了。
-        if (model.globalVars.isNotEmpty()) {
-            val first = model.globalVars.first()
-            throw RsfError(
-                "codegen",
-                "字节码后端还没接全局变量（const var / const val）：「" + first.name +
-                    "」是全局变量。现在能跑它的只有解释器：rsf run / rsf build" +
-                    "（构建脚本走解释器）。要编成 .class 得等下一步" +
-                    "（给程序类加静态字段 + <clinit>）",
-                first.at.line,
-                first.at.column,
-                null,
-            )
-        }
         val pending = compileBytes(className, meta)
         if (!outDir.exists() && !outDir.mkdirs()) {
             throw IllegalStateException("无法创建输出目录: ${outDir.absolutePath}")
@@ -431,16 +415,36 @@ class BytecodeCompiler(
         for (fn in model.functions) {
             emitFunction(cw, className, fn)
         }
+        // 阶段 85：全局变量就是程序类的静态字段（const val 加 ACC_FINAL）。
+        // 初值统一在下面的 <clinit> 里按声明顺序 PUTSTATIC——JVM 的静态字段初值本来就是
+        // 「类初始化时跑一段代码」，顺序也正好等于声明顺序。
+        for (g in model.globalVars) {
+            val binding = model.globalBindings[g.name] ?: continue
+            val flags = ACC_PUBLIC or ACC_STATIC or (if (g.mutable) 0 else ACC_FINAL)
+            cw.visitField(flags, g.name, descriptorOfType(binding.type), null, null).visitEnd()
+        }
         // 阶段 60b：有 native 方法就自动 System.loadLibrary(<类名>)——库名与类名一致，
         // JVM 只查「已经加载过的库」，不自动去 java.library.path 里找，所以这一步必须显式做。
-        if (model.functions.any { it.target == BuildTarget.NATIVE }) {
-            val simple = className.substringAfterLast('/')
+        // 阶段 85：<clinit> 只能有一个，所以「全局变量初值」与「装 JNI 库」合并到同一份里。
+        val hasNativeFns = model.functions.any { it.target == BuildTarget.NATIVE }
+        if (model.globalVars.isNotEmpty() || hasNativeFns) {
             val mv = cw.visitMethod(Opcodes.ACC_STATIC, "<clinit>", "()V", null, null)
             mv.visitCode()
-            mv.visitLdcInsn(simple)
-            mv.visitMethodInsn(
-                Opcodes.INVOKESTATIC, "java/lang/System", "loadLibrary", "(Ljava/lang/String;)V", false,
-            )
+            if (model.globalVars.isNotEmpty()) {
+                val ctx = ExprCtx(mv, className, null, 0)
+                for (g in model.globalVars) {
+                    val binding = model.globalBindings[g.name] ?: continue
+                    emitExpr(ctx, g.initializer)
+                    emitWiden(mv, model.typeOf(g.initializer), binding.type)
+                    mv.visitFieldInsn(PUTSTATIC, className, g.name, descriptorOfType(binding.type))
+                }
+            }
+            if (hasNativeFns) {
+                mv.visitLdcInsn(className.substringAfterLast('/'))
+                mv.visitMethodInsn(
+                    Opcodes.INVOKESTATIC, "java/lang/System", "loadLibrary", "(Ljava/lang/String;)V", false,
+                )
+            }
             mv.visitInsn(Opcodes.RETURN)
             mv.visitMaxs(0, 0)
             mv.visitEnd()
@@ -2793,7 +2797,12 @@ class BytecodeCompiler(
                         )
                     } else {
                         val binding = model.bindingOf(instr.stmt)
-                        if (ctx.promoted.containsKey(binding)) {
+                        if (binding.global) {
+                            // 阶段 85：全局变量是程序类的静态字段
+                            emitExpr(ctx, instr.stmt.value)
+                            emitWiden(mv, model.typeOf(instr.stmt.value), binding.type)
+                            mv.visitFieldInsn(PUTSTATIC, programInternalName, binding.name, descriptorOfType(binding.type))
+                        } else if (ctx.promoted.containsKey(binding)) {
                             mv.visitVarInsn(ALOAD, ctx.frameSlot)
                             pushInt(mv, ctx.slotOf(binding))
                             emitExpr(ctx, instr.stmt.value)
@@ -3199,7 +3208,10 @@ class BytecodeCompiler(
                     )
                 } else {
                     val binding = model.bindingOf(expr)
-                    if (ctx.promoted.containsKey(binding)) {
+                    if (binding.global) {
+                        // 阶段 85：全局变量是程序类的静态字段
+                        mv.visitFieldInsn(GETSTATIC, programInternalName, binding.name, descriptorOfType(binding.type))
+                    } else if (ctx.promoted.containsKey(binding)) {
                         emitPromotedLoad(ctx, binding)
                     } else {
                         loadSlot(mv, binding.type, ctx.slotOf(binding) + ctx.localOffset)

@@ -16,10 +16,10 @@ import kotlin.test.assertTrue
 /**
  * 阶段 85：全局变量 `const var` / `const val`。
  *
- * 这一版（v1）三个后端里只有**解释器**接了全局存储：
- * - `rsf run foo.rsf` 与 `rsf build`（构建脚本走解释器）可用；
- * - 字节码后端与 C 后端**明确报错**（错误消息里写清「下一步才接」），
- *   而不是静默编出一份把全局状态丢掉的产物。
+ * 三个后端都接了全局存储，但落点不同：
+ * - 解释器：`Interpreter` 自己一张全局表，`runEntry()` 里按声明顺序初始化；
+ * - JVM：程序类的静态字段（`const val` 加 `ACC_FINAL`），初值在 `<clinit>` 里；
+ * - C：文件作用域的 `static`，初值在 `rsf_globals_init()` 里，`main` 开头调一次。
  */
 class GlobalVarTest {
 
@@ -40,6 +40,24 @@ class GlobalVarTest {
         val model = Rsf.analyze(Rsf.load(root, dir, null))
         val out = ByteArrayOutputStream()
         PrintStream(out, true, "UTF-8").use { stream -> Rsf.interpret(model, stream) }
+        return out.toString("UTF-8").replace("\r\n", "\n").trimEnd('\n').lines()
+    }
+
+    /** 编成 .class 之后跑 main，返回打印出来的行（System.out 临时换掉）。 */
+    private fun runCompiled(text: String, className: String): List<String> {
+        val dir = Files.createTempDirectory("rsf-globals-jvm").toFile()
+        val source = SourceFile.of("main.rsf", text)
+        Rsf.build(Rsf.analyze(source), source, className, dir)
+        val loader = java.net.URLClassLoader(arrayOf(dir.toURI().toURL()), javaClass.classLoader)
+        val cls = loader.loadClass(className)
+        val out = ByteArrayOutputStream()
+        val original = System.out
+        System.setOut(PrintStream(out, true, "UTF-8"))
+        try {
+            cls.getMethod("main", Array<String>::class.java).invoke(null, arrayOf<String>())
+        } finally {
+            System.setOut(original)
+        }
         return out.toString("UTF-8").replace("\r\n", "\n").trimEnd('\n').lines()
     }
 
@@ -119,26 +137,42 @@ class GlobalVarTest {
     }
 
     @Test
-    fun `字节码后端明确拒绝全局变量`() {
+    fun `解释器与字节码跑全局变量结果一致`() {
         val text = """
-            const val answer : Int = 42
-            fn main() -> void { println(intToString(answer)) }
+            const val greeting : String = "hello"
+            const var counter : Int = 0
+            const val LIMIT : Int = 3
+
+            fn bump() -> void { counter = counter + 1 }
+
+            fn main() -> void {
+                bump()
+                bump()
+                println(greeting + " " + intToString(counter) + "/" + intToString(LIMIT))
+            }
         """.trimIndent()
-        val e = assertFailsWith<RsfError> {
-            Rsf.build(Rsf.analyze(SourceFile.of("main.rsf", text)), SourceFile.of("main.rsf", text), "Main", Files.createTempDirectory("rsf-g").toFile())
-        }
-        assertTrue(e.message!!.contains("字节码后端还没接全局变量"), e.message)
+        val expected = listOf("hello 2/3")
+        assertEquals(expected, runInterpreted(text))
+        assertEquals(expected, runCompiled(text, "RsfGlobals"))
     }
 
     @Test
-    fun `C 后端明确拒绝全局变量`() {
+    fun `C 后端把全局变量发成文件作用域的 static，并在 main 开头初始化`() {
         val text = """
             target native
             const val answer : Int = 42
-            fn main() -> void { println(intToString(answer)) }
+            const var hits : Int = 0
+            fn main() -> void {
+                hits = hits + answer
+                println(intToString(hits))
+            }
         """.trimIndent()
-        val model = Rsf.analyze(SourceFile.of("main.rsf", text))
-        val e = assertFailsWith<RsfError> { CBackend(model, withEntry = true).emit() }
-        assertTrue(e.message!!.contains("全局变量"), e.message)
+        val c = CBackend(Rsf.analyze(SourceFile.of("main.rsf", text)), withEntry = true).emit()
+        assertTrue(c.contains("static int32_t rsf_g_answer;"), c.take(600))
+        assertTrue(c.contains("static int32_t rsf_g_hits;"), c.take(600))
+        assertTrue(c.contains("void rsf_globals_init(void) {"), c.take(600))
+        assertTrue(c.contains("rsf_g_answer = 42;"), c.take(1600))
+        // 初始化必须发生在进用户 main 之前
+        assertTrue(c.indexOf("rsf_globals_init();") < c.indexOf("rsf_fn_main();"), c.take(1600))
     }
 }

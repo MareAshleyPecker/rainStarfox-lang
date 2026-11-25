@@ -83,6 +83,16 @@ class CBackend(
         val runtimeEnd = sb.length
         for (e in model.enums.values) sb.append(enumBlock(e))
         for (cls in classes.values) sb.append(struct(cls))
+        // 阶段 85：全局变量是文件作用域的 static；初值在 rsf_globals_init() 里按声明顺序跑，
+        // 由 main（或 --lib 的 JNI 导出）在进用户代码之前调一次（函数内部有幂等守卫）。
+        if (model.globalVars.isNotEmpty()) {
+            sb.append("static int rsf_globals_ready = 0;").append(NL)
+            for (g in model.globalVars) {
+                val binding = model.globalBindings[g.name] ?: continue
+                sb.append("static ").append(cType(binding.type)).append(" ")
+                    .append(globalName(g.name)).append(";").append(NL)
+            }
+        }
         for (fn in model.functions.sortedBy { it.name }) sb.append(protoTop(fn)).append(";\n")
         for (cls in classes.values) {
             for (fn in cls.methods) {
@@ -118,6 +128,18 @@ class CBackend(
                 sb.append(definition(fn, null, iface)).append(NL)
             }
         }
+        if (model.globalVars.isNotEmpty()) {
+            sb.append(NL).append("void rsf_globals_init(void) {").append(NL)
+            sb.append("    if (rsf_globals_ready) return;").append(NL)
+            sb.append("    rsf_globals_ready = 1;").append(NL)
+            for (g in model.globalVars) {
+                val binding = model.globalBindings[g.name] ?: continue
+                sb.append("    ").append(globalName(g.name)).append(" = ")
+                    .append(adapt(binding.type, physicalType(g.initializer), expr(g.initializer)))
+                    .append(";").append(NL)
+            }
+            sb.append("}").append(NL)
+        }
         if (usesJvmCall) sb.insert(runtimeEnd, JVM_RUNTIME)
         if (usesFile) sb.insert(runtimeEnd, FILE_RUNTIME)
         if (!withEntry) {
@@ -126,6 +148,7 @@ class CBackend(
         }
         val entry = model.entry ?: throw RsfError("native", "没有 main 函数，C 后端不知道从哪开始跑")
         sb.append("int main(void) {\n")
+        if (model.globalVars.isNotEmpty()) sb.append("    rsf_globals_init();\n")
         if (model.gcEnabled) {
             // 先发布根区间（锚点必须落在 main 自己的帧上），再换分配器：顺序反了的话
             // install 之后的第一次分配就已经在 GC 管理的堆上了。
@@ -246,9 +269,7 @@ class CBackend(
     // ------------------------------------------------------------------ 前置检查
 
     private fun checkProgram() {
-        // 阶段 85 v1：全局变量只有解释器接了（C 侧要发文件作用域的 static + 启动时初始化，
-        // 那是下一步）。这里显式拒绝，别让它静默编出一份丢掉全局状态的产物。
-        if (model.globalVars.isNotEmpty()) fail("全局变量（const var / const val）")
+
         if (model.annotations.isNotEmpty()) fail("注解")
         for (sup in model.superClasses.values) {
             if (sup.fromClassPath) fail("继承 JDK 类（${sup.name}）")
@@ -667,6 +688,8 @@ class CBackend(
     private fun fnName(fn: FuncDecl): String = "rsf_fn_" + fn.name
 
     private fun paramName(name: String): String = "v_" + name
+    /** 阶段 85：全局变量在 C 侧的名字（加前缀，不会与局部变量 v_* 或字段 f_* 撞）。 */
+    private fun globalName(name: String): String = "rsf_g_" + name
 
     // ------------------------------------------------------------------ 泛型擦除
     // 类型参数 T 在 C 里是 rsf_val（带标签的盒子）：写进泛型字段/数组/参数时装箱，
@@ -751,8 +774,12 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
         }
         is AssignStmt -> {
             val field = model.classModel.bareFieldWrites[s]
+            val global = if (field == null) runCatching { model.bindingOf(s) }.getOrNull() else null
             if (field != null) {
                 pad(indent) + fieldRef("self", field.className, s.name) + " = " + expr(s.value) + ";\n"
+            } else if (global?.global == true) {
+                pad(indent) + globalName(s.name) + " = " +
+                    adapt(global.type, physicalType(s.value), expr(s.value)) + ";" + NL
             } else {
                 pad(indent) + "${paramName(s.name)} = ${expr(s.value)};\n"
             }
@@ -974,7 +1001,12 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
         is NullLit -> nullValue(e, expected)
         is VarExpr -> {
             val field = model.classModel.fieldReads[e]
-            if (field != null) fieldRef("self", field.className, e.name) else paramName(e.name)
+            val global = if (field == null) runCatching { model.bindingOf(e) }.getOrNull() else null
+            when {
+                field != null -> fieldRef("self", field.className, e.name)
+                global?.global == true -> globalName(e.name)
+                else -> paramName(e.name)
+            }
         }
         // 阶段 80：扩展函数里 `this` 是 0 号形参（接收者），C 侧名字是 v_this
         is ThisExpr -> if (extensionFn) paramName("this") else "self"
@@ -1443,6 +1475,7 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
         sb.append("#include <stdbool.h>").append(NL)
         sb.append("#include <stdlib.h>").append(NL)
         sb.append("#include <string.h>").append(NL).append(NL)
+        if (model.globalVars.isNotEmpty()) sb.append("    rsf_globals_init();\n")
         if (model.gcEnabled) {
             // gc on：桥里要调 rsf_gc_thread_attach / rsf_gc_heap_install，所以直接拿运行时头
             // （它里面的 rsf_str 也有 RSF_STR_DEFINED 守卫，和下面的兜底块不冲突）。
@@ -1455,6 +1488,10 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
         sb.append("#endif").append(NL).append(NL)
         sb.append(JNI_UTF8).append(NL)
 
+        if (model.globalVars.isNotEmpty()) {
+            // 阶段 85：--lib 没有 main，全局变量的初值得靠 JNI 导出入口补一次（函数内部幂等）。
+            sb.append("extern void rsf_globals_init(void);").append(NL).append(NL)
+        }
         val natives = model.functions.filter { it.target == BuildTarget.NATIVE }
         for (fn in natives) {
             sb.append("extern ").append(cType(model.returnTypeOf(fn)))
@@ -1476,7 +1513,9 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
             for (i in ps.indices) sb.append(", ").append(jniType(ps[i])).append(" j").append(i)
             sb.append(") {").append(NL)
             sb.append("    (void)env; (void)cls;").append(NL)
-            if (model.gcEnabled) {
+            if (model.globalVars.isNotEmpty()) sb.append("    rsf_globals_init();").append(NL)
+            if (model.globalVars.isNotEmpty()) sb.append("    rsf_globals_init();\n")
+        if (model.gcEnabled) {
                 // --lib 没有 main，产物是被 JVM 加载的 dll/so：根区间与分配器在这里补上。
                 // 两个调用都幂等，所以每个导出函数前面写一遍没关系。
                 sb.append("    if (!rsf_gc_thread_attached()) rsf_gc_thread_attach();").append(NL)
