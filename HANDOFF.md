@@ -80,3 +80,26 @@ sh tools/dev/probe.sh --cmp /tmp/x.rsf   # 单文件探针 + 对拍
 - C 后端 `try/catch` 里 `break/continue` 目前**显式拒绝**（v1），别以为能用。
 - Kotlin 块注释会**嵌套**：文档里写 `build/*.rsfs` 会把注释打开，编译报 Unclosed comment。
 - gradle 依赖缓存没有的话，先在有网机器 build 一次再拷 `~/.gradle`。
+
+## 7. 导入机制改版（已定设计，未实现）
+
+```rsf
+import "core/Vec.rsf" as vec          // 只给限定名，不注入
+import "core/Vec.rsf" as vec { * }    // 全部注入
+import "core/Vec.rsf" as vec { push, size }   // 只注入这两个
+```
+
+- 限定词用 **`as`**（import 位置无歧义，不复用 `from`/`of` 这类含糊词）。
+- **默认不注入**：不写花括号就只拿限定名 `vec.push(...)`；要裸用必须显式 `{ * }` 或列名字。
+- 同名注入在**编译期报错**并指出两处来源，不要后导入静默覆盖。
+- `@/` = **项目根**（`build.rsfs` 所在目录），`./` 当前目录可省，`../` 保留。
+  这样跨层引用写成 `@/rsfSrc/core/Vec.rsf`，`@2/` 这类设计不再需要。
+- 限定名分隔符用 `.`，模块别名走独立命名空间，查找顺序：模块别名 → 类 → 变量。
+
+实现顺序（口径必须四处一致，否则自举链先崩）：
+1. `loading/SourceLoader.kt` 与 `directives/`：解析 `as` 与花括号清单、`@/` 展开；
+2. `sema/Checker.kt`：模块别名表 + 显式注入表 + 同名冲突报错；
+3. `lsp/RsfSymbols.kt` / `EditorSupport.kt`：补全里区分“本文件可见”与“需限定”；
+4. `rsfSrc/bootstrap/Sources.rsf`：同一套规则的 rsf 版（parity 的关键一步）；
+5. 判据：新增 `build/verify83/`，正例（三种导入形态）+ 负例（同名冲突、缺名导入、
+   `@/` 越界）各若干，并保证九示例不受影响。
