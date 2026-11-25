@@ -33,6 +33,17 @@ class CBackendTest {
     }
 
     @Test
+    fun `运行时头里不能出现双 inline`() {
+        // runtimeLibSource() 会把行首的 "static " 改写成 "static inline "，所以运行时源码里
+        // 手写 static inline 就会变成 "static inline inline"，gcc 直接编不过。
+        // 这条把整份头扫一遍（用户 2026-11-25 在 rsf_runtime.h:704 亲眼见过一次）。
+        val backend = CBackend(Rsf.analyze(SourceFile.of("c.kt", "fn main() -> void { rtn }")))
+        val header = backend.runtimeLibSource()
+        val hit = Regex("inline\\s+inline").find(header)
+        assertTrue(hit == null, "运行时里还有双 inline：${hit?.value}")
+    }
+
+    @Test
     fun `memBytes 与 memPeak 摊成运行时统计`() {
         val backend = nativeBackend(
             """

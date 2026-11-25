@@ -2815,7 +2815,10 @@ static inline void* rsf_grow(void* ptr, size_t oldSize, size_t newSize) {
                语义上就是异常：嵌套调用里的失败会一层层跳过，不会拿零值继续算。 */
             struct rsf_handler { jmp_buf jb; struct rsf_handler* prev; };
 
-            static inline void rsf_throw(void) {
+            /* 这行只能写 static：runtimeLibSource() 会把行首的 "static " 改写成
+               "static inline "（多 TU 包含安全），写成 static inline 会变成
+               写上多余的 inline 会直接编不过（见 CBackendTest 的双 inline 断言）。 */
+            static void rsf_throw(void) {
                 rsf_ctx* c = rsf_ctx_get();
                 if (c->handler != NULL) { longjmp(c->handler->jb, 1); }
                 /* 没有 try 接：与 JVM 侧未捕获异常同一口径 */
