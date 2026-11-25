@@ -1,3 +1,4 @@
+#NoWarning!!(all)
 // rainStarfox 阶段 32a：类型层（`RsfType` 的自举版）
 //
 // 与 Kotlin 侧 `src/main/kotlin/org/example/complie/sema/RsfType.kt` 一一对应：

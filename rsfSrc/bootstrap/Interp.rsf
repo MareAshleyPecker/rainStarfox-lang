@@ -1,3 +1,4 @@
+#NoWarning!!(all)
 // rainStarfox 阶段 17c：**用 rsf 自己写的解释器**（自举的第三步）
 //
 // 基准是 Kotlin 版 `src/main/kotlin/org/example/complie/interp/Interpreter.kt`：同一份 `.rsf`

@@ -35,6 +35,8 @@ class Cli {
         if (argv.isEmpty()) return repl()
         return when (val cmd = argv[0]) {
             "run" -> wrap { cmdRun(argv.drop(1)) }
+            "script" -> wrap { cmdScript(argv.drop(1)) }
+            "init" -> wrap { cmdInit(argv.drop(1)) }
             "build", "compile" -> wrap { cmdBuild(argv.drop(1)) }
             "check" -> wrap { cmdCheck(argv.drop(1)) }
             "complete" -> wrap { cmdComplete(argv.drop(1)) }
@@ -61,6 +63,96 @@ class Cli {
         val model = Rsf.analyze(loaded)
         for (warning in model.warnings) System.err.println("[rsf] 警告: $warning")
         requireEntry(model)
+        Rsf.interpret(model, System.out)
+        return 0
+    }
+
+    /**
+     * 建一个项目骨架：`rsf init [目录]`。
+     *
+     * 生成的 `build.rsfs` **必须有 main**（构建脚本的入口），但规则可以拆成模块
+     * （`build/` 下的 .rsfs 用 import 拼起来）——和 gradle 的 settings/build 分层一个意思，
+     * 自举出 toolchain 之后这套骨架照样能用。
+     */
+    private fun cmdInit(rest: List<String>): Int {
+        val dir = File(rest.firstOrNull() ?: ".")
+        dir.mkdirs()
+        val src = File(dir, "src")
+        val buildDir = File(dir, "build")
+        src.mkdirs()
+        buildDir.mkdirs()
+
+        File(dir, "build.rsfs").writeText(
+            """
+            |// 项目构建脚本：入口是 main，规则可以拆到 build/ 下的模块里。
+            |import "build/defaults.rsfs"
+            |
+            |fn main() -> void {
+            |    println("构建 " + projectName() + "（" + targetName() + "）")
+            |    // TODO: 在这里描述目标、编译参数、依赖（#dep）等
+            |}
+            """.trimMargin(),
+            Charsets.UTF_8,
+        )
+        File(buildDir, "defaults.rsfs").writeText(
+            """
+            |// 构建规则的默认值；拆成模块是为了让 build.rsfs 只留流程。
+            |fn projectName() -> String {
+            |    rtn "app"
+            |}
+            |
+            |fn targetName() -> String {
+            |    rtn "app"
+            |}
+            """.trimMargin(),
+            Charsets.UTF_8,
+        )
+        File(src, "main.rsf").writeText(
+            """
+            |fn main() -> void {
+            |    println("hello, rsf")
+            |}
+            """.trimMargin(),
+            Charsets.UTF_8,
+        )
+        File(dir, ".gitignore").writeText(".rsfcache/\n.rsfdeps/\n", Charsets.UTF_8)
+
+        println("[rsf] 已生成 ${File(dir, "build.rsfs").path}")
+        println("[rsf] 已生成 ${File(src, "main.rsf").path}")
+        println("[rsf] 运行: rsf run ${File(src, "main.rsf").path}")
+        println("[rsf] 构建脚本: rsf script ${File(dir, "build.rsfs").path}")
+        return 0
+    }
+
+    /**
+     * 脚本入口：`.rsf` / `.rsfs` 都收。
+     *
+     * 与 `run` 的唯一差别是**不要求 main**：
+     * - 有 main 就跑 main（和 run 完全一致）；
+     * - 没有 main 就把它当纯库，列出可调用的顶层函数（`--list` 显式要这份列表）。
+     *
+     * `.rsfs` 目前的语义只有这一条。导出面暂时是「全部顶层函数」；
+     * 等 `export` 关键字落地后再收窄（那要同时改自举的 Lexer/Parser，单独一刀）。
+     */
+    private fun cmdScript(rest: List<String>): Int {
+        val file = requireFile(rest.firstOrNull(), "script <file.rsf|.rsfs> [--list]")
+        val loaded = Rsf.load(file)
+        val model = Rsf.analyze(loaded)
+        for (warning in model.warnings) System.err.println("[rsf] 警告: $warning")
+        // 只要有一个 export，导出面就只算 export 的那些；一个都没有时退回「全部顶层函数」，
+        // 这样加上 export 之前的脚本还能照旧跑。
+        val exported = model.functions.filter { it.exported }
+        val names = (if (exported.isNotEmpty()) exported else model.functions)
+            .map { it.name }.distinct().sorted()
+        if (model.entry == null) {
+            println("[rsf] 脚本: ${file.path}（没有 main，可调用：）")
+            for (fn in names) println("  $fn")
+            return 0
+        }
+        if (rest.contains("--list")) {
+            for (fn in names) println(fn)
+            return 0
+        }
         Rsf.interpret(model, System.out)
         return 0
     }
@@ -98,9 +190,23 @@ class Cli {
             i++
         }
 
+        // 不带文件名时：项目里若有 build.rsfs，就由它驱动构建（构建脚本必须有 main）。
+        // 这样 `rsf build` 在项目目录里和 `rsf build x.rsf` 在单文件模式下是同一个命令。
+        if (positional.isEmpty() && !cMode && !dump && !meta) {
+            val buildScript = File("build.rsfs")
+            if (buildScript.isFile) {
+                val loadedScript = Rsf.load(buildScript)
+                val scriptModel = Rsf.analyze(loadedScript)
+                for (warning in scriptModel.warnings) System.err.println("[rsf] 警告: $warning")
+                val problem = scriptModel.entryProblem
+                if (problem != null) throw RsfError("build", "build.rsfs 不能当构建脚本：$problem")
+                Rsf.interpret(scriptModel, System.out)
+                return 0
+            }
+        }
         val file = requireFile(
             positional.firstOrNull(),
-            "build <file.rsf> [-o <dir>] [-n <类名>] [--dump] [--c [--lib] [--jni]]",
+            "build [<file.rsf>] [-o <dir>] [-n <类名>] [--dump] [--c [--lib] [--jni]]",
         )
         // 阶段 60：`--c` 是 native 构建，只收 target native / 两侧都写的声明
         val loaded = Rsf.load(file, target = if (cMode) BuildTarget.NATIVE else BuildTarget.JVM)
@@ -146,7 +252,7 @@ class Cli {
             if (cLib) {
                 println("[rsf] 这是库（没有 main）: gcc -c ${out.path} -o ${File(outDir, "$name.o").path}")
             } else {
-                println("[rsf] 编译: gcc ${out.path} -o ${File(outDir, "$name.exe").path}")
+                println("[rsf] 编译: gcc ${out.path} -o ${File(outDir, "$name.exe").path} -lm")
             }
             return 0
         }
@@ -586,7 +692,10 @@ class Cli {
             |
             |命令:
             |  run <file.rsf>                   解释执行，不生成任何产物
-            |  build <file.rsf> [选项]           编译，默认出 .class
+            |  script <file.rsf|.rsfs> [--list]  脚本入口：允许没有 main，列出可调用函数
+            |  init [目录]                      生成项目骨架（build.rsfs + src/main.rsf）
+            |  script <file.rsf> [--list|--call F] 编译进内存、当场加载并调用（不落盘）
+            |  build [<file.rsf>] [选项]         编译；不带文件时若项目里有 build.rsfs 就由它驱动
             |  decompile <产物> [选项]           从产物还原源码（产物要用 build --meta 编出）
             |  check <file.rsf> [选项]           只做词法、语法、类型检查
             |  lex <file.rsf>                   打印 token 流

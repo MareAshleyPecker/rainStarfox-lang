@@ -1,3 +1,4 @@
+#NoWarning!!(all)
 // rainStarfox 阶段 32b：符号表（`Checker.Scope` 的自举版）
 //
 // Kotlin 侧是一个 `HashMap<String, Binding>` 串父链（`src/main/kotlin/org/example/complie/sema/Checker.kt:327-340`）；

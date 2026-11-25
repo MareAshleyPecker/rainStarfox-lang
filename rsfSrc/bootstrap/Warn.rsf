@@ -1,3 +1,4 @@
+#NoWarning!!(all)
 // 阶段 39：不可达代码告警（只做控制流，不做类型检查）
 //
 // 单独成一个模块，是为了让 `RsfcBuild` / `RsfcRun` 不必 import `Checker.rsf`

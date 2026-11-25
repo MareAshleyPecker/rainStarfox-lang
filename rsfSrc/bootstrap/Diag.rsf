@@ -1,3 +1,4 @@
+#NoWarning!!(all)
 // rainStarfox 阶段 32b：诊断渲染（`RsfError.render()` 的自举版）
 //
 // 与 Kotlin 侧 `src/main/kotlin/org/example/complie/diag/RsfError.kt` 的 `render()` 逐字节对应：

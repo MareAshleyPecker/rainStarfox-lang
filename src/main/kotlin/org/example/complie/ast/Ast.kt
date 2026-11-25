@@ -462,6 +462,15 @@ data class FuncDecl(
      * 所以 Checker 与两个后端看到的永远是「本侧该有的那部分」。
      */
     val target: BuildTarget = BuildTarget.BOTH,
+    /**
+     * 扩展函数的接收者类型：`fn Int.twice()` 里的 `Int`。普通函数是 null。
+     *
+     * 语义（下一刀）：desugar 成第一个形参，`this` 指向它；调用点成员查找失败时回退到
+     * 这张表。这一刀只到「语法与工具链认识它」为止。
+     */
+    val receiverType: TypeRef? = null,
+    /** `export fn`：这个顶层函数是给宿主/别的模块调的（只是导出面，不影响语义）。 */
+    val exported: Boolean = false,
 ) : Node {
     /**
      * 抽象方法：只有签名没有体（[body] == null）。

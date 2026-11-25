@@ -49,6 +49,12 @@ class CBackend(
 
     /** `switch` 的被分派值落在临时变量里，编号保证同一函数内不重名。 */
     private var switchSeq = 0
+    /** try 帧的编号。 */
+    private var trySeq = 0
+    /** 当前函数里有 try：局部变量要加 volatile（longjmp 之后寄存器值不可信）。 */
+    private var volatileLocals = false
+    /** 正在发射的 try 嵌套深度：return 时要把 handler 栈弹回去。 */
+    private var tryDepth = 0
     private var tempSeq = 0
 
     /** 用到 `jvmCall` 才把「起 JVM」那段运行时编进来（不用的人不背 windows.h/jni.h）。 */
@@ -64,6 +70,14 @@ class CBackend(
         // 共享状态走 extern + 单一定义，全程序恰好一个编译单元 define RSF_RUNTIME_IMPL。
         // 头文件由构建侧调 ensureRuntimeLib(outDir) 写出（内容不同才重写）；
         // emitImpl=true 交给其中**一个**实例。RuntimeErase 仍被 emitJni 使用，故常量保留。
+        // gcc -std=c11 会把 __STRICT_ANSI__ 打开，dirent/stat 里的 S_IFREG、readdir 等
+        // 都被藏起来。生成的代码要用它们（File shim），所以在任何 include 之前把扩展打开。
+        // 只对非 Windows 生效；_GNU_SOURCE 在 glibc / musl 上都等价于「全开」。
+        sb.append("#ifndef _WIN32\n")
+        sb.append("#  ifndef _GNU_SOURCE\n")
+        sb.append("#    define _GNU_SOURCE 1\n")
+        sb.append("#  endif\n")
+        sb.append("#endif\n")
         if (emitImpl) sb.append("#define RSF_RUNTIME_IMPL\n")
         sb.append("#include \"rsf_runtime.h\"\n")
         val runtimeEnd = sb.length
@@ -268,6 +282,20 @@ class CBackend(
     private fun fail(what: String): Nothing =
         throw RsfError("native", "C 后端暂不支持：$what（阶段 52 的 C 后端只接了 int/long/bool/string/数组/类）")
 
+    /** 语句树里有没有 try（含嵌套块）。决定局部变量要不要 volatile。 */
+    private fun containsTry(st: Stmt?): Boolean = when (st) {
+        null -> false
+        is TryStmt -> true
+        is Block -> st.statements.any { containsTry(it) }
+        is IfStmt -> containsTry(st.body) || containsTry(st.elseBody)
+        is WhileStmt -> containsTry(st.body)
+        is ForStmt -> containsTry(st.body) || containsTry(st.step)
+        is SwitchStmt -> st.cases.any { containsTry(it.body) } || containsTry(st.elseBody)
+        else -> false
+    }
+
+    private fun hasTry(fn: FuncDecl): Boolean = fn.body?.statements?.any { containsTry(it) } == true
+
     // ------------------------------------------------------------------ 类型
 
     /** 「现在这个位置期望的类型」：只用于把 `null` 字面量落成对的 C 表示。 */
@@ -342,8 +370,23 @@ class CBackend(
             if (i > 0) sb.append(", ")
             sb.append("rsf_val_${decl.name}_${v.name} = ").append(i)
         }
-        sb.append("};").append(NL).append(NL)
+        sb.append("};").append(NL)
+        // 枚举是 int：拼接/打印时要还原成源码里的名字，和解释器、JVM 两端一致。
+        sb.append("static const char* rsf_enum_name_${decl.name}(int32_t v) {").append(NL)
+        sb.append("    switch (v) {").append(NL)
+        decl.values.forEachIndexed { i, v ->
+            sb.append("        case ").append(i).append(": return \"").append(v.name).append("\";").append(NL)
+        }
+        sb.append("        default: return \"?\";").append(NL)
+        sb.append("    }").append(NL)
+        sb.append("}").append(NL).append(NL)
         return sb.toString()
+    }
+
+    /** 表达式的静态类型如果是枚举，返回那个枚举声明。 */
+    private fun enumOf(t: RsfType): EnumDecl? {
+        val n = t.rsfName.ifEmpty { t.externalName ?: "" }
+        return model.enums[n] ?: model.enums[n.substringAfterLast('/')]
     }
 
     /** 数组元素（或指针指向的值）在 C 里的类型——交给 [cType] 统一算，含指针层。 */
@@ -456,7 +499,8 @@ class CBackend(
 
     private fun protoTop(fn: FuncDecl): String {
         val params = paramTypesOf(fn)
-        val list = fn.params.mapIndexed { i, p -> "${cType(params[i])} ${paramName(p.name)}" }
+        val v = if (volatileLocals) "volatile " else ""
+        val list = fn.params.mapIndexed { i, p -> "$v${cType(params[i])} ${paramName(p.name)}" }
         return "${cType(returnType(fn))} ${fnName(fn)}(${list.joinToString(", ").ifEmpty { "void" }})"
     }
 
@@ -484,18 +528,22 @@ class CBackend(
 
     private fun definition(fn: FuncDecl, cls: ClassDecl?, iface: InterfaceDecl? = null): String {
         currentClass = cls
+        val withTry = hasTry(fn)
+        volatileLocals = withTry
+        tryDepth = 0
+        val h0 = if (withTry) "    rsf_handler* _rsf_h0 = rsf_ctx_get()->handler;\n" else ""
         val savedReturn = currentReturn
         currentReturn = returnType(fn)
         val sb = StringBuilder()
         if (iface != null) {
-            sb.append(ifaceProto(iface, fn)).append(" {").append(NL)
+            sb.append(ifaceProto(iface, fn)).append(" {").append(NL).append(h0)
             fn.body?.statements?.forEach { sb.append(stmt(it, 1)) }
             sb.append("}").append(NL).append(NL)
             currentClass = null
             return sb.toString()
         }
         if (cls == null) {
-            sb.append(protoTop(fn)).append(" {\n")
+            sb.append(protoTop(fn)).append(" {\n").append(h0)
             fn.body?.statements?.forEach { sb.append(stmt(it, 1)) }
             sb.append("}\n\n")
             currentClass = null
@@ -507,7 +555,7 @@ class CBackend(
             currentClass = null
             return sb.toString()
         }
-        sb.append(protoMember(cls, fn)).append(" {\n")
+        sb.append(protoMember(cls, fn)).append(" {\n").append(h0)
         fn.body?.statements?.forEach { sb.append(stmt(it, 1)) }
         sb.append("}\n\n")
         currentClass = null
@@ -522,6 +570,7 @@ class CBackend(
             fn.params.mapIndexed { i, p -> "${cType(params[i])} ${paramName(p.name)}" }
         val sb = StringBuilder()
         sb.append("void $name(${list.joinToString(", ")}) {").append(NL)
+        if (hasTry(fn)) sb.append("    rsf_handler* _rsf_h0 = rsf_ctx_get()->handler;").append(NL)
         val thisCall = model.classModel.delegationOf(fn)
         if (thisCall != null) {
             // this(...)：转给同类另一个构造器；字段初值只在那条链的根跑
@@ -683,7 +732,8 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
     private fun stmt(s: Stmt, indent: Int): String = when (s) {
         is VarDeclStmt -> {
             val type = model.typeOf(s)
-            pad(indent) + "${cType(type)} ${paramName(s.name)} = ${expr(s.initializer)};\n"
+            val v = if (volatileLocals) "volatile " else ""
+            pad(indent) + "$v${cType(type)} ${paramName(s.name)} = ${expr(s.initializer)};\n"
         }
         is AssignStmt -> {
             val field = model.classModel.bareFieldWrites[s]
@@ -705,7 +755,8 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
         }
         is SuperCallStmt, is ThisCallStmt -> ""
         // 阶段 66：fail "..." → 置错误旗标并立刻从当前函数返回（错误由 try/catch 或顶层兜底）
-        is FailStmt -> pad(indent) + "rsf_set_err(" + expr(s.message) + "); " + returnZero(currentReturn) + NL
+        is FailStmt -> pad(indent) + "rsf_set_err(" + expr(s.message) + "); rsf_throw(); " +
+            returnZero(currentReturn) + NL
         is IndexAssignStmt -> {
             val target = s.target
             val elem = elemCType(elementOf(model.typeOf(target.receiver)))
@@ -715,13 +766,14 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
         }
         is ExprStmt -> pad(indent) + expr(s.expr) + ";\n"
         is ReturnStmt -> {
+            val pop = if (tryDepth > 0) "rsf_ctx_get()->handler = _rsf_h0; " else ""
             val value = s.value
             if (value == null) {
-                pad(indent) + "return;\n"
+                pad(indent) + pop + "return;\n"
             } else {
                 expectedType = currentReturn
                 val code = expr(value)
-                pad(indent) + "return $code;\n"
+                pad(indent) + pop + "return $code;\n"
             }
         }
         is IfStmt -> {
@@ -747,26 +799,34 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
         }
         is SwitchStmt -> switchStmt(s, indent)
         is ForStmt -> forStmt(s, indent)
-        is BreakStmt -> pad(indent) + "break;\n"
-        is ContinueStmt -> pad(indent) + "continue;\n"
+        is BreakStmt -> {
+            if (tryDepth > 0) fail("try 块里的 break（第 ${s.at.line} 行）")
+            pad(indent) + "break;\n"
+        }
+        is ContinueStmt -> {
+            if (tryDepth > 0) fail("try 块里的 continue（第 ${s.at.line} 行）")
+            pad(indent) + "continue;\n"
+        }
         is TryStmt -> {
             val sb = StringBuilder()
-            sb.append(pad(indent)).append("rsf_err = false;\n")
+            val h = "h_${trySeq++}"
+            sb.append(pad(indent)).append("rsf_handler ").append(h).append(";\n")
+            sb.append(pad(indent)).append(h).append(".prev = rsf_ctx_get()->handler;\n")
+            sb.append(pad(indent)).append("rsf_ctx_get()->handler = &").append(h).append(";\n")
+            sb.append(pad(indent)).append("if (setjmp(").append(h).append(".jb) == 0) {\n")
+            tryDepth++
             for (inner in s.body.statements) {
-                if (inner is VarDeclStmt) {
-                    // 声明提到外面：否则变量被 if (!rsf_err) { } 关在块里，后面用不到
-                    val type = model.typeOf(inner)
-                    val name = paramName(inner.name)
-                    sb.append(pad(indent)).append("${cType(type)} $name;\n")
-                    sb.append(pad(indent)).append("if (!rsf_err) $name = ${expr(inner.initializer)};\n")
-                } else {
-                    sb.append(pad(indent)).append("if (!rsf_err) {\n")
-                    sb.append(stmt(inner, indent + 1))
-                    sb.append(pad(indent)).append("}\n")
-                }
+                sb.append(stmt(inner, indent + 1))
+                // 内置函数的失败不会自己跳：走到这里还挂着 rsf_err 就补一次 throw
+                sb.append(pad(indent + 1)).append("if (rsf_err) rsf_throw();\n")
             }
-            sb.append(pad(indent)).append("if (rsf_err) {\n")
+            tryDepth--
+            sb.append(pad(indent + 1)).append("rsf_ctx_get()->handler = ").append(h).append(".prev;\n")
+            sb.append(pad(indent)).append("} else {\n")
+            // longjmp 落到这里：错误已经置好，帧也已经弹回 prev（下面这行）
+            sb.append(pad(indent + 1)).append("rsf_ctx_get()->handler = ").append(h).append(".prev;\n")
             sb.append(pad(indent + 1)).append("rsf_str v_").append(s.catchName).append(" = rsf_err_msg;\n")
+            sb.append(pad(indent + 1)).append("rsf_err = false;\n")
             for (inner in s.catchBody.statements) sb.append(stmt(inner, indent + 1))
             sb.append(pad(indent)).append("}\n")
             sb.toString()
@@ -855,7 +915,16 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
             have.base == RsfBase.TYPE_PARAM && want.base != RsfBase.TYPE_PARAM -> unboxed(want, "_e")
             else -> "_e"
         }
-        return "({ ${cType(have)} _e = $code; ($test) ? ${expr(e.right)} : $pick; })"
+        // 左边可能 fail：`?:` 必须自己接住这次 longjmp，否则错误会穿过整个表达式。
+        // 语义：失败 → 取右边；成功但值为 null → 也取右边。
+        val h = "he_${trySeq++}"
+        val right = expr(e.right)
+        return "({ ${cType(want)} _out; ${cType(have)} _e; rsf_handler $h; " +
+            "$h.prev = rsf_ctx_get()->handler; rsf_ctx_get()->handler = &$h; " +
+            "if (setjmp($h.jb) == 0) { _e = $code; rsf_ctx_get()->handler = $h.prev; " +
+            "_out = ($test) ? (rsf_err = false, $right) : $pick; } " +
+            "else { rsf_ctx_get()->handler = $h.prev; rsf_err = false; _out = $right; } " +
+            "_out; })"
     }
 
     private fun floatLit(v: Float): String = if (v == Float.POSITIVE_INFINITY) "(1.0f/0.0f)" else if (v == Float.NEGATIVE_INFINITY) "(-1.0f/0.0f)" else v.toString() + "f"
@@ -911,8 +980,13 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
         // 阶段 66：new File(path) → 宿主侧 rsf_file
         if (e.className == "File" || e.className == "java.io.File" || e.className == "java/io/File") {
             usesFile = true
-            val arg = e.arguments.firstOrNull() ?: fail("new File() 没有参数")
-            return "rsf_file_new(${expr(arg)})"
+            val fileArgs = e.arguments
+            return when (fileArgs.size) {
+                0 -> "rsf_file_new(rsf_str_c(\"\"))"
+                1 -> "rsf_file_new(${expr(fileArgs[0])})"
+                // new File(parent, child)：两个参数都要用，别只取第一个
+                else -> "rsf_file_join(${expr(fileArgs[0])}, ${expr(fileArgs[1])})"
+            }
         }
         val cls = model.classModel.newTargets[e] ?: fail("new 的类（${e.className}）")
         val ctor = model.classModel.newCtors[e]
@@ -964,6 +1038,7 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
                 "getName" -> "rsf_file_name($recv)"
                 "getParent" -> "rsf_file_parent($recv)"
                 "getPath", "toString" -> "rsf_file_path($recv)"
+                "getAbsolutePath", "getCanonicalPath" -> "rsf_file_absolute($recv)"
                 "listFiles" -> "rsf_file_list($recv)"
                 "mkdirs" -> "rsf_file_mkdirs($recv)"
                 "delete" -> "rsf_file_delete($recv)"
@@ -1106,9 +1181,13 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
         val operand = e.operand
         val code = expr(operand)
         val t = model.typeOf(operand)
-        // 非可空值上的 !! 是编译期的空断言，C 里没有可做的
-        if (!t.nullable) return code
-        return if (t.base == RsfBase.STRING) "rsf_force_str($code)" else "rsf_force_ptr($code)"
+        // 非可空值上的 !! 是编译期的空断言，C 里没有可做的；
+        // 但内置函数（writeText 之类）的失败是「置错 + 返回零值」，
+        // 所以 !! 必须把待处理的失败转成真正的 throw，否则错误会被悄悄吞掉。
+        val raw = if (!t.nullable) code
+        else if (t.base == RsfBase.STRING) "rsf_force_str($code)"
+        else "rsf_force_ptr($code)"
+        return "({ ${cType(model.typeOf(e))} _f = $raw; if (rsf_err) rsf_throw(); _f; })"
     }
 
     private fun unary(e: UnaryExpr): String {
@@ -1150,7 +1229,12 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
             TokenKind.MINUS -> "($left - $right)"
             TokenKind.STAR -> "($left * $right)"
             TokenKind.SLASH -> "($left / $right)"
-            TokenKind.PERCENT -> "($left % $right)"
+            // C 的 % 只对整数成立；浮点取余要 fmod/fmodf（语义与 Java 的 % 一致）
+            TokenKind.PERCENT -> when (type.base) {
+                RsfBase.FLOAT -> "(fmodf($left, $right))"
+                RsfBase.DOUBLE -> "(fmod($left, $right))"
+                else -> "($left % $right)"
+            }
             TokenKind.LT -> "($left < $right)"
             TokenKind.GT -> "($left > $right)"
             TokenKind.LE -> "($left <= $right)"
@@ -1164,15 +1248,25 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
     }
 
     /** 拼接里的一个操作数：字符串原样，数值/布尔走对应的 `rsf_*_to_str`。 */
-    private fun asStr(operand: org.example.complie.ast.Expr, code: String): String =
-        when (model.typeOf(operand).base) {
+    private fun asStr(operand: org.example.complie.ast.Expr, code: String): String {
+        val t = model.typeOf(operand)
+        return when (t.base) {
             RsfBase.STRING -> code
             RsfBase.BOOL -> "rsf_bool_to_str($code)"
             RsfBase.LONG -> "rsf_long_to_str($code)"
-            RsfBase.INT -> "rsf_int_to_str($code)"
+            RsfBase.INT, RsfBase.BYTE -> "rsf_int_to_str($code)"
             RsfBase.CHAR -> "rsf_char_to_str($code)"
-            else -> fail("字符串拼接里的 ${model.typeOf(operand).base.rsfName}")
+            RsfBase.FLOAT, RsfBase.DOUBLE -> "rsf_double_to_str($code)"
+            else -> {
+                val en = enumOf(t)
+                if (en != null) {
+                    "rsf_str_c(rsf_enum_name_${en.name}($code))"
+                } else {
+                    fail("字符串拼接里的 ${t.rsfName.ifEmpty { t.externalName ?: "?" }}（第 ${operand.at.line} 行）")
+                }
+            }
         }
+    }
 
     private fun call(e: CallExpr): String {
         if (e.name == "print" || e.name == "println") return printCall(e)
@@ -1259,7 +1353,15 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
             RsfBase.BOOL -> if (newline) "rsf_println_b($value)" else "rsf_print_b($value)"
             RsfBase.FLOAT, RsfBase.DOUBLE -> if (newline) "rsf_println_d($value)" else "rsf_print_d($value)"
             RsfBase.INT -> if (newline) "rsf_println_i($value)" else "rsf_print_i($value)"
-            else -> fail("print 的参数类型 '${type.base.rsfName}'")
+            else -> {
+                val en = enumOf(type)
+                if (en != null) {
+                    val s = "rsf_str_c(rsf_enum_name_${en.name}($value))"
+                    if (newline) "rsf_println_s($s)" else "rsf_print_s($s)"
+                } else {
+                    fail("print 的参数类型 '${type.rsfName.ifEmpty { type.externalName ?: "?" }}'")
+                }
+            }
         }
     }
 
@@ -1744,13 +1846,36 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
             #ifdef _WIN32
             #include <direct.h>
             #define rsf_mkdir(p) _mkdir(p)
+            #define rsf_getcwd(b, n) _getcwd(b, (int)(n))
             #else
             #include <sys/types.h>
+            #include <unistd.h>
             #define rsf_mkdir(p) mkdir(p, 0777)
+            #define rsf_getcwd(b, n) getcwd(b, n)
             #endif
 
             typedef struct rsf_file { rsf_str path; } rsf_file;
 
+            static rsf_file* rsf_file_new(rsf_str p);
+            /* new File(parent, child)：child 是绝对路径就直接用，否则 parent + '/' + child。 */
+            static rsf_file* rsf_file_join(rsf_str parent, rsf_str child) {
+                rsf_file* f;
+                char* buf;
+                int64_t n;
+                if (!parent.data || parent.len == 0) return rsf_file_new(child);
+                if (child.len > 0 && child.data[0] == '/') return rsf_file_new(child);
+                n = parent.len + 1 + child.len;
+                buf = (char*)rsf_malloc((size_t)n + 1);
+                memcpy(buf, parent.data, (size_t)parent.len);
+                buf[parent.len] = '/';
+                if (child.len > 0) memcpy(buf + parent.len + 1, child.data, (size_t)child.len);
+                buf[n] = 0;
+                {
+                    rsf_str s; s.len = n; s.data = buf;
+                    f = rsf_file_new(s);
+                }
+                return f;
+            }
             static rsf_file* rsf_file_new(rsf_str p) {
                 rsf_file* f = (rsf_file*)rsf_malloc(sizeof(rsf_file));
                 f->path = p;
@@ -1782,11 +1907,81 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
                 return f->path;
             }
             static rsf_str rsf_file_name(rsf_file* f) {
+                /* 返回**独立副本**：rsf_zstr 用的是共享静态缓冲，指向它会被下一次调用覆盖。 */
                 if (!f || !f->path.data) return rsf_str_c("");
-                const char* p = rsf_zstr(f->path);
-                const char* last = p;
-                for (; *p; p++) { if (*p == '/' || *p == ((char)92)) last = p + 1; }
-                return rsf_str_c(last);
+                int64_t i = f->path.len - 1;
+                while (i >= 0 && (f->path.data[i] == '/' || f->path.data[i] == ((char)92))) i--;
+                {
+                    int64_t last = i;
+                    while (last >= 0 && f->path.data[last] != '/' && f->path.data[last] != ((char)92)) last--;
+                    last++;
+                    {
+                        int64_t n = i - last + 1;
+                        char* p = (char*)rsf_malloc((size_t)(n > 0 ? n : 0) + 1);
+                        if (n > 0) memcpy(p, f->path.data + last, (size_t)n);
+                        p[n > 0 ? n : 0] = 0;
+                        rsf_str s; s.len = n > 0 ? n : 0; s.data = p;
+                        s.units1 = 0;
+                        return rsf_str_settle(s);
+                    }
+                }
+            }
+            /* java File.getAbsolutePath：相对路径按 cwd 变绝对，再词法归一（去 // 、. 、..）。 */
+            static rsf_str rsf_file_absolute(rsf_file* f) {
+                char joined[4096];
+                char cwd[2048];
+                int64_t n = 0;
+                if (!f || !f->path.data) return rsf_str_c("");
+                if (f->path.len > 0 && f->path.data[0] == '/') {
+                    if (f->path.len >= (int64_t)sizeof(joined)) return f->path;
+                    memcpy(joined, f->path.data, (size_t)f->path.len);
+                    n = f->path.len;
+                } else {
+                    if (!rsf_getcwd(cwd, sizeof(cwd))) return f->path;
+                    n = (int64_t)strlen(cwd);
+                    if (n + 1 + f->path.len >= (int64_t)sizeof(joined)) return f->path;
+                    memcpy(joined, cwd, (size_t)n);
+                    joined[n++] = '/';
+                    memcpy(joined + n, f->path.data, (size_t)f->path.len);
+                    n += f->path.len;
+                }
+                joined[n] = 0;
+                {
+                    char out[4096];
+                    int64_t k = 0;
+                    int64_t i = 0;
+                    while (i < n) {
+                        int64_t j;
+                        int64_t len;
+                        while (i < n && joined[i] == '/') i++;
+                        if (i >= n) break;
+                        j = i;
+                        while (j < n && joined[j] != '/') j++;
+                        len = j - i;
+                        if (len == 1 && joined[i] == '.') {
+                            /* "." 段丢掉 */
+                        } else if (len == 2 && joined[i] == '.' && joined[i + 1] == '.') {
+                            while (k > 0 && out[k - 1] != '/') k--;
+                            if (k > 0) k--;
+                        } else {
+                            out[k++] = '/';
+                            memcpy(out + k, joined + i, (size_t)len);
+                            k += len;
+                        }
+                        i = j;
+                    }
+                    if (k == 0) out[k++] = '/';
+                    out[k] = 0;
+                    {
+                        char* p = (char*)rsf_malloc((size_t)k + 1);
+                        memcpy(p, out, (size_t)k + 1);
+                        {
+                            rsf_str s; s.len = k; s.data = p;
+                            s.units1 = 0;
+                            return rsf_str_settle(s);
+                        }
+                    }
+                }
             }
             static rsf_str rsf_file_parent(rsf_file* f) {
                 if (!f || !f->path.data) return rsf_str_c("");
@@ -1908,11 +2103,15 @@ typedef struct rsf_gc {
     void*  user;
 } rsf_gc;
 
+typedef struct rsf_handler rsf_handler;
+
 typedef struct rsf_ctx {
     rsf_allocator alloc;
     rsf_gc gc;
     bool err;
     rsf_str err_msg;
+    /* 最近的 try 的 setjmp 帧；fail 用它做非局部跳转 */
+    rsf_handler* handler;
 } rsf_ctx;
 
 /* 线程局部当前上下文；-DRSF_NO_TLS 退回单线程全局（C99 编译器也能编）。 */
@@ -2097,7 +2296,8 @@ static inline rsf_ctx* rsf_ctx_get(void) {
         c->err = false;
         c->err_msg.len = 0;
         c->err_msg.units1 = 0;
-            c->err_msg.data = NULL;
+        c->err_msg.data = NULL;
+        c->handler = NULL;
         rsf_ctx_cur = c;
         atexit(rsf_ctx_process_exit);
         return c;
@@ -2521,6 +2721,8 @@ static inline void* rsf_grow(void* ptr, size_t oldSize, size_t newSize) {
             #include <stdio.h>
             #include <stdlib.h>
             #include <string.h>
+            #include <math.h>
+            #include <setjmp.h>
 
             #ifndef RSF_STR_DEFINED
             #define RSF_STR_DEFINED
@@ -2569,6 +2771,22 @@ static inline void* rsf_grow(void* ptr, size_t oldSize, size_t newSize) {
 
             static void rsf_set_err(rsf_str msg) {
                 if (!rsf_err) { rsf_err = true; rsf_err_msg = msg; }
+            }
+
+            /* try 压栈的 setjmp 帧。fail = 置错 + longjmp 到最近一帧，
+               语义上就是异常：嵌套调用里的失败会一层层跳过，不会拿零值继续算。 */
+            struct rsf_handler { jmp_buf jb; struct rsf_handler* prev; };
+
+            static inline void rsf_throw(void) {
+                rsf_ctx* c = rsf_ctx_get();
+                if (c->handler != NULL) { longjmp(c->handler->jb, 1); }
+                /* 没有 try 接：与 JVM 侧未捕获异常同一口径 */
+                fputs("运行期错误: ", stderr);
+                if (c->err_msg.len > 0 && c->err_msg.data != NULL) {
+                    fwrite(c->err_msg.data, 1, (size_t)c->err_msg.len, stderr);
+                }
+                fputc(10, stderr);
+                exit(1);
             }
 
             /* 把码元数补上（就这一次 O(n)），之后 length() / charAt 都是 O(1)。
@@ -2915,6 +3133,15 @@ static inline void* rsf_grow(void* ptr, size_t oldSize, size_t newSize) {
                 return buf;
             }
 
+            /* 与 JVM 侧 Builtins.FileRuntime 同一套消息格式：
+               <name>: 文件操作失败 '<path>'：<reason>；缺文件时 JDK 给的 reason 就是路径本身。 */
+            static rsf_str rsf_file_fail(rsf_str name, rsf_str path) {
+                rsf_str a = rsf_concat(name, rsf_str_c(": 文件操作失败 '"));
+                rsf_str b = rsf_concat(a, path);
+                rsf_str c = rsf_concat(b, rsf_str_c("'："));
+                return rsf_concat(c, path);
+            }
+
             static char* rsf_read_all(rsf_str path, int64_t* outLen) {
                 FILE* f = fopen(rsf_zstr(path), "rb");
                 if (!f) { *outLen = 0; return NULL; }
@@ -2932,7 +3159,7 @@ static inline void* rsf_grow(void* ptr, size_t oldSize, size_t newSize) {
             static rsf_str rsf_read_text(rsf_str path) {
                 int64_t n = 0;
                 char* b = rsf_read_all(path, &n);
-                if (!b) { rsf_set_err(rsf_str_c("readText: 文件读不出来")); }
+                if (!b) { rsf_set_err(rsf_file_fail(rsf_str_c("readText"), path)); }
                 rsf_str s = {0, 0, NULL};
                 s.len = n; s.data = b;
                 return rsf_str_settle(s);   /* 读一次数一遍，之后按下标扫才是 O(1) */
@@ -2941,7 +3168,7 @@ static inline void* rsf_grow(void* ptr, size_t oldSize, size_t newSize) {
             static rsf_arr rsf_read_bytes(rsf_str path) {
                 int64_t n = 0;
                 char* b = rsf_read_all(path, &n);
-                if (!b) { rsf_set_err(rsf_str_c("readBytes: 文件读不出来")); }
+                if (!b) { rsf_set_err(rsf_file_fail(rsf_str_c("readBytes"), path)); }
                 rsf_arr a;
                 a.len = n; a.data = b;
                 return a;
@@ -2949,7 +3176,7 @@ static inline void* rsf_grow(void* ptr, size_t oldSize, size_t newSize) {
 
             static bool rsf_write_text(rsf_str path, rsf_str text) {
                 FILE* f = fopen(rsf_zstr(path), "wb");
-                if (!f) { rsf_set_err(rsf_str_c("writeText: 文件写不出来")); return false; }
+                if (!f) { rsf_set_err(rsf_file_fail(rsf_str_c("writeText"), path)); return false; }
                 if (text.len > 0) { fwrite(text.data, 1, (size_t)text.len, f); }
                 fclose(f);
                 return true;
@@ -2957,7 +3184,7 @@ static inline void* rsf_grow(void* ptr, size_t oldSize, size_t newSize) {
 
             static bool rsf_write_bytes(rsf_str path, rsf_arr bytes) {
                 FILE* f = fopen(rsf_zstr(path), "wb");
-                if (!f) { rsf_set_err(rsf_str_c("writeBytes: 文件写不出来")); return false; }
+                if (!f) { rsf_set_err(rsf_file_fail(rsf_str_c("writeBytes"), path)); return false; }
                 if (bytes.len > 0) { fwrite(bytes.data, 1, (size_t)bytes.len, f); }
                 fclose(f);
                 return true;
@@ -2967,7 +3194,9 @@ static inline void* rsf_grow(void* ptr, size_t oldSize, size_t newSize) {
                 char* cs = rsf_zstr(s);
                 char* end = NULL;
                 long v = strtol(cs, &end, 10);
-                if (end == cs || end == NULL || *end != 0) {
+                /* Java 的 Integer.parseInt 在越界时抛 NumberFormatException；
+                   strtol 只保证 long 范围内不溢出，32 位越界必须自己查。 */
+                if (end == cs || end == NULL || *end != 0 || v > 2147483647L || v < (-2147483647L - 1L)) {
                     int cap = (int)s.len + 48;
                     char* m = (char*)malloc((size_t)cap);
                     int n = snprintf(m, (size_t)cap, "parseInt: 不是合法的整数：'%s'", (const char*)s.data);
@@ -2988,16 +3217,33 @@ static inline void* rsf_grow(void* ptr, size_t oldSize, size_t newSize) {
             static uint16_t rsf_to_lower(uint16_t c) { return (c >= 65 && c <= 90) ? (uint16_t)(c + 32) : c; }
             static int32_t rsf_min_i(int32_t a, int32_t b) { return a < b ? a : b; }
 
-            static rsf_str rsf_float_to_str(float v) {
+            /* Java 的写法：整数值也带小数点（0 → "0.0"），C 的 %g 会打成 "0"。
+               这里只对齐「有限、|v| < 1e7 的整数值」这条最常见路径；
+               大数/极值的科学计数法（Java 用 1.0E10，C 用 1e+10）还没对齐。 */
+            static rsf_str rsf_double_fmt(double v) {
                 char* buf = (char*)malloc(64);
-                int n = snprintf(buf, 64, "%g", (double)v);
-                rsf_str s = {0, 0, NULL}; s.len = n; s.data = buf; return s;
+                int n;
+                if (v > -1e7 && v < 1e7 && v == (double)(long long)v) {
+                    n = snprintf(buf, 64, "%.1f", v);
+                } else {
+                    /* Java 打的是「能唯一还原这个 double 的最短串」：
+                       从 1 位精度往上试，第一次能原样转回来的就是它。 */
+                    int prec;
+                    n = snprintf(buf, 64, "%.15g", v);
+                    for (prec = 1; prec <= 17; prec++) {
+                        n = snprintf(buf, 64, "%.*g", prec, v);
+                        if (strtod(buf, NULL) == v) break;
+                    }
+                }
+                { rsf_str s = {0, 0, NULL}; s.len = n; s.data = buf; return rsf_str_settle(s); }
+            }
+
+            static rsf_str rsf_float_to_str(float v) {
+                return rsf_double_fmt((double)v);
             }
 
             static rsf_str rsf_double_to_str(double v) {
-                char* buf = (char*)malloc(64);
-                int n = snprintf(buf, 64, "%.17g", v);
-                rsf_str s = {0, 0, NULL}; s.len = n; s.data = buf; return s;
+                return rsf_double_fmt(v);
             }
 
             static rsf_str rsf_str_replace(rsf_str s, rsf_str from, rsf_str to) {
@@ -3044,7 +3290,22 @@ static inline void* rsf_grow(void* ptr, size_t oldSize, size_t newSize) {
             }
 
             static rsf_str rsf_get_prop(rsf_str key) {
-                const char* v = getenv(rsf_zstr(key));
+                const char* k = rsf_zstr(key);
+                const char* v = NULL;
+                /* JDK 内建属性：C 侧没有 JVM，只能给平台上的等价物 */
+                if (strcmp(k, "java.io.tmpdir") == 0) {
+                    v = getenv("TMPDIR");
+                    if (!v) v = "/tmp";
+                }
+            #ifdef _WIN32
+                else if (strcmp(k, "file.separator") == 0) v = "\\";
+                else if (strcmp(k, "path.separator") == 0) v = ";";
+            #else
+                else if (strcmp(k, "file.separator") == 0) v = "/";
+                else if (strcmp(k, "path.separator") == 0) v = ":";
+            #endif
+                else if (strcmp(k, "line.separator") == 0) v = "\n";
+                else v = getenv(k);
                 rsf_str s = {0, 0, NULL};
                 if (!v) { s.len = 0; s.data = NULL; return s; }
                 s.data = v;

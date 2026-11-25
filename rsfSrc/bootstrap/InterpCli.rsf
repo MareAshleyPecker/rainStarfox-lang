@@ -1,3 +1,4 @@
+#NoWarning!!(all)
 // rainStarfox 阶段 17c：rsf 版解释器的**命令行入口**
 //
 // 解释器本体是旁边的 `Interp.rsf`（纯库，没有 main）；这里只负责「挑一个输入文件、

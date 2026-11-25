@@ -1,3 +1,4 @@
+#NoWarning!!(all)
 // rainStarfox 阶段 36b：自举链的统一驱动入口（`check` 先落地，`build`/`run` 在 36c）
 //
 // 目标：与 Kotlin 版 `rsf check` 的输出逐字节一致——

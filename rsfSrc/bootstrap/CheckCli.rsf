@@ -1,3 +1,4 @@
+#NoWarning!!(all)
 // rainStarfox 阶段 32c：自举链的 `check` 入口（与 Kotlin `rsf check` 同口径）
 //
 // 契约（DESIGN-32 §1）：

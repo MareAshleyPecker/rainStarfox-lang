@@ -1,3 +1,4 @@
+#NoWarning!!(all)
 // rainStarfox 阶段 17d：**用 rsf 自己写的字节码后端**（自举的第三步）
 //
 // 基准是 Kotlin 版 `src/main/kotlin/org/example/complie/codegen/BytecodeCompiler.kt`：

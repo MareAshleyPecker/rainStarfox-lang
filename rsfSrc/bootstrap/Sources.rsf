@@ -1,3 +1,4 @@
+#NoWarning!!(all)
 // ================================================================ rainStarfox 17e：多文件源码装载
 //
 // 对齐 Kotlin 版 `org/example/complie/loading/SourceLoader.kt`：把入口文件里

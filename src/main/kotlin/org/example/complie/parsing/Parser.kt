@@ -224,7 +224,7 @@ class Parser(
                         "（现在还只能当关键字用，不能当名字）",
                 )
             } else {
-                functions.add(parseFuncDecl(annotations = declAnnotations, allowLeadingAnnotations = true))
+                functions.add(parseFuncDecl(annotations = declAnnotations, allowLeadingAnnotations = true, allowExport = true))
             }
         }
         return Program(
@@ -1777,6 +1777,7 @@ class Parser(
         annotations: List<AnnotationUse> = emptyList(),
         allowLeadingAnnotations: Boolean = false,
         allowInheritModifiers: Boolean = false,
+        allowExport: Boolean = false,
     ): FuncDecl {
         val leading = ArrayList(annotations)
         // <注解> 与 <ControlType> 与 <override> 与 <static> 与 <open/final/abstract>：
@@ -1789,6 +1790,7 @@ class Parser(
         var inherit: InheritModifiers? = null
         var declTarget = BuildTarget.BOTH
         var targetTok: Token? = null
+        var exported = false
         while (true) {
             val m = peek()
             if (m.kind.isControlKeyword) {
@@ -1802,6 +1804,15 @@ class Parser(
                 }
                 declTarget = side
                 targetTok = advance()
+                continue
+            }
+            if (m.kind == TokenKind.KW_EXPORT) {
+                if (!allowExport) {
+                    throw error(m, "'export' 只能写在顶层函数上：类/接口里的方法用 pub/prot/prv 控制可见性")
+                }
+                if (exported) throw error(m, "'export' 写了两次")
+                exported = true
+                advance()
                 continue
             }
             if (consumeOverride(allowOverride)) {
@@ -1909,10 +1920,31 @@ class Parser(
             throw error(m, "修饰符 '${m.lexeme}' 要写在 fn 前面：改成 '${m.lexeme} fn ...'")
         }
 
-        // <MainType>：fun 之后、函数名之前的类型槽，缺省 void
+        // <MainType>：fun 之后、函数名之前的类型槽，缺省 void。
+        // 但 `fn Int.twice()` 里那个类型是**接收者**：后面跟 '.' 就按扩展函数解析。
         var mainType = TypeRef("void", funTok.at)
+        var receiver: TypeRef? = null
         if (peek().kind.isTypeKeyword) {
-            mainType = parseTypeRef()
+            val ty = parseTypeRef()
+            if (check(TokenKind.DOT)) {
+                advance() // 吃掉 '.'，否则后面读函数名时还停在它上面
+                if (!allowExport) {
+                    throw error(peek(), "扩展函数只能写在顶层：类/接口里请写成普通方法")
+                }
+                receiver = ty
+            } else {
+                mainType = ty
+            }
+        } else if (check(TokenKind.IDENT) && peek(1).kind == TokenKind.DOT &&
+            !peek(1).kind.isFunKeyword
+        ) {
+            // 用户类做接收者：`fn Foo.bar()`（Foo 不是类型关键字，得靠后面的 '.' 认出来）
+            if (!allowExport) {
+                throw error(peek(), "扩展函数只能写在顶层：类/接口里请写成普通方法")
+            }
+            val t = advance()
+            advance() // 吃掉 '.'
+            receiver = TypeRef(t.lexeme, t.at)
         }
 
         val nameTok = if (check(TokenKind.IDENT)) {
@@ -2011,14 +2043,22 @@ class Parser(
         } else {
             parseBlock()
         }
+        // 扩展函数：接收者就是 0 号形参，名字固定叫 this（体里用 this 访问接收者）。
+        val finalParams = if (receiver != null) {
+            listOf(Param(receiver, "this", funTok.at)) + params
+        } else {
+            params
+        }
         return FuncDecl(
-            control, mainType, nameTok.lexeme, params, ret, body, funTok.at, isStatic,
+            control, mainType, nameTok.lexeme, finalParams, ret, body, funTok.at, isStatic,
             isOverride = isOverride,
             isFinal = inherit?.isFinal == true,
             annotations = leading,
             typeParams = typeParamSig.names,
             typeParamBounds = typeParamSig.bounds,
             target = declTarget,
+            exported = exported,
+            receiverType = receiver,
         )
     }
 
