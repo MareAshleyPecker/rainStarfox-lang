@@ -12,6 +12,7 @@ import org.example.complie.native.CBackend
 import org.example.complie.sema.SemanticModel
 import org.example.complie.util.input
 import org.example.meta.RsfMeta
+import org.example.script.RsfScript
 import java.io.File
 import kotlin.system.exitProcess
 
@@ -35,6 +36,7 @@ class Cli {
         if (argv.isEmpty()) return repl()
         return when (val cmd = argv[0]) {
             "run" -> wrap { cmdRun(argv.drop(1)) }
+            "script" -> wrap { cmdScript(argv.drop(1)) }
             "build", "compile" -> wrap { cmdBuild(argv.drop(1)) }
             "check" -> wrap { cmdCheck(argv.drop(1)) }
             "complete" -> wrap { cmdComplete(argv.drop(1)) }
@@ -62,6 +64,33 @@ class Cli {
         for (warning in model.warnings) System.err.println("[rsf] 警告: $warning")
         requireEntry(model)
         Rsf.interpret(model, System.out)
+        return 0
+    }
+
+    /**
+     * 脚本宿主：编译成字节码后在自己的 ClassLoader 里跑，不落任何 .class。
+     *
+     * 三条路的分工：
+     *   `run`    解释器，改一行看一行；
+     *   `build`  落盘成 .class 再 `java` 启动；
+     *   `script` 只在内存里编译 + 定义 + 调用——这是「把 rsf 当可加载模块」那条线的入口。
+     */
+    private fun cmdScript(rest: List<String>): Int {
+        val file = requireFile(rest.firstOrNull(), "script <file.rsf> [--list] [--call <函数名>]")
+        val script = RsfScript.load(file)
+        for (warning in script.warnings) System.err.println("[rsf] 警告: $warning")
+        if (rest.contains("--list")) {
+            for (fn in script.functions()) println(fn)
+            return 0
+        }
+        val at = rest.indexOf("--call")
+        val fn = if (at >= 0) {
+            rest.getOrNull(at + 1) ?: throw RsfError("cli", "--call 后面要跟函数名")
+        } else {
+            "main"
+        }
+        val result = script.call(fn)
+        if (result != null) println(result)
         return 0
     }
 
@@ -146,7 +175,7 @@ class Cli {
             if (cLib) {
                 println("[rsf] 这是库（没有 main）: gcc -c ${out.path} -o ${File(outDir, "$name.o").path}")
             } else {
-                println("[rsf] 编译: gcc ${out.path} -o ${File(outDir, "$name.exe").path}")
+                println("[rsf] 编译: gcc ${out.path} -o ${File(outDir, "$name.exe").path} -lm")
             }
             return 0
         }
@@ -586,6 +615,7 @@ class Cli {
             |
             |命令:
             |  run <file.rsf>                   解释执行，不生成任何产物
+            |  script <file.rsf> [--list|--call F] 编译进内存、当场加载并调用（不落盘）
             |  build <file.rsf> [选项]           编译，默认出 .class
             |  decompile <产物> [选项]           从产物还原源码（产物要用 build --meta 编出）
             |  check <file.rsf> [选项]           只做词法、语法、类型检查

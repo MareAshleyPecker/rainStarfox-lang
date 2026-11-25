@@ -107,7 +107,14 @@ class BytecodeCompiler(
      * [className] 是程序类的内部名（写了 `pkg a.b` 时是 `a/b/主文件名`）。
      * 用户类跟着程序类的包走：`pkg a.b` 里的 `class Point` → `a/b/Point.class`。
      */
-    fun compile(className: String, outDir: File, meta: ByteArray? = null): List<File> {
+    /**
+     * 把程序编成「内部名 → 字节」的表，**不落盘**。
+     *
+     * 脚本宿主（`org.example.script.RsfScript`）走这条：拿到的字节交给自己的
+     * ClassLoader 定义，于是同一个 JVM 里可以并存多份脚本、各自卸载，
+     * 也不需要临时目录。
+     */
+    fun compileBytes(className: String, meta: ByteArray? = null): List<Pair<String, ByteArray>> {
         // 阶段 25 K2：K1 在这里的那道守卫（「带父类的类还不能 build」）已经撤掉——
         // 带父类的类现在真的生成 extends、父类构造链、父链字段与虚分派。
         programInternalName = className
@@ -218,12 +225,18 @@ class BytecodeCompiler(
             pending += name to bytes
         }
 
-        if (!outDir.exists() && !outDir.mkdirs()) {
-            throw IllegalStateException("无法创建输出目录: ${outDir.absolutePath}")
-        }
         // --meta：只往程序类里放一份（用户类各带一份会把体积翻几十倍）
         if (meta != null && pending.isNotEmpty()) {
             pending[0] = pending[0].first to withMetaAttribute(pending[0].second, meta)
+        }
+        return pending
+    }
+
+    /** 编译成 .class 并落盘（`rsf build` 走这条）。 */
+    fun compile(className: String, outDir: File, meta: ByteArray? = null): List<File> {
+        val pending = compileBytes(className, meta)
+        if (!outDir.exists() && !outDir.mkdirs()) {
+            throw IllegalStateException("无法创建输出目录: ${outDir.absolutePath}")
         }
         return pending.map { (internalName, bytes) -> writeClass(internalName, bytes, outDir) }
     }
