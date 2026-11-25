@@ -1,6 +1,6 @@
 # rundev.ps1 -- run the rsf CLI from build/dev-classes (sandbox dev loop).
 # ASCII-only on purpose: Windows PowerShell 5.1 reads .ps1 with the ANSI codepage.
-# Usage: .\tools\rundev.ps1 run lang\main.rsf
+# Usage: .\tools\dev\rundev.ps1 run lang\main.rsf
 param(
     [Parameter(ValueFromRemainingArguments = $true)]
     [string[]]$Rest

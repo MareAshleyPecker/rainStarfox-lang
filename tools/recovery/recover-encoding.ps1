@@ -5,7 +5,7 @@ param(
     [Parameter(Mandatory=$true)][string]$SpotsOut,
     [string]$CorpusRoot = 'D:\java\rainStarfox'
 )
-# Recovery of a CP936/UTF-8 double-encoding accident (see tools/recover-encoding.ps1).
+# Recovery of a CP936/UTF-8 double-encoding accident (see tools/recovery/recover-encoding.ps1).
 #
 # Phase 1: reverse the mis-decode; pick the last byte of each damaged character with the
 #          project's own Chinese prose as a language model.
