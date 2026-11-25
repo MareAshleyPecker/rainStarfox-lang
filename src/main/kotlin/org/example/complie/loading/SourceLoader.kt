@@ -260,7 +260,9 @@ class SourceLoader {
 
                 is ModuleImport -> {
                     val moduleDir = resolveDir(imp.path, dir, imp)
-                    val entries = moduleDir.listFiles { f -> f.isFile && f.name.endsWith(".rsf") }
+                    val entries = moduleDir.listFiles { f ->
+                        f.isFile && (f.name.endsWith(".rsf") || f.name.endsWith(".rsfs"))
+                    }
                         ?.sortedBy { it.name }
                         ?: emptyList()
                     if (entries.isEmpty()) {

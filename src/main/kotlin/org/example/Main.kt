@@ -12,7 +12,6 @@ import org.example.complie.native.CBackend
 import org.example.complie.sema.SemanticModel
 import org.example.complie.util.input
 import org.example.meta.RsfMeta
-import org.example.script.RsfScript
 import java.io.File
 import kotlin.system.exitProcess
 
@@ -68,29 +67,31 @@ class Cli {
     }
 
     /**
-     * 脚本宿主：编译成字节码后在自己的 ClassLoader 里跑，不落任何 .class。
+     * 脚本入口：`.rsf` / `.rsfs` 都收。
      *
-     * 三条路的分工：
-     *   `run`    解释器，改一行看一行；
-     *   `build`  落盘成 .class 再 `java` 启动；
-     *   `script` 只在内存里编译 + 定义 + 调用——这是「把 rsf 当可加载模块」那条线的入口。
+     * 与 `run` 的唯一差别是**不要求 main**：
+     * - 有 main 就跑 main（和 run 完全一致）；
+     * - 没有 main 就把它当纯库，列出可调用的顶层函数（`--list` 显式要这份列表）。
+     *
+     * `.rsfs` 目前的语义只有这一条。导出面暂时是「全部顶层函数」；
+     * 等 `export` 关键字落地后再收窄（那要同时改自举的 Lexer/Parser，单独一刀）。
      */
     private fun cmdScript(rest: List<String>): Int {
-        val file = requireFile(rest.firstOrNull(), "script <file.rsf> [--list] [--call <函数名>]")
-        val script = RsfScript.load(file)
-        for (warning in script.warnings) System.err.println("[rsf] 警告: $warning")
-        if (rest.contains("--list")) {
-            for (fn in script.functions()) println(fn)
+        val file = requireFile(rest.firstOrNull(), "script <file.rsf|.rsfs> [--list]")
+        val loaded = Rsf.load(file)
+        val model = Rsf.analyze(loaded)
+        for (warning in model.warnings) System.err.println("[rsf] 警告: $warning")
+        val names = model.functions.map { it.name }.distinct().sorted()
+        if (model.entry == null) {
+            println("[rsf] 脚本: ${file.path}（没有 main，可调用：）")
+            for (fn in names) println("  $fn")
             return 0
         }
-        val at = rest.indexOf("--call")
-        val fn = if (at >= 0) {
-            rest.getOrNull(at + 1) ?: throw RsfError("cli", "--call 后面要跟函数名")
-        } else {
-            "main"
+        if (rest.contains("--list")) {
+            for (fn in names) println(fn)
+            return 0
         }
-        val result = script.call(fn)
-        if (result != null) println(result)
+        Rsf.interpret(model, System.out)
         return 0
     }
 
@@ -615,6 +616,7 @@ class Cli {
             |
             |命令:
             |  run <file.rsf>                   解释执行，不生成任何产物
+            |  script <file.rsf|.rsfs> [--list]  脚本入口：允许没有 main，列出可调用函数
             |  script <file.rsf> [--list|--call F] 编译进内存、当场加载并调用（不落盘）
             |  build <file.rsf> [选项]           编译，默认出 .class
             |  decompile <产物> [选项]           从产物还原源码（产物要用 build --meta 编出）
