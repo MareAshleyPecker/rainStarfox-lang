@@ -36,6 +36,7 @@ class Cli {
         return when (val cmd = argv[0]) {
             "run" -> wrap { cmdRun(argv.drop(1)) }
             "script" -> wrap { cmdScript(argv.drop(1)) }
+            "init" -> wrap { cmdInit(argv.drop(1)) }
             "build", "compile" -> wrap { cmdBuild(argv.drop(1)) }
             "check" -> wrap { cmdCheck(argv.drop(1)) }
             "complete" -> wrap { cmdComplete(argv.drop(1)) }
@@ -63,6 +64,63 @@ class Cli {
         for (warning in model.warnings) System.err.println("[rsf] 警告: $warning")
         requireEntry(model)
         Rsf.interpret(model, System.out)
+        return 0
+    }
+
+    /**
+     * 建一个项目骨架：`rsf init [目录]`。
+     *
+     * 生成的 `build.rsfs` **必须有 main**（构建脚本的入口），但规则可以拆成模块
+     * （`build/` 下的 .rsfs 用 import 拼起来）——和 gradle 的 settings/build 分层一个意思，
+     * 自举出 toolchain 之后这套骨架照样能用。
+     */
+    private fun cmdInit(rest: List<String>): Int {
+        val dir = File(rest.firstOrNull() ?: ".")
+        dir.mkdirs()
+        val src = File(dir, "src")
+        val buildDir = File(dir, "build")
+        src.mkdirs()
+        buildDir.mkdirs()
+
+        File(dir, "build.rsfs").writeText(
+            """
+            |// 项目构建脚本：入口是 main，规则可以拆到 build/ 下的模块里。
+            |import "build/defaults.rsfs"
+            |
+            |fn main() -> void {
+            |    println("构建 " + projectName() + "（" + targetName() + "）")
+            |    // TODO: 在这里描述目标、编译参数、依赖（#dep）等
+            |}
+            """.trimMargin(),
+            Charsets.UTF_8,
+        )
+        File(buildDir, "defaults.rsfs").writeText(
+            """
+            |// 构建规则的默认值；拆成模块是为了让 build.rsfs 只留流程。
+            |fn projectName() -> String {
+            |    rtn "app"
+            |}
+            |
+            |fn targetName() -> String {
+            |    rtn "app"
+            |}
+            """.trimMargin(),
+            Charsets.UTF_8,
+        )
+        File(src, "main.rsf").writeText(
+            """
+            |fn main() -> void {
+            |    println("hello, rsf")
+            |}
+            """.trimMargin(),
+            Charsets.UTF_8,
+        )
+        File(dir, ".gitignore").writeText(".rsfcache/\n.rsfdeps/\n", Charsets.UTF_8)
+
+        println("[rsf] 已生成 ${File(dir, "build.rsfs").path}")
+        println("[rsf] 已生成 ${File(src, "main.rsf").path}")
+        println("[rsf] 运行: rsf run ${File(src, "main.rsf").path}")
+        println("[rsf] 构建脚本: rsf script ${File(dir, "build.rsfs").path}")
         return 0
     }
 
@@ -617,6 +675,7 @@ class Cli {
             |命令:
             |  run <file.rsf>                   解释执行，不生成任何产物
             |  script <file.rsf|.rsfs> [--list]  脚本入口：允许没有 main，列出可调用函数
+            |  init [目录]                      生成项目骨架（build.rsfs + src/main.rsf）
             |  script <file.rsf> [--list|--call F] 编译进内存、当场加载并调用（不落盘）
             |  build <file.rsf> [选项]           编译，默认出 .class
             |  decompile <产物> [选项]           从产物还原源码（产物要用 build --meta 编出）
