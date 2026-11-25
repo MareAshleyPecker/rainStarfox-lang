@@ -21,7 +21,7 @@ import kotlin.test.assertTrue
 class LanguageServerTest {
 
     private fun server(out: ByteArrayOutputStream = ByteArrayOutputStream()) =
-        LanguageServer(ByteArrayInputStream(ByteArray(0)), out, PrintStream(out, true, "UTF-8"))
+        LanguageServer(ByteArrayInputStream(ByteArray(0)), out, log = PrintStream(out, true, "UTF-8"))
 
     @Test
     fun `JSON 解析与渲染往返`() {

@@ -4,10 +4,17 @@ import org.example.complie.directives.Directives
 import org.example.complie.directives.ParsedDirectives
 import java.io.File
 
+/** `.rsfs` 是脚本：允许没有 main，也允许把语句直接写在顶层。 */
+private fun looksLikeScript(path: String): Boolean = path.endsWith(".rsfs", ignoreCase = true)
+
 /**
  * 一份被编译的 .rsf 源码。保留原文是为了在报错时能打印出出错那一行和插入符。
+ *
+ * [script] 为真时按**脚本**解析（`.rsfs`）：顶层可以直接写语句，编译器把它们裹进
+ * 合成的 `main`（见 `Parser.parseProgram`）。默认按扩展名判断，`rsf lsp --script`
+ * 之类的场景可以在 [of] 里显式指定。
  */
-class SourceFile(val path: String, val text: String) {
+class SourceFile(val path: String, val text: String, val script: Boolean = looksLikeScript(path)) {
 
     val lines: List<String> = text.split("\n")
 
@@ -42,7 +49,12 @@ class SourceFile(val path: String, val text: String) {
         get() = name.substringBeforeLast('.')
 
     companion object {
-        fun of(file: File): SourceFile = SourceFile(file.path, file.readText())
-        fun of(path: String, text: String): SourceFile = SourceFile(path, text)
+        /** [script] 为 null 时按扩展名判断（`.rsfs` 就是脚本）。 */
+        fun of(file: File, script: Boolean? = null): SourceFile =
+            SourceFile(file.path, file.readText(), script ?: looksLikeScript(file.path))
+
+        /** [script] 为 null 时按扩展名判断（`.rsfs` 就是脚本）。 */
+        fun of(path: String, text: String, script: Boolean? = null): SourceFile =
+            SourceFile(path, text, script ?: looksLikeScript(path))
     }
 }

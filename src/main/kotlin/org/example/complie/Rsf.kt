@@ -59,7 +59,8 @@ object Rsf {
         baseDir: File? = null,
         text: String? = null,
         target: BuildTarget = BuildTarget.JVM,
-    ): LoadedProgram = SourceLoader().load(file, baseDir, text, target)
+        script: Boolean? = null,
+    ): LoadedProgram = SourceLoader().load(file, baseDir, text, target, script)
 
     /** 检查一个已经展开好的多文件程序。 */
     fun analyze(loaded: LoadedProgram): SemanticModel =

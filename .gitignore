@@ -244,3 +244,5 @@ bin/
 
 ### 性能剖析产物（gprof）不入库 ###
 gmon.out
+
+/rsfinitTest

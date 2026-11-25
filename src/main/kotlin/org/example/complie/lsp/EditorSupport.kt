@@ -56,10 +56,10 @@ object EditorSupport {
      * 前端是「遇错即停」，所以 error 最多一条；warning 全部收集。
      * `file` 是绝对路径——import 展开后别的文件里的错也在这里，调用方按它分流。
      */
-    fun diagnostics(file: File, baseDir: File?, text: String? = null): List<Located> {
+    fun diagnostics(file: File, baseDir: File?, text: String? = null, script: Boolean = false): List<Located> {
         val out = ArrayList<Located>()
         try {
-            val loaded = Rsf.load(file, baseDir, text)
+            val loaded = Rsf.load(file, baseDir, text, script = script)
             val model = Rsf.analyze(loaded)
             for (d in model.diagnostics) {
                 val src = loaded.files.firstOrNull { it.name == d.file } ?: loaded.root
@@ -129,15 +129,15 @@ object EditorSupport {
     }
 
     /** 补全的**类型化**结果（守护进程用；顺序与去重规则都在 [Completer] 里）。 */
-    fun completions(file: File, text: String?, line: Int, col: Int, baseDir: File?): List<CompletionItem> {
-        val source = if (text != null) SourceFile.of(file.path, text) else SourceFile.of(file)
+    fun completions(file: File, text: String?, line: Int, col: Int, baseDir: File?, script: Boolean = false): List<CompletionItem> {
+        val source = if (text != null) SourceFile.of(file.path, text, script) else SourceFile.of(file, script)
 
         // 被 import 进来的函数也要能补出来。带上「当前文件」与「整个程序」两份函数表：
         // 前者用来判断光标在哪个函数里（要按当前文件的坐标算），后者用来列候选。
         var ownFunctions: List<FuncDecl> = emptyList()
         var allFunctions: List<FuncDecl> = emptyList()
         runCatching {
-            val loaded = Rsf.load(file, baseDir, text)
+            val loaded = Rsf.load(file, baseDir, text, script = script)
             allFunctions = loaded.functions
         }
         runCatching {

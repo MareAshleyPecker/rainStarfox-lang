@@ -114,6 +114,8 @@ class Parser(
         val enums = ArrayList<EnumDecl>()
         val interfaces = ArrayList<InterfaceDecl>()
         val annotations = ArrayList<AnnotationDecl>()
+        // 脚本（`.rsfs`）允许把语句直接写在顶层：收在这里，最后裹进合成的 main。
+        val topLevelStmts = ArrayList<Stmt>()
 
         // pkg 只能出现在最前面（在 import 之前），和 Java 的 package 一样
         var packageName: String? = null
@@ -223,9 +225,51 @@ class Parser(
                     "'mathematic' 是保留关键字（数学类预留）：语法还没定，编译器还没实现它" +
                         "（现在还只能当关键字用，不能当名字）",
                 )
+            } else if (source.script && !peekAfterControls().kind.isFunKeyword) {
+                // 脚本（`.rsfs`）：剩下的都是**顶层语句**，最后裹进合成的 main。
+                // 判据是「不是 fn 声明」——`pub fn` / `stc fn` 也算声明（见 peekAfterControls）。
+                if (declAnnotations.isNotEmpty()) {
+                    val first = declAnnotations.first()
+                    throw RsfError(
+                        "parser",
+                        "注解只能标在声明上：脚本里可以直接写语句，但语句不能带注解。" +
+                            "把 '${first.display()}' 删掉，或者把这段逻辑写成函数再标",
+                        first.at.line,
+                        first.at.column,
+                        source,
+                    )
+                }
+                topLevelStmts.add(parseStmt())
             } else {
                 functions.add(parseFuncDecl(annotations = declAnnotations, allowLeadingAnnotations = true, allowExport = true))
             }
+        }
+
+        // 脚本的顶层语句裹成 main：与显式写的 main 不能共存（否则不知道哪份先跑）。
+        if (topLevelStmts.isNotEmpty()) {
+            val at = topLevelStmts.first().at
+            val explicit = functions.firstOrNull { it.name == "main" && it.receiverType == null }
+            if (explicit != null) {
+                throw RsfError(
+                    "parser",
+                    "这份脚本已经有 fn main()（第 ${explicit.at.line} 行），顶层就不能再写语句了：" +
+                        "把第 ${at.line} 行开始的语句挪进 main，或者删掉 main 让编译器替你裹",
+                    at.line,
+                    at.column,
+                    source,
+                )
+            }
+            functions.add(
+                FuncDecl(
+                    control = ControlType.DEFAULT,
+                    mainType = TypeRef("void", at),
+                    name = "main",
+                    params = emptyList(),
+                    ret = ReturnSpec(TypeRef("void", at), ReturnStyle.ARROW, false, at),
+                    body = Block(topLevelStmts.toList(), at),
+                    at = at,
+                ),
+            )
         }
         return Program(
             imports = imports,

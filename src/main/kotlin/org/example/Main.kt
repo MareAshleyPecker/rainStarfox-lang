@@ -41,7 +41,7 @@ class Cli {
             "build", "compile" -> wrap { cmdBuild(argv.drop(1)) }
             "check" -> wrap { cmdCheck(argv.drop(1)) }
             "complete" -> wrap { cmdComplete(argv.drop(1)) }
-            "lsp" -> wrap { cmdLsp() }
+            "lsp" -> wrap { cmdLsp(argv.drop(1)) }
             "decompile" -> wrap { cmdDecompile(argv.drop(1)) }
             "lex" -> wrap { cmdLex(argv.drop(1)) }
             "repl" -> repl()
@@ -492,9 +492,19 @@ class Cli {
      *
      * 和 `check --json` 的区别是**常驻**：起一次 JVM，之后每次诊断/补全只花一次管道往返。
      * stdout 是协议通道（UTF-8 的 JSON-RPC 帧），任何调试输出都只能走 stderr。
+     *
+     * `--script`：把打开的每一份文件都当**脚本**（`.rsfs`）解析——顶层可以直接写语句。
+     * 编辑器那边把 `.rsfs` 交给同一个服务器时，这个开关让文件不必真叫 `.rsfs`。
      */
-    private fun cmdLsp(): Int {
-        org.example.complie.lsp.LanguageServer(System.`in`, System.out).serve()
+    private fun cmdLsp(rest: List<String>): Int {
+        var script = false
+        for (arg in rest) {
+            when (arg) {
+                "--script", "-s" -> script = true
+                else -> throw RsfError("usage", "lsp 不认识参数 '$arg'。用法：rsf lsp [--script]")
+            }
+        }
+        org.example.complie.lsp.LanguageServer(System.`in`, System.out, script).serve()
         return 0
     }
 
@@ -743,7 +753,7 @@ class Cli {
             |  check <file.rsf> [选项]           只做词法、语法、类型检查
             |  lex <file.rsf>                   打印 token 流
             |  complete <file.rsf> [选项]        补全候选，JSON（编辑器用）
-            |  lsp                              语言服务器，stdio 上的 LSP
+            |  lsp [--script]                   语言服务器（stdio）；--script 把打开的文件都当 .rsfs 脚本
             |  repl                             交互式解释器（不带参数也是）
             |  help | version                   看帮助 / 看版本
             |

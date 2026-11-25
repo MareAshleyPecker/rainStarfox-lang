@@ -34,6 +34,13 @@ import java.net.URLEncoder
 class LanguageServer(
     private val input: InputStream,
     private val output: OutputStream,
+    /**
+     * 把打开的每份文档都当**脚本**（`.rsfs`）解析：顶层可以直接写语句，编译期裹进 main。
+     *
+     * `rsf lsp --script` 打开它。文件扩展名是 `.rsfs` 时本来就按脚本解析（`SourceFile.script`
+     * 默认按扩展名判断），这个开关只是给「编辑器把脚本存成别的名字」兜底。
+     */
+    private val script: Boolean = false,
     private val log: PrintStream = System.err,
 ) {
 
@@ -234,7 +241,7 @@ class LanguageServer(
             val baseDir = file.parentFile ?: File(".").absoluteFile
             // 正文用内存里的（未保存也算数），路径仍用真实文件：包声明校验要按
             // 「文件在哪个目录」判，把它挪到 Temp 下会误报 `pkg` 位置不对。
-            EditorSupport.diagnostics(file, baseDir, doc?.text).map { d ->
+            EditorSupport.diagnostics(file, baseDir, doc?.text, script).map { d ->
                 val owner = if (d.file == file.path || d.file == file.canonicalPath) uri else pathToUri(d.file)
                 LocatedDiag(owner, d.line, d.col, d.endCol, d.severity, d.phase, d.message)
             }
@@ -256,7 +263,7 @@ class LanguageServer(
             val file = File(path)
             val baseDir = file.parentFile ?: File(".").absoluteFile
             val items = EditorSupport
-                .completions(file, doc?.text, line + 1, character + 1, baseDir)
+                .completions(file, doc?.text, line + 1, character + 1, baseDir, script)
                 .map { item ->
                     JsonValue.Obj(
                         linkedMapOf(
@@ -378,7 +385,7 @@ class LanguageServer(
         val file = File(path)
         val baseDir = file.parentFile ?: File(".").absoluteFile
         return try {
-            val loaded = org.example.complie.Rsf.load(file, baseDir, documents[uri]?.text)
+            val loaded = org.example.complie.Rsf.load(file, baseDir, documents[uri]?.text, script = script)
             RsfSymbols.references(loaded, symbol, includeDeclaration).map { usage ->
                 val owner = if (sameFile(usage.file, path)) uri else pathToUri(usage.file)
                 owner to usage
@@ -396,7 +403,7 @@ class LanguageServer(
         val doc = documents[uri]
         return try {
             val baseDir = file.parentFile ?: File(".").absoluteFile
-            val loaded = org.example.complie.Rsf.load(file, baseDir, doc?.text)
+            val loaded = org.example.complie.Rsf.load(file, baseDir, doc?.text, script = script)
             val root = loaded.root
             val symbol = RsfSymbols.resolveAt(loaded, root, line0, character0) ?: return null
             if (sameFile(symbol.file, root.path) || sameFile(symbol.file, file.path)) symbol.copy(file = file.path) else symbol

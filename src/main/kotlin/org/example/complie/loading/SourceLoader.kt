@@ -136,15 +136,17 @@ class SourceLoader {
         baseDir: File? = null,
         text: String? = null,
         target: BuildTarget = BuildTarget.JVM,
+        script: Boolean? = null,
     ): LoadedProgram {
         this.target = target
         // text 不为空 = 「盘上那份不是正文」：编辑器里有未保存的缓冲区。
         // 路径必须用**真实文件**的（包声明校验、import 相对路径都按它算），
         // 否则 `pkg testbag` 会因为临时目录在 Temp 下而误报。
+        // script 显式给 true 时按脚本解析（`rsf lsp --script` 编辑的文件不一定叫 .rsfs）。
         val root = if (text != null) {
-            SourceFile.of(rootFile.canonicalFile.path, text)
+            SourceFile.of(rootFile.canonicalFile.path, text, if (script == true) true else null)
         } else {
-            SourceFile.of(rootFile.canonicalFile)
+            SourceFile.of(rootFile.canonicalFile, if (script == true) true else null)
         }
         rootDir = baseDir?.canonicalFile ?: rootFile.canonicalFile.parentFile
         loadFile(rootFile.canonicalFile, root, baseDir?.canonicalFile)

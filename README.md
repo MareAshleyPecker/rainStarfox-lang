@@ -74,7 +74,7 @@ rsf decompile <产物> [-o <dir>] [--list]    从产物还原源码（需 --meta
 rsf check <file.rsf>                        只检查，列函数表
 rsf lex   <file.rsf>                        打印 token 流
 rsf complete <file.rsf> --line L --col C    补全候选（给编辑器用）
-rsf lsp                                     stdio 上的语言服务器
+rsf lsp [--script]                           stdio 上的语言服务器（--script：把打开的文件都当 .rsfs 脚本）
 rsf repl                                    交互式解释器
 rsf help | version
 ```
@@ -246,7 +246,7 @@ rsf decompile out/main.class --list              # 只列不写
 
 ```
 demo/
-  build.rsfs        构建脚本（.rsfs = 同语言，只是允许没有 main）
+  build.rsfs        构建脚本（.rsfs = 同语言，顶层可以直接写语句，也能没有 main）
   src/main.rsf      程序入口
   build/            产物目录（默认 build/out）
 ```
@@ -298,7 +298,7 @@ Termux 里 `pkg install openjdk-17`，解压 `dist/rainStarfox-termux-arm64-0.9.
 
 ## 编辑器支持
 
-`rsf lsp` 是 stdio 上的语言服务器：诊断、补全、跳转定义、悬停文档（RDoc，用 `///` 写）、查找引用、重命名、增量同步。
+`rsf lsp` 是 stdio 上的语言服务器：诊断、补全、跳转定义、悬停文档（RDoc，用 `///` 写）、查找引用、重命名、增量同步。`rsf lsp --script` 把打开的每份文件都按 `.rsfs` 脚本解析（顶层语句不再报错）——文件本身叫 `.rsfs` 时不用加这个开关。
 
 IDEA 插件在 `idea-rainstarfox/`，独立 Gradle 工程：
 
