@@ -3213,16 +3213,33 @@ static inline void* rsf_grow(void* ptr, size_t oldSize, size_t newSize) {
             static uint16_t rsf_to_lower(uint16_t c) { return (c >= 65 && c <= 90) ? (uint16_t)(c + 32) : c; }
             static int32_t rsf_min_i(int32_t a, int32_t b) { return a < b ? a : b; }
 
-            static rsf_str rsf_float_to_str(float v) {
+            /* Java 的写法：整数值也带小数点（0 → "0.0"），C 的 %g 会打成 "0"。
+               这里只对齐「有限、|v| < 1e7 的整数值」这条最常见路径；
+               大数/极值的科学计数法（Java 用 1.0E10，C 用 1e+10）还没对齐。 */
+            static rsf_str rsf_double_fmt(double v) {
                 char* buf = (char*)malloc(64);
-                int n = snprintf(buf, 64, "%g", (double)v);
-                rsf_str s = {0, 0, NULL}; s.len = n; s.data = buf; return s;
+                int n;
+                if (v > -1e7 && v < 1e7 && v == (double)(long long)v) {
+                    n = snprintf(buf, 64, "%.1f", v);
+                } else {
+                    /* Java 打的是「能唯一还原这个 double 的最短串」：
+                       从 1 位精度往上试，第一次能原样转回来的就是它。 */
+                    int prec;
+                    n = snprintf(buf, 64, "%.15g", v);
+                    for (prec = 1; prec <= 17; prec++) {
+                        n = snprintf(buf, 64, "%.*g", prec, v);
+                        if (strtod(buf, NULL) == v) break;
+                    }
+                }
+                { rsf_str s = {0, 0, NULL}; s.len = n; s.data = buf; return s; }
+            }
+
+            static rsf_str rsf_float_to_str(float v) {
+                return rsf_double_fmt((double)v);
             }
 
             static rsf_str rsf_double_to_str(double v) {
-                char* buf = (char*)malloc(64);
-                int n = snprintf(buf, 64, "%.17g", v);
-                rsf_str s = {0, 0, NULL}; s.len = n; s.data = buf; return s;
+                return rsf_double_fmt(v);
             }
 
             static rsf_str rsf_str_replace(rsf_str s, rsf_str from, rsf_str to) {
