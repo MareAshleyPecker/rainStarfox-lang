@@ -22,8 +22,8 @@ import java.nio.file.Files
 class ScriptModeTest {
 
     private val scriptBody = """
-        val greeting : String = "hello"
-        var n : Int = 0
+        const val greeting : String = "hello"
+        const var n : Int = 0
         n = n + 41
         println(greeting + " script, n=" + intToString(n + 1))
     """.trimIndent()

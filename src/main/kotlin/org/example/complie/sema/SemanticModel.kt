@@ -734,6 +734,14 @@ class SemanticModel(
     val propertyReads: IdentityHashMap<MemberExpr, UserMember.Method> = IdentityHashMap(),
     /** 阶段 79 v2：**属性写** → setter（`p.hp = v` ⇒ `p.setHp(v)`）。 */
     val propertyWrites: IdentityHashMap<MemberAssignStmt, UserMember.Method> = IdentityHashMap(),
+    /** 阶段 85：全局变量声明（按声明顺序初始化）。 */
+    val globalVars: List<GlobalVarDecl> = emptyList(),
+    /** 阶段 85：全局变量 → 绑定（类型 + 能不能写）。 */
+    val globalBindings: Map<String, Binding> = emptyMap(),
+    /** 阶段 85：读全局变量的 VarExpr。 */
+    val globalReads: IdentityHashMap<VarExpr, Binding> = IdentityHashMap(),
+    /** 阶段 85：写全局变量的 AssignStmt。 */
+    val globalWrites: IdentityHashMap<AssignStmt, Binding> = IdentityHashMap(),
     /** 顶层函数 → 返回类型。 */
     val returnTypes: Map<FuncDecl, RsfType>,
     /** 顶层函数 → 降级后的指令序列。 */

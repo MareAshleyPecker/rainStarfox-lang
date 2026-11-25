@@ -116,6 +116,8 @@ class Parser(
         val annotations = ArrayList<AnnotationDecl>()
         // 脚本（`.rsfs`）允许把语句直接写在顶层：收在这里，最后裹进合成的 main。
         val topLevelStmts = ArrayList<Stmt>()
+        // 阶段 85：全局变量（`const var` / `const val`），位置自由、整程序一份。
+        val globals = ArrayList<GlobalVarDecl>()
 
         // pkg 只能出现在最前面（在 import 之前），和 Java 的 package 一样
         var packageName: String? = null
@@ -225,6 +227,17 @@ class Parser(
                     "'mathematic' 是保留关键字（数学类预留）：语法还没定，编译器还没实现它" +
                         "（现在还只能当关键字用，不能当名字）",
                 )
+            } else if (isConstDeclAhead()) {
+                globals.add(parseGlobalVarDecl())
+            } else if (check(TokenKind.KW_VAR) || check(TokenKind.KW_VAL)) {
+                // 顶层裸变量：语法上只有 `const var` / `const val` 这一种写法。
+                val t = peek()
+                throw error(
+                    t,
+                    "顶层的变量要写 'const'：'const var 名字 : 类型 = 初值' 是全局可变，" +
+                        "'const val 名字 : 类型 = 初值' 是全局不可变。不带 const 的 var/val " +
+                        "只能写在函数体里（那样才是局部变量）",
+                )
             } else if (source.script && !peekAfterControls().kind.isFunKeyword) {
                 // 脚本（`.rsfs`）：剩下的都是**顶层语句**，最后裹进合成的 main。
                 // 判据是「不是 fn 声明」——`pub fn` / `stc fn` 也算声明（见 peekAfterControls）。
@@ -281,6 +294,7 @@ class Parser(
             enums = enums,
             interfaces = interfaces,
             annotations = annotations,
+            globals = globals,
         )
     }
 
@@ -291,6 +305,51 @@ class Parser(
      * `pkg util`、`pkg a.b`、`pkg a\b`、`pkg a/b` 说的是同一个包。
      * 包本身是个**目录**，以当前目录为准（`pkg a.b` → `./a/b/`）。
      */
+    /**
+     * 阶段 85：下一个是不是全局变量声明（const var / const val）。
+     *
+     * const 是**软关键字**（像 target / native 那样）：词法层不动，只有紧跟 var/val 才是
+     * 全局声明，别处仍是普通标识符——加一条语法不用去改五处联动。
+     */
+    private fun isConstDeclAhead(): Boolean {
+        if (!check(TokenKind.IDENT) || peek().lexeme != "const") return false
+        val next = peek(1)
+        return next.kind == TokenKind.KW_VAR || next.kind == TokenKind.KW_VAL
+    }
+
+    /**
+     * 阶段 85：const var 名字 [ : 类型 ] = 初值 / const val 名字 [ : 类型 ] = 初值。
+     *
+     * var 是全局可变，val 是全局不可变；初值必填（全局变量没有「未初始化」这种状态）。
+     */
+    private fun parseGlobalVarDecl(): GlobalVarDecl {
+        val constTok = advance()
+        val kw = advance()
+        val mutable = kw.kind == TokenKind.KW_VAR
+        val nameTok = expect(
+            TokenKind.IDENT,
+            "全局变量缺少名字（写法：const ${kw.lexeme} 名字 : 类型 = 初值）",
+        )
+        val declared = if (match(TokenKind.COLON)) parseTypeRef() else null
+        if (!check(TokenKind.ASSIGN)) {
+            throw error(
+                peek(),
+                "全局变量必须写初值（没有未初始化的全局变量）：写成 " +
+                    "const ${kw.lexeme} ${nameTok.lexeme} = …",
+            )
+        }
+        advance()
+        val init = parseExpr()
+        match(TokenKind.SEMI)
+        return GlobalVarDecl(
+            name = nameTok.lexeme,
+            initializer = init,
+            mutable = mutable,
+            at = constTok.at,
+            declaredType = declared,
+        )
+    }
+
     /**
      * 阶段 60：文件级构建目标 `target native` / `target jvm` / `target both`。
      *

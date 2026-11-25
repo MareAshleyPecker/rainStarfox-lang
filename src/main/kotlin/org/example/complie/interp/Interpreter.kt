@@ -206,6 +206,14 @@ class Interpreter(
      */
     private class Closure(val plan: LambdaClosure, val captures: List<Any?>)
 
+    /**
+     * 阶段 85：全局变量（const var / const val）的存储。
+     *
+     * 位置在「整份程序」这一层（不在任何调用帧里），所以 `runEntry` 一开始按声明顺序
+     * 把初值算一遍、之后所有函数读写都落在这张表上。
+     */
+    private val globals = LinkedHashMap<String, Any?>()
+
     /** 从 main 开始执行。 */
     fun runEntry(): Any? {
         // 阶段 25 K3 起类继承在解释器里**跑得动了**，K1 那道解释器守卫就撤了。
@@ -218,7 +226,24 @@ class Interpreter(
             val at = model.functionsNamed("main").firstOrNull()?.at
             throw RsfError("interp", problem, at?.line ?: 0, at?.column ?: 0, null)
         }
+        initGlobals()
         return call(model.entry!!, emptyList())
+    }
+
+    /**
+     * 阶段 85：按声明顺序把全局变量的初值算一遍。
+     *
+     * 初值表达式可能有副作用（调函数、读文件），所以必须**每次跑程序只算一遍**、
+     * 而且顺序就是源码里的顺序；前向引用在 Checker 里已经报成「未声明的变量」了。
+     */
+    private fun initGlobals() {
+        if (model.globalVars.isEmpty()) return
+        val body = model.loweredOf(model.entry!!)
+        val noSlots = arrayOfNulls<Any>(body.slotCount)
+        for (decl in model.globalVars) {
+            val binding = model.globalBindings.getValue(decl.name)
+            globals[decl.name] = coerce(eval(decl.initializer, noSlots, body), binding.type)
+        }
     }
 
     /**
@@ -372,8 +397,9 @@ class Interpreter(
                             pc++
                         } else {
                             val binding = model.bindingOf(instr.stmt)
-                            slots[binding.slot] =
-                                coerce(eval(instr.stmt.value, slots, body), binding.type)
+                            val value = coerce(eval(instr.stmt.value, slots, body), binding.type)
+                            // 阶段 85：写的是全局变量就落在整程序那份存储里
+                            if (binding.global) globals[binding.name] = value else slots[binding.slot] = value
                             pc++
                         }
                     }
@@ -631,8 +657,13 @@ class Interpreter(
                     thisObject(slots).fields[field.index]
                 } else {
                     val binding = model.bindingOf(expr)
-                    // 阶段 30b：lambda 体里读外层变量时，槽号要按捕获清单换
-                    slots[slotOf(binding, slots)]
+                    if (binding.global) {
+                        // 阶段 85：全局变量不在任何调用帧里，读的是整程序那份存储
+                        globals[binding.name]
+                    } else {
+                        // 阶段 30b：lambda 体里读外层变量时，槽号要按捕获清单换
+                        slots[slotOf(binding, slots)]
+                    }
                 }
             }
 

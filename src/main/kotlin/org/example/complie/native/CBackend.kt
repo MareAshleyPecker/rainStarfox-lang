@@ -246,6 +246,9 @@ class CBackend(
     // ------------------------------------------------------------------ 前置检查
 
     private fun checkProgram() {
+        // 阶段 85 v1：全局变量只有解释器接了（C 侧要发文件作用域的 static + 启动时初始化，
+        // 那是下一步）。这里显式拒绝，别让它静默编出一份丢掉全局状态的产物。
+        if (model.globalVars.isNotEmpty()) fail("全局变量（const var / const val）")
         if (model.annotations.isNotEmpty()) fail("注解")
         for (sup in model.superClasses.values) {
             if (sup.fromClassPath) fail("继承 JDK 类（${sup.name}）")

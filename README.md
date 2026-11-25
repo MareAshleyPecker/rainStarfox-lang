@@ -262,10 +262,20 @@ demo/
 `rsf init` 生成的脚本就是最小可用的：
 
 ```rsf
-fn main() -> void {
-    println("编译 " + intToString(compileAll("src")) + " 个文件 -> " + outDir())
-}
+// 顶层直接写语句也行：编译器把它裹进合成的 main（.rsfs 专属）
+println("编译 " + intToString(compileAll("src")) + " 个文件 -> " + outDir())
 ```
+
+跨文件的配置用**全局变量**——顶层定义变量只有这一种写法：
+
+```rsf
+const val targetDir : String = "build/out"   // 全局不可变
+const var compiled : Int = 0                 // 全局可变
+```
+
+`const` 位置自由（哪个文件、排在函数前后都行），全局变量对所有文件可见；初值按声明顺序在进 `main` 之前跑一遍。
+不带 `const` 的顶层 `var` / `val` 会直接报错（函数体里的 `var` / `val` 不受影响，那才是局部变量）。
+注意：全局变量的存储目前只有解释器接了，字节码后端与 C 后端会明确报「还没接全局变量」。
 
 项目设置写在文件头的两条块状指令里（块里一行一条，整块在词法前被挖成空格，不影响行列号）：
 

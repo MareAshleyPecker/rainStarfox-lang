@@ -63,6 +63,13 @@ class LoadedProgram(
      * 编译器本身不下载也不改 classpath。
      */
     val deps: List<DepEntry> = emptyList(),
+    /**
+     * 阶段 85：所有文件里的全局变量（`const var` / `const val`），保持「文件被载入的顺序」。
+     *
+     * 全局变量是**整程序一份**：位置自由（写在哪一层、哪个文件都行），所以这里合并成一张表；
+     * 声明顺序决定初值的执行顺序（前向引用在 Checker 里报「未声明的变量」）。
+     */
+    val globals: List<GlobalVarDecl> = emptyList(),
     /** 阶段 82：`build.rsfs` 里的 `#build { … }`；别的文件写了会报错。 */
     val build: BuildSettings? = null,
 ) {
@@ -79,6 +86,7 @@ class LoadedProgram(
             interfaces = interfaces,
             annotations = annotations,
             gc = gc,
+            globals = globals,
         )
 }
 
@@ -122,6 +130,8 @@ class SourceLoader {
 
     /** 阶段 82：各文件 `#dep` 声明的依赖（`java`/`c`/`h`/`rule`），按出现顺序去重。 */
     private val deps = LinkedHashSet<DepEntry>()
+    /** 阶段 85：各文件的全局变量，按载入顺序合并（初值就按这个顺序跑）。 */
+    private val globals = ArrayList<GlobalVarDecl>()
 
     /** 阶段 82：`build.rsfs` 的 `#build` 设置（`Directives.parse` 已经保证只有它能写）。 */
     private var build: BuildSettings? = null
@@ -171,6 +181,7 @@ class SourceLoader {
             gc = resolveGc(root),
             deps = deps.toList(),
             build = build,
+            globals = globals.toList(),
         )
     }
 
@@ -229,6 +240,8 @@ class SourceLoader {
         // 阶段 82：`#dep` 相加、`#build` 只认 build.rsfs（Directives.parse 已保证唯一）。
         source.directives.deps.forEach { deps.add(it) }
         source.directives.build?.let { if (build == null) build = it }
+        // 阶段 85：合并全局变量（整程序一份；顺序 = 载入顺序，初值就按这个顺序跑）。
+        for (g in program.globals) globals.add(g)
 
         for (fn in program.functions) {
             // 阶段 60b：JVM 构建里 native 函数**保留声明**（编成 ACC_NATIVE 方法，由 JNI 桥实现），

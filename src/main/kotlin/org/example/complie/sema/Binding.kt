@@ -22,6 +22,13 @@ class Binding(
      * 归错时也要给一句专门的话，而不是让它冒充 val 局部变量。
      */
     val catchVar: Boolean = false,
+    /**
+     * 阶段 85：这个绑定是**全局变量**（`const var` / `const val`），不是局部变量。
+     *
+     * 全局变量没有局部槽位（[slot] 恒为 -1），三个后端看到它就改走「全局存储」那条路
+     * （解释器一张全局表、JVM 程序类的静态字段、C 的文件作用域变量）。
+     */
+    val global: Boolean = false,
 ) {
     val isParam: Boolean get() = paramIndex >= 0
 

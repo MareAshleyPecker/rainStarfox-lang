@@ -587,9 +587,35 @@ data class Program(
      * 编辑器在消费；加它也是为了让 AST 里「注解声明真的被解析出来了」有据可查。
      */
     val annotations: List<AnnotationDecl> = emptyList(),
+    /**
+     * 阶段 85：全局变量（`const var x = …` / `const val x = …`）。
+     *
+     * 「const 写哪里都可以」指的是**位置自由**（任意文件的顶层、排在函数/类前后都行），
+     * 不是嵌套作用域：它们永远是整程序的全局，所有文件的函数都能读写。
+     * 顶层写 `var` / `val` 不带 `const` 是**语法错**（Parser 当场拦），
+     * 免得让人以为那是局部变量。
+     */
+    val globals: List<GlobalVarDecl> = emptyList(),
 ) : Node {
     override val at: SourceLine get() = SourceLine(1, 1)
 }
+
+/**
+ * 全局变量声明（阶段 85）：`const var name : T = 初值` 或 `const val name : T = 初值`。
+ *
+ * 为什么单独一个节点而不是复用 [VarDeclStmt]：`VarDeclStmt` 是**语句**，落在某个函数体里、
+ * 有局部槽位；全局变量没有所在函数，语义上是「整程序一份存储 + 按声明顺序跑一次初值」。
+ * 硬塞进函数体会让后端要在语句流里找「这其实是全局」，容易出错。
+ *
+ * [declaredType] 可以省（从初值推断），但省了就必须有初值。
+ */
+data class GlobalVarDecl(
+    val name: String,
+    val initializer: Expr,
+    val mutable: Boolean,
+    override val at: SourceLine,
+    val declaredType: TypeRef? = null,
+) : Node
 
 // ------------------------------------------------------------------ 枚举
 

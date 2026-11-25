@@ -234,6 +234,22 @@ class BytecodeCompiler(
 
     /** 编译成 .class 并落盘（`rsf build` 走这条）。 */
     fun compile(className: String, outDir: File, meta: ByteArray? = null): List<File> {
+        // 阶段 85 v1：const var / const val 目前只有解释器（含 build.rsfs）接了。
+        // 字节码后端要给它发程序类的静态字段 + <clinit>，那是下一步；先明确报出来，
+        // 别让人以为全局变量被静默丢掉了。
+        if (model.globalVars.isNotEmpty()) {
+            val first = model.globalVars.first()
+            throw RsfError(
+                "codegen",
+                "字节码后端还没接全局变量（const var / const val）：「" + first.name +
+                    "」是全局变量。现在能跑它的只有解释器：rsf run / rsf build" +
+                    "（构建脚本走解释器）。要编成 .class 得等下一步" +
+                    "（给程序类加静态字段 + <clinit>）",
+                first.at.line,
+                first.at.column,
+                null,
+            )
+        }
         val pending = compileBytes(className, meta)
         if (!outDir.exists() && !outDir.mkdirs()) {
             throw IllegalStateException("无法创建输出目录: ${outDir.absolutePath}")

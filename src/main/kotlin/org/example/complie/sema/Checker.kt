@@ -256,6 +256,10 @@ class Checker(
         // 它还不存在），所以它自己写的父类要在这一趟补登记，再把同一组继承规矩跑一遍。
         // 位置必须早于 checkClassBodies：伴生类的方法体里要能看见继承来的字段与方法。
         checkCompanionParents()
+
+        // 阶段 85：全局变量要看得见函数（初值可能调函数），函数体也要看得见它，
+        // 所以放在函数声明之后、查任何函数体之前。
+        declareGlobals()
         declareFunctions()
         // 阶段 80：扩展函数按接收者类型收表（要在类/枚举/接口表填好之后，
         // 否则 `fn Box&<Int>.foo()` 里的 `Box` 还解析不出来）。
@@ -295,6 +299,10 @@ class Checker(
             callTargets = callTargets,
             memberTargets = memberTargets,
             extensionCalls = extensionCalls,
+            globalVars = program.globals,
+            globalBindings = globalBindings,
+            globalReads = globalReads,
+            globalWrites = globalWrites,
             propertyReads = propertyReads,
             propertyWrites = propertyWrites,
             returnTypes = returnTypes,
@@ -352,6 +360,48 @@ class Checker(
         }
     }
     // ------------------------------------------------------------------ 函数表
+    /**
+     * 阶段 85：声明全局变量（const var / const val）。
+     *
+     * 按**声明顺序**走一遍：前面的全局变量对后面的初值可见（`const val B = A + 1`），
+     * 反过来不行（前向引用报「未声明的变量」）。绑定标 `global = true`、槽号恒 -1，
+     * 三个后端看到这个标志就改走全局存储。
+     */
+    private fun declareGlobals() {
+        for (decl in program.globals) {
+            val annotated = decl.declaredType?.let { resolveType(it) }
+            val initType = withExpectation(annotated) { type(decl.initializer) }
+            if (initType.isVoid) throw err("void 不能作为全局变量的值", decl.at)
+            val declared = annotated ?: initType
+            if (declared.isVoid) throw err("全局变量不能是 void 类型", decl.at)
+            if (declared.isNullLiteral) {
+                throw err(
+                    "没法从 null 推断全局变量的类型：写成 const ${if (decl.mutable) "var" else "val"} " +
+                        "${decl.name} : ?类型 = null",
+                    decl.at,
+                )
+            }
+            if (annotated != null && !acceptsValue(declared, decl.initializer, initType)) {
+                throw err(
+                    "不能把 ${initType.rsfName} 赋给 ${declared.rsfName} 全局变量 " +
+                        decl.name,
+                    decl.at,
+                )
+            }
+            if (globalBindings.containsKey(decl.name)) {
+                throw err("全局变量 ${decl.name} 重名了：整份程序只能有一份同名全局变量", decl.at)
+            }
+            globalBindings[decl.name] = Binding(
+                name = decl.name,
+                type = declared,
+                mutable = decl.mutable,
+                paramIndex = -1,
+                at = decl.at,
+                global = true,
+            )
+        }
+    }
+
     private fun declareFunctions() {
         for (fn in program.functions) {
             currentSource = sourceOfFunction[fn] ?: source
@@ -5365,13 +5415,22 @@ class Checker(
                         return
                     }
                 }
-                val bound = binding
+                val bound = binding ?: globalBindings[stmt.name]
                     ?: throw err("未声明的变量 '${stmt.name}'", stmt.at)
+                // 阶段 85：写的是全局变量 → 三个后端要改走全局存储
+                if (bound.global) globalWrites[stmt] = bound
                 // 解糖生成的赋值（for-in 的步进）不受 val 约束
                 if (!stmt.synthetic && !bound.mutable) {
                     if (bound.catchVar) {
                         throw err(
                             "catch 的错误变量 '${stmt.name}' 不能重新赋值——它就是这次接住的那条消息",
+                            stmt.at,
+                        )
+                    }
+                    if (bound.global) {
+                        throw err(
+                            "全局常量 '${stmt.name}' 是 'const val' 声明的，不能重新赋值。" +
+                                "想改值就把声明改成 'const var'。",
                             stmt.at,
                         )
                     }
@@ -5951,8 +6010,9 @@ class Checker(
             for (read in reads) {
                 val binding = varRefs[read] ?: continue
                 // 参数在函数入口就有值，不参与确定性赋值分析；
-                // catch 变量也一样——它是「进处理体时刚写进去的」，不属于任何 VarDeclStmt
-                if (binding.isParam || binding.catchVar) continue
+                // catch 变量也一样——它是「进处理体时刚写进去的」，不属于任何 VarDeclStmt；
+                // 全局变量（阶段 85）同理：runEntry 在调 main 之前就按声明顺序初始化好了。
+                if (binding.isParam || binding.catchVar || binding.global) continue
                 if (binding !in assignedHere) {
                     throw err(
                         "读到变量 '${read.name}' 时它可能还没被赋值：存在一条绕过了它前面那句声明的路径" +
@@ -6127,6 +6187,13 @@ class Checker(
                         val member = fieldMember(info, field, substitutionFromInside(info, owner))
                         fieldReads[expr] = member
                         member.type
+                    } else if (globalBindings[expr.name] != null) {
+                        // 阶段 85：局部没有、字段也没有，就查全局变量（const var / const val）
+                        val global = globalBindings.getValue(expr.name)
+                        globalReads[expr] = global
+                        // varRefs 也要记：解释器和字节码后端都靠 bindingOf(expr) 取绑定
+                        varRefs[expr] = global
+                        global.type
                     } else {
                         throw err(
                             "未声明的变量 '${expr.name}'" +
@@ -6566,6 +6633,12 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
 
     /** 接收者类型名 → 这个类型上的扩展函数（按名字再挑一次）。 */
     private val extensionsByReceiver = LinkedHashMap<String, MutableList<FuncDecl>>()
+    /** 阶段 85：全局变量（const var / const val）的绑定表；名字永远整程序唯一。 */
+    private val globalBindings = LinkedHashMap<String, Binding>()
+    /** 阶段 85：哪些 VarExpr 读的是全局变量（解释器/两个后端靠它改走全局存储）。 */
+    private val globalReads = IdentityHashMap<VarExpr, Binding>()
+    /** 阶段 85：哪些 AssignStmt 写的是全局变量。 */
+    private val globalWrites = IdentityHashMap<AssignStmt, Binding>()
 
     // ------------------------------------------------------------- 属性访问器（阶段 79 v2）
 
