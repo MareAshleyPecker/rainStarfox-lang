@@ -129,3 +129,59 @@ fails to initialise), so only functional checks were done here.
   and after this branch, worth its own investigation.
 - `runtimelib.h/` in the repo root is an untracked, stale copy of an older
   generated header. Nothing reads it; it can be deleted.
+
+---
+
+## Extension functions — syntax landed, semantics is the next slice
+
+Done (`e54ed73`): `fn Int.twice() -> Int` / `fn Foo.bar()` parse into
+`FuncDecl.receiverType`; the Checker stops with an explicit
+"扩展函数还没接语义" error. Existing corpus is unaffected (9/9 parity).
+
+Next slice, in this order:
+
+1. **Desugar to a leading parameter.** In `Parser.parseFuncDecl`, when
+   `receiverType != null`, prepend `Param("this", receiverType)` to `params`.
+   Keep `receiverType` on the node — the LSP and the "no private access" rule
+   both need to know it is an extension.
+2. **Bind `this`.** `Checker.checkFunctionBody`: if `fn.receiverType != null`,
+   register a binding for the name `this` pointing at param slot 0, so
+   `ThisExpr` in the body resolves. Today `this` only resolves inside classes.
+3. **Fallback lookup.** In the member-call resolution (around
+   `Checker.kt:6534` / `6607`), when normal member lookup fails and the
+   receiver's static type matches an extension's `receiverType`, record the
+   target in a new `SemanticModel.extensionCalls[expr] = decl` and type-check
+   the arguments against `decl.params.drop(1)`.
+4. **Interpreter** (`interp/Interpreter.kt`, the `evalMember` call path): if
+   `extensionCalls[expr]` is set, evaluate the receiver + args and call the
+   function with the receiver first.
+5. **Bytecode + C backends**: same shape — the call site becomes a static call
+   with the receiver prepended. No ABI change; these are already `public static`
+   functions. Until this lands, both backends should *explicitly refuse* an
+   extension call rather than miscompile it.
+6. **LSP** (`lsp/RsfSymbols.kt`, `lsp/EditorSupport.kt`):
+   - index extensions under the receiver type (document symbol group
+     "Extensions");
+   - completion after `x.` lists extensions of `x`'s static type;
+   - hover / definition jump to the `fn Foo.bar` line.
+7. Rules copied from Kotlin: extensions cannot touch private members; dispatch
+   is static (by the receiver's declared type, not its runtime type).
+
+## Bootstrap line prep (direct machine code)
+
+When `.rsfs` is done, the next track is self-hosting with direct codegen.
+Two things from this session matter there:
+
+- The C backend now has a real error model (`setjmp`/`longjmp` handler stack in
+  `rsf_ctx`), which is what lets the self-hosted interpreter run natively.
+- A native, JVM-free runner already exists end to end:
+  `rsf build rsfSrc/bootstrap/InterpCli.rsf --c` + `gcc -lm` produces
+  `interp`, and it matches the Kotlin interpreter byte-for-byte on all nine
+  `rsfSrc/lang` examples (`tools/dev/quick.sh`, parity 9/9, ~10 ms startup vs
+  ~400 ms on the JVM).
+
+For direct machine code, keep the export story simple: emit object files and let
+the platform linker build `.so`/`.dll` (export tables are the linker's job);
+`export fn` decides visibility and `rsf_` prefixes the symbol. Only write PE
+`.edata` / ELF `.dynsym` by hand if the single-file, no-toolchain goal becomes
+real.
