@@ -240,6 +240,35 @@ rsf decompile out/main.class --list              # 只列不写
 
 注意：元数据原样带着源码，发布前想清楚要不要把源码一起发出去——所以 `--meta` 默认关。
 
+### 项目目录与 `build.rsfs`（构建脚本）
+
+`rsf init demo` 造一个能直接跑的项目骨架：
+
+```
+demo/
+  build.rsfs        构建脚本（.rsfs = 同语言，只是允许没有 main）
+  src/main.rsf      程序入口
+  build/            产物目录（默认 build/out）
+```
+
+在项目目录里裸跑 `rsf build`，它驱动 `build.rsfs`，脚本里能调三个只有构建脚本才有的内置函数：
+
+| 内置 | 类型 | 作用 |
+| --- | --- | --- |
+| `outDir()` | `() -> String` | 产物目录（`-o` 给的，或默认 `build/out`） |
+| `compile(path)` | `(String) -> String` | 编一个文件，返回产物路径 |
+| `compileAll(dir)` | `(String) -> Int` | 递归编 `*.rsf` / `*.rsfs`，返回编了几个 |
+
+`rsf init` 生成的脚本就是最小可用的：
+
+```rsf
+fn main() -> void {
+    println("编译 " + intToString(compileAll("src")) + " 个文件 -> " + outDir())
+}
+```
+
+`rsf build` 默认编成 `.class`，`rsf build --c` 编成 C（`<名字>.c` + `rsf_runtime.h`），`--meta` 照旧把源码快照塞进产物。脚本里的相对路径以**项目根目录**为基准。这三个内置函数在别处用会明确报错（编进 class 之后没有编译器可调），见 `design/DESIGN-81.md`。
+
 ## Termux / aarch64
 
 Termux 里 `pkg install openjdk-17`，解压 `dist/rainStarfox-termux-arm64-0.9.0.tar.gz`（用 `./gradlew.bat jar` 之后按 `dist/termux/README.md` 打包）再 `./install.sh`，就有 `rsf` 命令。jar 编到 Java 17 字节码（major 61），openjdk-17 / 21 都能跑。

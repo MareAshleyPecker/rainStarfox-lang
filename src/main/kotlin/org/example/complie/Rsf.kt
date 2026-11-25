@@ -75,8 +75,11 @@ object Rsf {
 
     // ------------------------------------------------------------------ 解释
 
-    fun interpret(model: SemanticModel, out: PrintStream = System.out): Any? =
-        Interpreter(model, out).runEntry()
+    fun interpret(
+        model: SemanticModel,
+        out: PrintStream = System.out,
+        buildHost: org.example.build.BuildHost? = null,
+    ): Any? = Interpreter(model, out, buildHost).runEntry()
 
     // ------------------------------------------------------------------ 编译
 

@@ -246,6 +246,31 @@ object Builtins {
         doc = "让 GC 扫一轮（宿主用 rsf_ctx_set_gc 登记的）；没登记 GC 时返回 false",
     )
 
+    // ------------------------------------------------ 构建脚本宿主（阶段 81，build.rsfs）
+
+    /**
+     * `outDir() -> String`：`rsf build` 驱动 `build.rsfs` 时的产物目录。
+     *
+     * 这三个只在构建脚本里有意义——它们由 `rsf build` 注入的宿主（
+     * [org.example.build.BuildHost]）承接；普通程序里调用会在解释期报「只有构建脚本里能用」。
+     */
+    val OUT_DIR = Builtin(
+        "outDir", emptyList(), RsfType.STRING,
+        doc = "产物目录（只有 build.rsfs 里能用）",
+    )
+
+    /** `compile(path) -> String`：编译一个源文件，返回产物路径（只有构建脚本里能用）。 */
+    val COMPILE = Builtin(
+        "compile", listOf(RsfType.STRING), RsfType.STRING,
+        doc = "编译一个源文件，返回产物路径（只有 build.rsfs 里能用）",
+    )
+
+    /** `compileAll(dir) -> Int`：编译目录下全部 .rsf / .rsfs，返回文件数（只有构建脚本里能用）。 */
+    val COMPILE_ALL = Builtin(
+        "compileAll", listOf(RsfType.STRING), RsfType.INT,
+        doc = "编译目录下全部 .rsf / .rsfs，返回编译了几个文件（只有 build.rsfs 里能用）",
+    )
+
     /** 带签名的内置函数（`print` / `println` 是单参数特例，签名不在这里表达）。 */
     val ALL: List<Builtin> = listOf(
         TO_BYTE, TO_CHAR, CHAR_TO_INT, INT_TO_STRING, PARSE_INT,
@@ -253,6 +278,7 @@ object Builtins {
         READ_TEXT, WRITE_TEXT, READ_BYTES, WRITE_BYTES,
         JVM_CALL, JVM_NEW, JVM_CALL_ON,
         MEM_BYTES, MEM_PEAK, GC_COLLECT,
+        OUT_DIR, COMPILE, COMPILE_ALL,
     )
 
     private val BY_NAME: Map<String, Builtin> = ALL.associateBy { it.name }

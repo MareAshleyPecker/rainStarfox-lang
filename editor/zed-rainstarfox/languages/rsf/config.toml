@@ -1,6 +1,6 @@
 name = "rainStarfox"
 grammar = "rsf"
-path_suffixes = ["rsf"]
+path_suffixes = ["rsf", "rsfs"]
 line_comments = ["// "]
 block_comment = { start = "/*", prefix = "", end = "*/", tab_size = 0 }
 autoclose_before = ";:.,=}])>"

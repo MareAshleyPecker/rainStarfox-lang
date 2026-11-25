@@ -38,6 +38,21 @@ gc on                     // 这份产物要 GC（只认带 main 的文件）；
 `deprecated-case`（switch 里老写法 `case`）、`erasure-cast`（`as`/`is` 写了泛型实参，按擦除判）、
 `all`（全部）。指令行在词法之前被整行挖空，所以**行列号与原文完全对齐**；写成别的 `#` 开头会报「不认识的字符 '#'」。
 
+### 0.2 `.rsfs` 与构建脚本
+
+`.rsfs` 和 `.rsf` 是**同一门语言**，唯一差别：`.rsfs` 允许没有 `main`（脚本片段）。
+
+项目根目录的 `build.rsfs` 是构建脚本：在项目里裸跑 `rsf build` / `rsf build --c` 时由它决定编什么。
+脚本里能调三个只有构建脚本才有的内置函数，其余地方（普通程序、`rsf build <文件>`、编成 class 之后）调用会明确报错：
+
+| 内置 | 签名 | 作用 |
+| --- | --- | --- |
+| `outDir()` | `() -> String` | 产物目录（`-o` 给的，或默认 `build/out`） |
+| `compile(path)` | `(String) -> String` | 编一个 `.rsf` / `.rsfs`，返回产物路径 |
+| `compileAll(dir)` | `(String) -> Int` | 递归编目录下的 `.rsf` / `.rsfs`，返回编了几个 |
+
+相对路径以**项目根目录**为基准。`rsf init demo` 生成的脚本就是 `println("编译 " + intToString(compileAll("src")) + " 个文件")`。
+
 ## 1. 关键字（57 个）
 
 | 类别 | 关键字（共 57，与两个词法器的表逐条对齐） |

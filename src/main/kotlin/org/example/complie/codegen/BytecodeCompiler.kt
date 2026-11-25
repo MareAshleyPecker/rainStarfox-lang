@@ -4626,6 +4626,13 @@ class BytecodeCompiler(
                 "'${builtin.name}' 只有 native 侧才有，字节码后端产不出：用 'rsf build --c' 编这份文件",
             )
 
+            // 阶段 81：构建脚本的宿主能力只在 `rsf build` 驱动 build.rsfs 时注入，
+            // 编进 class 里就没有宿主了。
+            "outDir", "compile", "compileAll" -> throw RsfError(
+                "build",
+                "'${builtin.name}' 只有构建脚本里能用（rsf build 驱动 build.rsfs 时注入），编成 .class 之后没有编译器可调",
+            )
+
             else -> throw IllegalStateException("内部错误：没实现的内置函数 '${builtin.name}'")
         }
     }

@@ -1,5 +1,6 @@
 package org.example
 
+import org.example.build.ProjectBuildHost
 import org.example.complie.Rsf
 import org.example.complie.ast.BuildTarget
 import org.example.complie.codegen.disassemble
@@ -89,7 +90,10 @@ class Cli {
             |
             |fn main() -> void {
             |    println("构建 " + projectName() + "（" + targetName() + "）")
-            |    // TODO: 在这里描述目标、编译参数、依赖（#dep）等
+            |    // 阶段 81：脚本能真的干活——compileAll 把 src/ 下每个 .rsf / .rsfs 编到 build/out。
+    // 想只编一个文件、改目标名、加依赖，就换成 compile("src/main.rsf") 之类。
+    val count = compileAll("src")
+    println("编译 " + intToString(count) + " 个文件 -> " + outDir())
             |}
             """.trimMargin(),
             Charsets.UTF_8,
@@ -160,6 +164,8 @@ class Cli {
     /** 编译成 .class。 */
     private fun cmdBuild(rest: List<String>): Int {
         var outDir = File("out")
+        /** 用户显式给了 `-o` 吗？项目模式（build.rsfs）没给时用 `build/out`。 */
+        var outGiven = false
         var className: String? = null
         var dump = false
         var cMode = false
@@ -174,6 +180,7 @@ class Cli {
                 "-o", "--out" -> {
                     val v = rest.getOrNull(i + 1) ?: throw RsfError("cli", "-o 后面要跟输出目录")
                     outDir = File(v)
+                    outGiven = true
                     i++
                 }
                 "-n", "--name" -> {
@@ -192,7 +199,9 @@ class Cli {
 
         // 不带文件名时：项目里若有 build.rsfs，就由它驱动构建（构建脚本必须有 main）。
         // 这样 `rsf build` 在项目目录里和 `rsf build x.rsf` 在单文件模式下是同一个命令。
-        if (positional.isEmpty() && !cMode && !dump && !meta) {
+        // 阶段 81：脚本拿到一个宿主（`compile` / `compileAll` / `outDir`），真的能编译东西；
+        // `--c` / `--meta` 也走这条路——它们只影响宿主怎么编。
+        if (positional.isEmpty() && !dump) {
             val buildScript = File("build.rsfs")
             if (buildScript.isFile) {
                 val loadedScript = Rsf.load(buildScript)
@@ -200,7 +209,14 @@ class Cli {
                 for (warning in scriptModel.warnings) System.err.println("[rsf] 警告: $warning")
                 val problem = scriptModel.entryProblem
                 if (problem != null) throw RsfError("build", "build.rsfs 不能当构建脚本：$problem")
-                Rsf.interpret(scriptModel, System.out)
+                // 没写 -o 时用项目约定 `build/out`（脚本里 `outDir()` 看到的就是它）
+                val host = ProjectBuildHost(
+                    srcDir = File("src"),
+                    outDir = if (outGiven) outDir else File("build/out"),
+                    cMode = cMode,
+                    meta = meta,
+                )
+                Rsf.interpret(scriptModel, System.out, host)
                 return 0
             }
         }

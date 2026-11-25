@@ -1323,6 +1323,8 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
             "memBytes" -> return "rsf_mem_bytes()"
             "memPeak" -> return "rsf_mem_peak()"
             "gcCollect" -> return "rsf_gc_collect()"
+            // 阶段 81：构建脚本的宿主能力只有 `rsf build` 驱动 build.rsfs 时才有
+            "outDir", "compile", "compileAll" -> fail("内置函数 ${e.name}（只有构建脚本里能用）")
             "stringBytes" -> return "rsf_str_bytes(${expr(e.arguments[0])})"
             "byteLength" -> return "rsf_str_byte_len(${expr(e.arguments[0])})"
         "slice" -> return "rsf_str_slice(${expr(e.arguments[0])}, " +

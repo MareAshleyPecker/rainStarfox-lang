@@ -1,5 +1,6 @@
 package org.example.complie.interp
 
+import org.example.build.BuildHost
 import org.example.complie.ast.*
 import org.example.complie.diag.RsfError
 import org.example.complie.interop.JvmMethod
@@ -144,6 +145,8 @@ class RsfFailure(val msg: String) : RuntimeException(msg) {
 class Interpreter(
     private val model: SemanticModel,
     private val out: PrintStream = System.out,
+    /** 阶段 81：构建脚本（`build.rsfs`）的宿主；普通解释执行时为 null。 */
+    private val buildHost: BuildHost? = null,
 ) {
 
     private var depth = 0
@@ -2275,6 +2278,19 @@ class Interpreter(
                 if (to < n && Character.isLowSurrogate(text[to])) to += 1
                 if (to < from) to = from
                 text.substring(from, to)
+            }
+            // 阶段 81：构建脚本（`build.rsfs`）的宿主能力。普通程序里没有宿主，
+            // 所以这里明确报错，而不是让 `compile` 变成空操作。
+            "outDir", "compile", "compileAll" -> {
+                val host = buildHost ?: throw RsfFailure(
+                    "'${builtin.name}' 只有构建脚本里能用：它由 'rsf build' 驱动 build.rsfs 时注入。" +
+                        "想让程序自己编译东西，请把它写成构建脚本（build.rsfs），或者用 rsf 命令行。",
+                )
+                when (builtin.name) {
+                    "outDir" -> host.outDir()
+                    "compile" -> host.compile(args[0] as String)
+                    else -> host.compileAll(args[0] as String)
+                }
             }
             "readBytes" -> fileCall(builtin.name, args[0] as String) {
                 Files.readAllBytes(Paths.get(it))
