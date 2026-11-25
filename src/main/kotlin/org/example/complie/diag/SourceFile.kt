@@ -1,5 +1,7 @@
 package org.example.complie.diag
 
+import org.example.complie.directives.Directives
+import org.example.complie.directives.ParsedDirectives
 import java.io.File
 
 /**
@@ -16,6 +18,16 @@ class SourceFile(val path: String, val text: String) {
      * 只影响本文件的警告（诊断里带文件名，按文件匹配）。
      */
     val suppressedWarnings: Set<String> = WarningDirectives.kinds(this)
+
+    /**
+     * 文件级指令（`#dep` / `#build`）的解析结果，构造时就校验过。
+     *
+     * 装载层从这里取依赖清单与构建设置；`codeText` 是挖掉这些块之后交给词法器的正文。
+     */
+    val directives: ParsedDirectives = Directives.parse(this)
+
+    /** 交给词法器的正文：`#dep` / `#build` / `#NoWarning!!` 都已挖成空格（行列号不变）。 */
+    val codeText: String = directives.stripped
 
     /** 取第 [line] 行（1 基）的原文，越界返回 null。 */
     fun lineAt(line: Int): String? =

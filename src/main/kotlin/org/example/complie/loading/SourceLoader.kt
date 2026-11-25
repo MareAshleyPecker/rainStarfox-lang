@@ -3,6 +3,8 @@ package org.example.complie.loading
 import org.example.complie.ast.*
 import org.example.complie.diag.RsfError
 import org.example.complie.diag.SourceFile
+import org.example.complie.directives.BuildSettings
+import org.example.complie.directives.DepEntry
 import org.example.complie.lexing.Lexer
 import org.example.complie.parsing.Parser
 import java.io.File
@@ -54,6 +56,15 @@ class LoadedProgram(
      * 走 arena（只增不减）。写在别的文件里会报错（见 [SourceLoader.resolveGc]）。
      */
     val gc: GcDirective? = null,
+    /**
+     * 阶段 82：参与编译的文件里 `#dep { … }` 声明的依赖（去重、保持出现顺序）。
+     *
+     * 只是**声明**：`.rsfdeps/lock.json` 与存在性校验由构建驱动（`ProjectBuildHost`）做，
+     * 编译器本身不下载也不改 classpath。
+     */
+    val deps: List<DepEntry> = emptyList(),
+    /** 阶段 82：`build.rsfs` 里的 `#build { … }`；别的文件写了会报错。 */
+    val build: BuildSettings? = null,
 ) {
     /** 合成一个 Program 交给 Checker。 */
     fun toProgram(): Program =
@@ -109,6 +120,12 @@ class SourceLoader {
     /** 阶段 77：收集到的 gc 指令 + 它写在哪个文件里，最后由 [resolveGc] 挑一份。 */
     private val gcDecls = ArrayList<Pair<GcDirective, SourceFile>>()
 
+    /** 阶段 82：各文件 `#dep` 声明的依赖（`java`/`c`/`h`/`rule`），按出现顺序去重。 */
+    private val deps = LinkedHashSet<DepEntry>()
+
+    /** 阶段 82：`build.rsfs` 的 `#build` 设置（`Directives.parse` 已经保证只有它能写）。 */
+    private var build: BuildSettings? = null
+
     /**
      * [baseDir] 给根文件用：编辑器会把「未保存的缓冲区」写成临时文件再拿来分析，
      * 此时它真实的 import 相对目录得从外面指定（临时文件所在目录没有意义）。
@@ -150,6 +167,8 @@ class SourceLoader {
             target = target,
             otherSide = otherSide.toMap(),
             gc = resolveGc(root),
+            deps = deps.toList(),
+            build = build,
         )
     }
 
@@ -204,6 +223,10 @@ class SourceLoader {
         // 阶段 77：先记下来，等全部文件读完再挑（要知道 main 在哪份文件里）。
         // 放在 target 过滤之后——不参与编译的文件不算数。
         program.gc?.let { gcDecls.add(it to source) }
+
+        // 阶段 82：`#dep` 相加、`#build` 只认 build.rsfs（Directives.parse 已保证唯一）。
+        source.directives.deps.forEach { deps.add(it) }
+        source.directives.build?.let { if (build == null) build = it }
 
         for (fn in program.functions) {
             // 阶段 60b：JVM 构建里 native 函数**保留声明**（编成 ACC_NATIVE 方法，由 JNI 桥实现），

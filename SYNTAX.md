@@ -53,6 +53,37 @@ gc on                     // 这份产物要 GC（只认带 main 的文件）；
 
 相对路径以**项目根目录**为基准。`rsf init demo` 生成的脚本就是 `println("编译 " + intToString(compileAll("src")) + " 个文件")`。
 
+### 0.3 项目设置：`#dep` 与 `#build`
+
+两条块状指令，写在文件最前面（可以和其他文件头指令混排）。块里一行一条，**整块在词法之前被挖成空格**，所以后面的行号、列号都不受影响。
+
+```
+#dep {
+    java("libs/util.jar")
+    c("native/helper.c")
+    h("native/helper.h")
+    rule("extraDeps")
+}
+
+#build {
+    out("build/out")
+    target("auto")
+    meta(false)
+    name("app")
+}
+```
+
+| 指令 | 写在哪 | 内容 |
+| --- | --- | --- |
+| `#dep` | 任意源文件 | `java` / `c` / `h` 是相对项目根的路径，`rule` 是顶层函数名（返回更多依赖） |
+| `#build` | 只能是项目根的 `build.rsfs` | `out` 产物目录、`target` 目标侧、`meta` 要不要带源码元数据、`name` 产物名 |
+
+`target` 收四个值：`"jvm"`、`"c"`、`"native"`（等同 `c`）、`"auto"`。
+`auto` 时**每份文件自己决定**：文件头写了 `target native`、或者里面有不带 `target` 别的侧标记的 `native` 声明，就编成 C；否则编成 `.class`。于是同一个 `src/` 里可以混着放两种文件。
+
+`#dep` 里的文件在构建末尾被记进 `.rsfdeps/lock.json`（`kind` / `path` / `size` / `sha256`），缺文件直接报错。
+命令行显式给的 `-o` / `--c` / `--meta` **压过** `#build` 里的设置。
+
 ## 1. 关键字（57 个）
 
 | 类别 | 关键字（共 57，与两个词法器的表逐条对齐） |

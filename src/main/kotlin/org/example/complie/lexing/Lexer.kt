@@ -139,7 +139,7 @@ class Lexer(private val source: SourceFile) {
      * 长度与换行都不变，所以行列号与原文逐字对齐（[SourceFile.lineAt] 仍读原文，
      * 报错时看到的是用户写的那一行）。
      */
-    private val text: String = WarningDirectives.strip(source.text)
+    private val text: String = source.codeText
     private var pos = 0
     private var line = 1
     private var column = 1

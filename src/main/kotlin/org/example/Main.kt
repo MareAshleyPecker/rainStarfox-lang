@@ -88,12 +88,23 @@ class Cli {
             |// 项目构建脚本：入口是 main，规则可以拆到 build/ 下的模块里。
             |import "build/defaults.rsfs"
             |
+            |// 产物设置（只认项目根的 build.rsfs）。命令行给的 -o / --c / --meta 压过这里。
+            |#build {
+            |    out("build/out")
+            |    target("auto")
+            |}
+            |
+            |// 依赖写在这里或任意源文件里，构建末尾汇总进 .rsfdeps/lock.json。
+            |// #dep {
+            |//     java("libs/util.jar")
+            |//     rule("extraDeps")
+            |// }
+            |
             |fn main() -> void {
             |    println("构建 " + projectName() + "（" + targetName() + "）")
-            |    // 阶段 81：脚本能真的干活——compileAll 把 src/ 下每个 .rsf / .rsfs 编到 build/out。
-    // 想只编一个文件、改目标名、加依赖，就换成 compile("src/main.rsf") 之类。
-    val count = compileAll("src")
-    println("编译 " + intToString(count) + " 个文件 -> " + outDir())
+            |    // 把 src/ 下每个 .rsf / .rsfs 编到产物目录；只编一个就换成 compile("src/main.rsf")。
+            |    val count = compileAll("src")
+            |    println("编译 " + intToString(count) + " 个文件 -> " + outDir())
             |}
             """.trimMargin(),
             Charsets.UTF_8,
@@ -209,14 +220,30 @@ class Cli {
                 for (warning in scriptModel.warnings) System.err.println("[rsf] 警告: $warning")
                 val problem = scriptModel.entryProblem
                 if (problem != null) throw RsfError("build", "build.rsfs 不能当构建脚本：$problem")
-                // 没写 -o 时用项目约定 `build/out`（脚本里 `outDir()` 看到的就是它）
+                // 没写 -o 时用项目约定 `build/out`（脚本里 `outDir()` 看到的就是它）；
+                // 阶段 82：`#build { … }` 的 out / target / meta 是默认值，命令行显式给了就压过它。
+                val (effOut, effTarget, effMeta) = ProjectBuildHost.settings(
+                    build = loadedScript.build,
+                    cliOut = if (outGiven) outDir else null,
+                    cliC = cMode,
+                    cliMeta = meta,
+                )
                 val host = ProjectBuildHost(
                     srcDir = File("src"),
-                    outDir = if (outGiven) outDir else File("build/out"),
-                    cMode = cMode,
-                    meta = meta,
+                    outDir = effOut,
+                    target = effTarget,
+                    meta = effMeta,
+                    deps = loadedScript.deps,
                 )
+                if (loadedScript.deps.isNotEmpty()) {
+                    println("[rsf] 依赖: ${loadedScript.deps.joinToString("、") { it.display() }}")
+                }
                 Rsf.interpret(scriptModel, System.out, host)
+                // 依赖可能在脚本或任一被编译的源文件里声明，所以锁文件写在跑完之后。
+                if (host.hasDeps()) {
+                    val lock = host.writeLock()
+                    println("[rsf] 依赖锁文件: ${lock.path}")
+                }
                 return 0
             }
         }

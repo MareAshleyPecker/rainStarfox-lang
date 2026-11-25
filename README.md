@@ -267,6 +267,27 @@ fn main() -> void {
 }
 ```
 
+项目设置写在文件头的两条块状指令里（块里一行一条，整块在词法前被挖成空格，不影响行列号）：
+
+```rsf
+#dep {
+    java("libs/util.jar")     // 依赖的 jar / C 源 / 头文件（相对项目根）
+    rule("extraDeps")         // 或一个返回更多依赖的顶层函数
+}
+
+#build {
+    out("build/out")          // 产物目录
+    target("auto")            // "jvm" / "c" / "native" / "auto"
+    meta(false)               // 要不要把源码元数据塞进产物
+    name("app")               // 产物名
+}
+```
+
+- `#dep` 可以写在任意源文件里，构建末尾汇总进 `.rsfdeps/lock.json`（`kind` / `path` / `size` / `sha256`），声明的文件不存在直接报错。
+- `#build` 只认项目根的 `build.rsfs`（它描述整份产物，写在别处容易让人猜不到）。
+- `target("auto")` 让**每份文件自己决定**：文件头写了 `target native` 或里面有 `native` 声明就编成 C，否则编成 `.class` —— 同一个 `src/` 可以混着放两种文件。
+- 命令行显式给的 `-o` / `--c` / `--meta` 压过 `#build`。
+
 `rsf build` 默认编成 `.class`，`rsf build --c` 编成 C（`<名字>.c` + `rsf_runtime.h`），`--meta` 照旧把源码快照塞进产物。脚本里的相对路径以**项目根目录**为基准。这三个内置函数在别处用会明确报错（编进 class 之后没有编译器可调），见 `design/DESIGN-81.md`。
 
 ## Termux / aarch64
