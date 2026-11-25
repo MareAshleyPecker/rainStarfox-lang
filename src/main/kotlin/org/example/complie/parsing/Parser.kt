@@ -2043,8 +2043,14 @@ class Parser(
         } else {
             parseBlock()
         }
+        // 扩展函数：接收者就是 0 号形参，名字固定叫 this（体里用 this 访问接收者）。
+        val finalParams = if (receiver != null) {
+            listOf(Param(receiver, "this", funTok.at)) + params
+        } else {
+            params
+        }
         return FuncDecl(
-            control, mainType, nameTok.lexeme, params, ret, body, funTok.at, isStatic,
+            control, mainType, nameTok.lexeme, finalParams, ret, body, funTok.at, isStatic,
             isOverride = isOverride,
             isFinal = inherit?.isFinal == true,
             annotations = leading,

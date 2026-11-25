@@ -635,7 +635,10 @@ class Interpreter(
                 coerceElement(java.lang.reflect.Array.get(array, index), model.typeOf(expr))
             }
 
-            is ThisExpr -> thisObject(slots)
+            // 类方法里 this 是 RsfObject；扩展函数里 this 就是 0 号形参（接收者，
+            // 可能是 Int/String 这种值类型）。两种都取 slots[0]。
+            is ThisExpr -> slots.getOrNull(0)
+                ?: throw RsfError("interp", "内部错误：这里没有 this", 0, 0, null)
 
             // 自动 new：省掉 new 的 `Point(1, 2)` 在 AST 里是 CallExpr，
             // 但 Checker 已经判定它是构造，所以走构造那条路（和显式 new 完全同一条代码）

@@ -2493,8 +2493,12 @@ class Checker(
     }
 
     /** `this` 在当前上下文里的类型：类的方法里是那个类，接口的默认方法里是那个接口。 */
+    /** 正在检查的扩展函数的接收者类型（`fn Int.twice` 里的 Int）；普通函数为 null。 */
+    private var currentExtensionReceiver: RsfType? = null
+
     private fun thisTypeOrNull(): RsfType? =
         currentClass?.type ?: currentInterface?.let { RsfType.external(it.decl.name) }
+            ?: currentExtensionReceiver
 
     /** 静态类型是**用户接口**时给出它的表项；类、JVM 类型、数组都是 null。 */
     private fun interfaceOf(type: RsfType): InterfaceInfo? =
@@ -5065,24 +5069,18 @@ class Checker(
 
     // ------------------------------------------------------------------ 函数体
     private fun checkFunction(fn: FuncDecl) {
-        // 扩展函数：这一刀只做到「语法与工具链认识它」，语义解析是下一刀。
-        // 明确报错，不让它被当成普通无参函数悄悄编过去。
-        val recv = fn.receiverType
-        if (recv != null) {
-            throw org.example.complie.diag.RsfError(
-                "checker",
-                "扩展函数还没接语义：'fn ${recv.display()}.${fn.name}(...)'。",
-                fn.at.line, fn.at.column, null,
-            )
-        }
         // 阶段 31：泛型函数的类型参数并进解析环境（函数级遮蔽类级），查完就还原，
         // 否则 `fn id&<T>(x : T) -> T` 的 T 会漏给下一个被检查的函数。
         val savedTypeParams = pushTypeParams(fn)
         checkFunctionBody(fn)
         typeParams = savedTypeParams
+        currentExtensionReceiver = null
     }
 
     private fun checkFunctionBody(fn: FuncDecl) {
+        // 扩展函数：接收者是 0 号形参，`this` 指它（Parser 已经把 this 插成首参了）。
+        val savedReceiver = currentExtensionReceiver
+        currentExtensionReceiver = fn.receiverType?.let { resolveType(it) }
         // 阶段 60b：JVM 构建里的 native 函数只有签名（实现由 JNI 桥提供），
         // 函数体是 C 侧的，不能在 JVM 侧做语义检查。
         if (fn.target == BuildTarget.NATIVE && program.target == BuildTarget.JVM) return
