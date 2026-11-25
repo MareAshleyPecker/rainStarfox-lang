@@ -190,9 +190,12 @@ class AnnotationSemaTest {
         )
     }
 
-    /** A4 反例：伴生实体不能继承类（类继承留到后面那一阶段）。 */
+    /**
+     * 阶段 83：伴生实体**可以**继承类，但父类必须带实参表、排最前面（与类头同一套规矩）。
+     * 写成 `: Base` 会被当成接口列表里的一项，于是报「'Base' 是个类，要写在最前面并带实参表」。
+     */
     @Test
-    fun `伴生实体不能继承类`() {
+    fun `伴生实体继承类必须写实参表`() {
         checkFails(
             """
             class Base {
@@ -208,8 +211,8 @@ class AnnotationSemaTest {
             fn main() -> void { println("ok") }
             """,
             line = 6,
-            "companion entity 暂时只能继承接口：rsf 还没有类继承",
-            "继承 'Base' 这类写法留到类继承那一阶段",
+            "是个类",
+            "必须带实参表",
         )
     }
 

@@ -669,8 +669,9 @@ class Parser(
      * }
      * ```
      *
-     * 名字可省（匿名：`companion entity : Runnable { }`），父类型列表可省。体是**普通类体**
-     * （字段/方法/构造器），复用 parseFieldDecl / parseConstructor / parseFuncDecl。
+     * 名字可省（匿名：`companion entity : Runnable { }`），父类型列表可省。父**类**要带实参表、
+     * 排在列表最前面（阶段 83，`companion entity Impl : Base(1) { }`），其余都是接口。
+     * 体是**普通类体**（字段/方法/构造器），复用 parseFieldDecl / parseConstructor / parseFuncDecl。
      */
     private fun parseCompanionEntity(annotationName: String): CompanionEntityDecl {
         val companionTok = expect(TokenKind.KW_COMPANION, "伴生实体缺少 'companion'")
@@ -687,7 +688,11 @@ class Parser(
                     "实际读到 ${t.describe()}",
             )
         }
-        val supertypes = parseSupertypeList("注解 '${annotationName}' 的伴生实体")
+        // 阶段 83：父类型子句与类头**同一套解析**——父类要带实参表、排最前
+        // （`companion entity Impl : Base(value), Runnable { ... }`），其余都是接口。
+        // 名字到底是类还是接口留给 Checker 判，这里只看语法：紧跟着 '(' 的就是父类。
+        val owner = "伴生实体${if (name == null) "" else " '$name'"}"
+        val sup = parseSuperClause(owner)
         expect(
             TokenKind.LBRACE,
             "伴生实体${if (name == null) "" else " '${name}'"}缺少 '{'（伴生实体要有类体，写法是 companion entity 名字 : 父接口 { ... }）",
@@ -725,7 +730,15 @@ class Parser(
             TokenKind.RBRACE,
             "伴生实体${if (name == null) "" else " '${name}'"}没有闭合，缺少 '}'",
         )
-        return CompanionEntityDecl(name, fields, methods, supertypes, companionTok.at)
+        return CompanionEntityDecl(
+            name = name,
+            fields = fields,
+            methods = methods,
+            supertypes = sup.interfaces,
+            at = companionTok.at,
+            superClass = sup.base,
+            superArgs = sup.baseArgs,
+        )
     }
 
     /**
@@ -858,7 +871,7 @@ class Parser(
         // `class Dog(n : String) : Greeter, Runnable { ... }`、
         // `class D(y : Int) : Base(y), Greeter { ... }`。
         // 顺序固定为「主构造括号 → ':' 子句 → '{'」（DESIGN-20 §2）。
-        val sup = parseSuperClause(nameTok.lexeme)
+        val sup = parseSuperClause("类 '${nameTok.lexeme}'")
 
         expect(TokenKind.LBRACE, "类 '${nameTok.lexeme}' 缺少 '{'")
 
@@ -987,7 +1000,7 @@ class Parser(
      * 继承的类」留给语义层（[parseSupertypeList] 与 Checker 会给出准确报错）。
      * 这样父类槽位不必反过来去查符号表。
      */
-    private fun parseSuperClause(className: String): SuperClause {
+    private fun parseSuperClause(owner: String): SuperClause {
         if (!check(TokenKind.COLON)) return SuperClause(null, emptyList(), emptyList())
         advance() // ':'
 
@@ -995,28 +1008,28 @@ class Parser(
         val firstIsBase = isBaseAhead()
         if (firstIsBase) {
             val base = parseTypeRef()
-            val args = parseSuperArgs(className)
+            val args = parseSuperArgs(owner)
             if (!check(TokenKind.COMMA)) return SuperClause(base, emptyList(), args)
             advance() // ','
             if (isBaseAhead()) {
                 throw error(
                     peek(),
-                    "类 '$className' 只能有一个父类：'${base.display()}(...)' 后面又出现了带实参表的 " +
+                    "$owner 只能有一个父类：'${base.display()}(...)' 后面又出现了带实参表的 " +
                         "'${peek().lexeme}'。父类型列表里**最多一个**带实参的父类，其余都是接口" +
                         "（写法是 ': 父类名(实参), 接口名'），rsf 不做多继承（DESIGN-25 §6）",
                 )
             }
-            return SuperClause(base, parseSupertypeItems("类 '$className'"), args)
+            return SuperClause(base, parseSupertypeItems(owner), args)
         }
 
-        val interfaces = parseSupertypeItems("类 '$className'", stopAtBase = true)
+        val interfaces = parseSupertypeItems(owner, stopAtBase = true)
         if (isBaseAhead()) {
             val baseStart = peek()
             val base = parseTypeRef()
-            val args = parseSuperArgs(className)
+            val args = parseSuperArgs(owner)
             throw error(
                 baseStart,
-                "类 '$className' 的父类 '${base.display()}' 必须排在父类型列表的最前面：写法是 " +
+                "$owner 的父类 '${base.display()}' 必须排在父类型列表的最前面：写法是 " +
                     "': 父类名(实参), 接口名'，把 '${base.display()}(...)' 挪到最前面",
             )
         }
@@ -1062,11 +1075,11 @@ class Parser(
     /**
      * 父类构造实参表：`Base(实参)`。**必须写**——没有括号直接报错（DESIGN-25 §2）。
      */
-    private fun parseSuperArgs(className: String): List<Expr> {
+    private fun parseSuperArgs(owner: String): List<Expr> {
         if (!check(TokenKind.LPAREN)) {
             throw error(
                 peek(),
-                "类 '$className' 的父类后面必须写出构造实参：写法是 `: 父类名(实参)` 或 `: 父类名()`" +
+                "$owner 的父类后面必须写出构造实参：写法是 `: 父类名(实参)` 或 `: 父类名()`" +
                     "（父类可能没有无参构造器，所以这一对括号不能省），实际读到 ${peek().describe()}",
             )
         }
@@ -1077,7 +1090,7 @@ class Parser(
                 args.add(parseExpr())
             } while (match(TokenKind.COMMA))
         }
-        expect(TokenKind.RPAREN, "类 '$className' 的父类构造实参表没有闭合，缺少 ')'")
+        expect(TokenKind.RPAREN, "$owner 的父类构造实参表没有闭合，缺少 ')'")
         return args
     }
 

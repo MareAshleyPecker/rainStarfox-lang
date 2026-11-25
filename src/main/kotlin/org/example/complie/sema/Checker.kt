@@ -252,6 +252,10 @@ class Checker(
         // 放在类声明与接口体之后：元素类型可能是枚举/注解（要那两张表已经填满），
         // 伴生实体自己写的父接口可能是这份程序里的接口（要接口表已经填满）。
         declareAnnotationBodies()
+        // 阶段 83：伴生类是上一趟才合成进 classTable 的（`checkClassParents` 跑的时候
+        // 它还不存在），所以它自己写的父类要在这一趟补登记，再把同一组继承规矩跑一遍。
+        // 位置必须早于 checkClassBodies：伴生类的方法体里要能看见继承来的字段与方法。
+        checkCompanionParents()
         declareFunctions()
         // 阶段 80：扩展函数按接收者类型收表（要在类/枚举/接口表填好之后，
         // 否则 `fn Box&<Int>.foo()` 里的 `Box` 还解析不出来）。
@@ -825,6 +829,41 @@ class Checker(
         }
         currentClass = null
     }
+
+    /**
+     * 伴生类的父类（阶段 83）：与 [checkClassParents] 同一组规矩，只是**晚一趟**跑。
+     *
+     * 为什么不能并进那一趟：伴生类是 [declareCompanionEntity] 按注解合成出来的，
+     * 而那一趟在 `declareAnnotationBodies()` 里，比 `checkClassParents()` 晚。合成时
+     * `classTable` 里还没有它，父类名字也就没法解析。所以这里对合成出来的每个类再走一遍：
+     * 解析父类名字 → 成环 / final / 字段遮蔽 / 覆盖 / 抽象成员。
+     *
+     * 构造实参不在这里查：[checkClassBodies] 的 `checkParentCalls` 对所有进 `classTable`
+     * 的类都跑（伴生类的那个构造器已经被标成主构造），`superArgs` 因此自动被校验、
+     * `superDelegations` 自动被登记。
+     */
+    private fun checkCompanionParents() {
+        val companions = companionDecls.keys.filter { it.superClass != null }
+        if (companions.isEmpty()) return
+        for (decl in companions) {
+            currentSource = sourceOfClass[decl] ?: source
+            typeParams = typeParamsFor(decl.typeParams, decl.typeParamBounds)
+            decl.superClass?.let { registerParentClass(decl, it) }
+        }
+        typeParams = emptyMap()
+        for (decl in companions) {
+            val info = classTable[decl.name] ?: continue
+            currentClass = info
+            currentSource = info.source
+            checkParentCycle(info)
+            checkParentModifiers(info)
+            checkFieldShadowing(info)
+            checkInheritedOverrides(info)
+            checkAbstractMembers(info)
+        }
+        currentClass = null
+    }
+
 
     /** 父类成环（`class A : B` + `class B : A`）永远算不完，就地报掉。 */
     private fun checkParentCycle(info: ClassInfo) {
@@ -1847,6 +1886,11 @@ class Checker(
             methods = methods,
             at = entity.at,
             supertypes = entity.supertypes,
+            // 阶段 83：`companion entity Impl : Base(value) { ... }` 的父类与实参。
+            // 父类的登记不在这一趟做（此刻 checkClassParents 已经跑过了），
+            // 由紧跟 declareAnnotationBodies 之后的 checkCompanionParents 补上。
+            superClass = entity.superClass,
+            superArgs = entity.superArgs,
         )
         companionDecls[decl] = entity
         // 伴生类 = 一个普通的类：父接口 = 注解接口（摆在最前面）+ 自己写的那些接口
@@ -2413,13 +2457,6 @@ class Checker(
             return SuperRef.Rsf(info, args)
         }
         if (classTable.containsKey(ref.name) || enumTable.containsKey(ref.name)) {
-            if (companionEntity) {
-                throw err(
-                    "companion entity 暂时只能继承接口：rsf 还没有类继承" +
-                        "（继承 '$display' 这类写法留到类继承那一阶段）",
-                    ref.at,
-                )
-            }
             if (enumTable.containsKey(ref.name)) {
                 throw err(
                     "$where 不能继承 '$display'：'$display' 是个枚举。" +
@@ -2442,13 +2479,6 @@ class Checker(
                 ref.at,
             )
         if (!cls.isInterface) {
-            if (companionEntity) {
-                throw err(
-                    "companion entity 暂时只能继承接口：rsf 还没有类继承" +
-                        "（继承 '$display' 这类写法留到类继承那一阶段）",
-                    ref.at,
-                )
-            }
             throw err(
                 "$where 想把 '$display' 当父类型，但它是 classpath 上的类（不是接口）。" +
                     "要继承它就得写在父类型列表**最前面**并带上实参表：" +

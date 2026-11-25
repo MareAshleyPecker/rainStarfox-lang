@@ -157,8 +157,9 @@ data class AnnotationElement(
  * 伴生实体（阶段 21）：`companion entity [名字] [: 父接口, 父接口] { 类体 }`。
  *
  * - 名字**可以省**（匿名）：那就只在源码里占位，内部名由语义层拼成 `注解名$companion`；
- * - 父类型表与类/接口的 `:` 子句**同一套语法**（[ClassDecl.supertypes]），
- *   所以直接复用 [parseSupertypeList] 的结果；
+ * - 父类型表与类/接口的 `:` 子句**同一套语法**，所以直接复用类头那套解析：
+ *   父**类**带实参表写在最前面（[superClass] + [superArgs]，阶段 83），
+ *   其余都是接口（[supertypes]）；
  * - 体就是普通类体：字段 / 方法 / 构造器，和类体用同一批解析函数，
  *   所以 `override` / `static` / 权限修饰词在这里的规矩与类里完全一致。
  *
@@ -171,6 +172,18 @@ data class CompanionEntityDecl(
     val methods: List<FuncDecl>,
     val supertypes: List<TypeRef>,
     override val at: SourceLine,
+    /**
+     * 父**类**（阶段 83）：`companion entity Impl : Base(value) { ... }` 里的 `Base`。
+     *
+     * 单独一个槽位而不是混进 [supertypes]，理由与 [ClassDecl.superClass] 完全一样——
+     * 父类只能有一个、必须带实参表、必须排最前面，而接口可写任意多个、不许带实参。
+     *
+     * 有它的时候伴生类按「继承」编：基类的字段/方法在伴生对象上都能用，
+     * 构造时先跑基类构造器（实参就是 [superArgs]）。
+     */
+    val superClass: TypeRef? = null,
+    /** 传给父类构造器的实参（[superClass] == null 时是空表）；写法就在 `Base(...)` 的括号里。 */
+    val superArgs: List<Expr> = emptyList(),
 ) : Node {
     /** 所有构造器（按源码顺序）。 */
     val constructors: List<FuncDecl> get() = methods.filter { it.isConstructor }

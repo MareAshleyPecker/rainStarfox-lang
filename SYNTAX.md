@@ -254,9 +254,14 @@ native 侧（C 后端）只当整型常量用，没有 `values()`。
 ### 4.6 注解与伴生实体
 
 ```rsf
+class Base(seed : String) {                     // 伴生体可以继承一个类（阶段 83）
+    var tag : String = seed
+    fn describe() -> String { rtn "base:" + tag }
+}
+
 annotation Marker(value : String = "x", count : Int = 0) {
-    companion entity Impl : Runnable {          // 行为，至多一个；只能继承接口
-        fn run() -> void { println(value) }
+    companion entity Impl : Base("s:" + value), Runnable {   // 行为，至多一个
+        fn run() -> void { println(this.describe()) }
     }
 }
 
@@ -265,6 +270,10 @@ class Greeter { }
 ```
 
 元素按**裸名**读；`Marker::Impl` 可以 `new`；同一处同一个注解只能标一次。
+
+伴生体的父类型列表和类头**同一套规矩**：父**类**要带实参表、排在**最前面**
+（`: Base(实参), 接口名`），其余都是接口；父类得能被继承（默认就可以，写了 `final` 才禁止）。
+继承来的字段/方法在伴生体里直接可用（`this.describe()`），也自动出现在 `new Marker(...)` 出来的实例上。
 
 ## 5. 语句
 

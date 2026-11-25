@@ -8386,16 +8386,36 @@ class RsfTest {
     /**
      * 把一批 .class 都 define 进同一个类加载器，返回 (类加载器, 程序类的二进制名)。
      *
-     * 顺序有讲究：先把用户类 define 完，最后才 define 程序类——程序类的方法体里
-     * 引用着用户类（`new Point` / `INVOKEVIRTUAL Point.sum`），先定义被依赖的那些更稳。
+     * 顺序有讲究：程序类最后 define（它的方法体里引用着用户类：`new Point` /
+     * `INVOKEVIRTUAL Point.sum`）。剩下的按「能 define 的先 define」排——`defineClass`
+     * 会**立刻**去解析父类与接口，注解伴生类（`Marker$Impl`）依赖名不一定排在
+     * `Marker` 之前，硬按文件顺序走就是 `NoClassDefFoundError: Marker`。
      * （`Rsf.build` 保证程序类排在 classFiles 第一个。）
      */
     private fun programLoader(files: List<File>, dir: File): Pair<ClassLoader, String> {
         val loader = object : ClassLoader(javaClass.classLoader) {
             fun define(n: String, b: ByteArray): Class<*> = defineClass(n, b, 0, b.size)
         }
-        for (f in files.drop(1)) {
-            loader.define(binaryName(f, dir), f.readBytes())
+        val pending = files.drop(1).toMutableList()
+        while (pending.isNotEmpty()) {
+            var progressed = false
+            val iter = pending.iterator()
+            while (iter.hasNext()) {
+                val f = iter.next()
+                val bytes = f.readBytes()
+                try {
+                    loader.define(binaryName(f, dir), bytes)
+                    iter.remove()
+                    progressed = true
+                } catch (_: NoClassDefFoundError) {
+                    // 它依赖的类还没 define，下一轮再来
+                } catch (_: ClassNotFoundException) {
+                    // 同上（接口/父类还没就位）
+                }
+            }
+            if (!progressed) {
+                throw AssertionError("这些类互相依赖、define 不出来：" + pending.map { it.name })
+            }
         }
         val programName = binaryName(files.first(), dir)
         loader.define(programName, files.first().readBytes())
@@ -9580,4 +9600,67 @@ class RsfTest {
         assertTrue(e.message!!.contains("至少需要 2 个参数"))
     }
 
+
+    @Test
+    fun `注解伴生体能继承一个类，三端一致`() {
+        val program = """
+            class Base(seed : String) {
+                var tag : String = seed
+                fn describe() -> String { rtn "base:" + tag }
+                fn bump() -> void { this.tag = this.tag + "!" }
+            }
+
+            annotation Marker(value : String = "x") {
+                companion entity Impl : Base("s:" + value) {
+                    fn full() -> String { rtn this.describe() + "/" + value }
+                }
+            }
+
+            fn main() -> void {
+                val m = new Marker("z")
+                m.bump()
+                println(m.full())
+                println(m.describe())
+                println(m.tag)
+            }
+        """.trimIndent()
+        val expected = listOf("base:s:z!/z", "base:s:z!", "s:z!")
+        assertEquals(expected, lines(runInterpreted(program)))
+        assertEquals(expected, lines(runCompiledClasses(program, "RsfCompanionParent")))
+    }
+
+    @Test
+    fun `注解伴生体继承的父类，在 javap 里就是那个父类`() {
+        val dir = tempDir()
+        val program = """
+            class Base(seed : Int) { var seed : Int = seed }
+            annotation Marker { companion entity Impl : Base(7) { } }
+            fn main() -> void { println(1) }
+        """.trimIndent()
+        val model = Rsf.analyze(SourceFile.of("c.rsf", program))
+        Rsf.build(model, SourceFile.of("c.rsf", program), "RsfCompanionParentJavap", dir)
+        val loader = java.net.URLClassLoader(arrayOf(dir.toURI().toURL()), javaClass.classLoader)
+        val impl = loader.loadClass("Marker${'$'}Impl")
+        assertEquals("Base", impl.superclass.name)
+        assertEquals("Marker", impl.interfaces.single().name)
+    }
+
+    @Test
+    fun `注解伴生体继承类：父类要带实参表，final 不准继承`() {
+        val noArgs = """
+            class Base(n : Int) { var n : Int = n }
+            annotation Marker { companion entity Impl : Base { } }
+            fn main() -> void { println(1) }
+        """.trimIndent()
+        val e1 = assertFailsWith<RsfError> { Rsf.analyze(SourceFile.of("c.rsf", noArgs)) }
+        assertTrue(e1.message!!.contains("父类"), e1.message)
+
+        val fin = """
+            final class Base() { }
+            annotation Marker { companion entity Impl : Base() { } }
+            fn main() -> void { println(1) }
+        """.trimIndent()
+        val e2 = assertFailsWith<RsfError> { Rsf.analyze(SourceFile.of("c.rsf", fin)) }
+        assertTrue(e2.message!!.contains("final"), e2.message)
+    }
 }
