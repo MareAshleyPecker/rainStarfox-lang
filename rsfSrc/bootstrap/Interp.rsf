@@ -868,6 +868,11 @@ pub class Interp(prog : Node) {
     // 用一个**独有的 Val 对象**，靠引用相等判断，所以不可能是任何真实值。
     var caughtVal : Val = new Val(Kind.NULLV)
 
+    // 最近一条被接住的错误消息（阶段 84，`lastErrorMessage()` 的内建实现）。
+    // 控制流信号（\u0001 开头的 goto / rtn / break）不算错误，永远不会写进这里；
+    // 因此它和 Kotlin 侧、C 侧「最近一条错误」的口径一致。
+    var lastErrMsg : String = ""
+
     // ------------------------------------------------------------------ 装载
 
     pub fn load() -> void {
@@ -2687,6 +2692,7 @@ pub class Interp(prog : Node) {
         if (nm == "toUpper" || nm == "toLower") { rtn true }
         if (nm == "readText" || nm == "writeText") { rtn true }
         if (nm == "readBytes" || nm == "writeBytes") { rtn true }
+        if (nm == "lastErrorMessage") { rtn true }
         rtn false
     }
 
@@ -2729,6 +2735,8 @@ pub class Interp(prog : Node) {
     }
 
     pub fn callBuiltin(nm : String, args : Val[]) -> !Val {
+        // 阶段 84：零参数的内建要排在「没有实参」那道闸前面
+        if (nm == "lastErrorMessage") { rtn vStr(lastErrMsg) }
         if (args.length == 0) { fail unsupported("内置函数 '" + nm + "' 没有实参") }
         var a0 = args[0]
         if (nm == "toByte") { rtn vByte(toByte(intOf(a0))) }
@@ -3137,6 +3145,7 @@ pub class Interp(prog : Node) {
             } catch (e : String) {
                 if (isSignal(e)) { fail e }
                 bad = true
+                lastErrMsg = e
             }
             if (bad) { rtn caughtVal }
             rtn got
@@ -3149,6 +3158,7 @@ pub class Interp(prog : Node) {
         } catch (e2 : String) {
             if (isSignal(e2)) { fail e2 }
             bad2 = true
+            lastErrMsg = e2
         }
         if (bad2) { rtn caughtVal }
         rtn got2
@@ -3490,6 +3500,7 @@ pub class Interp(prog : Node) {
         }
         if (sig.length() > 0) { fail sig }
         if (bad) {
+            lastErrMsg = msg
             var catchEnv = new Env(env)
             catchEnv.define(attr(n, "catch"), vStr(msg))
             rtn blk(kid(n, 1), catchEnv)!!

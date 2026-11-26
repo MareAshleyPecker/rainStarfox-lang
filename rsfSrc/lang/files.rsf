@@ -1,9 +1,11 @@
 // rainStarfox 阶段 16b 示例：文件读写（readText / writeText / readBytes / writeBytes）
 //
-// 这四个函数都是 `!T`（可能失败），调用方**必须**显式处理错误，三种写法这个示例都演示了：
-//   (a) try { ... } catch (e : String) { ... }   接住失败，消息就在 catch 变量里
-//   (b) f(...) ?: 兜底值                        失败就取右边的值
-//   (c) f(...)!!                               往上抛（那本函数也得写成 !T）
+// 这四个函数都是 `!T`（可能失败），调用方**必须**显式处理错误。四种写法这个示例都演示了：
+//   (a) f(...) ?: 兜底值                        失败就取右边的值
+//   (b) f(...) ?: 兜底()                       只要「出错时做点什么」——兜底写成 -> void 的函数，
+//                                              消息从 lastErrorMessage() 取，值丢掉
+//   (c) try f(...)                             在 !T 函数里原样往上抛（返回 void 的用它）
+//   (d) f(...)!!                               往上抛（返回值的用它；本函数也得写成 !T）
 //
 // 跑：rsf run   rsfSrc/lang/files.rsf      （解释器）
 //     rsf build rsfSrc/lang/files.rsf      （字节码：生成 files.class + TempFile.class）
@@ -43,15 +45,11 @@ class TempFile(name : String) {
 // ---------------------------------------------------------------- 包一层 !T
 
 // 四个文件函数自己是 !T，这里再包一层是为了演示「!T 函数自己内部也要处理错误」。
-// 有返回值的用 `!!` 往上抛；返回 void 的没有值可取，所以用 try + fail 原样往上抛
+// 有返回值的用 `!!` 往上抛；返回 void 的没有值可以断言，用 `try` 原样往上抛
 // （`!void` 上不能写 `!!`——没有值可以取）。
 
 fn saveText(path : String, text : String) -> !void {
-    try {
-        writeText(path, text)
-    } catch (e : String) {
-        fail e
-    }
+    try writeText(path, text)
 }
 
 fn loadText(path : String) -> !String {
@@ -59,11 +57,7 @@ fn loadText(path : String) -> !String {
 }
 
 fn saveBytes(path : String, data : Byte[]) -> !void {
-    try {
-        writeBytes(path, data)
-    } catch (e : String) {
-        fail e
-    }
+    try writeBytes(path, data)
 }
 
 fn loadBytes(path : String) -> !Byte[] {
@@ -92,6 +86,47 @@ fn bytesToHex(data : Byte[]) -> String {
     rtn out
 }
 
+// ---------------------------------------------------------------- 兜底函数
+
+// 多语句块抽出来的 !T 函数：文本读写一来一回
+fn textRoundTrip(path : String, label : String) -> !void {
+    var content = "hello, rainStarfox!\n第二行（UTF-8）\n"
+    try saveText(path, content)
+    println("写进 " + label + " 的字符数 = " + content.length())
+
+    var back = loadText(path)!!
+    println("读回来的字符数 = " + back.length())
+    println("第一行 = " + back.substring(0, 19))
+    println("和写进去的一模一样 = " + (back == content))
+}
+
+fn binRoundTrip(path : String) -> !void {
+    var raw : Byte[] = new Byte[6]
+    raw[0] = toByte(82)      // 'R'
+    raw[1] = toByte(115)     // 's'
+    raw[2] = toByte(102)     // 'f'
+    raw[3] = toByte(0)
+    raw[4] = toByte(200)     // 有符号 Byte 的负数：读回来是 -56
+    raw[5] = toByte(255)     // 截断成 -1
+    println("要写的字节 = " + bytesToHex(raw))
+
+    try saveBytes(path, raw)
+    var back : Byte[] = loadBytes(path)!!
+    println("读回来的字节数 = " + back.length)
+    println("读回来的字节 = " + bytesToHex(back))
+    println("第 5 个字节（有符号）= " + back[4])
+}
+
+// 出错时打印一句话就够的兜底（-> void）：成功路径的值被丢掉
+fn reportIo(prefix : String) -> void {
+    println(prefix + lastErrorMessage())
+}
+
+fn reportWriteFailure() -> void {
+    var e = lastErrorMessage()
+    println("接住了写失败：消息以 '" + e.substring(0, 9) + "' 开头，长度 " + e.length())
+}
+
 // ---------------------------------------------------------------- 入口
 
 fn main() -> void {
@@ -99,43 +134,15 @@ fn main() -> void {
     var bin = new TempFile("demo.bin")
     var missing = new TempFile("no-such-file.txt")
 
-    // ---- (a) 写文本 + 读回来，整段用 try 接住 ----
+    // ---- (a) 写文本 + 读回来：多语句的「出错就整段跳过」抽成一个 !T 函数 ----
     println("== 文本：writeText / readText ==")
-    try {
-        var content = "hello, rainStarfox!\n第二行（UTF-8）\n"
-        saveText(text.path(), content)
-        println("写进 " + text.label() + " 的字符数 = " + content.length())
-
-        var back = loadText(text.path())
-        println("读回来的字符数 = " + back.length())
-        println("第一行 = " + back.substring(0, 19))
-        println("和写进去的一模一样 = " + (back == content))
-    } catch (e : String) {
-        println("文本读写失败: " + e)
-    }
+    textRoundTrip(text.path(), text.label()) ?: reportIo("文本读写失败: ")
     text.cleanup()
 
     // ---- 写二进制 + 读回来 ----
     println()
     println("== 二进制：writeBytes / readBytes ==")
-    try {
-        var raw : Byte[] = new Byte[6]
-        raw[0] = toByte(82)      // 'R'
-        raw[1] = toByte(115)     // 's'
-        raw[2] = toByte(102)     // 'f'
-        raw[3] = toByte(0)
-        raw[4] = toByte(200)     // 有符号 Byte 的负数：读回来是 -56
-        raw[5] = toByte(255)     // 截断成 -1
-        println("要写的字节 = " + bytesToHex(raw))
-
-        saveBytes(bin.path(), raw)
-        var back : Byte[] = loadBytes(bin.path())
-        println("读回来的字节数 = " + back.length)
-        println("读回来的字节 = " + bytesToHex(back))
-        println("第 5 个字节（有符号）= " + back[4])
-    } catch (e : String) {
-        println("二进制读写失败: " + e)
-    }
+    binRoundTrip(bin.path()) ?: reportIo("二进制读写失败: ")
     bin.cleanup()
 
     // ---- (b) 读一个不存在的文件：?: 给兜底值 ----
@@ -144,30 +151,22 @@ fn main() -> void {
     var fallback = loadText(missing.path()) ?: "(读不到，用了兜底值)"
     println("loadText(不存在的文件) ?: -> " + fallback)
 
-    // ---- (c) 同一次失败，用 try 接住 ----
+    // ---- (c) 同一次失败：?: 取到错误消息本身 ----
+    // 左边失败时右边就求值成「刚才那条消息」，于是不需要 catch 绑定也能用消息。
     println()
-    println("== 失败处理之二：try / catch ==")
-    try {
-        var never = loadText(missing.path())
-        println("不该走到这里: " + never)
-    } catch (e : String) {
-        // 消息形如： readText: 文件操作失败 '<绝对路径>'：<绝对路径>
-        // 绝对路径每次跑都不一样（里面有临时目录），所以这里只打印固定那两段，
-        // 免得示例的输出随机器变。
-        println("catch 接住了：消息以 '" + e.substring(0, 8) + "' 开头，长度 " + e.length())
-        println("消息里有 '文件操作失败' 吗 = " + e.contains("文件操作失败"))
-    }
+    println("== 失败处理之二：?: 取错误消息 ==")
+    var msg = loadText(missing.path()) ?: lastErrorMessage()
+    // 消息形如： readText: 文件操作失败 '<绝对路径>'：<绝对路径>
+    // 绝对路径每次跑都不一样（里面有临时目录），所以这里只打印固定那几段，
+    // 免得示例的输出随机器变。
+    println("接住了：消息以 '" + msg.substring(0, 8) + "' 开头，长度 " + msg.length())
+    println("消息里有 '文件操作失败' 吗 = " + msg.contains("文件操作失败"))
 
-    // ---- 写到一个不可能成功的路径：让 writeText 自己失败 ----
+    // ---- 写到一个不可能成功的路径：`!void` 的 ?: 兜底 ----
     println()
-    println("== 失败处理之三：写失败也能接住 ==")
-    try {
-        var dir : String = System.getProperty("java.io.tmpdir")
-        saveText(dir + "/rsf-16b-不存在的目录/x.txt", "x")
-        println("不该走到这里")
-    } catch (e : String) {
-        println("catch 接住了写失败：消息以 '" + e.substring(0, 9) + "' 开头，长度 " + e.length())
-    }
+    println("== 失败处理之三：!void 的 ?: 兜底 ==")
+    var dir : String = System.getProperty("java.io.tmpdir")
+    saveText(dir + "/rsf-16b-不存在的目录/x.txt", "x") ?: reportWriteFailure()
 
     rtn
 }

@@ -16,7 +16,9 @@
 //     在函数里改元素，外面看得见（和 Java 一样）。
 //   * 越界（含负数下标）两端抛**同一条 rsf 运行期错误**，消息格式统一：
 //       数组下标越界：长度 3，下标 5
-//     所以 `try { ... } catch (e : String) { println(e) }` 两边打出来一模一样。
+//     **运行期故障不是 `!T` 调用**，`?:` 接不住它，所以这个示例里仍然用
+//     `try { ... } catch (e : String) { println(e) }`（旧表面里留下的最后一处用法；
+//     要不要给故障另配一个捕获构造，见 HANDOFF 里「运行期故障」那条待办）。
 //     JVM 自己的 ArrayIndexOutOfBoundsException（消息是 "Index 5 out of bounds
 //     for length 3"）在两端都被显式边界检查替换掉了。
 //   * 数组**不能直接打印或拼进字符串**：JVM 上数组的 toString 是身份哈希

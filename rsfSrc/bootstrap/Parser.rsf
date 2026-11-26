@@ -2415,6 +2415,24 @@ pub class Parser(tokens : Token[]) {
     // `try { ... } catch (e : String) { ... }`（也收老写法 `catch (e String)`）
     fn parseTry() -> Node {
         advance()   // try
+        // 阶段 84：`try 表达式`（Zig 风格）——出错就原样往上抛，成功就丢掉值。
+        // 解糖成等价的 `try { 表达式 } catch (e : String) { fail e }`，
+        // 与 Kotlin 侧 Parser.parseTry 逐字对应（`!void` 也能用它传播）。
+        if (!check("LBRACE")) {
+            var e = parseExpr()
+            var body0 = new Node(NodeKind.BLOCK)
+            var inner = new Node(NodeKind.EXPR_STMT)
+            inner.add(e)
+            body0.add(inner)
+            var catchBody0 = new Node(NodeKind.BLOCK)
+            var rethrow = new Node(NodeKind.FAIL)
+            rethrow.add(varNode("e"))
+            catchBody0.add(rethrow)
+            var n0 = new Node(NodeKind.TRY).put("catch", escapeValue("e"))
+            n0.add(body0)
+            n0.add(catchBody0)
+            rtn n0
+        }
         var body = parseBody("try")
 
         if (!check("KW_CATCH")) {
