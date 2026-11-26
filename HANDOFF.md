@@ -1,7 +1,7 @@
 # HANDOFF — rainStarfox 当前状态（给下一位 agent / 未来的我）
 
 > 面向自动化交接：只写「现在在哪、怎么跑、下一步做什么」，不写历史。
-> 分支 `feat/import-redesign`，最新提交 `823f581`，本地提交，**未推送**。
+> 分支 `feat/import-redesign`，本地提交，**未推送**。
 
 ## 0. 一分钟交接
 
@@ -14,8 +14,9 @@
   `rsf run` 是 cargo run 语义，`module-impex.rsf` + 模块别名按包组织标准库。
 - **标准库**：`stdlib/{lang,io,std,classfile}`，模块用「类 + 静态方法」组织
   （`Text.join` / `Io.readLines` / `Lang.…` / `Exception.…`）。
-- **下一步**：根除 `try/catch`（五步，见 §10「根除 try/catch 的计划」），
-  第 1 步是 `?:` 的 void 兜底 + `lastErrorMessage()`。
+- **下一步**：根除 `try/catch`（五步，见 §10「根除 try/catch 的计划」）。
+  第 1 步（`?:` 的 void 兜底 + `lastErrorMessage()`，判据 `verify99`）已完成；
+  下一步是迁移 `rsfSrc/lang` 的 19 处，并把这三个新表面补进自举侧。
 
 ## 1. 这台机器怎么跑
 
@@ -52,6 +53,7 @@ sh tools/dev/probe.sh --cmp /tmp/x.rsf   # 单文件探针 + 对拍
 | `verify96` | `Exception` 结构化错误串 | — |
 | `verify97` | `try` 表达式、`catch` 三种写法、不再误报不可达 | — |
 | `verify98` | `fail 种类, 消息`、种类名编译期校验 | — |
+| `verify99` | `?:` 的 void 兜底、`lastErrorMessage()`、三端输出对拍 | gcc |
 
 ## 2. 2026-11-26 这一轮落地了什么
 
@@ -77,6 +79,7 @@ sh tools/dev/probe.sh --cmp /tmp/x.rsf   # 单文件探针 + 对拍
 | `2ac9377` | `try` 表达式、`catch` 省略绑定；修 `ControlFlow` 没传 handlers（所有 catch 体被误报不可达） |
 | `3c0ad9c` | `fail 种类, 消息`（`ErrorKinds` 表，编译期校验） |
 | `823f581` | `Io` 的三处重抛改用 `try 表达式`（根除 try/catch 的样板） |
+| `e1d6088` | `?:` 的 void 兜底 + `lastErrorMessage()`（根除 try/catch 第 1 步，判据 `verify99`） |
 
 规则：
 - `.rsfs` 与 `.rsf` 同语言，唯一差别是**允许没有 main**；
@@ -299,8 +302,8 @@ fn main() -> void {
 | `expr!!` | 不变（取值/向上抛） |
 | `try expr` | 不变（传播，`!void` 也行）——已实现 |
 | `expr ?: fallback` | 不变（出错取值） |
-| `try { f() } catch { }` | `f() ?: <void 表达式>`（要加：允许 void 兜底） |
-| `try { } catch e { 用 e }` | `expr ?: null` + 判空 + `lastErrorMessage()`（要加） |
+| `try { f() } catch { }` | `f() ?: <void 表达式>`——已实现（`!void` 也能 `?:`） |
+| `try { } catch e { 用 e }` | `expr ?: …` + `lastErrorMessage()`——已实现 |
 | `catch e { 多语句 }` | 抽函数，或 `?: null` + `if` |
 | `finally` | 以后换 `defer` |
 
@@ -308,8 +311,21 @@ fn main() -> void {
 （已完成 Io）→ ③ 迁移 `rsfSrc/lang` 19 处（parity 示例）→ ④ 迁移 `rsfSrc/bootstrap`
 31 处并跑通自举 → ⑤ 删掉 `try {} catch {}` 语法（Parser 报迁移提示，自举 Parser 同步）。
 
+**① 已完成**（判据 `verify99`）：
+
+```rsf
+writeText(p, s) ?: reportFailure()     // !void 的 ?: ：出错才跑兜底（两边都得是 void）
+println(lastErrorMessage())            // 最近一条错误消息；被兜住后仍保留，没出错是空串
+```
+
+三端各自的槽：解释器是 `RsfFailure` 抛出时记下的文件级变量；字节码是程序类上的静态字段
+`__rsf_lastErrorMessage`（抛错时 `getMessage()` 落进去，只在程序真用过时发，旧产物不变）；
+C 侧直接用运行时的 `rsf_err_msg`。同时修掉一个老不一致：C 的 `?:` 以前没看
+`rsf_err`，`parseInt("x") ?: -1` 会拿到 `0` 并把错误旗标漏给后面的语句。
+
 现状：`stdlib/io/Io.rsf` 的 3 处重抛已改成 `try 表达式`；`rsfSrc/lang/errors.rsf`
-是错误模型的教学示例，等 ① 做完再迁移（它要用到“最后一条错误”）。
+是错误模型的教学示例，下一步（③）就该用它展示 `lastErrorMessage()`——
+注意那时要同步补自举侧（bootstrap 的 Parser/Checker/Interp 还不认识这些新表面）。
 
 **错误种类**（阶段 84 第二步的表面部分）：
 
@@ -435,17 +451,22 @@ gcc 命令行固定带 `-I<stdlib>`；查找顺序见 `build/Stdlib.kt`（`RSF_S
 
 ## 12. 下一步（按顺序）
 
-1. **根除 `try/catch` 第 1 步**：`?:` 允许 void 兜底（`f() ?: logIt()`）+
-   `lastErrorMessage()`（三端各加一个“最后一条错误”的槽；C 端消息在 `rsf_err_msg`，
-   需要一份能在恢复后保留的副本）。判据：同一程序在解释器 / `--c` / 字节码三端输出一致。
-2. 迁移 `rsfSrc/lang` 的 19 处（**parity 示例**，输出必须逐字节不变），
-   再迁移 `rsfSrc/bootstrap` 的 31 处，跑通自举。
+1. ~~`?:` void 兜底 + `lastErrorMessage()`~~ ✅ 已完成，判据 `verify99`。
+2. 迁移 `rsfSrc/lang` 的 19 处（**parity 示例**，输出必须逐字节不变）——
+   要注意自举侧现在还不认识 `?:` 的 void 兜底与 `lastErrorMessage()`，
+   这一步实际包含「bootstrap 的 Parser / Checker / Interp 同步」。
+   然后再迁移 `rsfSrc/bootstrap` 的 31 处，跑通自举。
 3. 删掉 `try {} catch {}` 语法：Parser 报「已移除，改用 …」，自举 Parser 同步。
 4. `try` 表达式（`val x = try { f() } catch { 0 }`）——需要 Lowering 支持“表达式内的块值”，
    与载荷改造同级，单独安排。
 5. `!T` 载荷从 `String` 换成 `(kind, message)`：`ErrorKinds` 表直接变枚举取值，
    `Exception.isKind` 的字符串解析退役。
-6. 其余：LSP 跳到标准库定义、标准库继续补（排序/遍历/格式化）、`defer`。
+6. 两个特殊类型（用户 2026-11-26 提）：`Any`（任何非 void 值都能塞进去）与
+   `Unit`（只有 `unit` 一个值的单元类型，给泛型与「没有信息量的返回值」用）。
+   要想清楚：`Any` 与现有 `Object` 互操作的关系、装箱表示、三个后端各自的落地，
+   以及 `Unit` 与 `void` 的分工（`void` 不能当值/当类型实参，`Unit` 可以）。
+   涉及类型系统核心，单独排期，别和 try/catch 收尾混在一起。
+7. 其余：LSP 跳到标准库定义、标准库继续补（排序/遍历/格式化）、`defer`。
 
 ## 13. 这份文档怎么读
 
