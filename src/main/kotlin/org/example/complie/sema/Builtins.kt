@@ -357,6 +357,34 @@ object Builtins {
         doc = "内部：配置块解糖出来的调用（project { name = … }），不要手写",
     )
 
+    // ------------------------------------------- 产物声明（target { … } 里用，阶段 84）
+
+    /**
+     * `target { exe("…") / lib("…") / jar("…") / copy("…", "…") }` 里的四个动词。
+     *
+     * 从 `#target` 指令改成块语句之后，产物声明和 `project { }` 同一套语法：
+     * 块里一行一条调用。四个都只往构建计划里加一行，顺序就是书写顺序。
+     */
+    val ART_EXE = Builtin(
+        "exe", listOf(RsfType.STRING), RsfType.VOID, buildOnly = true,
+        doc = "声明一个可执行文件产物：exe(\"@/src/main.rsf\")（只有构建脚本里能用）",
+    )
+
+    val ART_LIB = Builtin(
+        "lib", listOf(RsfType.STRING), RsfType.VOID, buildOnly = true,
+        doc = "声明一个目标文件产物：lib(\"@/src/lib.rsf\")（只有构建脚本里能用）",
+    )
+
+    val ART_JAR = Builtin(
+        "jar", listOf(RsfType.STRING), RsfType.VOID, buildOnly = true,
+        doc = "声明一个 JVM 包产物：jar(\"@/src/tool.rsf\")（只有构建脚本里能用）",
+    )
+
+    val ART_COPY = Builtin(
+        "copy", listOf(RsfType.STRING, RsfType.STRING), RsfType.VOID, buildOnly = true,
+        doc = "声明一次原样复制：copy(\"@/res/data.txt\", \"build/out/copied.txt\")（只有构建脚本里能用）",
+    )
+
     /** 带签名的内置函数（`print` / `println` 是单参数特例，签名不在这里表达）。 */
     val ALL: List<Builtin> = listOf(
         TO_BYTE, TO_CHAR, CHAR_TO_INT, INT_TO_STRING, PARSE_INT,
@@ -366,6 +394,7 @@ object Builtins {
         MEM_BYTES, MEM_PEAK, GC_COLLECT,
         OUT_DIR, COMPILE, COMPILE_ALL, EXEC, TARGET, NEED,
         DEP_JAVA, DEP_C, DEP_H, DEP_DIR, BUILD_CONFIG,
+        ART_EXE, ART_LIB, ART_JAR, ART_COPY,
     )
 
     private val BY_NAME: Map<String, Builtin> = ALL.associateBy { it.name }

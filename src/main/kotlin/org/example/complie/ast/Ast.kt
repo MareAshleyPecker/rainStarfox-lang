@@ -552,7 +552,11 @@ data class ModuleImport(
  */
 data class ConfigBlock(
     val name: String,
-    val entries: List<Pair<String, Expr>>,
+    /**
+     * 条目统一是**表达式**：`name = x` 解糖成 `__build_config("project","name",x)`，
+     * `exe("a.rsf")` 就是它自己。这样字段赋值与动词调用共用一条求值路径。
+     */
+    val entries: List<Expr>,
     override val at: SourceLine,
 ) : Node
 

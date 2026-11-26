@@ -132,6 +132,9 @@ class Parser(
         // 写两次多半是复制粘贴，静默取最后一个会让用户以为另一处生效了。
         fun takeHeaderDirective(): Boolean {
             if (!check(TokenKind.IDENT)) return false
+            // 阶段 84：`target { … }` 是产物块语句（和文件头指令 `target native` 同名），
+            // 靠「后面紧跟 `{`」区分——块语句交给下面的声明循环处理。
+            if (peek().lexeme == "target" && peek(1).kind == TokenKind.LBRACE) return false
             when (peek().lexeme) {
                 "target" -> {
                     val previous = targetAt
@@ -182,7 +185,11 @@ class Parser(
             } else if (check(TokenKind.KW_PKG)) {
                 val t = peek()
                 throw error(t, "'pkg' 只能写在文件最前面（在所有 import 之前）")
-            } else if (check(TokenKind.IDENT) && (peek().lexeme == "target" || peek().lexeme == "gc")) {
+            } else if (check(TokenKind.IDENT) && (peek().lexeme == "target" || peek().lexeme == "gc") &&
+                peek(1).kind != TokenKind.LBRACE
+            ) {
+                // 阶段 84：`target { … }` 是配置块（和这个文件头指令 `target native` 同名），
+                // 靠「后面紧跟 `{`」区分；这里只拦「写在声明之后的文件头指令」。
                 // 文件头指令写在声明之后：这里显式拦下，否则会掉进 parseFuncDecl 报一句
                 // 关于 `fun` 的错（用户看不懂「我只想写 gc off」为什么提到 fn）。
                 val t = peek()
@@ -2658,24 +2665,50 @@ class Parser(
     private fun parseConfigBlock(): ConfigBlock {
         val nameTok = advance()
         advance() // '{'
-        val entries = ArrayList<Pair<String, Expr>>()
+        val entries = ArrayList<Expr>()
         while (!check(TokenKind.RBRACE) && !check(TokenKind.EOF)) {
             val fieldTok = if (check(TokenKind.IDENT)) {
                 advance()
             } else {
                 throw error(
                     peek(),
-                    "配置块 ${nameTok.lexeme} { … } 里只能写 '字段 = 表达式'（一行一条），" +
-                        "实际读到 ${peek().describe()}",
+                    "配置块 ${nameTok.lexeme} { … } 里一行一条：字段赋值，或者动词调用" +
+                        "（例：exe(\"@/src/main.rsf\")）。实际读到 ${peek().describe()}",
                 )
             }
-            if (!match(TokenKind.ASSIGN)) {
-                throw error(
-                    peek(),
-                    "配置项要写成 '${fieldTok.lexeme} = 表达式'，实际读到 ${peek().describe()}",
-                )
+            if (!check(TokenKind.ASSIGN)) {
+                // 动词调用：`exe("a.rsf")`、`copy("a", "out")`——名字已经吃掉了，直接读实参表
+                if (!check(TokenKind.LPAREN)) {
+                    throw error(
+                        peek(),
+                        "配置块 ${nameTok.lexeme} { … } 里 '${fieldTok.lexeme}' 后面要么是等号（字段赋值），" +
+                            "要么是左括号（动词调用）。实际读到 ${peek().describe()}",
+                    )
+                }
+                val args = ArrayList<Expr>()
+                advance() // 吃掉左括号
+                if (!check(TokenKind.RPAREN)) {
+                    do {
+                        args.add(parseExpr())
+                    } while (match(TokenKind.COMMA))
+                }
+                expect(TokenKind.RPAREN, "配置块里的 '${fieldTok.lexeme}(…)' 缺少 ')'")
+                entries.add(CallExpr(fieldTok.lexeme, args, fieldTok.at))
+                match(TokenKind.SEMI)
+                continue
             }
-            entries.add(fieldTok.lexeme to parseExpr())
+            advance()  // 吃掉等号
+            entries.add(
+                CallExpr(
+                    name = "__build_config",
+                    arguments = listOf(
+                        StringLit(nameTok.lexeme, nameTok.at),
+                        StringLit(fieldTok.lexeme, fieldTok.at),
+                        parseExpr(),
+                    ),
+                    at = fieldTok.at,
+                ),
+            )
             match(TokenKind.SEMI) // 可选分隔符，和别处一致
         }
         if (!check(TokenKind.RBRACE)) {

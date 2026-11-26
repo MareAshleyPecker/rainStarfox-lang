@@ -45,9 +45,9 @@ internal fun Cli.cmdInit(rest: List<String>): Int {
             |import "build/defaults.rsfs"
             |
             |// 要产出什么（声明顺序就是构建顺序）。
-            |// 种类：exe 可执行文件 / lib 目标文件 / jar 可执行包 / copy 原样复制。
-            |#target {
-            |    @/src/main.rsf -> exe
+            |// 动词：exe 可执行文件 / lib 目标文件 / jar 可执行包 / copy 原样复制。
+            |target {
+            |    exe("@/src/main.rsf")
             |}
             |
             |// 产物设置（只认项目根的 build.rsfs）。命令行给的 -o / --c / --meta 压过这里。

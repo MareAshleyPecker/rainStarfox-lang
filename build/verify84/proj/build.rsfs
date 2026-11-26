@@ -18,9 +18,9 @@ project {
     rule("genDeps")
 }
 
-#target {
-    @/src/main.rsf -> exe
-    @/res/data.txt -> copy -> build/out/copied.txt
+target {
+    exe("@/src/main.rsf")
+    copy("@/res/data.txt", "build/out/copied.txt")
 }
 
 #build {

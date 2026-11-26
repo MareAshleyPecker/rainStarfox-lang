@@ -46,6 +46,9 @@ interface BuildHost {
     /** 往目标表里加一行：`target("@/src/app.rsf", "exe")`。 */
     fun target(src: String, kind: String)
 
+    /** 同 [target]，但显式给出产物路径（`copy("a.txt", "build/out/b.txt")`）。 */
+    fun targetTo(src: String, kind: String, out: String)
+
     /** 记一条先后约束：`a` 要先于 `b`（名字或路径都认）。 */
     fun need(from: String, to: String)
 
@@ -204,6 +207,10 @@ class ProjectBuildHost(
      */
     override fun target(src: String, kind: String) {
         addTarget(TargetSpec.of(src, kind, null, "构建脚本里 target(\"$src\", \"$kind\")"))
+    }
+
+    override fun targetTo(src: String, kind: String, out: String) {
+        addTarget(TargetSpec.of(src, kind, out, "构建脚本里 $kind(\"$src\", \"$out\")"))
     }
 
     /** 直接加一行已经造好的目标（`#target` 块走这里，它自带行号与可选的产物路径）。 */

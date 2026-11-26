@@ -96,4 +96,10 @@ grep -q '"path": "native/util.c"' "$LOCK" || fail "cInclude 目录没展开成 .
 grep -q '"path": "native/util.h"' "$LOCK" || fail "hInclude 目录没展开成 .h 文件"
 grep -q '"path": "res"' "$LOCK" || fail "dirInclude 依赖没进锁文件"
 
+# 9. 旧写法 #target 要给出迁移提示（不是一句「未知指令」）
+printf '#target {\n}\n\nfn main() -> void {}
+' > legacy.rsf
+"$JAVA" -cp "$CP" org.example.MainKt check legacy.rsf > legacy.log 2>&1 && fail "#target 居然还能用"
+grep -q '已经改成块语句' legacy.log || { cat legacy.log; fail "#target 的迁移提示不对"; }
+
 echo "verify84: 全过"

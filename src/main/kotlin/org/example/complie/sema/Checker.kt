@@ -417,13 +417,15 @@ class Checker(
      */
     private fun checkConfigs() {
         for (cfg in program.configs) {
-            for ((field, expr) in cfg.entries) {
-                val t = type(expr)
-                if (t.isVoid) throw err("配置块 ${cfg.name} 的字段 '$field' 不能是 void 表达式", expr.at)
-                if (t.rsfName != "String") {
+            for (entry in cfg.entries) {
+                // 条目统一是表达式：字段赋值解糖成 __build_config(...)，动词调用就是它自己。
+                // 两者都要求「不返回值」——配置块不是表达式序列，值没人接。
+                val t = type(entry)
+                if (!t.isVoid) {
                     throw err(
-                        "配置块 ${cfg.name} 的字段 '$field' 要写 String 表达式，实际给了 ${t.rsfName}",
-                        expr.at,
+                        "配置块 ${cfg.name} { … } 里的这一条没有返回值，别拿它当表达式用" +
+                            "（实际类型 ${t.rsfName}）",
+                        entry.at,
                     )
                 }
             }

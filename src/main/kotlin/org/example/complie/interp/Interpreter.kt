@@ -264,13 +264,9 @@ class Interpreter(
             val host = buildHost ?: throw RsfFailure(
                 "配置块 ${cfg.name} { … } 只有构建脚本里能用：'rsf build' 驱动 build.rsfs 时才有宿主",
             )
-            for ((field, expr) in cfg.entries) {
-                val value = eval(expr, noSlots, body)
-                val text = value as? String ?: throw RsfFailure(
-                    "配置块 ${cfg.name} 的字段 '$field' 要写 String 表达式，" +
-                        "实际给了 ${model.typeOf(expr).rsfName}",
-                )
-                host.config(cfg.name, field, text)
+            for (entry in cfg.entries) {
+                // 条目是表达式：字段赋值解糖成 __build_config(...)，动词调用自己去找宿主。
+                eval(entry, noSlots, body)
             }
         }
     }
@@ -2393,6 +2389,21 @@ class Interpreter(
                 )
                 // 可以一次给多个路径（vararg）
                 for (arg in args) host.declareDep(builtin.name, arg as String)
+                null
+            }
+            // 阶段 84：块语句里的产物声明（target { exe(…) / copy(…) }）
+            "exe", "lib", "jar" -> {
+                val host = buildHost ?: throw RsfFailure(
+                    "'${builtin.name}' 只有构建脚本里能用：产物声明由 'rsf build' 驱动 build.rsfs 时注入。",
+                )
+                host.target(args[0] as String, builtin.name)
+                null
+            }
+            "copy" -> {
+                val host = buildHost ?: throw RsfFailure(
+                    "'copy' 只有构建脚本里能用：产物声明由 'rsf build' 驱动 build.rsfs 时注入。",
+                )
+                host.targetTo(args[0] as String, "copy", args[1] as String)
                 null
             }
             // 阶段 84：配置块解糖出来的调用。块名与字段都按字符串交给宿主校验。

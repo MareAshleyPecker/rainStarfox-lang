@@ -116,13 +116,6 @@ internal fun Cli.cmdBuild(rest: List<String>): Int {
                 if (loadedScript.deps.isNotEmpty()) {
                     println("[rsf] 依赖: ${loadedScript.deps.joinToString("、") { it.display() }}")
                 }
-                // 阶段 0：`#target` 块里声明的目标先入表——声明顺序就是构建顺序，
-                // 所以它一定排在 main 里 `target()` 加的那些前面。
-                for (t in loadedScript.targets) {
-                    host.addTarget(
-                        TargetSpec.of(t.src, t.kind, t.out, "build.rsfs 第 ${t.line} 行的 #target"),
-                    )
-                }
                 // 阶段 0b：项目根的 `module-impex.rsf`（模块对外面貌的清单）。
                 // 它不进 AST，用专用读取器解析；三种出口各自映射到已有的产物种类：
                 //   exportjvm -> jar（给 Java/Kotlin 调）

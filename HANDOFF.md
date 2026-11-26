@@ -110,21 +110,21 @@ import "core/Vec.rsf" as vec { push, size }   // 只注入这两个
 
 | 阶段 | 做什么 | 状态 |
 |---|---|---|
-| 0 读指令 | `#dep` / `#build` / `#target`（挖成空格）与 `#def`（解糖成函数） | 做了 |
+| 0 读指令 | `#dep` / `#build`（挖成空格）与 `#def`（解糖成函数）；产物用 `target { }` 块语句 | 做了 |
 | 1 跑规则 | `#def 名字 { … }` 定义的规则，`#dep rule("名字")` 按声明顺序调用 | 做了（规则体是代码） |
 | 2 跑 main | 追加 `target()` / `need()`；`exec()` 只在这里可用 | 做了 |
 | 3 出产物 | 按表顺序（有 `need` 就拓扑序），复用 `--c --link` / `--jar`；第一个失败即停并打印完整命令 | 做了 |
 
 目标表：`TargetSpec{ name, src, kind, out? }`，`kind ∈ {exe, lib, jar, copy}`（`build/BuildPlan.kt`）。
-两种写法进同一张表：`#target { @/a.rsf -> exe }` 与 `target("@/a.rsf", "exe")`；
+两种写法进同一张表：`target { exe("@/a.rsf") }` 与 `target("@/a.rsf", "exe")`；
 名字取文件名，重名报错并列两处来源；声明顺序即构建顺序，`need(a, b)` 只改顺序（稳定拓扑排序，成环报错）。
 
 `#target` 的第三个 `->` 段可省，写了就是显式产物路径：
 
 ```
-#target {
-    @/src/main.rsf -> exe
-    @/res/data.txt -> copy -> build/out/copied.txt
+target {
+    exe("@/src/main.rsf")
+    copy("@/res/data.txt", "build/out/copied.txt")
 }
 ```
 

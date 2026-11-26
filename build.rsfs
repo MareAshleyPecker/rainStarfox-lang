@@ -11,8 +11,8 @@ project {
     ver = projectVersion
 }
 
-#target {
-    @/rsfSrc/bootstrap/InterpCli.rsf -> exe
+target {
+    exe("@/rsfSrc/bootstrap/InterpCli.rsf")
 }
 
 #build {
