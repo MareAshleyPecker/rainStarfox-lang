@@ -1,0 +1,7 @@
+#build {
+    out("build/out")
+}
+
+fn main() -> void {
+    println("只出清单里的产物")
+}

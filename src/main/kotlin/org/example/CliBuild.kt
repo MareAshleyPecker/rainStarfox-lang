@@ -5,6 +5,8 @@ package org.example
 // 这里全是 `Cli` 的**扩展函数**：`this` 与原来当成员函数时完全一样，
 // 所以函数体一个字都没改，搬迁的风险只在包可见性上（同包＝不用 import）。
 
+import org.example.build.ImpexKind
+import org.example.build.ModuleImpex
 import org.example.build.ProjectBuildHost
 import org.example.build.TargetKind
 import org.example.build.TargetSpec
@@ -119,6 +121,45 @@ internal fun Cli.cmdBuild(rest: List<String>): Int {
                     host.addTarget(
                         TargetSpec.of(t.src, t.kind, t.out, "build.rsfs 第 ${t.line} 行的 #target"),
                     )
+                }
+                // 阶段 0b：项目根的 `module-impex.rsf`（模块对外面貌的清单）。
+                // 它不进 AST，用专用读取器解析；三种出口各自映射到已有的产物种类：
+                //   exportjvm -> jar（给 Java/Kotlin 调）
+                //   extern    -> lib（C ABI 的目标文件）
+                //   export / import 先校验文件存在（普通 rsf 的可见性走 import 机制）
+                val impexFile = File(ModuleImpex.FILE_NAME)
+                if (impexFile.isFile) {
+                    val entries = ModuleImpex.parse(impexFile)
+                    for (e in entries) {
+                        val srcFile = host.resolveInProject(e.path)
+                        if (!srcFile.isFile) {
+                            throw RsfError(
+                                "build",
+                                "${ModuleImpex.FILE_NAME} 第 ${e.line} 行引用的文件不存在：'${e.path}'" +
+                                    "（路径以项目根为基准）",
+                            )
+                        }
+                        when (e.kind) {
+                            ImpexKind.EXPORT_JVM -> host.addTarget(
+                                TargetSpec.of(
+                                    e.path, "jar", null,
+                                    "${ModuleImpex.FILE_NAME} 第 ${e.line} 行的 exportjvm",
+                                ),
+                            )
+                            ImpexKind.EXPORT_C -> host.addTarget(
+                                TargetSpec.of(
+                                    e.path, "lib", null,
+                                    "${ModuleImpex.FILE_NAME} 第 ${e.line} 行的 extern",
+                                ),
+                            )
+                            // import / export：v1 只校验存在。普通 rsf 的可见性由 import 管，
+                            // 「导出面」真正的检查要等 module-impex 的语义定完（见 HANDOFF 第 10 节）
+                            ImpexKind.IMPORT, ImpexKind.EXPORT -> Unit
+                        }
+                    }
+                    if (entries.isNotEmpty()) {
+                        println("[rsf] 模块清单: ${entries.size} 条（${ModuleImpex.FILE_NAME}）")
+                    }
                 }
                 // 阶段 1：`#dep rule(...)` 里的规则，按声明顺序先跑。
                 // 名字在装载期就校验：规则就是函数（#def 解糖出来的），所以「认得出名字」

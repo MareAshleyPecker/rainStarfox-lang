@@ -280,3 +280,11 @@ gmon.out
 !/build/verify86/**/*.rsfs
 !/build/verify86/**/*.c
 !/build/verify86/**/*.h
+
+### 判据台（阶段 84：module-impex.rsf）###
+!/build/verify88/
+/build/verify88/**
+!/build/verify88/**/
+!/build/verify88/**/*.sh
+!/build/verify88/**/*.rsf
+!/build/verify88/**/*.rsfs
