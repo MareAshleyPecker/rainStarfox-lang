@@ -156,18 +156,14 @@ fn pickFile() -> String {
 fn main() -> void {
     var path = pickFile()
     var name = fileNameOf(path)
-    var text = ""
-    var readOk = true
-    try {
-        text = readText(path)!!
-    } catch (readError : String) {
-        readOk = false
-    }
-    if (!readOk) {
+    // 读不到文件：`?: null` 把失败折成 null，再用 !! 取回（不关心错误消息）
+    var maybeText = readText(path) ?: null
+    if (maybeText == null) {
         System.err.println("error[cli]: cannot read file: " + path)
         System.exit(1)
         rtn
     }
+    var text = maybeText!!
 
     var ast = parseSource(text)
     if (ast.kind == NodeKind.ERROR) {

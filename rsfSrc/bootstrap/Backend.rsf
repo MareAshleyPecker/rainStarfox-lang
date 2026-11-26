@@ -9711,15 +9711,21 @@ pub fn compileProgram(g : Gen, ast : Node, sourceName : String) -> void {
 //
 // 触发条件收紧到「程序里真有类继承」：没有继承的程序（148 类验收、verify21 的
 // 探针）根本不走这段，字节与旧版逐字节一致。
+// 骨架只是给 ASM 的 Class.forName 备用：写不出去（目录不存在、路径为 null 触发 NPE）
+// 一律当没备成，不影响产出。所以整段抽成 !void 函数，调用点用 ?: 吞掉。
 fn writeSkeleton(g : Gen, out : String, nm : String, access : Int, sup : String, ifaces : String[]) -> void {
-    // writeBytes 是 `!void`，必须就地配 try/catch；写不出去只当骨架没备成。
-    try {
-        var sw = new Cw(0)
-        sw.visit(v17(), access, nm, null, sup, ifaces)
-        sw.visitEnd()
-        writeBytes(out + "/" + nm + ".class", sw.toByteArray())
-    } catch (we : String) {
-    }
+    tryWriteSkeleton(g, out, nm, access, sup, ifaces) ?: ignoreFailure()
+}
+
+fn tryWriteSkeleton(g : Gen, out : String, nm : String, access : Int, sup : String, ifaces : String[]) -> !void {
+    var sw = new Cw(0)
+    sw.visit(v17(), access, nm, null, sup, ifaces)
+    sw.visitEnd()
+    try writeBytes(out + "/" + nm + ".class", sw.toByteArray())
+}
+
+// 兜底：什么都不做（骨架备不成无所谓）
+fn ignoreFailure() -> void {
 }
 
 fn writeSkeletons(g : Gen) -> void {
@@ -9731,25 +9737,26 @@ fn writeSkeletons(g : Gen) -> void {
     var out = System.getProperty("rsf.backend.out")
     var i = 0
     while (i < g.ciCount) {
-        try {
-            if (out.length() > 0) {
-                var ci = g.cis[i]
-                writeSkeleton(g, out, ci.internal, accPublic() + accSuper(), superNameOf(ci), superArr(ci))
-            }
-        } catch (we : String) {
-        }
+        writeClassSkeleton(g, out, g.cis[i]) ?: ignoreFailure()
         i = i + 1
     }
     i = 0
     while (i < g.iiCount) {
-        try {
-            if (out.length() > 0) {
-                var ic = g.iis[i]
-                writeSkeleton(g, out, ic.internal, accPublic() + accInterface() + accAbstract(), "java/lang/Object", superArr(ic))
-            }
-        } catch (we : String) {
-        }
+        writeIfaceSkeleton(g, out, g.iis[i]) ?: ignoreFailure()
         i = i + 1
+    }
+}
+
+// 两类骨架各包一层：`out.length()` 在 out 是 Java null 时会 NPE，也由 ?: 一起吞掉。
+fn writeClassSkeleton(g : Gen, out : String, ci : CInfo) -> !void {
+    if (out.length() > 0) {
+        writeSkeleton(g, out, ci.internal, accPublic() + accSuper(), superNameOf(ci), superArr(ci))
+    }
+}
+
+fn writeIfaceSkeleton(g : Gen, out : String, ic : CInfo) -> !void {
+    if (out.length() > 0) {
+        writeSkeleton(g, out, ic.internal, accPublic() + accInterface() + accAbstract(), "java/lang/Object", superArr(ic))
     }
 }
 

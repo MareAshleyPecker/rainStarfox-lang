@@ -2412,62 +2412,28 @@ pub class Parser(tokens : Token[]) {
         rtn n
     }
 
-    // `try { ... } catch (e : String) { ... }`（也收老写法 `catch (e String)`）
+    // `try 表达式`（Zig 风格）。`try { ... } catch ...` 已经退休（与 Kotlin 侧同一口径）
     fn parseTry() -> Node {
         advance()   // try
-        // 阶段 84：`try 表达式`（Zig 风格）——出错就原样往上抛，成功就丢掉值。
-        // 解糖成等价的 `try { 表达式 } catch (e : String) { fail e }`，
-        // 与 Kotlin 侧 Parser.parseTry 逐字对应（`!void` 也能用它传播）。
-        if (!check("LBRACE")) {
-            var e = parseExpr()
-            var body0 = new Node(NodeKind.BLOCK)
-            var inner = new Node(NodeKind.EXPR_STMT)
-            inner.add(e)
-            body0.add(inner)
-            var catchBody0 = new Node(NodeKind.BLOCK)
-            var rethrow = new Node(NodeKind.FAIL)
-            rethrow.add(varNode("e"))
-            catchBody0.add(rethrow)
-            var n0 = new Node(NodeKind.TRY).put("catch", escapeValue("e"))
-            n0.add(body0)
-            n0.add(catchBody0)
-            rtn n0
-        }
-        var body = parseBody("try")
-
-        if (!check("KW_CATCH")) {
-            failAt(peek(), "try 块后面必须跟一个 catch，写法是 try { ... } catch (e : String) { ... }")
+        if (check("LBRACE")) {
+            failAt(peek(), "try { ... } catch { ... } 已经移除。错误处理改用这几种写法：(a) 出错时有值可用就 f(...) ?: 兜底值；(b) 只要「出错时做点什么」就 f(...) ?: 兜底函数()，兜底写成 -> void 的函数，消息用 lastErrorMessage() 取；(c) 往上抛用 f(...)!!（有返回值）或 try f(...)（!void）。多语句的守卫抽成一个 !T 函数，调用点再用 ?: 兜底")
             rtn errorNode()
         }
-        advance()   // catch
-
-        expect("LPAREN", "catch 后面需要 '('，写法是 catch (错误变量 : String)")
-        var nameTok = expect("IDENT", "catch 里需要错误变量名，写法是 catch (e : String)")
-
-        if (matchOne("COLON")) {
-            if (check("KW_STRING")) {
-                advance()
-            } else {
-                failAt(peek(), catchTypeError(nameTok.text))
-            }
-        } else {
-            if (check("KW_STRING")) {
-                advance()   // 老写法 catch (e String)
-            } else {
-                failAt(peek(), catchTypeError(nameTok.text))
-            }
-        }
-        expect("RPAREN", "catch 的参数表没有闭合，缺少 ')'")
-        var catchBody = parseBody("catch")
-
-        var n = new Node(NodeKind.TRY).put("catch", escapeValue(nameTok.text))
-        n.add(body)
-        n.add(catchBody)
-        rtn n
-    }
-
-    fn catchTypeError(name : String) -> String {
-        rtn "catch 的错误变量类型只能是 String。两种写法都可以：Kotlin 风格 'catch (" + name + " : String)'，或者 Java 风格 'catch (" + name + " String)'"
+        // 解糖成等价的 `try { 表达式 } catch (e : String) { fail e }`（内部 TryStmt），
+        // `!void` 也能用它传播。
+        var e = parseExpr()
+        var body0 = new Node(NodeKind.BLOCK)
+        var inner = new Node(NodeKind.EXPR_STMT)
+        inner.add(e)
+        body0.add(inner)
+        var catchBody0 = new Node(NodeKind.BLOCK)
+        var rethrow = new Node(NodeKind.FAIL)
+        rethrow.add(varNode("e"))
+        catchBody0.add(rethrow)
+        var n0 = new Node(NodeKind.TRY).put("catch", escapeValue("e"))
+        n0.add(body0)
+        n0.add(catchBody0)
+        rtn n0
     }
 
     // if：花括号块、`c : 语句`、以及「三目出现在语句位置」（值被丢弃）

@@ -873,6 +873,62 @@ pub class Interp(prog : Node) {
     // 因此它和 Kotlin 侧、C 侧「最近一条错误」的口径一致。
     var lastErrMsg : String = ""
 
+    // ------------------------------------------------ 信号/错误的降级状态（阶段 84）
+    //
+    // 这个解释器原来靠 `try { } catch (e : String) { }` 接住**控制流信号**
+    // （rtn / goto / break / continue 都是用 fail 编码出来的），再决定「怎么走」。
+    // `try {} catch {}` 正在退休，于是改成 `?:` + 兜底方法：兜底把决定写进下面这几个
+    // 状态位，调用点紧接着读它们。每个状态位都是「用一次就清」，不会有跨调用残留。
+    var pendingReturn : Bool = false
+    var pendingJump : Int = -1
+    var loopBreak : Bool = false
+    var pendingError : ?String = null
+
+    // `rtn` 信号：记下来，让调用点取 retVal；别的信号/真错误原样重抛
+    fn absorbReturnValue() -> !void {
+        var m = lastErrorMessage()
+        if (signalKind(m) == "R") { pendingReturn = true } else { fail m }
+    }
+
+    // 构造器体里的 `rtn`：只有信号 R 被吃掉（构造器的返回值没用），别的照旧上抛
+    fn absorbReturnVoid() -> !void {
+        var m = lastErrorMessage()
+        if (signalKind(m) != "R") { fail m }
+    }
+
+    // `goto` 信号：能落在本块的标签就记下跳转位置，否则原样上抛
+    fn absorbGoto(b : Node) -> !void {
+        var m = lastErrorMessage()
+        if (signalKind(m) == "G") {
+            var idx = labelIndex(b, signalPayload(m))
+            if (idx >= 0) { pendingJump = idx; rtn }
+        }
+        fail m
+    }
+
+    // 循环体里的 break / continue：B 记成 break，C 什么都不做，别的原样上抛
+    fn absorbLoopSignal() -> !void {
+        var m = lastErrorMessage()
+        var sk = signalKind(m)
+        if (sk == "B") { loopBreak = true } else if (sk == "C") { } else { fail m }
+    }
+
+    // `try` 块的保护体：真错误记进 pendingError（交给 catch 体），信号原样上抛
+    fn absorbCatchError() -> !void {
+        var m = lastErrorMessage()
+        if (isSignal(m)) { fail m }
+        pendingError = m
+    }
+
+    // `?:` 的兜底（tryCallProtected 用）：信号原样重抛，真错误记下消息、折成 null，
+    // 调用点看到 null 就知道「这次调用失败了」。
+    fn caughtOrRethrow() -> !?Val {
+        var m = lastErrorMessage()
+        if (isSignal(m)) { fail m }
+        lastErrMsg = m
+        rtn null
+    }
+
     // ------------------------------------------------------------------ 装载
 
     pub fn load() -> void {
@@ -2300,14 +2356,12 @@ pub class Interp(prog : Node) {
             fail "调用层级超过 2000 层，多半是无限递归"
         }
         var out = vNull()
-        var sig = ""
-        try {
-            blk(cv.clBody!!, e)!!
-        } catch (err : String) {
-            if (signalKind(err) == "R") { out = retVal } else { sig = err }
-        }
+        blk(cv.clBody!!, e) ?: absorbReturnValue()
         depth = depth - 1
-        if (sig.length() > 0) { fail sig }
+        if (pendingReturn) {
+            pendingReturn = false
+            rtn retVal
+        }
         rtn out
     }
 
@@ -2584,13 +2638,7 @@ pub class Interp(prog : Node) {
             runSuperDelegation(c, o, env, supArgs)!!
             runFieldInits(c, o, env)!!
         }
-        var sig = ""
-        try {
-            blk(f.body, env)!!
-        } catch (e : String) {
-            if (signalKind(e) != "R") { sig = e }
-        }
-        if (sig.length() > 0) { fail sig }
+        blk(f.body, env) ?: absorbReturnVoid()
         rtn 0
     }
 
@@ -2612,13 +2660,7 @@ pub class Interp(prog : Node) {
             env.define(f.pnames[i], coerceTo(f.ptypes[i], a))
             i = i + 1
         }
-        var sig = ""
-        try {
-            blk(f.body, env)!!
-        } catch (e : String) {
-            if (signalKind(e) != "R") { sig = e }
-        }
-        if (sig.length() > 0) { fail sig }
+        blk(f.body, env) ?: absorbReturnVoid()
         rtn 0
     }
 
@@ -2665,14 +2707,12 @@ pub class Interp(prog : Node) {
             fail "调用层级超过 2000 层，多半是无限递归"
         }
         var out = vNull()
-        var sig = ""
-        try {
-            blk(f.body, env)!!
-        } catch (e : String) {
-            if (signalKind(e) == "R") { out = retVal } else { sig = e }
-        }
+        blk(f.body, env) ?: absorbReturnValue()
         depth = depth - 1
-        if (sig.length() > 0) { fail sig }
+        if (pendingReturn) {
+            pendingReturn = false
+            rtn retVal
+        }
         rtn out
     }
 
@@ -2756,27 +2796,11 @@ pub class Interp(prog : Node) {
         if (nm == "readText") { rtn vStr(readText(render(a0)!!)!!) }
         if (nm == "readBytes") { rtn vArr(bytesToArray(readBytes(render(a0)!!)!!)) }
         if (nm == "writeText") {
-            var failed = false
-            var failedMsg = ""
-            try {
-                writeText(render(a0)!!, render(args[1])!!)
-            } catch (w : String) {
-                failed = true
-                failedMsg = w
-            }
-            if (failed) { fail failedMsg }
+            try writeText(render(a0)!!, render(args[1])!!)
             rtn vNull()
         }
         if (nm == "writeBytes") {
-            var failed2 = false
-            var failedMsg2 = ""
-            try {
-                writeBytes(render(a0)!!, arrayToBytes(args[1].av!!))
-            } catch (w2 : String) {
-                failed2 = true
-                failedMsg2 = w2
-            }
-            if (failed2) { fail failedMsg2 }
+            try writeBytes(render(a0)!!, arrayToBytes(args[1].av!!))
             rtn vNull()
         }
         fail unsupported("内置函数 '" + nm + "'")
@@ -3138,30 +3162,14 @@ pub class Interp(prog : Node) {
         if (ln.kind == NodeKind.MEMBER) {
             var recv = ev(kid(ln, 0), env)!!
             var args = evalArgs(kid(ln, 1), env)!!
-            var got = vNull()
-            var bad = false
-            try {
-                got = invokeMember(recv, attr(ln, "name"), args, env)!!
-            } catch (e : String) {
-                if (isSignal(e)) { fail e }
-                bad = true
-                lastErrMsg = e
-            }
-            if (bad) { rtn caughtVal }
-            rtn got
+            var got = invokeMember(recv, attr(ln, "name"), args, env) ?: caughtOrRethrow()
+            if (got == null) { rtn caughtVal }
+            rtn got!!
         }
         var args2 = evalArgs(kid(ln, 0), env)!!
-        var got2 = vNull()
-        var bad2 = false
-        try {
-            got2 = invokeCall(attr(ln, "name"), args2, env)!!
-        } catch (e2 : String) {
-            if (isSignal(e2)) { fail e2 }
-            bad2 = true
-            lastErrMsg = e2
-        }
-        if (bad2) { rtn caughtVal }
-        rtn got2
+        var got2 = invokeCall(attr(ln, "name"), args2, env) ?: caughtOrRethrow()
+        if (got2 == null) { rtn caughtVal }
+        rtn got2!!
     }
 
     pub fn evElvis(n : Node, env : Env) -> !Val {
@@ -3193,20 +3201,14 @@ pub class Interp(prog : Node) {
                 pc = pc + 1
             } else {
                 // goto 由**离它最近的、含该标签的块**接住；本块没有就原样往上传
-                var jump = -1
-                var sig = ""
-                try {
-                    st(s, env)!!
-                } catch (e : String) {
-                    if (signalKind(e) == "G") {
-                        var idx = labelIndex(b, signalPayload(e))
-                        if (idx >= 0) { jump = idx } else { sig = e }
-                    } else {
-                        sig = e
-                    }
+                st(s, env) ?: absorbGoto(b)
+                if (pendingJump >= 0) {
+                    var jump = pendingJump
+                    pendingJump = -1
+                    pc = jump
+                } else {
+                    pc = pc + 1
                 }
-                if (sig.length() > 0) { fail sig }
-                if (jump >= 0) { pc = jump } else { pc = pc + 1 }
             }
         }
         rtn 0
@@ -3367,18 +3369,11 @@ pub class Interp(prog : Node) {
         var bodyNode = kid(n, 1)
         while (true) {
             if (!truth(ev(cond, env)!!)!!) { rtn 0 }
-            var brk = false
-            var sig = ""
-            try {
-                blk(bodyNode, new Env(env))!!
-            } catch (e : String) {
-                var sk = signalKind(e)
-                if (sk == "B") { brk = true }
-                else if (sk == "C") { }
-                else { sig = e }
+            blk(bodyNode, new Env(env)) ?: absorbLoopSignal()
+            if (loopBreak) {
+                loopBreak = false
+                rtn 0
             }
-            if (sig.length() > 0) { fail sig }
-            if (brk) { rtn 0 }
         }
         rtn 0
     }
@@ -3405,18 +3400,11 @@ pub class Interp(prog : Node) {
             if (hasCond) {
                 if (!truth(ev(condNode, env)!!)!!) { rtn 0 }
             }
-            var brk = false
-            var sig = ""
-            try {
-                blk(bodyNode, new Env(env))!!
-            } catch (e : String) {
-                var sk = signalKind(e)
-                if (sk == "B") { brk = true }
-                else if (sk == "C") { }
-                else { sig = e }
+            blk(bodyNode, new Env(env)) ?: absorbLoopSignal()
+            if (loopBreak) {
+                loopBreak = false
+                rtn 0
             }
-            if (sig.length() > 0) { fail sig }
-            if (brk) { rtn 0 }
             if (hasStep) { st(stepNode, env)!! }
         }
         rtn 0
@@ -3485,27 +3473,14 @@ pub class Interp(prog : Node) {
     // `try` / `catch`：接住的**只有真错误**，控制流信号一律原样往上传
     // （否则 `try { rtn 5 } catch ...` 会把 return 吃掉）
     pub fn stTry(n : Node, env : Env) -> !Int {
-        var sig = ""
-        var bad = false
-        var msg = ""
-        try {
-            blk(kid(n, 0), new Env(env))!!
-        } catch (e : String) {
-            if (isSignal(e)) {
-                sig = e
-            } else {
-                bad = true
-                msg = e
-            }
-        }
-        if (sig.length() > 0) { fail sig }
-        if (bad) {
-            lastErrMsg = msg
-            var catchEnv = new Env(env)
-            catchEnv.define(attr(n, "catch"), vStr(msg))
-            rtn blk(kid(n, 1), catchEnv)!!
-        }
-        rtn 0
+        blk(kid(n, 0), new Env(env)) ?: absorbCatchError()
+        if (pendingError == null) { rtn 0 }
+        var msg = pendingError!!
+        pendingError = null
+        lastErrMsg = msg
+        var catchEnv = new Env(env)
+        catchEnv.define(attr(n, "catch"), vStr(msg))
+        rtn blk(kid(n, 1), catchEnv)!!
     }
 
     pub fn stThisCall(n : Node, env : Env) -> !Int {

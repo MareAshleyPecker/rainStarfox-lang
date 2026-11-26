@@ -485,15 +485,10 @@ class SrcLoader(rootDir : String) {
         if (alreadyLoaded(key)) { rtn 0 }   // 同一文件只装一次
         remember(key)
 
-        var text = ""
-        var readOk = false
-        try {
-            text = readText(path)!!
-            readOk = true
-        } catch (readError : String) {
-            readOk = false
-        }
-        if (!readOk) { fail "读不到文件：" + path }
+        // 读不到就报「读不到文件」；错误消息本身不用（`?: null` 折成 null 再取回）
+        var maybeText = readText(path) ?: null
+        if (maybeText == null) { fail "读不到文件：" + path }
+        var text = maybeText!!
 
         var ast = parseSource(text)
         if (ast.kind == NodeKind.ERROR) {
