@@ -14,9 +14,11 @@
   `rsf run` 是 cargo run 语义，`module-impex.rsf` + 模块别名按包组织标准库。
 - **标准库**：`stdlib/{lang,io,std,classfile}`，模块用「类 + 静态方法」组织
   （`Text.join` / `Io.readLines` / `Lang.…` / `Exception.…`）。
-- **下一步**：根除 `try/catch`（五步，见 §10「根除 try/catch 的计划」）。
-  第 1 步（`?:` 的 void 兜底 + `lastErrorMessage()`，判据 `verify99`）已完成；
-  下一步是迁移 `rsfSrc/lang` 的 19 处，并把这三个新表面补进自举侧。
+- **下一步**：根除 `try/catch`（五步，见 §10）。①②③ 已完成：`?:` 的 void 兜底 +
+  `lastErrorMessage()`（判据 `verify99`）、`stdlib` 与 `rsfSrc/lang` 的示例全迁完、
+  自举侧也补上了新表面（parity 9/9）。
+  **卡点**：数组越界这类「运行期故障」`?:` 接不住，`rsfSrc/lang/arrays.rsf` 的 3 处
+  `try` 因此留着；得先定下故障怎么接，才能继续迁移 `rsfSrc/bootstrap` 并删语法。
 
 ## 1. 这台机器怎么跑
 
@@ -80,6 +82,8 @@ sh tools/dev/probe.sh --cmp /tmp/x.rsf   # 单文件探针 + 对拍
 | `3c0ad9c` | `fail 种类, 消息`（`ErrorKinds` 表，编译期校验） |
 | `823f581` | `Io` 的三处重抛改用 `try 表达式`（根除 try/catch 的样板） |
 | `e1d6088` | `?:` 的 void 兜底 + `lastErrorMessage()`（根除 try/catch 第 1 步，判据 `verify99`） |
+| `a0766ca` | `?:` 的 void 兜底也接受 `!T` 左边（只要「出错时做点什么」时值可以丢） |
+| `57cc206` | 示例里的 `try/catch` 迁到 `?:` + `lastErrorMessage()`，自举侧同步（parity 9/9） |
 
 规则：
 - `.rsfs` 与 `.rsf` 同语言，唯一差别是**允许没有 main**；
@@ -304,12 +308,21 @@ fn main() -> void {
 | `expr ?: fallback` | 不变（出错取值） |
 | `try { f() } catch { }` | `f() ?: <void 表达式>`——已实现（`!void` 也能 `?:`） |
 | `try { } catch e { 用 e }` | `expr ?: …` + `lastErrorMessage()`——已实现 |
-| `catch e { 多语句 }` | 抽函数，或 `?: null` + `if` |
+| `catch e { 多语句 }` | 抽成一个 `!T` 函数，调用点 `?: <void 兜底>`——示例里已按这个写 |
 | `finally` | 以后换 `defer` |
 
 五步：① `?:` void 兜底 + `lastErrorMessage()`（三端 + 判据）→ ② 迁移 `stdlib` 的 3 处
 （已完成 Io）→ ③ 迁移 `rsfSrc/lang` 19 处（parity 示例）→ ④ 迁移 `rsfSrc/bootstrap`
 31 处并跑通自举 → ⑤ 删掉 `try {} catch {}` 语法（Parser 报迁移提示，自举 Parser 同步）。
+
+**卡点（⑤ 之前的硬前提）：运行期故障怎么办。** 数组越界、`!!` 打到 null、除零这类
+**不是 `!T` 调用**，`?:` 接不住——`rsfSrc/lang/arrays.rsf` 里那 3 处 `try` 就是这么留下的。
+两条路要用户拍板：
+1. 把 `?:` 放宽成「任何可能出错的表达式」：JVM 侧得把左边整个表达式抬进合成方法
+   （现在的 OrElse 只支持「一次调用」），C 侧还得先给数组加边界检查；
+2. 只让 `?:` 管 `!T`，另配一个只接故障的窄构造（`trap { … }` 之类），
+   或者干脆接受「故障直接中止程序、给清晰消息」。
+在这条定下来之前，`try {} catch {}` 不能删。
 
 **① 已完成**（判据 `verify99`）：
 
@@ -323,9 +336,22 @@ println(lastErrorMessage())            // 最近一条错误消息；被兜住�
 C 侧直接用运行时的 `rsf_err_msg`。同时修掉一个老不一致：C 的 `?:` 以前没看
 `rsf_err`，`parseInt("x") ?: -1` 会拿到 `0` 并把错误旗标漏给后面的语句。
 
-现状：`stdlib/io/Io.rsf` 的 3 处重抛已改成 `try 表达式`；`rsfSrc/lang/errors.rsf`
-是错误模型的教学示例，下一步（③）就该用它展示 `lastErrorMessage()`——
-注意那时要同步补自举侧（bootstrap 的 Parser/Checker/Interp 还不认识这些新表面）。
+**`?:` 的两条规则**（实现了 ① 之后又放宽了一条）：
+
+- 兜底是 **void** ⇒ 这个 `?:` 只为了「出错时做点什么」，结果类型 void，
+  成功路径的值被丢掉（所以只能当语句）：`writeText(p, s) ?: reportFailure()`，
+  `parseInt(s) ?: reportParse()` 都行。
+- 兜底是**值** ⇒ 出错就取右边的值，两边类型要对得上：`parseInt(s) ?: 0`。
+
+**②③ 已完成**：`stdlib/io/Io.rsf`（3 处重抛 → `try 表达式`）、
+`rsfSrc/lang/{errors,files,stdlib}.rsf` 与 `examples/ui_demo.rsf` 全部迁完，
+parity 仍是 9/9（输出有意改了两处小节标题，其余逐字节不变）。
+自举侧补了三样：`Interp.rsf` 的 `lastErrMsg` + `lastErrorMessage()` 内建
+（`tryCallProtected` / `stTry` 接住时记消息）、`Parser.rsf` 的 `try 表达式` 解糖
+（与 Kotlin 侧逐字对应）、`isBuiltinName` 认得新名字。
+
+**唯一留下的 `try`**：`rsfSrc/lang/arrays.rsf` 的 3 处（越界/负长度故障），
+原因见上面那个卡点。
 
 **错误种类**（阶段 84 第二步的表面部分）：
 
@@ -452,21 +478,22 @@ gcc 命令行固定带 `-I<stdlib>`；查找顺序见 `build/Stdlib.kt`（`RSF_S
 ## 12. 下一步（按顺序）
 
 1. ~~`?:` void 兜底 + `lastErrorMessage()`~~ ✅ 已完成，判据 `verify99`。
-2. 迁移 `rsfSrc/lang` 的 19 处（**parity 示例**，输出必须逐字节不变）——
-   要注意自举侧现在还不认识 `?:` 的 void 兜底与 `lastErrorMessage()`，
-   这一步实际包含「bootstrap 的 Parser / Checker / Interp 同步」。
-   然后再迁移 `rsfSrc/bootstrap` 的 31 处，跑通自举。
-3. 删掉 `try {} catch {}` 语法：Parser 报「已移除，改用 …」，自举 Parser 同步。
-4. `try` 表达式（`val x = try { f() } catch { 0 }`）——需要 Lowering 支持“表达式内的块值”，
+2. ~~迁移 `rsfSrc/lang` 的 19 处 + 自举侧同步~~ ✅（`errors` / `files` / `stdlib` /
+   `examples/ui_demo` 都迁完，bootstrap 的 Parser/Interp 也认识了 `try 表达式` 与
+   `lastErrorMessage()`，parity 9/9）。
+3. **先拍板「运行期故障怎么接」**（见 §10 的卡点），再把 `rsfSrc/lang/arrays.rsf`
+   剩下的 3 处 `try` 迁掉；之后才是迁移 `rsfSrc/bootstrap` 的 31 处并跑通自举。
+4. 删掉 `try {} catch {}` 语法：Parser 报「已移除，改用 …」，自举 Parser 同步。
+5. `try` 表达式（`val x = try { f() } catch { 0 }`）——需要 Lowering 支持“表达式内的块值”，
    与载荷改造同级，单独安排。
-5. `!T` 载荷从 `String` 换成 `(kind, message)`：`ErrorKinds` 表直接变枚举取值，
+6. `!T` 载荷从 `String` 换成 `(kind, message)`：`ErrorKinds` 表直接变枚举取值，
    `Exception.isKind` 的字符串解析退役。
-6. 两个特殊类型（用户 2026-11-26 提）：`Any`（任何非 void 值都能塞进去）与
+7. 两个特殊类型（用户 2026-11-26 提）：`Any`（任何非 void 值都能塞进去）与
    `Unit`（只有 `unit` 一个值的单元类型，给泛型与「没有信息量的返回值」用）。
    要想清楚：`Any` 与现有 `Object` 互操作的关系、装箱表示、三个后端各自的落地，
    以及 `Unit` 与 `void` 的分工（`void` 不能当值/当类型实参，`Unit` 可以）。
    涉及类型系统核心，单独排期，别和 try/catch 收尾混在一起。
-7. 其余：LSP 跳到标准库定义、标准库继续补（排序/遍历/格式化）、`defer`。
+8. 其余：LSP 跳到标准库定义、标准库继续补（排序/遍历/格式化）、`defer`。
 
 ## 13. 这份文档怎么读
 
