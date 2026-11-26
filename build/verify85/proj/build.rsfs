@@ -4,8 +4,8 @@ import demo.Util
     javaInclude("libs")
 }
 
-#target {
-    @/src/main.rsf -> exe
+target {
+    exe("@/src/main.rsf")
 }
 
 #build {
