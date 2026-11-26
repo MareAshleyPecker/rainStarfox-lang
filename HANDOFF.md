@@ -240,3 +240,23 @@ fn main() -> void {
 **已知缺口**：自举侧的 `Lexer.rsf`/`Parser.rsf` 还不认识 `extern`（它连 `#dep`/`#def`
 那一套指令都没有）。所以在自举派上用场之前，含 `extern` 的源码只能由 Kotlin 侧编译。
 等 bootstrap 补语法时，这条要和其它指令一起补，不是单独一刀。
+
+## 10. `.rsfs` 语法定稿（进行中，逐条拍板）
+
+已定的条目（用户拍板，实现按这个走）：
+
+1. **`#` 只留给内置指令**——`#dep` / `#build` / `#target` / `#def` 这一族不改名、不给用户扩展；
+   编译器认识的指令才配 `#` 前缀。
+2. **配置块不带 `#`**：`project { name = … }` 是语言级声明（已实现：AST `ConfigBlock`，
+   在 globals 之后、规则与 main 之前求值）。同理 `dependencies { }` / `run { }` 也走这一套。
+3. **`run { }` 里用 `use`（不是 `using`），按行执行**——一行一个动作，顺序即执行顺序。
+4. **两个特殊文件**：`module-impex.rsf`（模块的 import/export 声明：导出给普通 rsf、
+   extern C、JNI、javaClass 导出）与 `pkg-info.rsf`（包声明 + 注解 + 元数据，类比
+   Java 的 package-info）。**其他语法同前**（`def` / `fn` / `class` / `export` /
+   `const val` / `lazy` / 配置块）。
+
+待补的实现点（按依赖顺序）：
+- 装载器按**约定文件名**识别这两个特殊文件（在哪个目录：项目根还是每个包目录，待定）；
+- `module-impex.rsf` 是 `export` / `extern` / JNI / javaClass 的唯一落点；
+- 指令解析保持「词法前处理」，但 `#` 集合封闭，遇到未知 `#xxx` 直接报错并列出内置指令；
+- 产物命名缺口（`InterpCli` vs `interp`）和 `#target` 的 `name(...)` 一起收。
