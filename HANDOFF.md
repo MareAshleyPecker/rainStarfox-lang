@@ -177,7 +177,9 @@ loader，`installLoader` 会**清缓存**（缓存里存过「没找到」，不
 
 编辑器那一侧复用了同一个机制（`build/ProjectJars.kt`）：按文件往上找 `build.rsfs`，
 读它的 `#dep` 并装上，指纹（根 + jar 路径/大小/时间）没变就不重装；只读字节不初始化类。
-`rsf complete` 与 LSP 的四个分析入口都接了，补全里能看到 jar 的方法。
+`rsf complete` 与 LSP 的四个分析入口都接了：`Util.` 能补出 jar 里的方法，
+`import ` 那一行能补出依赖 jar 里的类名（`ProjectJars.installedClassNames` 直接读 jar 条目，
+过滤内部类与 `META-INF`，上限 300 条）。
 
 `javaInclude` / `cInclude` / `hInclude` / `dirInclude` 这些名字**只在 build.rsfs 里被占用**——普通程序里
 `fn c(x : Int)` 是正常写法，不该因为构建脚本存在被禁掉。为此有三处守卫，缺一处都会出岔子：

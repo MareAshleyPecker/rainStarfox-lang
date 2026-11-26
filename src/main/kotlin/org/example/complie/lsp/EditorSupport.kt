@@ -184,6 +184,8 @@ class Completer(
     fun items(): List<CompletionItem> {
         // 成员访问优先：`Math.` 这种要先看接收者
         memberItems()?.let { return it }
+        // `import ` 这一行单列：依赖 jar 里的类只有这里补得出来
+        importItems()?.let { return it }
 
         val out = ArrayList<CompletionItem>()
         for (k in KEYWORDS) {
@@ -213,6 +215,29 @@ class Completer(
         }
         return out.distinctBy { it.label + it.kind }
     }
+    // ------------------------------------------------------------------ import
+
+    /**
+     * 光标停在 `import 前缀` 上时，给出**依赖 jar 里的类名**（阶段 84）。
+     *
+     * 只认「行首 import + 一个还没写完的点分名字」，所以别的位置不受影响；
+     * 没有任何依赖 jar 时返回 null，让调用方回到通用的候选列表。
+     *
+     * 为什么只补 jar 里的类、不补 JDK：JDK 那几千个类塞进来只会淹没候选，
+     * 而 `import java.lang.Math` 这种用户基本是自己写（或用 IDE 的 JDK 索引）。
+     */
+    private fun importItems(): List<CompletionItem>? {
+        val lineText = source.lineAt(line) ?: return null
+        val upto = lineText.take((col - 1).coerceIn(0, lineText.length))
+        val typed = IMPORT_TAIL.find(upto)?.groupValues?.get(1) ?: return null
+        val out = ArrayList<CompletionItem>()
+        for (name in ProjectJars.installedClassNames()) {
+            if (typed.isNotEmpty() && !name.startsWith(typed)) continue
+            out.add(CompletionItem(name, "class", "依赖 jar 里的类"))
+        }
+        return out.ifEmpty { null }
+    }
+
     // ------------------------------------------------------------------ 成员
 
     /** 光标前是 `xxx.` 或 `xxx.部分名字` 时，列出 xxx 的成员；不是则返回 null。 */
@@ -549,6 +574,9 @@ class Completer(
 
         /** 光标前是不是 `名字.` 或 `名字.部分`。 */
         val MEMBER_TAIL = Regex("([A-Za-z_][A-Za-z0-9_]*)\\s*\\.\\s*([A-Za-z_][A-Za-z0-9_]*)?$")
+
+        /** `import ` 之后那半个点分名字（可以为空）：`import demo.Ut` -> `demo.Ut`。 */
+        val IMPORT_TAIL = Regex("""^\s*import\s+([A-Za-z0-9_.]*)$""")
     }
 }
 

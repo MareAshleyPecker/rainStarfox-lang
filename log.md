@@ -340,3 +340,16 @@ names make that collision essentially impossible (the guards stay, but nothing
 depends on them any more). All four are variadic, and a directory argument
 expands to the matching files (`*.jar` / `*.c` / `*.h`); `dirInclude` stays a
 directory because that is what it means.
+
+## `import ` completion now lists classes from dependency jars
+
+`EditorSupport.importedClasses()` already resolved `import demo.Util` through
+`ClassPath`, so member completion after `Util.` worked as soon as the jar was
+installed. What was missing was the *import line itself*: typing `import ` offered
+keywords and builtins, never the classes you just added a jar for.
+
+`Completer.importItems()` recognises `^\s*import\s+([\w.]*)$`, and
+`ProjectJars.installedClassNames()` reads the jar entries (`demo/Util.class` ->
+`demo.Util`), dropping inner classes (`$`), `module-info`/`package-info` and
+`META-INF`, capped at 300. No dependency jars in the project -> returns null and
+the ordinary candidate list is used, so nothing changes for projects without jars.

@@ -5,7 +5,8 @@
 # 然后核对三件事：
 #   1. 构建脚本 `import demo.Util` + `Util.version()` 能跑（分析期看得见 jar）；
 #   2. `#dep { javaInclude("libs") }` 给目录时展开成里面的 jar（锁文件记具体文件）；
-#   3. 编辑器一侧（`rsf complete`）同样看得见 jar 里的方法。
+#   3. 编辑器一侧（`rsf complete`）同样看得见 jar 里的方法，
+#      并且 `import ` 那一行能补出依赖 jar 里的类名。
 #
 # 用法：  sh build/verify85/run.sh
 # 前置：  sh tools/dev/kb.sh（编出 build/dev/classes）
@@ -69,5 +70,10 @@ grep -q '"path": "libs/lib.jar"' .rsfdeps/lock.json || fail "javaInclude 没展�
 "$JAVA" -cp "$CP" org.example.MainKt complete src/app.rsf --line 4 --col 10 > complete.json 2>&1 \
     || { cat complete.json; fail "complete 跑失败"; }
 grep -q '"version"' complete.json || fail "补全里看不到 jar 里的 version()"
+
+# 5. `import ` 那一行本身也要能从依赖 jar 里补类名
+"$JAVA" -cp "$CP" org.example.MainKt complete src/app.rsf --line 1 --col 8 > import.json 2>&1 \
+    || { cat import.json; fail "import 补全跑失败"; }
+grep -q 'demo.Util' import.json || fail "import 补全里看不到依赖 jar 里的类名"
 
 echo "verify85: 全过"

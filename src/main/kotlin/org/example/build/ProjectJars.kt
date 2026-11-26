@@ -30,6 +30,9 @@ object ProjectJars {
     /** 上次装的是哪份组合（根目录 + jar 的路径/大小/修改时间）。 */
     private var fingerprint: String? = null
 
+    /** 上次装上的 jar（`import` 补全要按它们列类名）。 */
+    private var installed: List<File> = emptyList()
+
     /**
      * 按 [file] 找到项目根，把根 `build.rsfs` 里声明的 jar 装上。
      *
@@ -53,6 +56,7 @@ object ProjectJars {
         }
         if (key == fingerprint) return jars
         fingerprint = key
+        installed = jars
         ClassPath.installLoader(
             if (jars.isEmpty()) {
                 null
@@ -67,7 +71,39 @@ object ProjectJars {
     fun clear() {
         if (fingerprint == null) return
         fingerprint = null
+        installed = emptyList()
         ClassPath.installLoader(null)
+    }
+
+    /**
+     * 依赖 jar 里的类名（点分），按名字排序。
+     *
+     * 给 `import` 补全用：jar 里一个 entry（`demo/Util.class`）就是一个类。
+     * 过滤掉三样：`$` 开头的内部类（`Outer$Inner` 补出来会误导）、`module-info`、
+     * 以及 `META-INF` 这类目录项。上限 [limit] 条——大 jar 动辄几千个类，
+     * 全塞进补全列表既卡又吵。
+     */
+    fun installedClassNames(limit: Int = 300): List<String> {
+        val names = sortedSetOf<String>()
+        for (jar in installed) {
+            try {
+                java.util.jar.JarFile(jar).use { file ->
+                    for (entry in file.entries()) {
+                        val path = entry.name
+                        if (!path.endsWith(".class")) continue
+                        if (path.startsWith("META-INF/")) continue
+                        val dotted = path.removeSuffix(".class").replace('/', '.')
+                        if (dotted.contains('$')) continue
+                        if (dotted.endsWith("module-info") || dotted.endsWith("package-info")) continue
+                        names.add(dotted)
+                        if (names.size >= limit) return names.toList()
+                    }
+                }
+            } catch (e: Exception) {
+                // 读不了的 jar（正在被写、损坏）就当它没有类：编辑器不能因此崩
+            }
+        }
+        return names.toList()
     }
 
     /** 从文件所在目录往上找第一个带 `build.rsfs` 的目录。 */
