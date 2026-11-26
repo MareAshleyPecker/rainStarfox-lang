@@ -39,6 +39,15 @@ fun main(args: Array<String>) {
 
 class Cli {
 
+    /**
+     * 上一次构建出了哪些产物（阶段 84）。
+     *
+     * `rsf run` 在项目目录里要先构建再运行，而构建逻辑在 [cmdBuild] 里——它原来只打印。
+     * 与其把整段构建流程再抄一遍，不如让它把结果留在这里，`run` 直接取。
+     * `Cli` 是一次性命令对象，这点状态不会跨命令泄漏。
+     */
+    internal var lastBuilt: List<BuiltArtifact> = emptyList()
+
     fun run(argv: List<String>): Int {
         if (argv.isEmpty()) return repl()
         return when (val cmd = argv[0]) {

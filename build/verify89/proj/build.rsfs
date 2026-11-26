@@ -1,0 +1,12 @@
+// cargo run 那套：rsf run 先构建，再跑产物
+target {
+    exe("@/src/main.rsf")
+    jar("@/src/tool.rsf")
+}
+
+#build {
+    out("build/out")
+}
+
+fn main() -> void {
+}

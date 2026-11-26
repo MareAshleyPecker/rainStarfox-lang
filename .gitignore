@@ -288,3 +288,11 @@ gmon.out
 !/build/verify88/**/*.sh
 !/build/verify88/**/*.rsf
 !/build/verify88/**/*.rsfs
+
+### 判据台（阶段 84：rsf run 的 cargo run 语义）###
+!/build/verify89/
+/build/verify89/**
+!/build/verify89/**/
+!/build/verify89/**/*.sh
+!/build/verify89/**/*.rsf
+!/build/verify89/**/*.rsfs

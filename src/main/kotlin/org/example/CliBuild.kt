@@ -30,6 +30,9 @@ import org.example.meta.RsfMeta
 import java.io.File
 import kotlin.system.exitProcess
 
+/** 一次构建产出的一个产物：它的目标声明与落盘文件。`rsf run` 靠它挑要跑哪个。 */
+data class BuiltArtifact(val spec: TargetSpec, val file: File)
+
 internal fun Cli.cmdBuild(rest: List<String>): Int {
         var outDir = File("out")
         /** 用户显式给了 `-o` 吗？项目模式（build.rsfs）没给时用 `build/out`。 */
@@ -283,19 +286,23 @@ internal fun Cli.cmdBuild(rest: List<String>): Int {
      */
 internal fun Cli.buildPlanned(host: ProjectBuildHost, meta: Boolean) {
         val plan = host.plan()
+        lastBuilt = emptyList()
         if (plan.isEmpty()) {
-            println("[rsf] 目标表是空的：构建脚本既没写 #target 块，也没调 target(...)，没有产物可出")
+            println("[rsf] 目标表是空的：构建脚本既没写 target 块，也没调 target(...)，没有产物可出")
             return
         }
         val ordered = plan.ordered()
         println("[rsf] 构建顺序：" + ordered.joinToString(" -> ") { it.name })
         val outRoot = host.resolveInProject(host.outDir())
         outRoot.mkdirs()
-        for (spec in ordered) buildOne(host, spec, outRoot, meta)
+        // 记下来给 `rsf run` 用：cargo run 那套语义要先知道「刚出了哪些产物」
+        val built = ArrayList<BuiltArtifact>()
+        for (spec in ordered) built.add(BuiltArtifact(spec, buildOne(host, spec, outRoot, meta)))
+        lastBuilt = built
     }
 
     /** 出一个目标。[spec] 的源路径与产物路径都按项目根解析。 */
-internal fun Cli.buildOne(host: ProjectBuildHost, spec: TargetSpec, outRoot: File, meta: Boolean) {
+internal fun Cli.buildOne(host: ProjectBuildHost, spec: TargetSpec, outRoot: File, meta: Boolean): File {
         val src = host.resolveInProject(spec.src)
         if (!src.isFile) {
             throw RsfError(
@@ -355,6 +362,7 @@ internal fun Cli.buildOne(host: ProjectBuildHost, spec: TargetSpec, outRoot: Fil
         }
         val ms = System.currentTimeMillis() - started
         println("[rsf] 目标 ${spec.name}（${spec.kind.keyword}）-> ${produced.path}（${ms} ms）")
+        return produced
     }
 
     /** 显式产物路径：把刚出的文件搬过去（同目录时什么都不做）。 */

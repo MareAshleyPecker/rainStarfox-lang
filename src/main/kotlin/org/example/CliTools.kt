@@ -28,7 +28,41 @@ import kotlin.system.exitProcess
 
     /** 解释执行：不生成任何 .class。 */
 internal fun Cli.cmdRun(rest: List<String>): Int {
-        val file = requireFile(rest.firstOrNull(), "run <file.rsf>")
+        // 阶段 84：`rsf run` 在项目目录里变成 cargo run——先构建，再跑产物。
+        // 单个文件（`rsf run a.rsf`）保持原语义：解释执行，不构建。
+        var bin: String? = null
+        val programArgs = ArrayList<String>()
+        val positional = ArrayList<String>()
+        var i = 0
+        var afterDoubleDash = false
+        while (i < rest.size) {
+            val a = rest[i]
+            when {
+                afterDoubleDash -> programArgs.add(a)
+                a == "--" -> afterDoubleDash = true
+                a == "--bin" -> {
+                    bin = rest.getOrNull(i + 1)
+                        ?: throw org.example.complie.diag.RsfError("cli", "--bin 后面要跟产物名")
+                    i++
+                }
+                a.startsWith("-") -> throw org.example.complie.diag.RsfError(
+                    "cli",
+                    "run 不认识参数 '$a'。用法：rsf run [<file.rsf>] [--bin <产物名>] [-- 程序参数…]",
+                )
+                else -> positional.add(a)
+            }
+            i++
+        }
+        if (positional.isEmpty() && java.io.File("build.rsfs").isFile) {
+            return runProject(bin, programArgs)
+        }
+        if (positional.isEmpty()) {
+            throw org.example.complie.diag.RsfError(
+                "cli",
+                "用法: rsf run <file.rsf>（在一个有 build.rsfs 的项目目录里可以不带文件名：先构建再运行）",
+            )
+        }
+        val file = requireFile(positional.firstOrNull(), "run <file.rsf>")
         val loaded = Rsf.load(file)
         val model = Rsf.analyze(loaded)
         for (warning in model.warnings) System.err.println("[rsf] 警告: $warning")
@@ -205,3 +239,43 @@ internal fun Cli.cmdLex(rest: List<String>): Int {
 internal fun Cli.requireEntry(model: SemanticModel) {
         model.entryProblem?.let { throw RsfError("checker", it) }
     }
+
+/**
+ * `rsf run` 的项目模式：先跑构建（四阶段），再从产物里挑一个来运行。
+ *
+ * 挑法照 cargo 的规矩：只有一个可运行的产物就跑它；有多个就用 `--bin 名字` 指定。
+ * 可运行 = `exe`（native 二进制）或 `jar`（JVM 包）；`lib` / `copy` 不是程序。
+ */
+internal fun Cli.runProject(bin: String?, programArgs: List<String>): Int {
+    lastBuilt = emptyList()
+    val rc = cmdBuild(emptyList())
+    if (rc != 0) return rc
+    val runnable = lastBuilt.filter { it.spec.kind == org.example.build.TargetKind.EXE || it.spec.kind == org.example.build.TargetKind.JAR }
+    if (runnable.isEmpty()) {
+        throw org.example.complie.diag.RsfError(
+            "build",
+            "目标表里没有可运行的产物：rsf run 要的是 exe 或 jar，" +
+                "现在只有 ${lastBuilt.joinToString("、") { "${it.spec.name}（${it.spec.kind.keyword}）" }}",
+        )
+    }
+    val chosen = when {
+        bin != null -> runnable.firstOrNull { it.spec.name == bin }
+            ?: throw org.example.complie.diag.RsfError(
+                "build",
+                "没有叫 '$bin' 的可运行产物。可选的：${runnable.joinToString("、") { it.spec.name }}",
+            )
+        runnable.size == 1 -> runnable.first()
+        else -> throw org.example.complie.diag.RsfError(
+            "build",
+            "有多个可运行的产物：${runnable.joinToString("、") { it.spec.name }}。" +
+                "用 rsf run --bin <名字> 指定一个",
+        )
+    }
+    val cmd = when (chosen.spec.kind) {
+        org.example.build.TargetKind.EXE -> listOf(chosen.file.path)
+        else -> listOf("java", "-jar", chosen.file.path)
+    } + programArgs
+    println("[rsf] 运行: ${cmd.joinToString(" ")}")
+    val process = ProcessBuilder(cmd).inheritIO().start()
+    return process.waitFor()
+}
