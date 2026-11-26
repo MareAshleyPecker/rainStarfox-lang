@@ -272,6 +272,9 @@ class Checker(
         // 两处的报错文案会一起出现在用户改代码的第一轮里。
         checkOverrides()
         for (fn in program.functions) {
+            // 阶段 84：extern 函数只有签名（体在 C 那边），既没有东西可检查，
+            // 也没有东西可降级——它的返回类型直接从声明上取（见 declareFunctions）。
+            if (fn.isExtern) continue
             checkFunction(fn)
         }
         checkInterfaceBodies()
@@ -484,6 +487,15 @@ class Checker(
             // 阶段 14：`!T` 的语义是「正常路径返回 T，出错时走异常」——返回类型本身不用额外
             // 表示（returnTypes 里存的就是那个 T）。真正的约束在**调用方**：调用 !T 函数必须
             // 显式处理错误，见 requireErrorHandled。
+            // 阶段 84：extern 函数不走 rsf 的错误模型（它直接调 C 符号，没有 longjmp 这一层），
+            // 所以 `!T` 在它身上没有意义——现在就拒，别等生成代码时才炸。
+            if (fn.isExtern && fn.ret.mayError) {
+                throw err(
+                    "extern 函数不能写 '!${fn.ret.type.name}'：调的是 C 符号，失败与否由它在 C 里决定" +
+                        "（C 侧没有 rsf 的 longjmp 错误通道）。要区分成败就让它返回 Int 当错误码",
+                    fn.ret.at,
+                )
+            }
             returnTypes[fn] = resolveType(fn.ret.type)
             typeParams = savedTypeParams
         }

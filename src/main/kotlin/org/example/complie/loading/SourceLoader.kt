@@ -5,6 +5,7 @@ import org.example.complie.diag.RsfError
 import org.example.complie.diag.SourceFile
 import org.example.complie.directives.BuildSettings
 import org.example.complie.directives.DepEntry
+import org.example.complie.directives.DepKind
 import org.example.complie.directives.DirectiveRule
 import org.example.complie.directives.DirectiveTarget
 import org.example.complie.lexing.Lexer
@@ -314,7 +315,17 @@ class SourceLoader {
             when (imp) {
                 is ClassImport -> classImports.add(imp.path)
 
-                is SourceImport -> loadFile(resolvePath(imp.path, dir, imp), null)
+                is SourceImport -> {
+                    val resolved = resolvePath(imp.path, dir, imp)
+                    // 阶段 84：`import "native/util.c"` / `"util.h"` 不是 rsf 源码，
+                    // 而是 C 依赖——`.c` 进链接（等于 cInclude）、`.h` 只进 `-I`（等于 hInclude）。
+                    // 这是**唯一**按扩展名分流的地方：别的扩展名照旧当源码。
+                    when (resolved.extension.lowercase()) {
+                        "c" -> deps.add(DepEntry(DepKind.C, depPath(resolved)))
+                        "h" -> deps.add(DepEntry(DepKind.H, depPath(resolved)))
+                        else -> loadFile(resolved, null)
+                    }
+                }
 
                 is ModuleImport -> {
                     val moduleDir = resolveDir(imp.path, dir, imp)
@@ -342,6 +353,16 @@ class SourceLoader {
      * 这样跨层引用不用写 `../../..`，层级一变也不用改：`@/rsfSrc/core/Vec.rsf`。
      * 工程里没有 build.rsfs 时退回本次加载的根目录。
      */
+    /** 从 [from] 往上找带 `build.rsfs` 的目录；没有项目就返回 null（`@/` 那种情况要求必须有）。 */
+    private fun findProjectRoot(from: File): File? {
+        var d: File? = from.absoluteFile
+        while (d != null) {
+            if (File(d, "build.rsfs").isFile) return d
+            d = d.parentFile
+        }
+        return null
+    }
+
     private fun projectRoot(from: File): File {
         var d: File? = from.absoluteFile
         while (d != null) {
@@ -349,6 +370,22 @@ class SourceLoader {
             d = d.parentFile
         }
         return rootDir ?: from.absoluteFile
+    }
+
+    /**
+     * 依赖清单里的路径：**相对项目根**（和 `#dep`、`@/` 同一套基准）。
+     *
+     * 不在项目里（比如系统里的 `.h`）就退回绝对路径——锁文件里至少还是一个能定位的路径。
+     */
+    private fun depPath(file: File): String {
+        // 有 build.rsfs 就相对项目根（与 `@/`、`#dep` 同一套基准）；没有项目就相对**当前目录**
+        // ——构建命令解析依赖时用的就是当前目录，两边必须同基准，否则清单里的路径指回别处。
+        val root = findProjectRoot(file.parentFile ?: file) ?: File(".").absoluteFile
+        return try {
+            file.absoluteFile.normalize().relativeTo(root.absoluteFile.normalize()).path
+        } catch (e: IllegalArgumentException) {
+            file.absolutePath
+        }
     }
 
     private fun resolvePath(path: String, fromDir: File, imp: ImportDecl): File {

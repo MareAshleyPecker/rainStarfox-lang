@@ -117,7 +117,11 @@ class CBackend(
             if (table != null) sb.append(table)
         }
         sb.append('\n')
-        for (fn in model.functions.sortedBy { it.name }) sb.append(definition(fn, null))
+        for (fn in model.functions.sortedBy { it.name }) {
+            // 外部 C 函数没有体，只有上面那条原型
+            if (fn.isExtern) continue
+            sb.append(definition(fn, null))
+        }
         for (cls in classes.values) {
             for (fn in cls.methods) sb.append(definition(fn, cls))
             if (defaultCtorNames.containsKey(cls)) sb.append(defaultConstructor(cls))
@@ -531,8 +535,10 @@ class CBackend(
     private fun protoTop(fn: FuncDecl): String {
         val params = paramTypesOf(fn)
         val v = if (volatileLocals) "volatile " else ""
+        // 阶段 84：extern 用 C 里的**原名**，不加 `rsf_fn_` 前缀——要调的就是外部那个符号
+        val name = if (fn.isExtern) fn.name else fnName(fn)
         val list = fn.params.mapIndexed { i, p -> "$v${cType(params[i])} ${paramName(p.name)}" }
-        return "${cType(returnType(fn))} ${fnName(fn)}(${list.joinToString(", ").ifEmpty { "void" }})"
+        return "${cType(returnType(fn))} $name(${list.joinToString(", ").ifEmpty { "void" }})"
     }
 
     private fun protoMember(cls: ClassDecl, fn: FuncDecl): String {
@@ -1415,6 +1421,8 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
         }
         val target = model.callTargets[e] ?: fail("调用 '${e.name}'")
         val args = argsWithExpected(e.arguments, paramTypesOf(target))
+        // 阶段 84：extern 函数按 C 原名直接调（上面已经发过原型，链接时由 cInclude 的 .c 提供）
+        if (target.isExtern) return "${target.name}($args)"
         return "${fnName(target)}($args)"
     }
 

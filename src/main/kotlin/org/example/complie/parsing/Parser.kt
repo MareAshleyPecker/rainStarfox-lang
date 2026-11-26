@@ -1907,6 +1907,7 @@ class Parser(
         var declTarget = BuildTarget.BOTH
         var targetTok: Token? = null
         var exported = false
+        var isExtern = false
         while (true) {
             val m = peek()
             if (m.kind.isControlKeyword) {
@@ -1928,6 +1929,19 @@ class Parser(
                 }
                 if (exported) throw error(m, "'export' 写了两次")
                 exported = true
+                advance()
+                continue
+            }
+            // 阶段 84：`extern fn 名字(...) -> Ret` —— 外部 C 函数声明（只有签名）。
+            if (m.kind == TokenKind.KW_EXTERN) {
+                if (!allowExport) {
+                    throw error(m, "'extern' 只能写在顶层函数上：它声明的是外部 C 符号，方法没有这个身份")
+                }
+                if (isExtern) throw error(m, "'extern' 写了两次")
+                if (declTarget == BuildTarget.JVM) {
+                    throw error(m, "'extern' 与 'jvm' 不能一起写：外部 C 函数只存在于 native 侧")
+                }
+                isExtern = true
                 advance()
                 continue
             }
@@ -2127,7 +2141,25 @@ class Parser(
         // - 类里的 `abstract fun`（阶段 25）：同理，只写签名。**但返回子句必须写出来**，
         //   否则「省略返回子句 = void」这条规则与抽象方法撞在一起就分不清是不是漏写了体；
         // - 其余任何地方都要求有体。
-        val body: Block? = if (allowAbstractBody && !check(TokenKind.LBRACE)) {
+        val body: Block? = if (isExtern) {
+            // 外部 C 函数只有签名：不许有体，且返回子句必须写出来（和抽象方法同一个理由——
+            // 省了就分不清「返回 void」与「忘了写」）。
+            if (check(TokenKind.LBRACE)) {
+                throw error(
+                    peek(),
+                    "'extern' 函数只写签名：extern fn ${nameTok.lexeme}(...) -> 返回类型。" +
+                        "函数体在 C 那边，把 '{ ... }' 删掉",
+                )
+            }
+            if (ret.style == ReturnStyle.OMITTED) {
+                throw error(
+                    peek(),
+                    "extern 函数要写出返回子句：'extern fn ${nameTok.lexeme}(...) -> 返回类型'" +
+                        "（写 void 也要写出来：extern fn ${nameTok.lexeme}(...) -> void）",
+                )
+            }
+            null
+        } else if (allowAbstractBody && !check(TokenKind.LBRACE)) {
             // 接口里的方法天然是抽象的（没有体）。泛型方法在 v1 里不能是抽象方法，
             // 这条分支就是「接口里只写签名的泛型方法」——同样是 DESIGN-31 的禁区。
             if (typeParamSig.names.isNotEmpty()) {
@@ -2175,6 +2207,7 @@ class Parser(
             target = declTarget,
             exported = exported,
             receiverType = receiver,
+            isExtern = isExtern,
         )
     }
 

@@ -115,6 +115,19 @@ class BytecodeCompiler(
      * 也不需要临时目录。
      */
     fun compileBytes(className: String, meta: ByteArray? = null): List<Pair<String, ByteArray>> {
+        // 阶段 84：extern 是「外部 C 函数」，只有 native 侧能把它变成一次 C 调用。
+        // 编成 .class 时它既没有体也没有对应物，早报比让 JVM 在运行期 NoSuchMethodError 好。
+        for (fn in model.functions) {
+            if (fn.isExtern) {
+                throw RsfError(
+                    "codegen",
+                    "'extern fn ${fn.name}(...)' 只有 native 侧才有：它声明的是外部 C 符号" +
+                        "（函数体在 .c 里，由 cInclude 链接进来），JVM 上没有这个符号。" +
+                        "用 'rsf build --c' 构建，或者把它挪进 native 侧",
+                    fn.at.line, fn.at.column, null,
+                )
+            }
+        }
         // 阶段 25 K2：K1 在这里的那道守卫（「带父类的类还不能 build」）已经撤掉——
         // 带父类的类现在真的生成 extends、父类构造链、父链字段与虚分派。
         programInternalName = className

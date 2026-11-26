@@ -437,6 +437,15 @@ data class FuncDecl(
      */
     val isOverride: Boolean = false,
     /**
+     * 写没写 `extern`（阶段 84）：**外部 C 函数的声明**，只有签名没有体。
+     *
+     * 和 [body] 为 null 是同一件事的两个面：`extern fn util_ok() -> Int` 解析出来
+     * 就是「无体 + isExtern」。下游据此分流——Checker 不求值、C 后端发原型并直接调用、
+     * JVM/解释器显式拒绝。名字在 C 里**不加前缀**（`rsf_fn_` 只用于 rsf 自己的函数），
+     * 因为要调的就是外部那个符号。
+     */
+    val isExtern: Boolean = false,
+    /**
      * 显式写了 `final`（阶段 25；阶段 27 起它是**唯一**的收窄手段）：禁止被子类覆盖。
      *
      * 阶段 27 反转了旧法：方法**默认可覆盖**，只有写了 `final` 才封（DESIGN-27）。

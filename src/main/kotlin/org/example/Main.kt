@@ -11,6 +11,7 @@ import org.example.complie.codegen.disassemble
 import org.example.complie.diag.RsfError
 import org.example.complie.diag.SourceFile
 import org.example.complie.interp.Interpreter
+import org.example.complie.directives.DepEntry
 import org.example.complie.directives.DepKind
 import org.example.complie.interp.RsfFailure
 import org.example.complie.loading.LoadedProgram
@@ -343,7 +344,11 @@ class Cli {
             if (cLib) {
                 println("[rsf] 这是库（没有 main）: gcc -c ${out.path} -o ${File(outDir, "$name.o").path}")
             } else if (link) {
-                linkExe(out, outDir, name)
+                linkExe(
+                    out, outDir, name,
+                    extraSources = depFiles(loaded.deps, DepKind.C) { File(it) },
+                    includeDirs = depFiles(loaded.deps, DepKind.H) { File(it) }.mapNotNull { it.parentFile },
+                )
             } else {
                 println("[rsf] 编译: gcc ${out.path} -o ${File(outDir, "$name.exe").path} -lm")
             }
@@ -802,7 +807,13 @@ class Cli {
                 val model = Rsf.analyze(loaded)
                 for (warning in model.warnings) System.err.println("[rsf] 警告: $warning")
                 val cFile = emitNative(loaded, model, spec.name, outRoot, metaBlobOf(loaded, "native", spec.name, meta), withEntry = true)
-                val exe = linkExe(cFile, outRoot, spec.name)
+                val exe = linkExe(
+                    cFile, outRoot, spec.name,
+                    extraSources = (depFiles(loaded.deps, DepKind.C) { host.resolveInProject(it) } + host.cDeps())
+                        .distinctBy { it.absolutePath },
+                    includeDirs = (depFiles(loaded.deps, DepKind.H) { host.resolveInProject(it) } + host.hDeps())
+                        .mapNotNull { it.parentFile }.distinctBy { it.absolutePath },
+                )
                 relocate(exe, dest)
             }
             // lib：只编成目标文件，不链接（给别人 `gcc app.o` 用）
@@ -811,7 +822,14 @@ class Cli {
                 val model = Rsf.analyze(loaded)
                 for (warning in model.warnings) System.err.println("[rsf] 警告: $warning")
                 val cFile = emitNative(loaded, model, spec.name, outRoot, metaBlobOf(loaded, "native", spec.name, meta), withEntry = false)
-                relocate(compileObject(cFile, outRoot, spec.name), dest)
+                relocate(
+                    compileObject(
+                        cFile, outRoot, spec.name,
+                        includeDirs = (depFiles(loaded.deps, DepKind.H) { host.resolveInProject(it) } + host.hDeps())
+                            .mapNotNull { it.parentFile }.distinctBy { it.absolutePath },
+                    ),
+                    dest,
+                )
             }
             // jar：JVM 后端 + 打包（和单文件模式的 --jar 完全同一条路）
             TargetKind.JAR -> {
@@ -862,11 +880,35 @@ class Cli {
         return out
     }
 
-    /** 调系统 C 编译器链接出可执行文件；失败时把命令原样打出来，方便手调。 */
-    private fun linkExe(cFile: File, outDir: File, name: String): File {
+    /**
+     * 调系统 C 编译器链接出可执行文件；失败时把命令原样打出来，方便手调。
+     *
+     * [extraSources] 是依赖清单里的 `.c`（`cInclude` 或 `import "x.c"`）——extern 函数
+     * 的实体就在里面；[includeDirs] 是 `hInclude` 那些头文件所在的目录（`-I`）。
+     */
+    /** 依赖清单里某一类的文件（按 [resolve] 解路径，去掉不存在与重复）。 */
+    private fun depFiles(deps: List<DepEntry>, kind: DepKind, resolve: (String) -> File): List<File> =
+        deps.filter { it.kind == kind }
+            .map { resolve(it.target) }
+            .filter { it.isFile }
+            .distinctBy { it.absolutePath }
+
+    private fun linkExe(
+        cFile: File,
+        outDir: File,
+        name: String,
+        extraSources: List<File> = emptyList(),
+        includeDirs: List<File> = emptyList(),
+    ): File {
         val exe = File(outDir, if (isWindows()) "$name.exe" else name)
         val cc = System.getenv("CC") ?: "gcc"
-        val cmd = listOf(cc, "-std=c11", "-O1", "-w", cFile.path, "-o", exe.path, "-lm")
+        val cmd = ArrayList<String>()
+        cmd += listOf(cc, "-std=c11", "-O1", "-w")
+        for (dir in includeDirs.distinct()) cmd += "-I${dir.path}"
+        cmd += cFile.path
+        for (src in extraSources.distinctBy { it.path }) cmd += src.path
+        cmd += listOf("-o", exe.path, "-lm")
+        cmd as List<String>
         println("[rsf] 链接: ${cmd.joinToString(" ")}")
         val rc = ProcessBuilder(cmd).inheritIO().start().waitFor()
         if (rc != 0) throw RsfError("build", "链接失败（${cc} 退出码 $rc）：${cmd.joinToString(" ")}")
@@ -874,11 +916,15 @@ class Cli {
         return exe
     }
 
-    /** `gcc -c` 出一个目标文件（`lib` 种类的产物）。 */
-    private fun compileObject(cFile: File, outDir: File, name: String): File {
+    /** `gcc -c` 出一个目标文件（`lib` 种类的产物；`-I` 不能少，否则头文件找不到）。 */
+    private fun compileObject(cFile: File, outDir: File, name: String, includeDirs: List<File> = emptyList()): File {
         val obj = File(outDir, if (isWindows()) "$name.obj" else "$name.o")
         val cc = System.getenv("CC") ?: "gcc"
-        val cmd = listOf(cc, "-std=c11", "-O1", "-w", "-c", cFile.path, "-o", obj.path)
+        val cmd = ArrayList<String>()
+        cmd += listOf(cc, "-std=c11", "-O1", "-w", "-c")
+        for (dir in includeDirs.distinct()) cmd += "-I${dir.path}"
+        cmd += listOf(cFile.path, "-o", obj.path)
+        cmd as List<String>
         println("[rsf] 编译: ${cmd.joinToString(" ")}")
         val rc = ProcessBuilder(cmd).inheritIO().start().waitFor()
         if (rc != 0) throw RsfError("build", "编目标文件失败（${cc} 退出码 $rc）：${cmd.joinToString(" ")}")

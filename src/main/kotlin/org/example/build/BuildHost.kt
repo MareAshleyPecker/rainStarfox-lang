@@ -224,8 +224,17 @@ class ProjectBuildHost(
     private var installedJars: List<File> = emptyList()
     private var installedOnce = false
 
-    /** 清单里的 `java(...)` 路径（相对项目根）。 */
+    /** 清单里的 `javaInclude(...)` 路径（相对项目根）。 */
     fun javaDeps(): List<String> = collectedDeps.filter { it.kind == DepKind.JAVA }.map { it.target }
+
+    /** 清单里的 C 源文件（绝对路径；链接时要交给 gcc）。 */
+    fun cDeps(): List<File> = filesOf(DepKind.C)
+
+    /** 清单里的 C 头文件（绝对路径；它们的目录要进 `-I`）。 */
+    fun hDeps(): List<File> = filesOf(DepKind.H)
+
+    private fun filesOf(kind: DepKind): List<File> =
+        collectedDeps.filter { it.kind == kind }.map { resolveInProject(it.target) }.filter { it.isFile }
 
     override fun need(from: String, to: String) {
         if (from.isBlank() || to.isBlank()) throw RsfError("build", "need(\"$from\", \"$to\")：两个参数都要写")

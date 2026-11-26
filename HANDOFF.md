@@ -211,3 +211,32 @@ jar 目标 `java -jar build/out/tool.jar` 打印正常。
    「构建脚本调 jar」只是口号；
 3. `#target` 里写 `need` 行（现在是 main 里才能写），以及 `--list` 只看计划不构建；
 4. `compile()` / `compileAll()` 与目标表的关系收口：明确「compile 立即编、target 进计划」。
+
+## 9. rsf 调 C（阶段 84 收口：extern fn + import 的 .c/.h）
+
+```rsf
+import "native/util.c"      // 等于 cInclude：这个 .c 进链接
+import "native/util.h"      // 等于 hInclude：它的目录进 -I
+
+extern fn util_add(a : Int, b : Int) -> Int   // 只有签名，体在 util.c
+
+fn main() -> void {
+    println("C 说：" + intToString(util_add(40, 2)))   // 42
+}
+```
+
+- `extern` 是**顶层函数**修饰词（和 `export` 同一个位置），解析出来是「无体 + `isExtern`」；
+  返回子句**必须写**（和抽象方法同一个理由），`!T` 被拒（C 侧没有 rsf 的 longjmp 通道）。
+- C 后端：原型用 **C 原名**（不加 `rsf_fn_`），调用点也按原名调；不生成函数定义。
+- JVM 侧（字节码 / 解释器）**显式拒绝**：`extern` 在 JVM 上没有对应物。
+- `import` 的 `.c` / `.h` 在装载器里按扩展名分流进依赖清单（`.rsf`/`.rsfs` 以外的扩展名
+  只有这两种有意义；别的照旧当源码，找不到就报错）。
+- 依赖路径的基准：**有 `build.rsfs` 就相对项目根，否则相对当前目录**——必须和构建命令
+  解析依赖的基准一致，否则清单里的 `../native/util.c` 会被解析到别处。
+
+判据：`build/verify86/run.sh`（gcc 命令行里有 `-I` 与 `.c`、真调到 C 函数、生成的 .c 里
+没有 `rsf_fn_` 前缀、JVM 侧报错）。手工另验过单文件模式 `rsf build src/main.rsf --c --link`。
+
+**已知缺口**：自举侧的 `Lexer.rsf`/`Parser.rsf` 还不认识 `extern`（它连 `#dep`/`#def`
+那一套指令都没有）。所以在自举派上用场之前，含 `extern` 的源码只能由 Kotlin 侧编译。
+等 bootstrap 补语法时，这条要和其它指令一起补，不是单独一刀。

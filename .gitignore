@@ -270,3 +270,13 @@ gmon.out
 !/build/verify85/**/*.sh
 !/build/verify85/**/*.rsf
 !/build/verify85/**/*.rsfs
+
+### 判据台（阶段 84：extern fn 调 C）###
+!/build/verify86/
+/build/verify86/**
+!/build/verify86/**/
+!/build/verify86/**/*.sh
+!/build/verify86/**/*.rsf
+!/build/verify86/**/*.rsfs
+!/build/verify86/**/*.c
+!/build/verify86/**/*.h

@@ -353,3 +353,39 @@ keywords and builtins, never the classes you just added a jar for.
 `demo.Util`), dropping inner classes (`$`), `module-info`/`package-info` and
 `META-INF`, capped at 300. No dependency jars in the project -> returns null and
 the ordinary candidate list is used, so nothing changes for projects without jars.
+
+## Calling C from rsf — `extern fn`, and `.c` / `.h` through `import`
+
+The last hole in the build line was that `cInclude` / `hInclude` declared things
+nobody consumed: gcc never saw the `.c` files, `-I` never appeared, and rsf had
+no way to declare an external C function in the first place.
+
+Now:
+
+```rsf
+import "native/util.c"
+import "native/util.h"
+
+extern fn util_add(a : Int, b : Int) -> Int
+```
+
+`extern` is a top-level function modifier, same slot as `export`. It parses to
+"no body + `isExtern`"; the return clause is mandatory (same reasoning as abstract
+methods: otherwise "void" and "forgot to write" are indistinguishable), and `!T`
+is rejected at declaration time because the C side has no longjmp channel.
+
+C backend: the prototype uses the **C name** (no `rsf_fn_` prefix), the call site
+calls it by that name, and no definition is emitted. Bytecode and the interpreter
+reject extern explicitly — on the JVM the symbol simply does not exist.
+
+`import` routes `.c` / `.h` into the dependency list in the loader; no lexer or
+parser change was needed for that half. The path base had a real bug: dependency
+paths were made relative to the load root while the build command resolves them
+against the current directory, so a single-file build silently dropped the `.c`
+(it stayed in the list as `../native/util.c`, which resolved to the wrong place).
+Both sides now use "project root if a build.rsfs exists, otherwise the current
+directory".
+
+Known gap, recorded in HANDOFF §9: the bootstrap lexer/parser do not know
+`extern` yet (they know no directives at all), so sources using it are
+Kotlin-only for now.

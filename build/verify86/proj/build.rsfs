@@ -1,0 +1,12 @@
+#target {
+    @/src/main.rsf -> exe
+}
+
+#build {
+    out("build/out")
+    target("c")
+}
+
+fn main() -> void {
+    println("只声明 exe，C 依赖由源码里的 import 带进来")
+}

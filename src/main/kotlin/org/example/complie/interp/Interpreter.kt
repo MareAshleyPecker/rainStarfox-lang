@@ -264,6 +264,13 @@ class Interpreter(
      * 这里只负责按参数类型做一次收敛（比如 Int 实参传给 Long 形参）。
      */
     fun call(fn: FuncDecl, args: List<Any?>): Any? {
+        // 阶段 84：extern 函数没有函数体，只有一次 C 调用——解释器跑在 JVM 上，没有那个符号。
+        if (fn.isExtern) {
+            throw RsfFailure(
+                "'extern fn ${fn.name}(...)' 只有 native 侧能跑：它调的是外部 C 函数，" +
+                    "解释器跑在 JVM 上。用 'rsf build --c --link' 构建后再运行",
+            )
+        }
         enter(fn.at, fn.name)
         try {
             val body = model.loweredOf(fn)
