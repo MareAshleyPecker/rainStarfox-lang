@@ -1354,7 +1354,7 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
             }
         }
         // 阶段 83：用户函数优先。Checker 记了 callTargets 就说明这个位置调的是用户函数
-        // （构建脚本专用内建 java / c / h / dir 不抢名字），不能被同名内建截走。
+        // （构建脚本专用内建 …Include 不抢名字），不能被同名内建截走。
         if (model.callTargets[e] == null) when (e.name) {
             "intToString" -> return "rsf_int_to_str(${expr(e.arguments[0])})"
             "memBytes" -> return "rsf_mem_bytes()"
@@ -1362,7 +1362,7 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
             "gcCollect" -> return "rsf_gc_collect()"
             // 阶段 81：构建脚本的宿主能力只有 `rsf build` 驱动 build.rsfs 时才有
             "outDir", "compile", "compileAll", "exec", "target", "need",
-                "java", "c", "h", "dir" ->
+                "javaInclude", "cInclude", "hInclude", "dirInclude" ->
                 fail("内置函数 ${e.name}（只有构建脚本里能用，产物里没有编译器可调）")
             "stringBytes" -> return "rsf_str_bytes(${expr(e.arguments[0])})"
             "byteLength" -> return "rsf_str_byte_len(${expr(e.arguments[0])})"

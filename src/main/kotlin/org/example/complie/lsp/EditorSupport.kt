@@ -1,5 +1,6 @@
 package org.example.complie.lsp
 
+import org.example.build.ProjectJars
 import org.example.complie.Rsf
 import org.example.complie.ast.*
 import org.example.complie.diag.RsfError
@@ -59,6 +60,8 @@ object EditorSupport {
     fun diagnostics(file: File, baseDir: File?, text: String? = null, script: Boolean = false): List<Located> {
         val out = ArrayList<Located>()
         try {
+            // 阶段 84：先按项目根判定「编辑器该看见哪些 jar」，再分析
+            ProjectJars.installFor(file)
             val loaded = Rsf.load(file, baseDir, text, script = script)
             val model = Rsf.analyze(loaded)
             for (d in model.diagnostics) {
@@ -137,6 +140,8 @@ object EditorSupport {
         var ownFunctions: List<FuncDecl> = emptyList()
         var allFunctions: List<FuncDecl> = emptyList()
         runCatching {
+            // 阶段 84：先按项目根判定「编辑器该看见哪些 jar」，再分析
+            ProjectJars.installFor(file)
             val loaded = Rsf.load(file, baseDir, text, script = script)
             allFunctions = loaded.functions
         }

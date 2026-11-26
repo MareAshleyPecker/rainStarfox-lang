@@ -3,6 +3,7 @@ package org.example.complie.interp
 import org.example.build.BuildHost
 import org.example.complie.ast.*
 import org.example.complie.diag.RsfError
+import org.example.complie.interop.ClassPath
 import org.example.complie.interop.JvmMethod
 import org.example.complie.interop.ResolvedField
 import org.example.complie.interop.ResolvedMethod
@@ -913,7 +914,7 @@ class Interpreter(
 
         return when (val target = model.memberOf(expr)) {
             is ResolvedField -> {
-                val owner = Class.forName(target.field.owner.replace('/', '.'))
+                val owner = ClassPath.loadClass(target.field.owner.replace('/', '.'))
                 val field = owner.getDeclaredField(target.field.name).also { it.isAccessible = true }
                 if (target.field.isStatic) {
                     field.get(null)
@@ -925,7 +926,7 @@ class Interpreter(
             }
 
             is ResolvedMethod -> {
-                val owner = Class.forName(target.method.owner.replace('/', '.'))
+                val owner = ClassPath.loadClass(target.method.owner.replace('/', '.'))
                 val paramClasses = target.method.paramTypes.map { toJavaClass(it) }.toTypedArray()
                 val method = publicMethod(owner, target.method.name, paramClasses)
                 val receiver = if (target.method.isStatic) null else eval(expr.receiver, slots, body)
@@ -1209,7 +1210,7 @@ class Interpreter(
                     "还没有建立它的 JDK 父类实例",
                 -1, -1, null,
             )
-        val owner = Class.forName(target.method.owner.replace('/', '.'))
+        val owner = ClassPath.loadClass(target.method.owner.replace('/', '.'))
         val paramClasses = target.method.paramTypes.map { toJavaClass(it) }.toTypedArray()
         val method = publicMethod(owner, target.method.name, paramClasses)
         return method.invoke(receiver, *jvmCallArguments(target.method, args))
@@ -1316,7 +1317,7 @@ class Interpreter(
         val m = call.member.method
         val receiver = jdkReceiver(self)
         val owner = try {
-            Class.forName(m.owner.replace('/', '.'))
+            ClassPath.loadClass(m.owner.replace('/', '.'))
         } catch (e: ClassNotFoundException) {
             throw RsfError(
                 "interp",
@@ -1504,7 +1505,7 @@ class Interpreter(
                     continue
                 }
                 val cls = try {
-                    Class.forName(sup.internalName.replace('/', '.'))
+                    ClassPath.loadClass(sup.internalName.replace('/', '.'))
                 } catch (_: Throwable) {
                     continue
                 }
@@ -1762,7 +1763,7 @@ class Interpreter(
                 "内部错误：${sup.superClass.display} '${sup.superClass.name}' 里没有匹配的构造器",
                 -1, -1, null,
             )
-        val owner = Class.forName(internal.replace('/', '.'))
+        val owner = ClassPath.loadClass(internal.replace('/', '.'))
         val paramClasses = chosen.paramTypes.map { toJavaClass(it) }.toTypedArray()
         val javaCtor = owner.getDeclaredConstructor(*paramClasses)
         val adapted = args.mapIndexed { i, v ->
@@ -1878,7 +1879,7 @@ class Interpreter(
         slots: Array<Any?>,
         body: LoweredFunction,
     ): Any {
-        val owner = Class.forName(ctor.owner.replace('/', '.'))
+        val owner = ClassPath.loadClass(ctor.owner.replace('/', '.'))
         val paramClasses = ctor.paramTypes.map { toJavaClass(it) }.toTypedArray()
         // try 版而不是 `isAccessible = true`：JDK 内部那些没 opens 出来的包
         // （`java.lang.AbstractStringBuilder` 之类）会让强制版直接抛异常
@@ -2095,7 +2096,7 @@ class Interpreter(
     private fun jvmClassOf(target: RsfType): Class<*>? {
         val dotted = model.jvmRuntimeNameOf(target)
         return try {
-            Class.forName(dotted)
+            ClassPath.loadClass(dotted)
         } catch (e: ClassNotFoundException) {
             null
         }
@@ -2128,7 +2129,7 @@ class Interpreter(
         // 数组（`Int[][]` 的组件是 `Int[]`）——递归下去自然就对了。
         type.isArray -> java.lang.reflect.Array.newInstance(toJavaClass(type.elementType), 0).javaClass
         // 用户自定义类在解释器里就是 RsfObject（它没有对应的 .class 可以去加载，
-        // Class.forName("Point") 会直接 ClassNotFoundException）。所以 `Point[]` /
+        // ClassPath.loadClass("Point") 会直接 ClassNotFoundException）。所以 `Point[]` /
         // `Box&<Int>[]` 的元素类型按 RsfObject 建数组——这是解释器**内部**的载体，
         // 对 rsf 语义没有影响（元素读写仍然只经 rsf 的类型检查）。
         type.isExternal && model.classModel.classes.containsKey(type.externalName) ->
@@ -2137,12 +2138,12 @@ class Interpreter(
         type.isExternal && model.interfaces.containsKey(type.externalName) ->
             RsfObject::class.java
         // 阶段 19c：枚举同理——枚举的「类」是编译期才生成出来的（解释器根本不生成 .class），
-        // `Class.forName("TokenKind")` 必然 ClassNotFoundException。解释器里枚举值的载体
+        // `ClassPath.loadClass("TokenKind")` 必然 ClassNotFoundException。解释器里枚举值的载体
         // 是 [RsfEnumValue] 单例，所以 `TokenKind[]` 按它建数组。
         // 这个 `.class` 是 JVM 上的真实类（编译器自己编译出来的），不是生成的产物，
         // 所以反射建数组没有问题；元素读写照旧只经 rsf 的类型检查。
         type.isExternal && model.isEnumType(type) -> RsfEnumValue::class.java
-        type.isExternal -> Class.forName(type.externalName!!.replace('/', '.'))
+        type.isExternal -> ClassPath.loadClass(type.externalName!!.replace('/', '.'))
         // 类型参数擦除到 Object：反射调用时按 Object 找方法
         type.isTypeParam -> java.lang.Object::class.java
         type.base == RsfBase.STRING -> String::class.java
@@ -2204,7 +2205,7 @@ class Interpreter(
         // 阶段 16：带签名的内置函数（toByte / toChar / charToInt / parseInt / isDigit…）
         //
         // 阶段 83：**用户函数优先**。Checker 已经把「这里调的是用户函数」记进
-        // callTargets（构建脚本专用内建 java / c / h / dir 不抢名字），如果这里还按名字
+        // callTargets（构建脚本专用内建 …Include 不抢名字），如果这里还按名字
         // 先认内建，普通程序里的 `fn c(x : Int)` 就会在运行期被内建截走。
         if (model.callTargets[expr] == null) {
             Builtins[expr.name]?.let { return evalBuiltin(expr, it, slots, body) }
@@ -2363,11 +2364,12 @@ class Interpreter(
             }
             // 阶段 83 步骤 2：规则体里的依赖声明。和 `#dep { … }` 进的是同一份清单，
             // 所以锁文件与存在性校验只有一条路。
-            "java", "c", "h", "dir" -> {
+            "javaInclude", "cInclude", "hInclude", "dirInclude" -> {
                 val host = buildHost ?: throw RsfFailure(
                     "'${builtin.name}' 只有构建脚本里能用：依赖清单由 'rsf build' 驱动 build.rsfs 时注入。",
                 )
-                host.declareDep(builtin.name, args[0] as String)
+                // 可以一次给多个路径（vararg）
+                for (arg in args) host.declareDep(builtin.name, arg as String)
                 null
             }
             "readBytes" -> fileCall(builtin.name, args[0] as String) {
@@ -2664,7 +2666,7 @@ class Interpreter(
         args.drop(from).map { it as String }
 
     private fun jvmClass(cls: String): Class<*> = try {
-        Class.forName(cls)
+        ClassPath.loadClass(cls)
     } catch (e: Throwable) {
         throw RsfFailure("jvmCall 失败：找不到类 '$cls'")
     }

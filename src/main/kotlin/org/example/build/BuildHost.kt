@@ -9,9 +9,11 @@ import org.example.complie.directives.DepEntry
 import org.example.complie.directives.DepKind
 import org.example.complie.lexing.Lexer
 import org.example.complie.native.CBackend
+import org.example.complie.interop.ClassPath
 import org.example.complie.parsing.Parser
 import org.example.meta.RsfMeta
 import java.io.File
+import java.net.URLClassLoader
 import java.security.MessageDigest
 
 /**
@@ -69,6 +71,55 @@ interface BuildHost {
  * @param meta   是否把源码快照打进产物（`--meta` 或 `#build { meta(true) }`）。
  * @param deps   `#dep` 声明的依赖，用于写 `.rsfdeps/lock.json`（见 [writeLock]）。
  */
+/**
+ * 一条依赖声明展开成若干条：**给目录就是里面同类型的文件**（阶段 84）。
+ *
+ * ```
+ * javaInclude("libs")            // libs 下的所有 .jar（按名字排序，顺序确定）
+ * javaInclude("a.jar", "b.jar")  // 各自一条
+ * cInclude("native")             // native 下的所有 .c
+ * hInclude("native")             // native 下的所有 .h
+ * dirInclude("res")              // 不展开：它本来就是「整个目录」
+ * ```
+ *
+ * 为什么在**声明时**展开而不是出产物时：锁文件要记具体文件（大小、哈希），
+ * 声明时展开，清单与磁盘就一一对应；代价是「先声明、后由 exec 生成」的目录
+ * 抓不到——那种情况把 `exec` 写在 include 之前。
+ *
+ * 路径不存在时**原样保留**这一条：报错的责任在 writeLock（一处报错，消息统一），
+ * 而不是在这里静默丢掉一个用户写错的名字。
+ */
+internal fun expandDep(entry: DepEntry, root: File): List<DepEntry> {
+    // rule 指向的是函数名；dirInclude 表示「整个目录」，都不是文件清单
+    if (entry.kind == DepKind.RULE || entry.kind == DepKind.DIR) return listOf(entry)
+    val path = if (entry.target.startsWith("@/")) entry.target.substring(2) else entry.target
+    val file = if (File(path).isAbsolute) File(path) else File(root, path)
+    if (!file.isDirectory) return listOf(entry)
+    val ext = when (entry.kind) {
+        DepKind.JAVA -> "jar"
+        DepKind.C -> "c"
+        DepKind.H -> "h"
+        else -> return listOf(entry)
+    }
+    val files = file.listFiles()
+        ?.filter { it.isFile && it.extension.equals(ext, ignoreCase = true) }
+        ?.sortedBy { it.name }
+        .orEmpty()
+    if (files.isEmpty()) return listOf(entry)
+    return files.map { DepEntry(entry.kind, relativeToRoot(it, root)) }
+}
+
+/** 项目内的文件记相对路径（锁文件才可移植）；不在项目里就记绝对路径。 */
+internal fun relativeToRoot(file: File, root: File): String {
+    val base = root.absoluteFile.normalize()
+    val target = file.absoluteFile.normalize()
+    return try {
+        target.relativeTo(base).path
+    } catch (e: IllegalArgumentException) {
+        target.path
+    }
+}
+
 class ProjectBuildHost(
     private val root: File = File("."),
     private val srcDir: File = File("src"),
@@ -81,7 +132,7 @@ class ProjectBuildHost(
     private val outDir: File = (if (outDir.isAbsolute) outDir else File(root, outDir.path)).normalize()
 
     /** 依赖：脚本自己声明的 + 每个被编译文件里声明的（`#dep` 可以写在任意源文件里）。 */
-    private val collectedDeps = LinkedHashSet<DepEntry>(deps)
+    private val collectedDeps = LinkedHashSet(deps.flatMap { expandDep(it, root) })
 
     /** 有没有依赖需要写锁文件。 */
     fun hasDeps(): Boolean = collectedDeps.isNotEmpty()
@@ -136,9 +187,45 @@ class ProjectBuildHost(
         if (path.isBlank()) throw RsfError("build", "$kind(\"\")：路径不能是空的")
         val depKind = DepKind.entries.firstOrNull { it.keyword == kind }
             ?: throw RsfError("build", "不认识的依赖种类 '$kind'")
-        // 和 #dep 块一样：声明只是声明，存在性留给 writeLock 统一校验
-        collectedDeps.add(DepEntry(depKind, path))
+        // 和 #dep 块一样：声明只是声明，存在性留给 writeLock 统一校验。
+        // 给目录的话在这里展开成里面的文件（多条路径来自 vararg，见解释器）。
+        var added = false
+        for (entry in expandDep(DepEntry(depKind, path), root)) {
+            if (collectedDeps.add(entry)) added = true
+        }
+        // 阶段 84：规则里**当场**声明的 jar 要立刻生效——后面 `compile()` 分析源码时
+        // Checker 就得能看见里面的类。已经装过的同一批路径不会重复装（见 installJars）。
+        if (added && depKind == DepKind.JAVA) installJars()
     }
+
+    /**
+     * 把清单里所有 `java(...)` 的 jar 装进 [ClassPath]（阶段 84）。
+     *
+     * 为什么不用 `-cp`：构建脚本要调的 jar 是**项目的一部分**（`#dep` 里声明、
+     * 跟着仓库走），不该要求用户先改启动命令。这里用 URLClassLoader，父加载器是
+     * 系统那个，所以 JDK 类照旧。
+     *
+     * 已经在清单里出现过的同一批路径不重复装（装一次就会清一次 ClassPath 的缓存）。
+     */
+    fun installJars() {
+        val jars = javaDeps().map { resolveInProject(it) }.filter { it.isFile }
+        if (jars.isEmpty()) {
+            if (installedOnce) ClassPath.installLoader(null)
+            return
+        }
+        if (installedOnce && jars == installedJars) return
+        val urls = jars.map { it.toURI().toURL() }.toTypedArray()
+        ClassPath.installLoader(URLClassLoader(urls, ClassLoader.getSystemClassLoader()))
+        installedJars = jars
+        installedOnce = true
+        println("[rsf] 依赖 jar: " + jars.joinToString("、") { it.name })
+    }
+
+    private var installedJars: List<File> = emptyList()
+    private var installedOnce = false
+
+    /** 清单里的 `java(...)` 路径（相对项目根）。 */
+    fun javaDeps(): List<String> = collectedDeps.filter { it.kind == DepKind.JAVA }.map { it.target }
 
     override fun need(from: String, to: String) {
         if (from.isBlank() || to.isBlank()) throw RsfError("build", "need(\"$from\", \"$to\")：两个参数都要写")

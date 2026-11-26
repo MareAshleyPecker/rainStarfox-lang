@@ -6,23 +6,23 @@ import org.example.complie.diag.WarningDirectives
 
 /** `#dep` 里一条依赖的种类。 */
 enum class DepKind(val keyword: String) {
-    JAVA("java"),
-    C("c"),
-    H("h"),
+    JAVA("javaInclude"),
+    C("cInclude"),
+    H("hInclude"),
     RULE("rule"),
 
     /**
-     * 整个目录：`dir("res")`（阶段 83）。
+     * 整个目录：`dirInclude("res")`（阶段 83）。
      *
      * 和别的种类不一样，它指的是**目录里的全部文件**（复制、打包资源时用），
      * 所以存在性校验看的是 `isDirectory`，锁文件里也只记路径不记哈希
      * （目录的哈希要遍历子树，v1 不值得）。
      */
-    DIR("dir"),
+    DIR("dirInclude"),
 }
 
 /**
- * `#dep` 块里的一条：`java("libs/foo.jar")` / `c("native/util.c")` / `h("native/util.h")` / `rule("依赖函数名")`。
+ * `#dep` 块里的一条：`java("libs/foo.jar")` / `cInclude("native/util.c")` / `hInclude("native/util.h")` / `rule("依赖函数名")`。
  *
  * [target] 对前三种是**相对项目根目录**的路径，对 [DepKind.RULE] 是顶层函数名。
  */
@@ -90,9 +90,9 @@ class ParsedDirectives(
  *
  * ```rsf
  * #dep {
- *     java("libs/gson.jar")
- *     c("native/util.c")
- *     h("native/util.h")
+ *     javaInclude("libs/gson.jar")
+ *     cInclude("native/util.c")
+ *     hInclude("native/util.h")
  * }
  * #build {
  *     out("build/native")

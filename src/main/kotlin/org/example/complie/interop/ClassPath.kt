@@ -516,7 +516,30 @@ object ClassPath {
         )
     }
 
-    private fun loader(): ClassLoader = ClassLoader.getSystemClassLoader()
+    /**
+     * 额外要查的 classloader（阶段 84：构建脚本声明的 jar 由它提供）。
+     *
+     * 没装时就是系统 classloader——那份 classpath 里本来就有 JDK 与本进程的类。
+     * 装上之后**先问它**（URLClassLoader 的父加载器是系统那个，所以 JDK 类照样找得到）。
+     */
+    private var extraLoader: ClassLoader? = null
+
+    fun installLoader(loader: ClassLoader?) {
+        extraLoader = loader
+        // 缓存里存的可能是「没找到」（null）。装上新 jar 之后同一个名字可能就有了，
+        // 所以换 loader 必须清缓存，否则「加个依赖就好了」会变成「重启才行」。
+        cache.clear()
+    }
+
+    private fun loader(): ClassLoader = extraLoader ?: ClassLoader.getSystemClassLoader()
+
+    /**
+     * 运行期加载一个类（解释器反射调用 Java 方法/构造器时用）。
+     *
+     * 走的是同一份 loader：`Class.forName(String)` 用的是**调用方**的 loader，
+     * 而 rsf 的调用方永远是本进程的 app loader——jar 装得再多也看不见。
+     */
+    fun loadClass(dotted: String): Class<*> = Class.forName(dotted, true, loader())
 
     /**
      * private / synthetic / bridge 的成员不收。

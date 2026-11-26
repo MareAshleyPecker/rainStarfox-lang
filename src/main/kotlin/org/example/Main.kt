@@ -232,6 +232,23 @@ class Cli {
             val buildScript = File("build.rsfs")
             if (buildScript.isFile) {
                 val loadedScript = Rsf.load(buildScript)
+                // 阶段 84：`#dep { java(...) }` 声明的 jar 必须在**分析之前**装上，
+                // 否则 Checker 看不见 jar 里的类，构建脚本也就调不到它们。
+                // 宿主先造出来（它只管路径与设置，不依赖分析结果），安装完再分析。
+                val (effOut0, effTarget0, effMeta0) = ProjectBuildHost.settings(
+                    build = loadedScript.build,
+                    cliOut = if (outGiven) outDir else null,
+                    cliC = cMode,
+                    cliMeta = meta,
+                )
+                val earlyHost = ProjectBuildHost(
+                    srcDir = File("src"),
+                    outDir = effOut0,
+                    target = effTarget0,
+                    meta = effMeta0,
+                    deps = loadedScript.deps,
+                )
+                earlyHost.installJars()
                 val scriptModel = Rsf.analyze(loadedScript)
                 for (warning in scriptModel.warnings) System.err.println("[rsf] 警告: $warning")
                 val problem = scriptModel.entryProblem

@@ -315,33 +315,33 @@ object Builtins {
     // ---------------------------------------------- 规则里的依赖声明（阶段 83 步骤 2）
 
     /**
-     * `java("libs/x.jar")` / `c("native/util.c")` / `h("native/util.h")` / `dir("res")`。
+     * `javaInclude("libs/x.jar")` / `cInclude("native/util.c")` / `hInclude("native/util.h")` / `dirInclude("res")`。
      *
      * 四个都只做一件事：往构建宿主的依赖清单里加一条（和 `#dep { … }` 块里那些同一张表）。
      * 有了它们，规则体才是「代码」——可以先 `exec` 生成、再按条件 `c(...)` 收文件，
      * 而不是只能写死在块里。
      *
-     * **名字只在构建脚本里占用**：`java` / `c` / `h` 都是很短的名字，普通程序里
-     * `fn c(...)` 照样能写（见 Checker 的 `BUILTINS_BUILD_ONLY`）。
+     * **名字只在构建脚本里占用**（见 Checker 的 `BUILTINS_BUILD_ONLY`）。改名成
+     * `…Include` 之后基本不会和用户函数撞车——`c` / `h` 这种单字母名字才是真的会撞。
      */
     val DEP_JAVA = Builtin(
-        "java", listOf(RsfType.STRING), RsfType.VOID, buildOnly = true,
-        doc = "声明一个 jar 依赖：java(\"libs/x.jar\")（只有构建脚本里能用）",
+        "javaInclude", listOf(RsfType.STRING), RsfType.VOID, buildOnly = true, vararg = true,
+        doc = "声明 jar 依赖：javaInclude(\"libs/x.jar\", \"libs\")；给目录就是里面所有 *.jar（只有构建脚本里能用）",
     )
 
     val DEP_C = Builtin(
-        "c", listOf(RsfType.STRING), RsfType.VOID, buildOnly = true,
-        doc = "声明一个 C 源文件依赖：c(\"native/util.c\")（只有构建脚本里能用）",
+        "cInclude", listOf(RsfType.STRING), RsfType.VOID, buildOnly = true, vararg = true,
+        doc = "声明 C 源文件依赖：cInclude(\"native/util.c\", \"native\")；给目录就是里面所有 *.c（只有构建脚本里能用）",
     )
 
     val DEP_H = Builtin(
-        "h", listOf(RsfType.STRING), RsfType.VOID, buildOnly = true,
-        doc = "声明一个 C 头文件依赖：h(\"native/util.h\")（只有构建脚本里能用）",
+        "hInclude", listOf(RsfType.STRING), RsfType.VOID, buildOnly = true, vararg = true,
+        doc = "声明 C 头文件依赖：hInclude(\"native/util.h\", \"native\")；给目录就是里面所有 *.h（只有构建脚本里能用）",
     )
 
     val DEP_DIR = Builtin(
-        "dir", listOf(RsfType.STRING), RsfType.VOID, buildOnly = true,
-        doc = "声明一个目录依赖：dir(\"res\")（只有构建脚本里能用）",
+        "dirInclude", listOf(RsfType.STRING), RsfType.VOID, buildOnly = true, vararg = true,
+        doc = "声明目录依赖：dirInclude(\"res\", \"assets\")；整个目录原样带走（只有构建脚本里能用）",
     )
 
     /** 带签名的内置函数（`print` / `println` 是单参数特例，签名不在这里表达）。 */

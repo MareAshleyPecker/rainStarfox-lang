@@ -1,5 +1,6 @@
 package org.example.complie.lsp
 
+import org.example.build.ProjectJars
 import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
@@ -385,6 +386,7 @@ class LanguageServer(
         val file = File(path)
         val baseDir = file.parentFile ?: File(".").absoluteFile
         return try {
+            ProjectJars.installFor(file)
             val loaded = org.example.complie.Rsf.load(file, baseDir, documents[uri]?.text, script = script)
             RsfSymbols.references(loaded, symbol, includeDeclaration).map { usage ->
                 val owner = if (sameFile(usage.file, path)) uri else pathToUri(usage.file)
@@ -403,6 +405,7 @@ class LanguageServer(
         val doc = documents[uri]
         return try {
             val baseDir = file.parentFile ?: File(".").absoluteFile
+            ProjectJars.installFor(file)
             val loaded = org.example.complie.Rsf.load(file, baseDir, doc?.text, script = script)
             val root = loaded.root
             val symbol = RsfSymbols.resolveAt(loaded, root, line0, character0) ?: return null

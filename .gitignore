@@ -261,3 +261,12 @@ gmon.out
 !/build/verify84/**/*.h
 # 占位 jar：只是让 java(...) 的依赖声明有实物可校验（不是真能加载的包）
 !/build/verify84/proj/libs/demo.jar
+
+### 判据台（阶段 84：jar 进分析期 classpath）###
+# jar 由脚本当场用 rsf 编出来再打包，仓库里只留脚本与源码
+!/build/verify85/
+/build/verify85/**
+!/build/verify85/**/
+!/build/verify85/**/*.sh
+!/build/verify85/**/*.rsf
+!/build/verify85/**/*.rsfs

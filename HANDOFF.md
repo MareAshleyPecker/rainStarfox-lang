@@ -156,10 +156,30 @@ import "build/rules.rsfs"
 - 规则和 main 在**同一个解释器实例**里跑（`runEntry(rules)` 先跑规则再跑入口），
   全局变量只初始化一次——否则 `const val X = readText(...)` 这种初值会被算两遍。
 - 规则体里能做的「计算」只有两类：`exec("…")` 与调用 rsf 函数 / 类。声明依赖用四个内建
-  `java(...)` / `c(...)` / `h(...)` / `dir(...)`，进的是和 `#dep { … }` **同一份清单**
-  （锁文件、存在性校验只有一条路；`dir` 校验 `isDirectory`、锁文件里不记哈希）。
+  `javaInclude(...)` / `cInclude(...)` / `hInclude(...)` / `dirInclude(...)`，进的是和 `#dep { … }` **同一份清单**
+  （锁文件、存在性校验只有一条路；`dirInclude` 校验 `isDirectory`、锁文件里不记哈希）。
+  四个都是 **vararg**，且**给目录就展开成里面同类型的文件**（声明时展开，所以锁文件记的是
+  具体文件；`javaInclude("libs")` = libs 下所有 `.jar`，`cInclude`/`hInclude` 同理）。
+  `dirInclude` 不展开——它表达的就是「整个目录」。
 
-`java` / `c` / `h` / `dir` 这些名字**只在 build.rsfs 里被占用**——普通程序里
+### jar 进分析期 classpath（阶段 84）
+
+`#dep { javaInclude("libs") }` 声明的 jar 由 rsf 自己装进分析期：`ClassPath` 加了一个可换的
+loader，`installLoader` 会**清缓存**（缓存里存过「没找到」，不清就会变成「重启才行」）。
+两处用同一个 loader：
+- 分析期读 `.class` 字节（ASM，`getResourceAsStream`，**不初始化类**）；
+- 解释器反射调用 Java 方法（`ClassPath.loadClass` 走 `Class.forName(name, true, loader())`——
+  原来那 12 处 `Class.forName` 全换了，否则 jar 里的类在运行期依然看不见）。
+
+时序上：`#dep` 里的 jar 在**分析构建脚本之前**装上（脚本自己就能 `import demo.Util`）；
+规则里 `javaInclude(...)` 当场声明的 jar 立刻生效（后续 `compile()` 就能看见），
+但对**已经分析过的**这份构建脚本无效——这是声明式指令与运行时声明不可避免的先后差。
+
+编辑器那一侧复用了同一个机制（`build/ProjectJars.kt`）：按文件往上找 `build.rsfs`，
+读它的 `#dep` 并装上，指纹（根 + jar 路径/大小/时间）没变就不重装；只读字节不初始化类。
+`rsf complete` 与 LSP 的四个分析入口都接了，补全里能看到 jar 的方法。
+
+`javaInclude` / `cInclude` / `hInclude` / `dirInclude` 这些名字**只在 build.rsfs 里被占用**——普通程序里
 `fn c(x : Int)` 是正常写法，不该因为构建脚本存在被禁掉。为此有三处守卫，缺一处都会出岔子：
 
 1. Checker 的保留名检查跳过「构建脚本专用内建」（`BUILTINS_BUILD_ONLY`）；

@@ -1,0 +1,17 @@
+import demo.Util
+
+#dep {
+    javaInclude("libs")
+}
+
+#target {
+    @/src/main.rsf -> exe
+}
+
+#build {
+    out("build/out")
+}
+
+fn main() -> void {
+    println("jar 说：" + Util.version())
+}

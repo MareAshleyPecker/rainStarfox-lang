@@ -276,7 +276,7 @@ versus the target table.
 
 ## Rule bodies can declare deps — and `c` / `h` stay legal names elsewhere
 
-Step 2 of the build track: `java(...)`, `c(...)`, `h(...)`, `dir(...)` are now
+Step 2 of the build track: `javaInclude(...)`, `cInclude(...)`, `hInclude(...)`, `dirInclude(...)` are now
 builtins, `Builtin.buildOnly`, available in build scripts. They append to the
 same `DepEntry` set that `#dep { … }` blocks feed, so the lock file and the
 existence check have exactly one implementation. `dir` is a new `DepKind`:
@@ -303,3 +303,40 @@ letter-by-letter each one hid a different failure:
 Verified on all three engines: a program with `fn c(x : Int)` prints `42` via
 `rsf run`, via the class file, and via `--c --link`. `build/verify84` gained the
 four declarations and asserts all of them land in `.rsfdeps/lock.json`.
+
+## Jars on the analyse classpath, and the editor gets them too
+
+`ClassPath` used `ClassLoader.getSystemClassLoader()` for both resource reads and
+the interpreter's reflective calls. Now it has a replaceable loader:
+`installLoader(...)` also **clears the cache** — the cache stores `null` for
+"not found", so a jar added later would otherwise need a process restart.
+
+Two consumers, one loader:
+
+- the build command installs the jars from `#dep { javaInclude(...) }` **before**
+  analysing `build.rsfs`, so the script itself can `import demo.Util`;
+- jars declared *inside a rule* take effect immediately for later `compile()`
+  calls, but not for the build script that was already analysed (a real, and
+  unavoidable, ordering difference between static directives and runtime
+  declarations).
+
+The interpreter had twelve `Class.forName(...)` sites; all now go through
+`ClassPath.loadClass`. Without that the jar classes stayed invisible at runtime
+even though the checker could read their signatures — that was the actual test
+failure, not a hypothetical.
+
+Reused for the editor: `build/ProjectJars.kt` walks up from the edited file to the
+nearest `build.rsfs`, installs its jars, and keys the install on a fingerprint so
+a keystroke does not clear the classpath cache. It only ever reads `.class`
+bytes — never initialises a class, because initialising a project's jar inside
+the language server is not something an editor should do. Hooked into the four
+`Rsf.load` sites of `EditorSupport` and `LanguageServer`; `rsf complete` after
+`Util.` now lists `version` from the jar.
+
+Renames in the same slice, at the user's suggestion: `java` / `c` / `h` / `dir`
+became `javaInclude` / `cInclude` / `hInclude` / `dirInclude`. The old names
+were why "a user function named `c`" needed three separate guards; the longer
+names make that collision essentially impossible (the guards stay, but nothing
+depends on them any more). All four are variadic, and a directory argument
+expands to the matching files (`*.jar` / `*.c` / `*.h`); `dirInclude` stays a
+directory because that is what it means.

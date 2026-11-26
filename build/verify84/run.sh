@@ -80,10 +80,13 @@ grep -q '规则里的 exec' build.log || fail "规则里的 exec 没跑"
 # 8. 规则里的声明内建进了依赖清单（c/h/dir/java 四种都有）
 LOCK=.rsfdeps/lock.json
 [ -f "$LOCK" ] || fail "没有依赖锁文件"
-for kind in c h java dir; do
+for kind in cInclude hInclude javaInclude dirInclude; do
     grep -q "\"kind\": \"$kind\"" "$LOCK" || fail "锁文件里没有 $kind 依赖"
 done
-grep -q 'demo.jar' "$LOCK" || fail "java 依赖没进锁文件"
-grep -q '"path": "res"' "$LOCK" || fail "dir 依赖没进锁文件"
+# 目录展开：javaInclude("libs") 要落成具体的 jar 文件，而不是目录本身
+grep -q '"path": "libs/demo.jar"' "$LOCK" || fail "javaInclude 目录没展开成 jar 文件"
+grep -q '"path": "native/util.c"' "$LOCK" || fail "cInclude 目录没展开成 .c 文件"
+grep -q '"path": "native/util.h"' "$LOCK" || fail "hInclude 目录没展开成 .h 文件"
+grep -q '"path": "res"' "$LOCK" || fail "dirInclude 依赖没进锁文件"
 
 echo "verify84: 全过"
