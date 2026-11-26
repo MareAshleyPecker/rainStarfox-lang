@@ -1,7 +1,21 @@
 # HANDOFF — rainStarfox 当前状态（给下一位 agent / 未来的我）
 
 > 面向自动化交接：只写「现在在哪、怎么跑、下一步做什么」，不写历史。
-> 分支 `feat/script-embed`，本地提交，**未推送**。
+> 分支 `feat/import-redesign`，最新提交 `823f581`，本地提交，**未推送**。
+
+## 0. 一分钟交接
+
+- **编译器**：Kotlin 写的（`src/main/kotlin`），三个后端：解释器、JVM 字节码、
+  C（native），外加实验性的 LLVM 文本 IR（`--ll`）与 aarch64 汇编（`--asm`）。
+- **自举**：`rsfSrc/bootstrap` 是用 rsf 写的编译器，今天就走 C 后端编自己
+  （`tools/dev/native.sh` → `build/dev/native/interp`），与 Kotlin 版逐字节对拍 9/9。
+- **构建语言**：`.rsfs` + `build.rsfs`，四阶段（指令 → 规则 → main → 产物）已通，
+  `project {}` / `target {}` / `dependencies {}` / `run { use … }` 四个块语句已落地，
+  `rsf run` 是 cargo run 语义，`module-impex.rsf` + 模块别名按包组织标准库。
+- **标准库**：`stdlib/{lang,io,std,classfile}`，模块用「类 + 静态方法」组织
+  （`Text.join` / `Io.readLines` / `Lang.…` / `Exception.…`）。
+- **下一步**：根除 `try/catch`（五步，见 §10「根除 try/catch 的计划」），
+  第 1 步是 `?:` 的 void 兜底 + `lastErrorMessage()`。
 
 ## 1. 这台机器怎么跑
 
@@ -19,22 +33,55 @@ sh tools/dev/probe.sh --cmp /tmp/x.rsf   # 单文件探针 + 对拍
   `asm:9.9.1`。换机器先把 `~/.gradle` 拷过来。
 - 原生解释器读输入用环境变量 `rsf.interp.file`（rsf 的 `main` 接不到命令行参数）。
 - gcc 链接要带 `-lm`（`fmod`）。
+- 编译器命令：`java -cp build/dev/classes:$(cat build/dev/rt.cp) org.example.MainKt <子命令>`。
 
-## 2. 这一轮已经落地的东西
+### 判据台（都可单独跑：`sh build/verifyNN/run.sh`）
+
+| 判据 | 覆盖 | 依赖 |
+|---|---|---|
+| `verify84` | 构建四阶段、`project{}`、`#def` 规则、`dependencies{}`、stdlib 头文件、旧 `#target` 迁移提示 | gcc |
+| `verify85` | jar 进分析期 classpath、`import` 行补全 | gcc + jar |
+| `verify86` | `extern fn` 调 C、`import "*.c"/"*.h"` | gcc |
+| `verify88` | `module-impex.rsf` 三种出口、`exportjvm` 类型约束 | gcc |
+| `verify89` | `rsf run` 的 cargo 语义、`run { use }` | gcc |
+| `verify90` | `pkg-info.rsf` 继承、导出清单门禁 | — |
+| `verify92` | `--ll`（LLVM 文本 IR）与 C 后端对拍 | clang 或 llc |
+| `verify93` | `rsf cc`（编 rsf 自己出的 C） | gcc |
+| `verify94` | 标准库自动导入（补全带 import 编辑、诊断提示） | — |
+| `verify95` | 标准库常用面（ArrayList/Conv/Lang/Io/Vec 新方法） | — |
+| `verify96` | `Exception` 结构化错误串 | — |
+| `verify97` | `try` 表达式、`catch` 三种写法、不再误报不可达 | — |
+| `verify98` | `fail 种类, 消息`、种类名编译期校验 | — |
+
+## 2. 2026-11-26 这一轮落地了什么
 
 | 提交 | 内容 |
 |---|---|
-| `0435d74` 及之前 | **C 后端错误模型改成 setjmp/longjmp**，原生解释器九示例全绿 |
-| `921e976` | `.rsfs` 接上脚本入口：无 `main` 时可当库，列出可调用函数 |
-| `dae5a53` | `rsf init`：生成 `build.rsfs`（必须有 main）+ `build/` 模块 + `src/main.rsf` |
-| `fbb87db` | 项目目录里 `rsf build` 驱动 `build.rsfs` |
-| `f127053` | `export` 修饰词（Kotlin / 自举 Lexer+Parser / IDEA 关键字表三处对齐） |
-| `e54ed73` | 扩展函数**语法**：`fn Int.twice()` / `fn Foo.bar()` → `FuncDecl.receiverType` |
+| `12c55dd` | rsf build 四阶段（`#target` 时代）：`exec` / `target` / `need` + 出产物 |
+| `399dccc` | `#def` 定义构建规则，阶段 1 按序调用（解糖成函数） |
+| `ab24ead` | 规则里声明依赖（当时叫 `java/c/h/dir`），名字只在 build.rsfs 占用 |
+| `2082565` | jar 进分析期 classpath（编辑器共用），改名 `javaInclude/cInclude/hInclude/dirInclude`，支持目录 |
+| `7389155` | `import` 行补全列出依赖 jar 里的类 |
+| `3e390a9` | `extern fn` 调 C，`import "*.c"/"*.h"` |
+| `94xxx`/`948655b` | `#` 变成封闭集合，未知指令报错并列出内置 |
+| `9c4b997` | 定下 native 路线 A（自举仍走 C 后端，`--ll` 按需扩） |
+| `d6f390a`/`18539ed` | LLVM 文本 IR 后端（`--ll`）：整数、比较、控制流、调用、打印 |
+| `3580333` | `rsf cc`：编 rsf 自己出的 C（自动补 `-std/-I/-lm`） |
+| `97cc149` | `rsf run` 改为 cargo run 语义（`--bin`、`--`、jar 用 `java -jar`） |
+| `989eb93` | `run { use 名字 }` 块（选默认产物，按行执行） |
+| `a9b14ab`/`41ef616` | `#target` → `target { exe(…) }` 块语句 |
+| `a36b5dd`/`dc5d0a7` | `dependencies {}` 块语句 + `stdlib/` 目录（运行时头只生成一份） |
+| `d76a747` | `pkg-info.rsf` 与导出清单门禁 |
+| `615f31d`/`1994c53` | `module "…" to 别名 { … }`（清单里与源文件里都能写） |
+| `533f87b` | 标准库扩展（ArrayList/Conv/Lang/Exception/Io 补 readLines）+ 清除重复 API |
+| `2ac9377` | `try` 表达式、`catch` 省略绑定；修 `ControlFlow` 没传 handlers（所有 catch 体被误报不可达） |
+| `3c0ad9c` | `fail 种类, 消息`（`ErrorKinds` 表，编译期校验） |
+| `823f581` | `Io` 的三处重抛改用 `try 表达式`（根除 try/catch 的样板） |
 
 规则：
 - `.rsfs` 与 `.rsf` 同语言，唯一差别是**允许没有 main**；
-- `export` 只允许顶层函数，语义为零（只影响导出面）；
-- 扩展函数语法齐了，调用侧语义在**本节之后已经做完**（见 §3，2026-11-25 补）。
+- `export` 只允许顶层函数，导出面以 `module-impex.rsf` 为准；
+- 构建脚本里能用的内建（`exec`/`target`/`need`/`include`/`config`/`use`）只在 `build.rsfs` 里占名字。
 
 ## 3. 扩展函数语义（✅ 已做完，2026-11-25）
 
@@ -57,7 +104,7 @@ sh tools/dev/probe.sh --cmp /tmp/x.rsf   # 单文件探针 + 对拍
    （扩展仍按普通函数索引）。
 7. 规则同 Kotlin —— 静态解析、不能碰私有成员；重名限制已实现。
 
-## 4. 之后：`#dep` 与构建计划
+## 4. ~~之后：`#dep` 与构建计划~~（已落地，见 §8；本节留作历史）
 
 - `#dep { java("x.jar") c("y.c") h("z.h") }`：块里必须是**合法 rsf 语句**，
   `java/c/h/rule` 是内置函数；解析在装载层，不进 AST。
@@ -65,7 +112,7 @@ sh tools/dev/probe.sh --cmp /tmp/x.rsf   # 单文件探针 + 对拍
 - 自定义规则 = 一个返回依赖清单的 rsf 函数，运行器先单独跑它（此时无依赖）。
 - 构建计划执行（target / rule）还没设计，等 `#dep` 落地。
 
-## 5. 再之后：自举线（直出机器码）
+## 5. ~~再之后：自举线（直出机器码）~~（已开工：路线 A，见 §11；本节留作历史）
 
 - 起点已经具备：C 后端有 setjmp 错误模型；原生解释器端到端跑通（启动 10ms vs JVM 400ms）。
 - 导出：**出目标文件交给系统链接器**，`export fn` 决定可见性、`rsf_` 前缀防撞名；
@@ -81,7 +128,7 @@ sh tools/dev/probe.sh --cmp /tmp/x.rsf   # 单文件探针 + 对拍
 - Kotlin 块注释会**嵌套**：文档里写 `build/*.rsfs` 会把注释打开，编译报 Unclosed comment。
 - gradle 依赖缓存没有的话，先在有网机器 build 一次再拷 `~/.gradle`。
 
-## 7. 导入机制改版（已定设计，未实现）
+## 7. ~~导入机制改版（`import as` + 显式注入）~~（**已被 §10 的 `module "…" to 别名` 取代**，本节留作历史）
 
 ```rsf
 import "core/Vec.rsf" as vec          // 只给限定名，不注入
@@ -241,29 +288,6 @@ fn main() -> void {
 那一套指令都没有）。所以在自举派上用场之前，含 `extern` 的源码只能由 Kotlin 侧编译。
 等 bootstrap 补语法时，这条要和其它指令一起补，不是单独一刀。
 
-## 11. native 线：LLVM 文本 IR（按 Zig 的路子，阶段 84 起）
-
-决定：**native 线先交给 LLVM**，以后自己的编码器成熟了再逐步替换；C 与 class 后端都保留
-（C 是覆盖面最广的参照，class 是 JVM 互操作与 LSP 的参照）。
-
-已有两个实验性后端，都只覆盖很小的子集，遇到不支持的构造**显式报错**：
-
-| 开关 | 产物 | 说明 |
-|---|---|---|
-| `--ll [--link]` | `.ll` 文本 | 交给 clang 一步出二进制；没有 clang 就退回 `llc` + gcc |
-| `--asm [--link]` | aarch64 `.s` | 自己指令选择的验证；不依赖 LLVM |
-
-**路线决定（用户拍板）**：自举继续用 **C 后端**（它今天就能编 `rsfSrc`，`native.sh` 走的就是它），
-`--ll` 只服务用户程序、按需扩覆盖面；等它覆盖面接近编译器自身时再考虑把自举切过来，
-切的时候拿 C 后端当对照。**不**为了自举去追 `--ll` 的功能表。
-
-`--ll` 的扩展顺序（按价值）：字符串拼接 → 数组 → 类/结构体 → 枚举/switch → 闭包 →
-`fail`/`try` → 文件 IO。
-
-两个目标集合（aarch64/amd64、Linux ELF/Windows PE）都能由 LLVM 覆盖，所以
-多架构不再是问题：换 `--target` 即可，不用为每个架构写编码器。
-`verify92` 用「LLVM 产物与 C 后端输出对拍」作为语义锚点。
-
 ## 10. `.rsfs` 语法定稿（进行中，逐条拍板）
 
 **根除 try/catch 的计划**（阶段 84，用户拍板；早期设计债，越堆越多，现在清理）：
@@ -385,3 +409,47 @@ gcc 命令行固定带 `-I<stdlib>`；查找顺序见 `build/Stdlib.kt`（`RSF_S
 - `module-impex.rsf` 是 `export` / `extern` / JNI / javaClass 的唯一落点；
 - 指令解析保持「词法前处理」，但 `#` 集合封闭，遇到未知 `#xxx` 直接报错并列出内置指令；
 - 产物命名缺口（`InterpCli` vs `interp`）和 `#target` 的 `name(...)` 一起收。
+
+## 11. native 线：LLVM 文本 IR（按 Zig 的路子，阶段 84 起）
+
+决定：**native 线先交给 LLVM**，以后自己的编码器成熟了再逐步替换；C 与 class 后端都保留
+（C 是覆盖面最广的参照，class 是 JVM 互操作与 LSP 的参照）。
+
+已有两个实验性后端，都只覆盖很小的子集，遇到不支持的构造**显式报错**：
+
+| 开关 | 产物 | 说明 |
+|---|---|---|
+| `--ll [--link]` | `.ll` 文本 | 交给 clang 一步出二进制；没有 clang 就退回 `llc` + gcc |
+| `--asm [--link]` | aarch64 `.s` | 自己指令选择的验证；不依赖 LLVM |
+
+**路线决定（用户拍板）**：自举继续用 **C 后端**（它今天就能编 `rsfSrc`，`native.sh` 走的就是它），
+`--ll` 只服务用户程序、按需扩覆盖面；等它覆盖面接近编译器自身时再考虑把自举切过来，
+切的时候拿 C 后端当对照。**不**为了自举去追 `--ll` 的功能表。
+
+`--ll` 的扩展顺序（按价值）：字符串拼接 → 数组 → 类/结构体 → 枚举/switch → 闭包 →
+`fail`/`try` → 文件 IO。
+
+两个目标集合（aarch64/amd64、Linux ELF/Windows PE）都能由 LLVM 覆盖，所以
+多架构不再是问题：换 `--target` 即可，不用为每个架构写编码器。
+`verify92` 用「LLVM 产物与 C 后端输出对拍」作为语义锚点。
+
+## 12. 下一步（按顺序）
+
+1. **根除 `try/catch` 第 1 步**：`?:` 允许 void 兜底（`f() ?: logIt()`）+
+   `lastErrorMessage()`（三端各加一个“最后一条错误”的槽；C 端消息在 `rsf_err_msg`，
+   需要一份能在恢复后保留的副本）。判据：同一程序在解释器 / `--c` / 字节码三端输出一致。
+2. 迁移 `rsfSrc/lang` 的 19 处（**parity 示例**，输出必须逐字节不变），
+   再迁移 `rsfSrc/bootstrap` 的 31 处，跑通自举。
+3. 删掉 `try {} catch {}` 语法：Parser 报「已移除，改用 …」，自举 Parser 同步。
+4. `try` 表达式（`val x = try { f() } catch { 0 }`）——需要 Lowering 支持“表达式内的块值”，
+   与载荷改造同级，单独安排。
+5. `!T` 载荷从 `String` 换成 `(kind, message)`：`ErrorKinds` 表直接变枚举取值，
+   `Exception.isKind` 的字符串解析退役。
+6. 其余：LSP 跳到标准库定义、标准库继续补（排序/遍历/格式化）、`defer`。
+
+## 13. 这份文档怎么读
+
+- §0–§2 是最新的（状态、命令、判据、本轮提交）。
+- §3–§7 是历史设计记录，标题上标了「已落地 / 已取代 / 留作历史」。
+- §8–§11 是各条线的详细设计：构建语言四阶段（§8）、C 互操作（§9）、
+  `.rsfs` 语法定稿与标准库/错误模型（§10）、native 线（§11）。
