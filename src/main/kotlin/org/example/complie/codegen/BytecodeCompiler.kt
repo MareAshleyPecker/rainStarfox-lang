@@ -96,6 +96,16 @@ private const val LAST_ERROR_HELPER = "__rsf_lastErrorMessage\$rt"
 private const val LAST_ERROR_HELPER_DESC = "()Ljava/lang/String;"
 private const val LAST_ERROR_FIELD_DESC = "Ljava/lang/String;"
 
+/**
+ * 阶段 84：入口 `main` 里**没被接住**的运行期错误（越界 / `!!` 打到 null / 用户 `!T` 漏处理）
+ * 由这个辅助方法收尾：打 `运行期错误: <消息>` 到 stderr，退出码 1。
+ *
+ * 为什么要它：`try {} catch {}` 退休之后（用户拍板）故障一律中止程序，
+ * 而 JVM 默认打的是整段堆栈——和解释器、C 后端那句 `运行期错误: …` 不是一个口径。
+ */
+private const val UNCAUGHT_HELPER = "__rsf_uncaught\$rt"
+private const val UNCAUGHT_DESC = "(Ljava/lang/Throwable;)V"
+
 class BytecodeCompiler(
     private val model: SemanticModel,
     private val sourceName: String,
@@ -494,6 +504,8 @@ class BytecodeCompiler(
         if (usedSlice) emitSliceHelper(cw)
         // 阶段 84：`lastErrorMessage()` 的静态字段与读取方法（只有本程序用过才发）
         if (model.usesLastErrorMessage) emitLastErrorMessageHelper(cw)
+        // 阶段 84：入口 main 的「没接住的错误」收尾（与解释器 / C 后端同一条消息）
+        if (model.entry != null) emitUncaughtHelper(cw)
         cw.visitEnd()
         return cw
     }
@@ -676,6 +688,35 @@ class BytecodeCompiler(
         mv.visitLdcInsn("")
         mv.visitLabel(ok)
         mv.visitInsn(ARETURN)
+        mv.visitMaxs(0, 0)
+        mv.visitEnd()
+    }
+
+    /**
+     * 阶段 84：入口 main 里没接住的错误 → `运行期错误: <消息>` + 退出码 1。
+     *
+     * 解释器（Main.kt 的 wrap）和 C 运行时（rsf_throw 的兜底）打的是同一句话，
+     * 三端因此一样：不会一边是干净的一行、一边是整段堆栈。
+     */
+    private fun emitUncaughtHelper(cw: ClassWriter) {
+        val mv = cw.visitMethod(
+            ACC_PRIVATE or ACC_STATIC, UNCAUGHT_HELPER, UNCAUGHT_DESC, null, null,
+        )
+        mv.visitCode()
+        mv.visitFieldInsn(GETSTATIC, "java/lang/System", "err", "Ljava/io/PrintStream;")
+        mv.visitLdcInsn("运行期错误: ")
+        mv.visitMethodInsn(
+            INVOKEVIRTUAL, "java/io/PrintStream", "print", "(Ljava/lang/String;)V", false,
+        )
+        mv.visitFieldInsn(GETSTATIC, "java/lang/System", "err", "Ljava/io/PrintStream;")
+        mv.visitVarInsn(ALOAD, 0)
+        mv.visitMethodInsn(INVOKEVIRTUAL, "java/lang/Throwable", "getMessage", "()Ljava/lang/String;", false)
+        mv.visitMethodInsn(
+            INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false,
+        )
+        mv.visitInsn(ICONST_1)
+        mv.visitMethodInsn(INVOKESTATIC, "java/lang/System", "exit", "(I)V", false)
+        mv.visitInsn(RETURN)
         mv.visitMaxs(0, 0)
         mv.visitEnd()
     }
@@ -2796,6 +2837,15 @@ class BytecodeCompiler(
             )
         }
 
+        // 阶段 84：入口 main 整体套一层「没人接住的错误」兜底——try/catch 语法退休之后，
+        // 故障一律中止程序，JVM 侧要打的也是解释器 / C 后端那一句 `运行期错误: …`，
+        // 而不是一整段堆栈。范围只框住指令循环，函数末尾的防御性 throw 不在里面。
+        val catchAll = closure == null && isEntry(fn)
+        val allStart = Label()
+        val allEnd = Label()
+        val allHandler = Label()
+        if (catchAll) mv.visitLabel(allStart)
+
         for ((i, instr) in body.instructions.withIndex()) {
             // 处理器用到的三个标签即使落在不可达位置也必须 visit 一次：
             // `try { rtn 1 } catch (e : String) { ... }` 的 try.end 就在 RETURN 后面，
@@ -3088,6 +3138,18 @@ class BytecodeCompiler(
                 )
                 mv.visitInsn(ATHROW)
             }
+        }
+
+        // 阶段 84：关掉「兜底窗口」。处理器**必须在所有正常出口之后**——否则它会掉进
+        // 正常出口的 fall-through 里，校验器会拿两套栈帧对撞（VerifyError: stack map）。
+        if (catchAll) {
+            mv.visitLabel(allEnd)
+            mv.visitTryCatchBlock(allStart, allEnd, allHandler, "java/lang/RuntimeException")
+            mv.visitLabel(allHandler)
+            mv.visitMethodInsn(
+                INVOKESTATIC, programInternalName, UNCAUGHT_HELPER, UNCAUGHT_DESC, false,
+            )
+            mv.visitInsn(RETURN)
         }
 
         // 体发完、visitMaxs 之前：发 LVT 的结束标签，再逐条写表（见 beginLvt）

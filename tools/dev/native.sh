@@ -16,6 +16,6 @@ java -cp "$DEV/classes:$RT" org.example.MainKt build rsfSrc/bootstrap/InterpCli.
     echo "生成 C 失败："; tail -5 "$DEV/native.log"; exit 1; }
 
 cd "$OUT"
-gcc -std=c11 -w -O1 -o interp InterpCli.c -lm || { echo "gcc 失败"; exit 1; }
+gcc -std=c11 -w -O1 -I "$ROOT/stdlib" -o interp InterpCli.c -lm || { echo "gcc 失败"; exit 1; }
 
 [ "$1" = "-q" ] || echo "原生解释器：$OUT/interp（$(du -h interp | cut -f1)）"

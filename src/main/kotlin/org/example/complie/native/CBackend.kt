@@ -822,8 +822,14 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
             val target = s.target
             val elem = elemCType(elementOf(model.typeOf(target.receiver)))
             val want = elementOf(model.typeOf(target.receiver))
-            pad(indent) + "(($elem*)" + expr(target.receiver) + ".data)[" + expr(target.index) + "] = " +
-                adapt(want, physicalType(s.value), expr(s.value)) + ";" + NL
+            val arr = "ar_" + (tempSeq++)
+            val ix = "ix_" + (tempSeq++)
+            // 阶段 84：写也做边界检查（消息与读越界同一条）
+            pad(indent) + "{ rsf_arr " + arr + " = " + expr(target.receiver) + "; " +
+                "int64_t " + ix + " = (int64_t)(" + expr(target.index) + "); " +
+                "rsf_arr_check(" + arr + ".len, " + ix + "); " +
+                "((" + elem + "*)" + arr + ".data)[" + ix + "] = " +
+                adapt(want, physicalType(s.value), expr(s.value)) + "; }" + NL
         }
         is ExprStmt -> pad(indent) + expr(s.expr) + ";\n"
         is ReturnStmt -> {
@@ -1088,10 +1094,22 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
         return "$name($args)"
     }
 
+    /**
+     * 数组下标读。
+     *
+     * 阶段 84：加**边界检查**。`try {} catch {}` 退休之后，运行期故障在这里也必须中止
+     * （否则同一份源码三端行为不一致：解释器/字节码报错退出，C 侧悄悄读越界）。
+     * 消息与 ArrayRuntime 一字不差。用语句表达式，保证接收者与下标都只求值一次。
+     */
     private fun indexRead(e: IndexExpr): String {
         val arrayType = model.typeOf(e.receiver)
         val elem = elemCType(elementOf(arrayType))
-        return "(($elem*)${expr(e.receiver)}.data)[${expr(e.index)}]"
+        val arr = "ar_" + (tempSeq++)
+        val ix = "ix_" + (tempSeq++)
+        return "({ rsf_arr " + arr + " = " + expr(e.receiver) + "; " +
+            "int64_t " + ix + " = (int64_t)(" + expr(e.index) + "); " +
+            "rsf_arr_check(" + arr + ".len, " + ix + "); " +
+            "((" + elem + "*)" + arr + ".data)[" + ix + "]; })"
     }
 
     /**
@@ -1267,7 +1285,11 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
         if (e.dimensions.size != 1) fail("多维数组")
         // 元素类型用语义类型：泛型实参 T 也会落到 rsf_val（阶段 66）
         val elemSize = elemCType(elementOf(model.typeOf(e)))
-        return "rsf_arr_new(${expr(e.dimensions[0])}, (int64_t)sizeof($elemSize))"
+        val n = "len_" + (tempSeq++)
+        // 阶段 84：负数长度按运行期故障中止（消息与 ArrayRuntime.lengthFailure 一致）
+        return "({ int64_t " + n + " = (int64_t)(" + expr(e.dimensions[0]) + "); " +
+            "rsf_arr_len_check(" + n + "); " +
+            "rsf_arr_new(" + n + ", (int64_t)sizeof(" + elemSize + ")); })"
     }
 
     private fun baseOf(ref: TypeRef): RsfBase = when (ref.name) {
@@ -2898,6 +2920,46 @@ static inline void* rsf_grow(void* ptr, size_t oldSize, size_t newSize) {
 
             static void rsf_set_err(rsf_str msg) {
                 if (!rsf_err) { rsf_err = true; rsf_err_msg = msg; }
+            }
+
+            static void rsf_throw(void);
+
+            /* 阶段 84：数组的边界检查。越界/负长度是**运行期故障**：
+               `try {} catch {}` 退休后没有捕获手段，所以置错 + 立刻中止。
+               消息与 Kotlin 的 ArrayRuntime 一字不差（三端同一条）。 */
+            static void rsf_arr_index_fail(int64_t len, int64_t index) {
+                char buf[192];
+                int n = snprintf(buf, sizeof buf, "数组下标越界：长度 %lld，下标 %lld",
+                                 (long long)len, (long long)index);
+                if (n < 0) { n = 0; }
+                if (n > (int)sizeof buf - 1) { n = (int)sizeof buf - 1; }
+                char* p2 = (char*)malloc((size_t)n + 1);
+                if (n > 0) { memcpy(p2, buf, (size_t)n); }
+                p2[n] = 0;
+                rsf_str m; m.len = n; m.units1 = 0; m.data = p2;
+                rsf_set_err(m);
+                rsf_throw();
+            }
+
+            static void rsf_arr_len_fail(int64_t len) {
+                char buf[128];
+                int n = snprintf(buf, sizeof buf, "数组长度不能是负数：%lld", (long long)len);
+                if (n < 0) { n = 0; }
+                if (n > (int)sizeof buf - 1) { n = (int)sizeof buf - 1; }
+                char* p2 = (char*)malloc((size_t)n + 1);
+                if (n > 0) { memcpy(p2, buf, (size_t)n); }
+                p2[n] = 0;
+                rsf_str m; m.len = n; m.units1 = 0; m.data = p2;
+                rsf_set_err(m);
+                rsf_throw();
+            }
+
+            static void rsf_arr_check(int64_t len, int64_t index) {
+                if (index < 0 || index >= len) { rsf_arr_index_fail(len, index); }
+            }
+
+            static void rsf_arr_len_check(int64_t len) {
+                if (len < 0) { rsf_arr_len_fail(len); }
             }
 
             /* try 压栈的 setjmp 帧。fail = 置错 + longjmp 到最近一帧，

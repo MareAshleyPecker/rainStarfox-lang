@@ -7,15 +7,11 @@ fn ioFail() -> !void {
     fail io, "打不开"
 }
 
+fn report(prefix : String) -> void {
+    println(prefix + lastErrorMessage())
+}
+
 fn main() -> void {
-    try {
-        println(intToString(risky(-1)!!))
-    } catch e {
-        println("种类: " + e)
-    }
-    try {
-        try ioFail()
-    } catch e {
-        println("第二个: " + e)
-    }
+    risky(-1) ?: report("种类: ")
+    ioFail() ?: report("第二个: ")
 }

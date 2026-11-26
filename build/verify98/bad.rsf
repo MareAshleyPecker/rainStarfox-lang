@@ -1,3 +1,7 @@
+fn boom() -> !void {
+    fail "nope", "x"
+}
+
 fn main() -> void {
-    try { fail "nope", "x" } catch e { println(e) }
+    boom() ?: println("x")
 }

@@ -1,0 +1,4 @@
+fn main() {
+    var a : Int[] = new Int[-1]
+    println("这一行不会执行：" + a.length)
+}

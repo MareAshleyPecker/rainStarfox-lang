@@ -1,0 +1,6 @@
+fn main() {
+    var a : Int[] = new Int[3]
+    println("数组长度 = " + a.length)
+    println("a[5] = " + a[5])
+    println("这一行不会执行")
+}

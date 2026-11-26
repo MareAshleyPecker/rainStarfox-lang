@@ -363,3 +363,10 @@ gmon.out
 !/build/verify99/**/
 !/build/verify99/**/*.sh
 !/build/verify99/**/*.rsf
+
+### 判据台（阶段 84：运行期故障直接中止）###
+!/build/verify100/
+/build/verify100/**
+!/build/verify100/**/
+!/build/verify100/**/*.sh
+!/build/verify100/**/*.rsf

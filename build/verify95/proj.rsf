@@ -2,6 +2,10 @@ module "stdlib/std" to std { Vec, Text, Strings, ArrayList, Conv }
 module "stdlib/lang" to lang { Lang }
 module "stdlib/io" to io { Io }
 
+fn reportWrite() -> void {
+    println("写文件失败: " + lastErrorMessage())
+}
+
 fn main() -> void {
     var v = new Vec&<Int>()
     v.push(1)
@@ -29,11 +33,7 @@ fn main() -> void {
     println(intToString(Conv.toChars("abc").length))
 
     // 文件 IO：写若干行、再读回来，以及「读不到就给兜底值」
-    try {
-        Io.writeLines("out.txt", lines)
-    } catch (e : String) {
-        println("写文件失败: " + e)
-    }
+    Io.writeLines("out.txt", lines) ?: reportWrite()
     var back = Io.readLines("out.txt") ?: new String[0]
     println(Text.join(back, "|"))
     println(Io.readTextOr("no-such-file.txt", "缺省"))
