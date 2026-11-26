@@ -46,6 +46,40 @@ pub class Vec&<T> {
 
     pub fn contains(x : T) -> Bool { rtn indexOf(x) >= 0 }
 
+    /// 下标越界时给兜底值（比 `get` + 自己判空短）。
+    pub fn getOr(i : Int, fallback : T) -> T {
+        if (i < 0 || i >= n) { rtn fallback }
+        rtn items[i]
+    }
+
+    /// 在 [i] 处插入，原来的元素往后挪（越界按尾部追加）。
+    pub fn insert(i : Int, x : T) -> void {
+        if (i < 0) { i = 0 }
+        if (i > n) { i = n }
+        if (n == items.length) { grow() }
+        var k = n
+        while (k > i) {
+            items[k] = items[k - 1]
+            k = k - 1
+        }
+        items[i] = x
+        n = n + 1
+    }
+
+    /// 追加一整段（数组或另一个 Vec 的 copyInto 结果都行）。
+    pub fn addAll(more : T[]) -> void {
+        var i = 0
+        while (i < more.length) {
+            push(more[i])
+            i = i + 1
+        }
+    }
+
+    /// 弹掉最后一个（空表时什么都不做）。
+    pub fn removeLast() -> void {
+        if (n > 0) { n = n - 1 }
+    }
+
     // 把 [from, n) 段左移一格删掉下标 i
     pub fn removeAt(i : Int) -> void {
         if (i < 0 || i >= n) { rtn }

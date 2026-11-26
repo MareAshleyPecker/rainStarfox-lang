@@ -1,0 +1,40 @@
+module "stdlib/std" to std { Vec, Text, Strings, ArrayList, Conv }
+module "stdlib/lang" to lang { Lang }
+module "stdlib/io" to io { Io }
+
+fn main() -> void {
+    var v = new Vec&<Int>()
+    v.push(1)
+    v.push(3)
+    v.insert(1, 2)
+    println(intToString(v.getOr(9, -1)) + " " + intToString(v.size()))
+    var more = new Int[2]
+    more[0] = 4
+    more[1] = 5
+    v.addAll(more)
+    v.removeLast()
+    println(intToString(v.last() ?: 0))
+
+    var list = new ArrayList&<String>()
+    list.add("a")
+    list.add("b")
+    println(Text.join(list.toArray(new String[list.size()]), "-"))
+
+    var lines = Strings.lines("a\nb\r\nc")
+    println(intToString(lines.length) + ":" + lines[1])
+    println(Lang.defaultIfBlank("  ", "fallback"))
+    println(Lang.oneLine("x\ny"))
+    println(intToString(Conv.toInt("42", 0)) + " " + intToString(Conv.toInt("x", -1)))
+    println(Conv.toString(Conv.toBoolOrNull("TRUE") ?: false))
+    println(intToString(Conv.toChars("abc").length))
+
+    // 文件 IO：写若干行、再读回来，以及「读不到就给兜底值」
+    try {
+        Io.writeLines("out.txt", lines)
+    } catch (e : String) {
+        println("写文件失败: " + e)
+    }
+    var back = Io.readLines("out.txt") ?: new String[0]
+    println(Text.join(back, "|"))
+    println(Io.readTextOr("no-such-file.txt", "缺省"))
+}

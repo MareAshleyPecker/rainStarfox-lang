@@ -1,0 +1,58 @@
+module "stdlib/std" to std { Strings }
+
+// rsf 标准库：io（输入输出）
+//
+// 全部是 `Io.xxx(...)` 的静态方法：rsf 里 `名.成员` 的左边必须是类型名，
+// 所以 IO 用类来组织，和 `Text.join(...)`、`Math.abs(...)` 一个形状。
+pub class Io {
+    /// 读整个文本文件（UTF-8）。失败时 `!String`。
+    pub stc fn readAllText(path : String) -> !String { rtn readText(path)!! }
+
+    /// 写整个文本文件（覆盖）。失败时 `!void`。
+    pub stc fn writeAllText(path : String, text : String) -> !void {
+        // `!void` 没有值可以取，所以用 try + fail 原样往上抛（见 rsfSrc/lang/files.rsf）
+        try {
+            writeText(path, text)
+        } catch (e : String) {
+            fail e
+        }
+    }
+
+    /// 读整个二进制文件。失败时 `!Byte[]`。
+    pub stc fn readAllBytes(path : String) -> !Byte[] { rtn readBytes(path)!! }
+
+    /// 写整个二进制文件（覆盖）。失败时 `!void`。
+    pub stc fn writeAllBytes(path : String, data : Byte[]) -> !void {
+        try {
+            writeBytes(path, data)
+        } catch (e : String) {
+            fail e
+        }
+    }
+
+    /// 读文本并按行切开（`\n` / `\r\n` 都认，末尾空行丢掉）。
+    pub stc fn readLines(path : String) -> !String[] {
+        var text = readText(path)!!
+        rtn Strings.lines(text)
+    }
+
+    /// 把若干行写进文件（每行末尾补 `\n`，覆盖）。
+    pub stc fn writeLines(path : String, lines : String[]) -> !void {
+        var out = ""
+        var i = 0
+        while (i < lines.length) {
+            out = out + lines[i] + "\n"
+            i = i + 1
+        }
+        try {
+            writeText(path, out)
+        } catch (e : String) {
+            fail e
+        }
+    }
+
+    /// 读文本，失败时给兜底值（等价于 readText(path) ?: fallback）。
+    pub stc fn readTextOr(path : String, fallback : String) -> String {
+        rtn readText(path) ?: fallback
+    }
+}

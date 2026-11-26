@@ -10,8 +10,8 @@
 
 internal module "stdlib/classfile" to classfile
 
-module "stdlib/lang" to lang
-module "stdlib/io" to io
+module "stdlib/lang" to lang { Lang, Exception }
+module "stdlib/io" to io { Io }
 
 // 成员列表写在同一行：清单是**逐行**解析的（没有跨行括号）
-module "stdlib/std" to std { Vec Bits BitSet Deque HashMap IntHeap IntMap Iter Numbers Queue Random Sets Sorts Strings Text }
+module "stdlib/std" to std { Vec ArrayList Bits BitSet Conv Deque HashMap IntHeap IntMap Iter Numbers Queue Random Sets Sorts Strings Text }

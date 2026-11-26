@@ -1,0 +1,38 @@
+// rsf 标准库：ArrayList<T>（阶段 84）
+//
+// 为什么和 Vec 并存：Vec 是"够用就好"的内核（容量翻倍、方法精简），
+// ArrayList 是**给熟悉 Java/Android 的人**的常用名字，接口按常见习惯来。
+// 两者互通：`addAll` 收数组，`toArray` 请你给目标数组（理由见 Vec.copyInto：
+// `T[]` 在 JVM 上会擦成 `Object[]`，自己 new 出来转回去会炸）。
+import "../std/Vec.rsf"
+
+pub class ArrayList&<T> {
+    var inner : Vec&<T> = new Vec&<T>()
+
+    pub fn size() -> Int { rtn inner.size() }
+
+    pub fn isEmpty() -> Bool { rtn inner.isEmpty() }
+
+    pub fn add(x : T) -> void { inner.push(x) }
+
+    pub fn get(i : Int) -> T { rtn inner.get(i) }
+
+    pub fn set(i : Int, x : T) -> void { inner.set(i, x) }
+
+    pub fn getOr(i : Int, fallback : T) -> T { rtn inner.getOr(i, fallback) }
+
+    pub fn removeAt(i : Int) -> void { inner.removeAt(i) }
+
+    pub fn removeLast() -> void { inner.removeLast() }
+
+    pub fn contains(x : T) -> Bool { rtn inner.contains(x) }
+
+    pub fn indexOf(x : T) -> Int { rtn inner.indexOf(x) }
+
+    pub fn clear() -> void { inner.clear() }
+
+    pub fn addAll(more : T[]) -> void { inner.addAll(more) }
+
+    /// 快照：数组由调用方给（见 Vec.copyInto 的说明）。
+    pub fn toArray(into : T[]) -> T[] { rtn inner.copyInto(into) }
+}

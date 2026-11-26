@@ -1,0 +1,85 @@
+// rsf 标准库：Exception —— 结构化错误串（阶段 84）
+//
+// rsf 的错误通道只有一个 `String`（`fail` / `!T` / `catch (e : String)`），
+// 所以这里不造异常类层次（那会依赖某端运行时的异常类型），而是**约定一个格式**：
+//
+//     <kind>: <message>
+//
+// `kind` 是短标识（`io` / `parse` / `range` / `state` / `todo` / `unreachable`），
+// 冒号后面给人看。它只是字符串，所以解释器、JVM、native 三端行为完全一致。
+//
+// 用法：
+//     fail Exception.io("a.txt", "打不开")            // 抛
+//     Exception.check(n > 0, "n 必须为正")            // 断言
+//     catch (e : String) { println(Exception.kindOf(e)) }
+pub class Exception {
+    /// 拼一条错误串：`kind: message`。
+    pub stc fn make(kind : String, message : String) -> String {
+        rtn kind + ": " + message
+    }
+
+    /// 取冒号前的 kind；没有冒号时返回 `"error"`。
+    pub stc fn kindOf(error : String) -> String {
+        var i = 0
+        while (i < error.length()) {
+            if (error.charAt(i) == ':') {
+                if (i == 0) { rtn "error" }
+                rtn error.substring(0, i)
+            }
+            i = i + 1
+        }
+        rtn "error"
+    }
+
+    /// 取冒号后的正文；没有冒号时整条返回。
+    pub stc fn messageOf(error : String) -> String {
+        var i = 0
+        while (i < error.length()) {
+            if (error.charAt(i) == ':') {
+                if (i + 1 < error.length() && error.charAt(i + 1) == ' ') {
+                    rtn error.substring(i + 2, error.length())
+                }
+                rtn error.substring(i + 1, error.length())
+            }
+            i = i + 1
+        }
+        rtn error
+    }
+
+    /// 这条错误是不是某类（`io` / `parse` …）。
+    pub stc fn isKind(error : String, kind : String) -> Bool {
+        rtn kindOf(error) == kind
+    }
+
+    // ---------------------------------------------------------------- 常见种类
+
+    pub stc fn io(path : String, why : String) -> String { rtn make("io", path + ": " + why) }
+
+    pub stc fn parse(what : String, text : String) -> String {
+        rtn make("parse", what + ": '" + text + "'")
+    }
+
+    pub stc fn range(index : Int, size : Int) -> String {
+        rtn make("range", intToString(index) + " 超出 0.." + intToString(size))
+    }
+
+    pub stc fn state(what : String) -> String { rtn make("state", what) }
+
+    pub stc fn todo(what : String) -> String { rtn make("todo", what) }
+
+    pub stc fn unreachable(where : String) -> String {
+        rtn make("unreachable", "这里不该执行到：" + where)
+    }
+
+    // ---------------------------------------------------------------- 动作
+
+    /// 条件不成立就抛（断言）。消息会带上 kind `state`。
+    pub stc fn check(cond : Bool, message : String) -> !void {
+        if (!cond) { fail make("state", message) }
+    }
+
+    /// 条件不成立就抛指定 kind。
+    pub stc fn checkKind(cond : Bool, kind : String, message : String) -> !void {
+        if (!cond) { fail make(kind, message) }
+    }
+}

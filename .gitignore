@@ -328,3 +328,17 @@ gmon.out
 !/build/verify94/**/
 !/build/verify94/**/*.sh
 !/build/verify94/**/*.rsf
+
+### 判据台（阶段 84：标准库常用面）###
+!/build/verify95/
+/build/verify95/**
+!/build/verify95/**/
+!/build/verify95/**/*.sh
+!/build/verify95/**/*.rsf
+
+### 判据台（阶段 84：Exception 结构化错误串）###
+!/build/verify96/
+/build/verify96/**
+!/build/verify96/**/
+!/build/verify96/**/*.sh
+!/build/verify96/**/*.rsf

@@ -266,6 +266,18 @@ fn main() -> void {
 
 ## 10. `.rsfs` 语法定稿（进行中，逐条拍板）
 
+**标准库布局**（阶段 84）：`stdlib/{lang,io,std,classfile}`，模块用**类 + 静态方法**组织
+（`Text.join(...)` / `Io.readLines(...)` / `Lang.parseIntOr(...)` / `Conv.toInt(...)`），
+因为 rsf 里 `名.成员` 的左边必须是类型名。
+
+- `lang`：`Lang`（parseIntOr / defaultIfBlank / oneLine）、`Exception`（结构化错误串：
+  `kind: message` + kindOf/messageOf/isKind/check*；rsf 的错误通道只有 String，所以
+  这里不造异常类，只约定格式，三端行为一致）
+- `io`：`Io`（读写在原有四个内置之上加了 readLines / writeLines / readTextOr）
+- `std`：Vec（新增 getOr / insert / addAll / removeLast）、**ArrayList**（Java 风格的
+  常用列表，内部包 Vec）、**Conv**（toInt / toIntOrNull / toBoolOrNull / toString(Int|Bool|Char)
+  / toBytes / toChars）、Strings（新增 lines）、以及原有 Bits/Numbers/Sorts/…
+
 **模块别名写在源文件里**（阶段 84，用户拍板）：一行声明即可用，不必依赖清单文件：
 
 ```rsf
