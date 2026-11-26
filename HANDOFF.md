@@ -244,7 +244,10 @@ fn main() -> void {
 ## 10. `.rsfs` 语法定稿（进行中，逐条拍板）
 
 **块语句家族**（阶段 84，都不带 `#`）：`project { 字段 = 值 }`、
-`target { 动词(参数) }`、`dependencies { 声明 }`，以及 `rsf run` 的 cargo 语义。
+`target { 动词(参数) }`、`dependencies { 声明 }`、`run { use 名字 }`，
+以及 `rsf run` 的 cargo 语义。`run { }` 里 `use project` / `use dependencies`
+是显式声明（本来就全局生效），`use <产物名>` 选中 `rsf run` 默认跑哪个
+（命令行 `--bin` 优先）。
 
 `dependencies { javaInclude(…) cInclude(…) rule(…) }` 由**装载层**处理（和 `#dep` 同一条路），
 因为 jar 必须在分析之前进 classpath，所以块里只认字面量。`#dep` 仍可用，新写法是块语句。

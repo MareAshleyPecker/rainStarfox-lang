@@ -258,11 +258,13 @@ internal fun Cli.runProject(bin: String?, programArgs: List<String>): Int {
                 "现在只有 ${lastBuilt.joinToString("、") { "${it.spec.name}（${it.spec.kind.keyword}）" }}",
         )
     }
+    // 优先级：命令行 --bin > 构建脚本里 run { use 名字 }
+    val wanted = bin ?: preferredRun
     val chosen = when {
-        bin != null -> runnable.firstOrNull { it.spec.name == bin }
+        wanted != null -> runnable.firstOrNull { it.spec.name == wanted }
             ?: throw org.example.complie.diag.RsfError(
                 "build",
-                "没有叫 '$bin' 的可运行产物。可选的：${runnable.joinToString("、") { it.spec.name }}",
+                "没有叫 '$wanted' 的可运行产物。可选的：${runnable.joinToString("、") { it.spec.name }}",
             )
         runnable.size == 1 -> runnable.first()
         else -> throw org.example.complie.diag.RsfError(

@@ -196,6 +196,8 @@ internal fun Cli.cmdBuild(rest: List<String>): Int {
                 }
                 // 阶段 3：按计划出产物（第一个失败即停，异常直接冒到 CLI）。
                 buildPlanned(host, effMeta)
+                // `run { use main }` 选中的默认产物：`rsf run` 没给 --bin 时用它
+                preferredRun = host.runTarget
                 return 0
             }
         }

@@ -385,6 +385,18 @@ object Builtins {
         doc = "声明一次原样复制：copy(\"@/res/data.txt\", \"build/out/copied.txt\")（只有构建脚本里能用）",
     )
 
+    /**
+     * `use 名字`：`run { use main }` 里的一行（阶段 84）。
+     *
+     * 语义是「这次运行要用到 X」：`project` / `dependencies` 表示项目配置与依赖已生效
+     * （它们本来就是全局的，这条是显式声明）；产物名则选中 `rsf run` 默认跑哪个。
+     * 按行执行，顺序即书写顺序。
+     */
+    val RUN_USE = Builtin(
+        "use", listOf(RsfType.STRING), RsfType.VOID, buildOnly = true,
+        doc = "run { use 名字 }：声明这次运行用到什么（项目配置 / 依赖 / 某个产物名）",
+    )
+
     /** 带签名的内置函数（`print` / `println` 是单参数特例，签名不在这里表达）。 */
     val ALL: List<Builtin> = listOf(
         TO_BYTE, TO_CHAR, CHAR_TO_INT, INT_TO_STRING, PARSE_INT,
@@ -394,7 +406,7 @@ object Builtins {
         MEM_BYTES, MEM_PEAK, GC_COLLECT,
         OUT_DIR, COMPILE, COMPILE_ALL, EXEC, TARGET, NEED,
         DEP_JAVA, DEP_C, DEP_H, DEP_DIR, BUILD_CONFIG,
-        ART_EXE, ART_LIB, ART_JAR, ART_COPY,
+        ART_EXE, ART_LIB, ART_JAR, ART_COPY, RUN_USE,
     )
 
     private val BY_NAME: Map<String, Builtin> = ALL.associateBy { it.name }

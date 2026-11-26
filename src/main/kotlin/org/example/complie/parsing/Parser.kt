@@ -2677,6 +2677,20 @@ class Parser(
                 )
             }
             if (!check(TokenKind.ASSIGN)) {
+                // 动词 + 裸名字：`use project`、`use main`（run 块用）。
+                // 名字按**字面量**传过去：它不是变量，而是产物名/块名。
+                if (check(TokenKind.IDENT)) {
+                    val target = advance()
+                    entries.add(
+                        CallExpr(
+                            name = fieldTok.lexeme,
+                            arguments = listOf(StringLit(target.lexeme, target.at)),
+                            at = fieldTok.at,
+                        ),
+                    )
+                    match(TokenKind.SEMI)
+                    continue
+                }
                 // 动词调用：`exe("a.rsf")`、`copy("a", "out")`——名字已经吃掉了，直接读实参表
                 if (!check(TokenKind.LPAREN)) {
                     throw error(

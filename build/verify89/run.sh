@@ -37,4 +37,17 @@ echo "== 单个文件模式不受影响 =="
 grep -q '构建顺序' single.log && fail "单文件模式不该触发构建"
 grep -q 'exe 跑起来了' single.log || fail "单文件模式没跑起来"
 
+echo "== run { use tool }：不带 --bin 也能跑 =="
+cat >> build.rsfs <<'RSF'
+RSF
+python3 - <<'PYEOF'
+p='build.rsfs'
+s=open(p).read()
+s=s.replace('fn main() -> void {\n}', 'run {\n    use project\n    use tool\n}\n\nfn main() -> void {\n}',1)
+open(p,'w').write(s)
+PYEOF
+"$JAVA" -cp "$CP" org.example.MainKt run > use.log 2>&1 || { cat use.log; fail "run { use tool } 没生效"; }
+grep -q 'java -jar' use.log || fail "run { use tool } 没选中 jar 产物"
+grep -q 'jar 跑起来了' use.log || fail "run { use tool } 跑的不是 jar"
+
 echo "verify89: 全过"

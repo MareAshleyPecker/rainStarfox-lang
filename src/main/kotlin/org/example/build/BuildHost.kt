@@ -54,6 +54,14 @@ interface BuildHost {
     fun need(from: String, to: String)
 
     /**
+     * `run { use 名字 }` 的一行。
+     *
+     * `project` / `dependencies` 是显式声明（它们本来就全局生效）；
+     * 其它名字当「默认运行哪个产物」记下来，`rsf run` 没有 --bin 时用它。
+     */
+    fun use(name: String)
+
+    /**
      * 往依赖清单里加一条（规则体里的 `java(...)` / `c(...)` / `h(...)` / `dir(...)`）。
      *
      * [kind] 是 `DepKind.keyword`；清单与 `#dep { … }` 块共用同一份，
@@ -162,6 +170,27 @@ class ProjectBuildHost(
         private set
     var projectExport: String? = null
         private set
+
+    /** `run { use … }` 里选中的默认产物（没写就是 null）。 */
+    var runTarget: String? = null
+        private set
+
+    override fun use(name: String) {
+        when (name) {
+            "project", "dependencies" -> Unit // 显式声明；这两块本来就全局生效
+            else -> {
+                // 同一个 name 写两次不算错，但换名字要报错——否则不知道按哪条跑
+                val previous = runTarget
+                if (previous != null && previous != name) {
+                    throw RsfError(
+                        "build",
+                        "run { } 里选了两个不同的产物：'$previous' 和 '$name'。只留一条",
+                    )
+                }
+                runTarget = name
+            }
+        }
+    }
 
     override fun config(block: String, field: String, value: String) {
         when (block) {

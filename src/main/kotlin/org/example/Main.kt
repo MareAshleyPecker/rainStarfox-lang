@@ -48,6 +48,9 @@ class Cli {
      */
     internal var lastBuilt: List<BuiltArtifact> = emptyList()
 
+    /** `run { use 名字 }` 里选中的默认产物（阶段 84）：`rsf run` 的优先选择。 */
+    internal var preferredRun: String? = null
+
     fun run(argv: List<String>): Int {
         if (argv.isEmpty()) return repl()
         return when (val cmd = argv[0]) {

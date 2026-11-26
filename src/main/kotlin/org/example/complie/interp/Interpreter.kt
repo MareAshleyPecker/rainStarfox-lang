@@ -2391,6 +2391,14 @@ class Interpreter(
                 for (arg in args) host.declareDep(builtin.name, arg as String)
                 null
             }
+            // 阶段 84：`run { use 名字 }` 的一行
+            "use" -> {
+                val host = buildHost ?: throw RsfFailure(
+                    "'use' 只有构建脚本里能用：运行配置由 'rsf build' 驱动 build.rsfs 时注入。",
+                )
+                host.use(args[0] as String)
+                null
+            }
             // 阶段 84：块语句里的产物声明（target { exe(…) / copy(…) }）
             "exe", "lib", "jar" -> {
                 val host = buildHost ?: throw RsfFailure(
