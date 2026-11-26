@@ -89,6 +89,11 @@ class LoadedProgram(
      * 所以「规则在哪份文件里」不影响调用——只要那份文件被 import 进来。
      */
     val rules: List<DirectiveRule> = emptyList(),
+    /**
+     * 阶段 84：顶层配置块（`project { … }`）。**只能写在项目根的 build.rsfs 里**
+     * （装载时校验），求值在 globals 之后、规则与 main 之前。
+     */
+    val configs: List<ConfigBlock> = emptyList(),
 ) {
     /** 合成一个 Program 交给 Checker。 */
     fun toProgram(): Program =
@@ -104,6 +109,7 @@ class LoadedProgram(
             annotations = annotations,
             gc = gc,
             globals = globals,
+            configs = configs,
         )
 }
 
@@ -150,6 +156,7 @@ class SourceLoader {
     private val rules = ArrayList<DirectiveRule>()
     /** 阶段 85：各文件的全局变量，按载入顺序合并（初值就按这个顺序跑）。 */
     private val globals = ArrayList<GlobalVarDecl>()
+    private val configs = ArrayList<ConfigBlock>()
 
     /** 阶段 82：`build.rsfs` 的 `#build` 设置（`Directives.parse` 已经保证只有它能写）。 */
     private var build: BuildSettings? = null
@@ -201,6 +208,7 @@ class SourceLoader {
             build = build,
             targets = root.directives.targets,
             rules = rules.toList(),
+            configs = configs.toList(),
             globals = globals.toList(),
         )
     }
@@ -261,6 +269,18 @@ class SourceLoader {
         source.directives.deps.forEach { deps.add(it) }
         source.directives.build?.let { if (build == null) build = it }
         rules.addAll(source.directives.rules)
+        // 阶段 84：配置块。它描述「整份构件」，和 #build 一样只认项目根的 build.rsfs。
+        for (cfg in program.configs) {
+            if (source.name != "build.rsfs") {
+                throw RsfError(
+                    "loader",
+                    "配置块 ${cfg.name} { … } 只能写在项目根目录的 build.rsfs 里：" +
+                        "它描述的是整份构件的设置，写进普通源文件会让人猜不到最终用哪套",
+                    cfg.at.line, cfg.at.column, source,
+                )
+            }
+            configs.add(cfg)
+        }
         // 阶段 85：合并全局变量（整程序一份；顺序 = 载入顺序，初值就按这个顺序跑）。
         for (g in program.globals) globals.add(g)
 

@@ -736,6 +736,8 @@ class SemanticModel(
     val propertyWrites: IdentityHashMap<MemberAssignStmt, UserMember.Method> = IdentityHashMap(),
     /** 阶段 85：全局变量声明（按声明顺序初始化）。 */
     val globalVars: List<GlobalVarDecl> = emptyList(),
+    /** 阶段 84：顶层配置块（`project { … }`），按书写顺序在 globals 之后求值。 */
+    val configs: List<org.example.complie.ast.ConfigBlock> = emptyList(),
     /** 阶段 85：全局变量 → 绑定（类型 + 能不能写）。 */
     val globalBindings: Map<String, Binding> = emptyMap(),
     /** 阶段 85：读全局变量的 VarExpr。 */

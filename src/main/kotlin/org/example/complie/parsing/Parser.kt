@@ -118,6 +118,7 @@ class Parser(
         val topLevelStmts = ArrayList<Stmt>()
         // 阶段 85：全局变量（`const var` / `const val`），位置自由、整程序一份。
         val globals = ArrayList<GlobalVarDecl>()
+        val configs = ArrayList<ConfigBlock>()
 
         // pkg 只能出现在最前面（在 import 之前），和 Java 的 package 一样
         var packageName: String? = null
@@ -227,6 +228,10 @@ class Parser(
                     "'mathematic' 是保留关键字（数学类预留）：语法还没定，编译器还没实现它" +
                         "（现在还只能当关键字用，不能当名字）",
                 )
+            } else if (isConfigBlockAhead()) {
+                // 阶段 84：`project { name = x }`。**顶层声明**，不是语句——
+                // 所以它能和 main 并存，并且在 main 之前求值（见 Interpreter.initGlobals）。
+                configs.add(parseConfigBlock())
             } else if (isConstDeclAhead()) {
                 globals.add(parseGlobalVarDecl())
             } else if (check(TokenKind.KW_VAR) || check(TokenKind.KW_VAL)) {
@@ -288,6 +293,7 @@ class Parser(
             imports = imports,
             functions = functions,
             classes = classes,
+            configs = configs,
             packageName = packageName,
             target = fileTarget,
             gc = gcDirective,
@@ -2637,8 +2643,59 @@ class Parser(
         return Block(statements, brace.at)
     }
 
+    /**
+     * `project { name = projectName, ver = version }` —— 配置块（阶段 84）。
+     *
+     * 只收 `字段 = 表达式`，一行一条（分号可选）。它是**声明**：值和 `const val`
+     * 一样在启动时求一次，所以能和 main 并存。字段与类型由宿主按 schema 校验。
+     */
+    private fun isConfigBlockAhead(): Boolean {
+        val t = peek()
+        return t.kind == TokenKind.IDENT && peek(1).kind == TokenKind.LBRACE &&
+            peek(1).at.line == t.at.line
+    }
+
+    private fun parseConfigBlock(): ConfigBlock {
+        val nameTok = advance()
+        advance() // '{'
+        val entries = ArrayList<Pair<String, Expr>>()
+        while (!check(TokenKind.RBRACE) && !check(TokenKind.EOF)) {
+            val fieldTok = if (check(TokenKind.IDENT)) {
+                advance()
+            } else {
+                throw error(
+                    peek(),
+                    "配置块 ${nameTok.lexeme} { … } 里只能写 '字段 = 表达式'（一行一条），" +
+                        "实际读到 ${peek().describe()}",
+                )
+            }
+            if (!match(TokenKind.ASSIGN)) {
+                throw error(
+                    peek(),
+                    "配置项要写成 '${fieldTok.lexeme} = 表达式'，实际读到 ${peek().describe()}",
+                )
+            }
+            entries.add(fieldTok.lexeme to parseExpr())
+            match(TokenKind.SEMI) // 可选分隔符，和别处一致
+        }
+        if (!check(TokenKind.RBRACE)) {
+            throw error(peek(), "配置块 ${nameTok.lexeme} { … } 没有收尾的 '}'")
+        }
+        advance()
+        return ConfigBlock(nameTok.lexeme, entries, nameTok.at)
+    }
+
     private fun parseStmt(): Stmt {
         val t = peek()
+        // 阶段 84：配置块是**顶层声明**。写在函数体里是常见误会（想「在这里配一下」），
+        // 直接说清楚它该待在哪，而不是报「未声明的变量」。
+        if (isConfigBlockAhead()) {
+            throw error(
+                t,
+                "配置块 ${t.lexeme} { … } 只能写在顶层：它是一份构建脚本的声明，" +
+                    "在 globals 之后、规则与 main 之前求值一次",
+            )
+        }
         return when {
             t.kind == TokenKind.LBRACE -> parseBlock()
 

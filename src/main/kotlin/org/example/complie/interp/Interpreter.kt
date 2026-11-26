@@ -250,12 +250,28 @@ class Interpreter(
      * 而且顺序就是源码里的顺序；前向引用在 Checker 里已经报成「未声明的变量」了。
      */
     private fun initGlobals() {
-        if (model.globalVars.isEmpty()) return
+        if (model.globalVars.isEmpty() && model.configs.isEmpty()) return
         val body = model.loweredOf(model.entry!!)
         val noSlots = arrayOfNulls<Any>(body.slotCount)
         for (decl in model.globalVars) {
             val binding = model.globalBindings.getValue(decl.name)
             globals[decl.name] = coerce(eval(decl.initializer, noSlots, body), binding.type)
+        }
+
+        // 阶段 84：顶层配置块（`project { … }`）在 globals 之后、规则与 main 之前求值一次。
+        // 这样 `const val projectName = "x"` 在块里可以直接引用。
+        for (cfg in model.configs) {
+            val host = buildHost ?: throw RsfFailure(
+                "配置块 ${cfg.name} { … } 只有构建脚本里能用：'rsf build' 驱动 build.rsfs 时才有宿主",
+            )
+            for ((field, expr) in cfg.entries) {
+                val value = eval(expr, noSlots, body)
+                val text = value as? String ?: throw RsfFailure(
+                    "配置块 ${cfg.name} 的字段 '$field' 要写 String 表达式，" +
+                        "实际给了 ${model.typeOf(expr).rsfName}",
+                )
+                host.config(cfg.name, field, text)
+            }
         }
     }
 
@@ -2377,6 +2393,14 @@ class Interpreter(
                 )
                 // 可以一次给多个路径（vararg）
                 for (arg in args) host.declareDep(builtin.name, arg as String)
+                null
+            }
+            // 阶段 84：配置块解糖出来的调用。块名与字段都按字符串交给宿主校验。
+            "__build_config" -> {
+                val host = buildHost ?: throw RsfFailure(
+                    "'${builtin.name}' 只有构建脚本里能用：配置块由 'rsf build' 驱动 build.rsfs 时注入。",
+                )
+                host.config(args[0] as String, args[1] as String, args[2] as String)
                 null
             }
             "readBytes" -> fileCall(builtin.name, args[0] as String) {

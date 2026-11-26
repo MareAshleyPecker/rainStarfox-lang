@@ -543,9 +543,24 @@ data class ModuleImport(
     override val at: SourceLine,
 ) : ImportDecl
 
+/**
+ * 配置块（阶段 84）：`project { name = projectName, ver = version }`。
+ *
+ * **它是声明，不是语句**——所以能和 `main` 并存，初值在 globals 之后、规则与 main 之前
+ * 求值一次（`const val projectName` 那种全局因此可以引用）。块名与字段由宿主按 schema
+ * 校验（现在只有 `project`）；[entries] 保持书写顺序。
+ */
+data class ConfigBlock(
+    val name: String,
+    val entries: List<Pair<String, Expr>>,
+    override val at: SourceLine,
+) : Node
+
 data class Program(
     val imports: List<ImportDecl>,
     val functions: List<FuncDecl>,
+    /** 阶段 84：顶层的配置块（`project { … }`），按书写顺序求值。 */
+    val configs: List<ConfigBlock> = emptyList(),
     /** 用户自定义类（阶段 12）。顶层函数和类是同一个命名空间里的两种声明。 */
     val classes: List<ClassDecl> = emptyList(),
     /**

@@ -70,6 +70,13 @@ MAIN_LINE=$(grep -n '目标 main' build.log | cut -d: -f1)
 grep -q '来自 exec 的一行' build.log || fail "exec 没跑"
 grep -q 'exec 失败' build.log && fail "exec 成功却走了失败分支"
 
+# 6.5 配置块生效：project { name = … } 在 main 之前求值并被报出来
+grep -q '项目: verify84 1.0' build.log || fail "project 配置块没生效（日志里没有 项目: verify84 1.0）"
+CONF_LINE=$(grep -n '配置块先求值' build.log | cut -d: -f1)
+MAIN_LOG2=$(grep -n 'main 在规则之后' build.log | cut -d: -f1)
+[ -n "$CONF_LINE" ] || fail "配置块的表达式没被求值"
+[ "$CONF_LINE" -lt "$MAIN_LOG2" ] || fail "配置块在 main 之后才求值"
+
 # 7. 阶段 1：规则先跑，且跑在 main 之前
 grep -q '规则 genDeps 先跑' build.log || fail "阶段 1 没跑规则"
 RULE_LINE=$(grep -n '规则 genDeps 先跑' build.log | cut -d: -f1)

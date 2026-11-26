@@ -146,6 +146,14 @@ internal fun Cli.cmdBuild(rest: List<String>): Int {
                     val lock = host.writeLock()
                     println("[rsf] 依赖锁文件: ${lock.path}")
                 }
+                // 阶段 84：`project { … }` 的字段在这里报一行，用户能确认块真的生效了
+                val pName = host.projectName
+                if (pName != null || host.projectVersion != null) {
+                    println(
+                        "[rsf] 项目: ${pName ?: "（未命名）"}" +
+                            (host.projectVersion?.let { " $it" } ?: ""),
+                    )
+                }
                 // 阶段 3：按计划出产物（第一个失败即停，异常直接冒到 CLI）。
                 buildPlanned(host, effMeta)
                 return 0

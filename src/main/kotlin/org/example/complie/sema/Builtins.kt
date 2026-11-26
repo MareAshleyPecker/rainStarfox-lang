@@ -344,6 +344,19 @@ object Builtins {
         doc = "声明目录依赖：dirInclude(\"res\", \"assets\")；整个目录原样带走（只有构建脚本里能用）",
     )
 
+    /**
+     * `__build_config(块名, 字段, 值)`：配置块解糖出来的内部调用（阶段 84）。
+     *
+     * `project { name = x }` 解析成 `__build_config("project", "name", x)`。
+     * 名字带下划线：这是**编译器的内部约定**，用户不该手写（写了也能用，但没意义——
+     * 它只是把值交给宿主）。字段是否存在、类型对不对，由宿主按 schema 校验。
+     */
+    val BUILD_CONFIG = Builtin(
+        "__build_config", listOf(RsfType.STRING, RsfType.STRING, RsfType.STRING), RsfType.VOID,
+        buildOnly = true,
+        doc = "内部：配置块解糖出来的调用（project { name = … }），不要手写",
+    )
+
     /** 带签名的内置函数（`print` / `println` 是单参数特例，签名不在这里表达）。 */
     val ALL: List<Builtin> = listOf(
         TO_BYTE, TO_CHAR, CHAR_TO_INT, INT_TO_STRING, PARSE_INT,
@@ -352,7 +365,7 @@ object Builtins {
         JVM_CALL, JVM_NEW, JVM_CALL_ON,
         MEM_BYTES, MEM_PEAK, GC_COLLECT,
         OUT_DIR, COMPILE, COMPILE_ALL, EXEC, TARGET, NEED,
-        DEP_JAVA, DEP_C, DEP_H, DEP_DIR,
+        DEP_JAVA, DEP_C, DEP_H, DEP_DIR, BUILD_CONFIG,
     )
 
     private val BY_NAME: Map<String, Builtin> = ALL.associateBy { it.name }

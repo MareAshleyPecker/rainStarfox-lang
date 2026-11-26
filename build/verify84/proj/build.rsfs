@@ -1,5 +1,19 @@
 import "build/rules.rsfs"
 
+const val projectName = "verify84"
+const val projectVersion = "1.0"
+
+// 配置块：字段 = 表达式；表达式可以引用 const val（它在 globals 之后求值）
+fn markConfig() -> String {
+    println("配置块先求值")
+    rtn projectName
+}
+
+project {
+    name = markConfig()
+    ver = projectVersion
+}
+
 #dep {
     rule("genDeps")
 }

@@ -262,6 +262,8 @@ class Checker(
         // 所以放在函数声明之后、查任何函数体之前。
         declareGlobals()
         declareFunctions()
+        // 阶段 84：配置块的值可能调函数（`name = markConfig()`），所以排在函数声明之后。
+        checkConfigs()
         // 阶段 80：扩展函数按接收者类型收表（要在类/枚举/接口表填好之后，
         // 否则 `fn Box&<Int>.foo()` 里的 `Box` 还解析不出来）。
         collectExtensions()
@@ -304,6 +306,7 @@ class Checker(
             memberTargets = memberTargets,
             extensionCalls = extensionCalls,
             globalVars = program.globals,
+            configs = program.configs,
             globalBindings = globalBindings,
             globalReads = globalReads,
             globalWrites = globalWrites,
@@ -403,6 +406,27 @@ class Checker(
                 at = decl.at,
                 global = true,
             )
+        }
+    }
+
+    /**
+     * 配置块（`project { … }`）的值表达式：逐个类型检查。
+     *
+     * 排在 declareGlobals + declareFunctions 之后：块里既能引用 `const val`
+     * （否则变量读取没有绑定），也能调函数（否则报「未定义的函数」）。
+     */
+    private fun checkConfigs() {
+        for (cfg in program.configs) {
+            for ((field, expr) in cfg.entries) {
+                val t = type(expr)
+                if (t.isVoid) throw err("配置块 ${cfg.name} 的字段 '$field' 不能是 void 表达式", expr.at)
+                if (t.rsfName != "String") {
+                    throw err(
+                        "配置块 ${cfg.name} 的字段 '$field' 要写 String 表达式，实际给了 ${t.rsfName}",
+                        expr.at,
+                    )
+                }
+            }
         }
     }
 

@@ -57,6 +57,13 @@ interface BuildHost {
      */
     fun declareDep(kind: String, path: String)
 
+    /**
+     * 配置块的一项：`project { name = x }` 解糖成 `config("project", "name", x)`。
+     *
+     * 字段名与类型由宿主按 schema 校验（现在只有 `project` 一块）。
+     */
+    fun config(block: String, field: String, value: String)
+
     /** 目标表（跑完 main 之后由 `rsf build` 拿走排好的顺序）。 */
     fun plan(): BuildPlan
 }
@@ -143,6 +150,32 @@ class ProjectBuildHost(
     private val buildPlan = BuildPlan()
 
     override fun plan(): BuildPlan = buildPlan
+
+    /** `project { … }` 的字段（阶段 84；`export` 先只记录，等 module-export 那条线）。 */
+    var projectName: String? = null
+        private set
+    var projectVersion: String? = null
+        private set
+    var projectExport: String? = null
+        private set
+
+    override fun config(block: String, field: String, value: String) {
+        when (block) {
+            "project" -> when (field) {
+                "name" -> projectName = value
+                "ver" -> projectVersion = value
+                "export" -> projectExport = value
+                else -> throw RsfError(
+                    "build",
+                    "project { … } 里没有字段 '$field'。可用的：name（产物名）/ ver（版本）/ export（对外导出的名字）",
+                )
+            }
+            else -> throw RsfError(
+                "build",
+                "不认识的配置块 '$block'。现在只有 project { … }",
+            )
+        }
+    }
 
     /**
      * 跑一条命令：工作目录固定为项目根（脚本里写的相对路径全是按项目根算的），
