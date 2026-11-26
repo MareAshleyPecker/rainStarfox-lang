@@ -156,6 +156,65 @@ class SourceLoader {
     /** 目录 → 它的 pkg-info.rsf 包名（null 表示这个目录没有/没写 pkg）。 */
     private val dirPackageCache = HashMap<File, String?>()
 
+    /** 每个源文件里 `module "…" to 别名` 的声明：别名 → (目录, 成员表)。 */
+    private val fileAliases = HashMap<File, MutableList<Pair<ModuleAlias, File>>>()
+
+    /** 别名声明要导入的成员：白名单就逐个找同名文件，没有名单就整包。 */
+    private fun loadAliasMembers(imp: ModuleAlias, dir: File, source: SourceFile) {
+        val files = dir.listFiles { f ->
+            f.isFile && f.name.endsWith(".rsf") && f.name != PkgInfo.FILE_NAME && f.name != ModuleImpex.FILE_NAME
+        }?.sortedBy { it.name }.orEmpty()
+        if (files.isEmpty()) {
+            throw RsfError("loader", "module \"${imp.path}\" 里没有 .rsf 文件", imp.at.line, imp.at.column, source)
+        }
+        val members = imp.members
+        if (members == null) {
+            for (f in files) loadFile(f.canonicalFile, null)
+            return
+        }
+        for (name in members) {
+            val hit = files.firstOrNull { it.nameWithoutExtension == name }
+                ?: throw RsfError(
+                    "loader",
+                    "module \"${imp.path}\" 里没有成员 '$name'。可用的：${files.joinToString("、") { it.nameWithoutExtension }}",
+                    imp.at.line, imp.at.column, source,
+                )
+            loadFile(hit.canonicalFile, null)
+        }
+    }
+
+    /** `import std.Vec` 命中本文件别名时，按名字取那一个成员。 */
+    private fun loadAliasMember(
+        imp: ClassImport,
+        alias: String,
+        member: String,
+        dir: File,
+        allowed: List<String>?,
+    ) {
+        if (member.isEmpty() || member == "*") {
+            val files = dir.listFiles { f ->
+                f.isFile && f.name.endsWith(".rsf") && f.name != PkgInfo.FILE_NAME && f.name != ModuleImpex.FILE_NAME
+            }?.sortedBy { it.name }.orEmpty()
+            for (f in files) loadFile(f.canonicalFile, null)
+            return
+        }
+        val name = member.substringAfterLast('.')
+        if (allowed != null && name !in allowed) {
+            throw RsfError(
+                "loader",
+                "模块 '$alias' 的成员表里没有 '$name'。写着的：${allowed.joinToString("、")}",
+                imp.at.line, imp.at.column, null,
+            )
+        }
+        val hit = dir.listFiles { f -> f.isFile && f.name == "$name.rsf" }?.firstOrNull()
+            ?: throw RsfError(
+                "loader",
+                "模块 '$alias'（${dir.path}）里没有 '$name.rsf'",
+                imp.at.line, imp.at.column, null,
+            )
+        loadFile(hit.canonicalFile, null)
+    }
+
     /** 项目根的 module-impex.rsf 清单（没有就 null）；键是规范化后的绝对路径。 */
     private var manifestCache: Map<String, File>? = null
     private var manifestRoot: File? = null
@@ -611,8 +670,16 @@ class SourceLoader {
                 is ClassImport -> {
                     // 先查模块别名表：`import std.Vec` 命中 `module "…" to std` 就是 rsf 的包；
                     // 没命中才按 JVM 类解析（`import java.lang.Math` 照旧）。
-                    val table = moduleTableFor(file)
                     val head = imp.path.substringBefore('.')
+                    // ① 本文件里 `module "…" to X` 声明的别名优先
+                    val local = fileAliases[file]?.firstOrNull { it.first.alias == head }
+                    if (local != null) {
+                        loadAliasMember(imp, head, imp.path.removePrefix(head).trimStart('.'), local.second, local.first.members)
+                        importDecls.remove(imp)
+                        continue
+                    }
+                    // ② 项目/工具链清单里的模块
+                    val table = moduleTableFor(file)
                     val dir = table?.dirs?.get(head)
                     if (dir != null) {
                         loadModuleMember(imp, head, imp.path.removePrefix(head).trimStart('.'), dir, table)
@@ -633,6 +700,14 @@ class SourceLoader {
                         "h" -> deps.add(DepEntry(DepKind.H, depPath(resolved)))
                         else -> loadFile(resolved, null)
                     }
+                }
+
+                // 阶段 84：`module "stdlib/std" to std { Vec Text }`——声明即导入。
+                // 别名记进本文件的表（供 `import std.Vec` 用），成员按白名单/整包拉进来。
+                is ModuleAlias -> {
+                    val aliasDir = resolveDir(imp.path, dir, imp)
+                    fileAliases.getOrPut(file) { ArrayList() }.add(imp to aliasDir)
+                    loadAliasMembers(imp, aliasDir, source)
                 }
 
                 is ModuleImport -> {
@@ -724,7 +799,7 @@ class SourceLoader {
         return hit.canonicalFile
     }
 
-    private fun resolveDir(path: String, fromDir: File, imp: ModuleImport): File {
+    private fun resolveDir(path: String, fromDir: File, imp: ImportDecl): File {
         val candidates = searchBases(path, fromDir)
         val hit = candidates.firstOrNull { it.isDirectory }
         if (hit == null) {

@@ -274,15 +274,25 @@ class Completer(
         }
     }
 
-    /** 这个文件已经 import 了哪些模块别名（`import std.Vec` → `std`）。 */
+    /**
+     * 这个文件已经导入了哪些模块别名。
+     *
+     * 两种写法都算：`import std.Vec`（点分）与
+     * `module "stdlib/std" to std { … }`（声明即导入，阶段 84）。
+     */
     private fun importedModules(): Set<String> {
         val out = LinkedHashSet<String>()
         for (line in source.text.lines()) {
             val t = line.trim()
-            if (!t.startsWith("import ")) continue
-            val spec = t.removePrefix("import ").trim().substringBefore(' ')
-            if (spec.startsWith("\"")) continue
-            out.add(spec.substringBefore('.'))
+            if (t.startsWith("import ")) {
+                val spec = t.removePrefix("import ").trim().substringBefore(' ')
+                if (!spec.startsWith("\"")) out.add(spec.substringBefore('.'))
+                continue
+            }
+            if (t.startsWith("module ")) {
+                val m = Regex("module \"[^\"]*\" to ([A-Za-z_][A-Za-z0-9_]*)").find(t)
+                if (m != null) out.add(m.groupValues[1])
+            }
         }
         return out
     }

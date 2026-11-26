@@ -44,4 +44,18 @@ RSF
 "$JAVA" -cp "$CP" org.example.MainKt run fixed.rsf > fixed.log 2>&1 || { cat fixed.log; fail "加上 import 后跑不起来"; }
 grep -q '^3$' fixed.log || { cat fixed.log; fail "运行结果不对"; }
 
+echo "== 源文件里 module \"…\" to … 声明即导入 =="
+cat > inline.rsf <<'RSF'
+module "stdlib/std" to std { Vec, Text }
+
+fn main() -> void {
+    var v = new Vec&<String>()
+    v.push("x")
+    v.push("y")
+    println(Text.join(v.copyInto(new String[v.size()]), "+"))
+}
+RSF
+"$JAVA" -cp "$CP" org.example.MainKt run inline.rsf > inline.log 2>&1 || { cat inline.log; fail "源文件里的 module 别名不生效"; }
+grep -q '^x+y$' inline.log || { cat inline.log; fail "module 别名导入的程序输出不对"; }
+
 echo "verify94: 全过"

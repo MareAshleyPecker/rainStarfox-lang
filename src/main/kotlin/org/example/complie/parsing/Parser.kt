@@ -1833,6 +1833,27 @@ class Parser(
             if (path.isEmpty()) {
                 throw error(t, "${kw.lexeme} 的路径是空的")
             }
+            // 阶段 84：`module "路径" to 别名 { 成员… }`——声明模块别名，声明即可用。
+            if (isModule && check(TokenKind.IDENT) && peek().lexeme == "to") {
+                advance() // to
+                val aliasTok = expect(TokenKind.IDENT, "module … to 后面要写别名（例：to std）")
+                var members: List<String>? = null
+                if (check(TokenKind.LBRACE)) {
+                    advance()
+                    val names = ArrayList<String>()
+                    while (!check(TokenKind.RBRACE) && !check(TokenKind.EOF)) {
+                        val nameTok = expect(TokenKind.IDENT, "成员列表里要写标识符（例：{ Vec Text }）")
+                        names.add(nameTok.lexeme)
+                        if (!match(TokenKind.COMMA)) break
+                    }
+                    expect(TokenKind.RBRACE, "module 的成员列表缺少 '}'")
+                    if (names.isEmpty()) {
+                        throw error(aliasTok, "module 的成员列表是空的：整包导入就别写 '{}'")
+                    }
+                    members = names
+                }
+                return ModuleAlias(path, aliasTok.lexeme, members, kw.at)
+            }
             return if (isModule) ModuleImport(path, kw.at) else SourceImport(path, kw.at)
         }
 

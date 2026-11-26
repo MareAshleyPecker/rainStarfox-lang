@@ -266,6 +266,18 @@ fn main() -> void {
 
 ## 10. `.rsfs` 语法定稿（进行中，逐条拍板）
 
+**模块别名写在源文件里**（阶段 84，用户拍板）：一行声明即可用，不必依赖清单文件：
+
+```rsf
+module "stdlib/std" to std { Vec, Text }   // 起名字 + 只导入这两个
+module "stdlib/lang" to lang               // 没有成员表 = 整包
+```
+
+- 声明**立即导入**列出的成员，之后 `new Vec&<Int>()` / `isBlank(…)` 直接能用；
+- 同一个别名也能用于点分 import（`import std.Vec`），成员表之外的会被拒；
+- `module-impex.rsf` 里的 `module "…" to …` 是**项目级**声明（对外面貌），源文件里的
+  是**文件级**（只影响这个文件）；两者规则一致，解析时文件级优先。
+
 **块语句家族**（阶段 84，都不带 `#`）：`project { 字段 = 值 }`、
 `target { 动词(参数) }`、`dependencies { 声明 }`、`run { use 名字 }`，
 以及 `rsf run` 的 cargo 语义。`run { }` 里 `use project` / `use dependencies`

@@ -544,6 +544,23 @@ data class ModuleImport(
 ) : ImportDecl
 
 /**
+ * 模块别名（阶段 84）：`module "stdlib/std" to std { Vec, Text }`。
+ *
+ * 写在**普通源文件**顶部：声明「把这个目录叫作 std，并把列出的成员导进来」，
+ * 声明完就能直接用（`new Vec&<Int>()`）。[members] 为 null 表示整包。
+ *
+ * 和 [ModuleImport] 的区别：那个只是"把目录里所有文件并进来"；这个是**起名字**
+ * 并给出可见成员表，源码里也能写 `import std.Vec`。
+ */
+data class ModuleAlias(
+    override val path: String,
+    val alias: String,
+    /** null = 整包；非空 = 只导入这些成员。 */
+    val members: List<String>?,
+    override val at: SourceLine,
+) : ImportDecl
+
+/**
  * 配置块（阶段 84）：`project { name = projectName, ver = version }`。
  *
  * **它是声明，不是语句**——所以能和 `main` 并存，初值在 globals 之后、规则与 main 之前
