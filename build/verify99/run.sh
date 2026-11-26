@@ -27,6 +27,7 @@ EXPECT='初始:[]
 内置兜底: 42
 之后2: parseInt: 不是合法的整数：'"'"'y'"'"'
 兜底: state: 写不进去
+兜底: parseInt: 不是合法的整数：'"'"'z'"'"'
 文件: hi'
 
 echo "== 解释器 =="
@@ -46,9 +47,9 @@ command -v gcc >/dev/null 2>&1 || { echo "verify99: 跳过 C 侧（没有 gcc）
 diff interp.out c.out || fail "C 后端与解释器输出不一致"
 
 echo "== 反面：类型对不上的写法要报错 =="
-printf 'fn warn() -> void { }\nfn main() -> void {\n    val x = parseInt("1") ?: warn()\n}\n' > bad1.rsf
-"$JAVA" -cp "$CP" org.example.MainKt check bad1.rsf > bad1.log 2>&1 && fail "?'?:' 右边是 void 居然编过了"
-grep -q '右边不能是 void' bad1.log || { cat bad1.log; fail "没报出「右边不能是 void」"; }
+printf 'fn warn() -> void { }\nfn f() -> Int { rtn 1 }\nfn main() -> void {\n    val x = f() ?: warn()\n}\n' > bad1.rsf
+"$JAVA" -cp "$CP" org.example.MainKt check bad1.rsf > bad1.log 2>&1 && fail "'?:' 右边是 void 居然编过了"
+grep -q '右边是 void 表达式' bad1.log || { cat bad1.log; fail "没报出「右边是 void 表达式」"; }
 
 printf 'fn f() -> !void { }\nfn main() -> void {\n    val x = f() ?: 1\n}\n' > bad2.rsf
 "$JAVA" -cp "$CP" org.example.MainKt check bad2.rsf > bad2.log 2>&1 && fail "'!void' 配非 void 兜底居然编过了"

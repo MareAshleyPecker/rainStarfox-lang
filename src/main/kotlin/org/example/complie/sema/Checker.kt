@@ -7129,34 +7129,44 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
      * 阶段 14 起它还有第二个用法：**左边是一个 `!T` 调用**时，出错就取右边的值
      * （`parseInt("") ?: -1`）。两种情况互相排斥，所以先用 `errorCallOf` 分流。
      *
-     * 阶段 84 起还有第三种：左边是 `!void` 调用、右边也是 void 表达式
-     * （`writeText(p, s) ?: reportFailure()`）——只用来「出错时做点什么」，
-     * 结果类型是 void。这是根除 `try/catch` 时最常见的替换形式。
+     * 阶段 84 起还有第三种：右边是 void 表达式——只用来「出错时做点什么」，
+     * 结果类型是 void。这是根除 `try/catch` 时最常见的替换形式：
+     *
+     * ```rsf
+     * writeText(p, s) ?: reportFailure()     // 左边 !void
+     * parseInt(s) ?: reportFailure()         // 左边 !T：成功路径的值被丢掉（只能当语句写）
+     * ```
      */
     private fun checkElvis(expr: ElvisExpr): RsfType {
         // 左边的错误由这个 `?:` 兜住，所以这里不再要求调用点处理
         val left = handling(expr.left) { type(expr.left) }
         val right = type(expr.right)
         val errFn = errorCallOf(expr.left)
-        if (left.isVoid) {
-            if (errFn == null) {
-                throw err(
-                    "'?:' 左边是 void 表达式，没有值可以兜底：要「出错时做点什么」，" +
-                        "左边得是可能失败的调用（'!T' 函数 / parseInt 之类）",
-                    expr.at,
-                )
-            }
-            if (!right.isVoid) {
-                throw err(
-                    "'?:' 左边是 '!void' 调用（'$errFn' 没有返回值），右边也得是不返回值的表达式：" +
-                        "把兜底写成一个 '-> void' 的函数，例如 ${errFn}(…) ?: reportFailure()",
-                    expr.at,
-                )
-            }
-            return RsfType.VOID
+        if (left.isVoid && errFn == null) {
+            throw err(
+                "'?:' 左边是 void 表达式，没有错误可以接：要「出错时做点什么」，" +
+                    "左边得是可能失败的调用（'!T' 函数 / parseInt 之类）",
+                expr.at,
+            )
         }
         if (right.isVoid) {
-            throw err("'?:' 右边不能是 void 表达式", expr.at)
+            if (errFn == null) {
+                throw err(
+                    "'?:' 右边是 void 表达式，但左边不是可能失败的调用——这里没有错误要接。" +
+                        "要处理 null 就给个有值的兜底；要「出错时做点什么」就把左边写成 '!T' 调用",
+                    expr.at,
+                )
+            }
+            // 兜底是 void ⇒ 这个 `?:` 只为了「出错时做点什么」，成功路径的值被丢掉，
+            // 所以它只能当语句用（赋给变量会被「不能用 void 初始化」拦下）。
+            return RsfType.VOID
+        }
+        if (left.isVoid) {
+            throw err(
+                "'?:' 左边是 '!void' 调用（'$errFn' 没有返回值），右边也得是不返回值的表达式：" +
+                    "把兜底写成一个 '-> void' 的函数，例如 ${errFn}(…) ?: reportFailure()",
+                expr.at,
+            )
         }
 
         if (errFn != null) {

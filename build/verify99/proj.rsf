@@ -27,6 +27,7 @@ fn main() -> void {
     // ③ !void 的 ?: 兜底——根除 try/catch 的那条路
     badWrite() ?: warn()
     nothing() ?: warn()
+    parseInt("z") ?: warn()          // !T 也可以只要「出错时做点什么」，值丢掉
     writeText("out.txt", "hi") ?: warn()
     println("文件: " + (readText("out.txt") ?: "读不到"))
 }
