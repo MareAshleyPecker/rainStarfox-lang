@@ -356,3 +356,10 @@ gmon.out
 !/build/verify98/**/
 !/build/verify98/**/*.sh
 !/build/verify98/**/*.rsf
+
+### 判据台（阶段 84：?: 的 void 兜底与 lastErrorMessage）###
+!/build/verify99/
+/build/verify99/**
+!/build/verify99/**/
+!/build/verify99/**/*.sh
+!/build/verify99/**/*.rsf

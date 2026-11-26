@@ -110,6 +110,14 @@ class Checker(
     /** 程序里出现过指针吗（决定字节码后端要不要发 `__rsf_ptr_*` 辅助方法）。 */
     private var usesPointers = false
 
+    /**
+     * 程序里调过 `lastErrorMessage()` 吗（阶段 84）。
+     *
+     * 字节码后端据此决定要不要在程序类上发「最近一条错误」的静态字段与读取方法：
+     * 没调过的程序**一个字节都不变**（和 `usesPointers` 同一个理由）。
+     */
+    private var usesLastErrorMessage = false
+
     // ---------------------------------------------------------------- 函数类型（阶段 30）
 
     /**
@@ -349,7 +357,10 @@ class Checker(
             companionAnnotations = companionAnnotations,
             annotationAccessors = annotationAccessors.toList(),
             genericCalls = genericCalls,
-        ).also { it.setPointerInfo(addressedBindings.toSet(), HashMap(addressedOwners), usesPointers) }
+        ).also {
+            it.setPointerInfo(addressedBindings.toSet(), HashMap(addressedOwners), usesPointers)
+            it.usesLastErrorMessage = usesLastErrorMessage
+        }
     }
 
     // ------------------------------------------------------------------ 作用域
@@ -7117,23 +7128,38 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
      *
      * 阶段 14 起它还有第二个用法：**左边是一个 `!T` 调用**时，出错就取右边的值
      * （`parseInt("") ?: -1`）。两种情况互相排斥，所以先用 `errorCallOf` 分流。
+     *
+     * 阶段 84 起还有第三种：左边是 `!void` 调用、右边也是 void 表达式
+     * （`writeText(p, s) ?: reportFailure()`）——只用来「出错时做点什么」，
+     * 结果类型是 void。这是根除 `try/catch` 时最常见的替换形式。
      */
     private fun checkElvis(expr: ElvisExpr): RsfType {
         // 左边的错误由这个 `?:` 兜住，所以这里不再要求调用点处理
         val left = handling(expr.left) { type(expr.left) }
         val right = type(expr.right)
+        val errFn = errorCallOf(expr.left)
+        if (left.isVoid) {
+            if (errFn == null) {
+                throw err(
+                    "'?:' 左边是 void 表达式，没有值可以兜底：要「出错时做点什么」，" +
+                        "左边得是可能失败的调用（'!T' 函数 / parseInt 之类）",
+                    expr.at,
+                )
+            }
+            if (!right.isVoid) {
+                throw err(
+                    "'?:' 左边是 '!void' 调用（'$errFn' 没有返回值），右边也得是不返回值的表达式：" +
+                        "把兜底写成一个 '-> void' 的函数，例如 ${errFn}(…) ?: reportFailure()",
+                    expr.at,
+                )
+            }
+            return RsfType.VOID
+        }
         if (right.isVoid) {
             throw err("'?:' 右边不能是 void 表达式", expr.at)
         }
 
-        val errFn = errorCallOf(expr.left)
         if (errFn != null) {
-            if (left.isVoid) {
-                throw err(
-                    "'?:' 左边是 '!void' 调用（'$errFn' 没有值可以取），没有东西可以兜底",
-                    expr.at,
-                )
-            }
             if (left.isNullable) {
                 throw err(
                     "暂不支持在同一处同时用可空与错误返回：'$errFn' 既可能失败、" +
@@ -7563,6 +7589,9 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
     }
 
     private fun checkBuiltinCall(expr: CallExpr, builtin: Builtin): RsfType {
+        // 阶段 84：用过 `lastErrorMessage()` 就告诉字节码后端「发那个静态字段」，
+        // 没用过的程序产物逐字节不变。
+        if (builtin.name == "lastErrorMessage") usesLastErrorMessage = true
         if (builtin.nativeOnly && currentTarget != BuildTarget.NATIVE && program.target != BuildTarget.NATIVE) {
             throw err(
                 "'${builtin.name}' 只有 native 侧才有：它读的是 native 运行时的内存统计，" +

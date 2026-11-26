@@ -957,6 +957,14 @@ class SemanticModel(
         usesPointers = uses
     }
 
+    /**
+     * 这份程序调过 `lastErrorMessage()` 吗（阶段 84）？
+     *
+     * 字节码后端据此决定要不要在程序类上发「最近一条错误」的静态字段与读取方法。
+     * 没调过的程序产物一个字节都不变（和 [usesPointers] 同一个理由）。
+     */
+    var usesLastErrorMessage: Boolean = false
+
     fun isAddressed(binding: Binding): Boolean = binding in addressedBindings
 
     /** 这个函数里被取过地址的绑定（按槽位升序）。 */

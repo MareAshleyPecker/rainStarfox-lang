@@ -87,6 +87,7 @@ class Builtin(
  * | `writeText(String, String) -> !void` | 写文本（覆盖） | `Files.write` + 同上 |
  * | `readBytes(String) -> !Byte[]` | 读二进制 | `Files.readAllBytes` + 同上 |
  * | `writeBytes(String, Byte[]) -> !void` | 写二进制（自举落盘 `.class` 用它） | `Files.write` + 同上 |
+ * | `lastErrorMessage() -> String` | 最近一条错误消息（阶段 84） | 程序类上的静态字段 / C 的 `rsf_err_msg` |
  *
  * 分类与大小写这三对**直接调 `java.lang.Character` 的对应方法**（解释器也是），
  * 这样 Unicode 边界情况（比如 `isWhitespace` 不认不间断空格、`toUpper` 对非字母原样返回）
@@ -198,6 +199,27 @@ object Builtins {
         doc = "把 Byte[] 原样写进文件（覆盖），失败就 fail（!void）",
         helperName = FileRuntime.WRITE_BYTES_HELPER,
         helperDesc = FileRuntime.WRITE_BYTES_HELPER_DESC,
+    )
+
+    /**
+     * `lastErrorMessage() -> String`：最近一条错误消息（阶段 84）。
+     *
+     * 根除 `try/catch` 的配套表面：以前要读错误内容只能写
+     * `try { … } catch e { … }`，现在可以
+     *
+     * ```rsf
+     * f() ?: reportFailure()        // reportFailure 里读 lastErrorMessage()
+     * ```
+     *
+     * 语义是**最近一次抛出的错误**（被 `?:` 或 catch 接住之后消息仍然保留），
+     * 所以它也能在错误处理完之后再取一次。还没有任何错误时是空串。
+     *
+     * 三端各有一个槽：解释器 / 字节码是「最近一次抛错时记下的串」，
+     * C 侧直接用运行时的 `rsf_err_msg`（它本来就在 `rsf_set_err` 里留着）。
+     */
+    val LAST_ERROR_MESSAGE = Builtin(
+        "lastErrorMessage", emptyList(), RsfType.STRING,
+        doc = "最近一条错误消息（被 ?: / catch 接住后仍保留；还没有错误时是空串）",
     )
 
     // ------------------------------------------------------------------ native → JVM（阶段 62）
@@ -401,7 +423,7 @@ object Builtins {
     val ALL: List<Builtin> = listOf(
         TO_BYTE, TO_CHAR, CHAR_TO_INT, INT_TO_STRING, PARSE_INT,
         IS_DIGIT, IS_LETTER, IS_WHITESPACE, TO_UPPER, TO_LOWER, STRING_BYTES, BYTE_LENGTH, SLICE,
-        READ_TEXT, WRITE_TEXT, READ_BYTES, WRITE_BYTES,
+        READ_TEXT, WRITE_TEXT, READ_BYTES, WRITE_BYTES, LAST_ERROR_MESSAGE,
         JVM_CALL, JVM_NEW, JVM_CALL_ON,
         MEM_BYTES, MEM_PEAK, GC_COLLECT,
         OUT_DIR, COMPILE, COMPILE_ALL, EXEC, TARGET, NEED,

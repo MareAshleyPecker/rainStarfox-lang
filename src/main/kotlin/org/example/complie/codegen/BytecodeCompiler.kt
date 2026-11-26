@@ -85,6 +85,17 @@ private const val CONCAT_HELPER_DESC = "(Ljava/lang/String;Ljava/lang/String;)Lj
 private const val SLICE_HELPER = "__rsf_slice"
 private const val SLICE_DESC = "(Ljava/lang/String;II)Ljava/lang/String;"
 
+/**
+ * 阶段 84：`lastErrorMessage()` 在程序类上的静态字段与读取方法。
+ *
+ * 只在**程序里真调过** `lastErrorMessage()` 时才发（`model.usesLastErrorMessage`），
+ * 所以没调过的程序产物一个字节都不变。字段名也带 `$`，rsf 源码写不出来。
+ */
+private const val LAST_ERROR_FIELD = "__rsf_lastErrorMessage"
+private const val LAST_ERROR_HELPER = "__rsf_lastErrorMessage\$rt"
+private const val LAST_ERROR_HELPER_DESC = "()Ljava/lang/String;"
+private const val LAST_ERROR_FIELD_DESC = "Ljava/lang/String;"
+
 class BytecodeCompiler(
     private val model: SemanticModel,
     private val sourceName: String,
@@ -481,6 +492,8 @@ class BytecodeCompiler(
         }
         // 阶段 73d：切片越界钳位（只有本程序用过 `s[a..b]` 才发）
         if (usedSlice) emitSliceHelper(cw)
+        // 阶段 84：`lastErrorMessage()` 的静态字段与读取方法（只有本程序用过才发）
+        if (model.usesLastErrorMessage) emitLastErrorMessageHelper(cw)
         cw.visitEnd()
         return cw
     }
@@ -531,10 +544,7 @@ class BytecodeCompiler(
         emitConcat(mv)
         mv.visitLdcInsn(Builtins.PARSE_INT_SUFFIX)
         emitConcat(mv)
-        mv.visitMethodInsn(
-            INVOKESPECIAL, "java/lang/RuntimeException", "<init>", "(Ljava/lang/String;)V", false,
-        )
-        mv.visitInsn(ATHROW)
+        emitRuntimeExceptionThrow(mv)
         mv.visitMaxs(0, 0)
         mv.visitEnd()
     }
@@ -638,6 +648,33 @@ class BytecodeCompiler(
             INVOKEVIRTUAL, "java/lang/String", "substring",
             "(II)Ljava/lang/String;", false,
         )
+        mv.visitInsn(ARETURN)
+        mv.visitMaxs(0, 0)
+        mv.visitEnd()
+    }
+
+    /**
+     * 阶段 84：`lastErrorMessage()` 的落地——程序类上一个静态字段 + 一个读取方法。
+     *
+     * 字段由 [emitRuntimeExceptionThrow] 在**每次抛错时**写入（抛出的 `RuntimeException`
+     * 里本来就是那条消息，直接 `getMessage()` 落进字段，不额外拼串）。
+     * 读取方法把「还没有过错误」的 null 折成空串——C 侧 `rsf_err_msg` 初值也是空串，
+     * 两端于是同一种可观察行为。
+     *
+     * 只在 [SemanticModel.usesLastErrorMessage] 为真时发，旧程序产物逐字节不变。
+     */
+    private fun emitLastErrorMessageHelper(cw: ClassWriter) {
+        cw.visitField(ACC_PUBLIC or ACC_STATIC, LAST_ERROR_FIELD, LAST_ERROR_FIELD_DESC, null, null)
+            .visitEnd()
+        val mv = cw.visitMethod(ACC_PUBLIC or ACC_STATIC, LAST_ERROR_HELPER, LAST_ERROR_HELPER_DESC, null, null)
+        mv.visitCode()
+        val ok = Label()
+        mv.visitFieldInsn(GETSTATIC, programInternalName, LAST_ERROR_FIELD, LAST_ERROR_FIELD_DESC)
+        mv.visitInsn(DUP)
+        mv.visitJumpInsn(IFNONNULL, ok)
+        mv.visitInsn(POP)
+        mv.visitLdcInsn("")
+        mv.visitLabel(ok)
         mv.visitInsn(ARETURN)
         mv.visitMaxs(0, 0)
         mv.visitEnd()
@@ -865,6 +902,13 @@ class BytecodeCompiler(
         mv.visitMethodInsn(
             INVOKESPECIAL, "java/lang/RuntimeException", "<init>", "(Ljava/lang/String;)V", false,
         )
+        // 阶段 84：抛出的同时把消息记进程序类的静态字段（`lastErrorMessage()` 读它）。
+        // 栈上是异常对象，DUP 一份取 getMessage，原对象留着给 ATHROW。
+        if (model.usesLastErrorMessage) {
+            mv.visitInsn(DUP)
+            mv.visitMethodInsn(INVOKEVIRTUAL, "java/lang/Throwable", "getMessage", "()Ljava/lang/String;", false)
+            mv.visitFieldInsn(PUTSTATIC, programInternalName, LAST_ERROR_FIELD, LAST_ERROR_FIELD_DESC)
+        }
         mv.visitInsn(ATHROW)
     }
 
@@ -2946,14 +2990,9 @@ class BytecodeCompiler(
                 // 直接用 JDK 现成的异常类型，不新造类——解释器那边抛的 RsfFailure
                 // 也带着同样的消息，两端的可观察行为一致（谁接住、消息是什么）。
                 is IFail -> {
-                    mv.visitTypeInsn(NEW, "java/lang/RuntimeException")
-                    mv.visitInsn(DUP)
+                    emitRuntimeExceptionHeader(mv)
                     emitExpr(ctx, instr.stmt.message)
-                    mv.visitMethodInsn(
-                        INVOKESPECIAL, "java/lang/RuntimeException", "<init>",
-                        "(Ljava/lang/String;)V", false,
-                    )
-                    mv.visitInsn(ATHROW)
+                    emitRuntimeExceptionThrow(mv)
                 }
 
                 is IGoto -> mv.visitJumpInsn(GOTO, labels[instr.label]!!)
@@ -3017,14 +3056,9 @@ class BytecodeCompiler(
                         // 没写 else 且 case 穷尽：静态上到不了这里（值只可能是 null）。
                         // 发的形状和 `fail "..."` 一模一样（`throw new RuntimeException(消息)`），
                         // 解释器那边抛的是同一个消息的 RsfFailure——两端的 catch 与输出因此一致。
-                        mv.visitTypeInsn(NEW, "java/lang/RuntimeException")
-                        mv.visitInsn(DUP)
+                        emitRuntimeExceptionHeader(mv)
                         mv.visitLdcInsn(EnumRuntime.noMatchFailure(model.typeOf(instr.stmt.subject).simpleExternalName))
-                        mv.visitMethodInsn(
-                            INVOKESPECIAL, "java/lang/RuntimeException", "<init>",
-                            "(Ljava/lang/String;)V", false,
-                        )
-                        mv.visitInsn(ATHROW)
+                        emitRuntimeExceptionThrow(mv)
                     }
                     for ((i, pad) in pads.withIndex()) {
                         mv.visitLabel(pad)
@@ -4229,10 +4263,16 @@ class BytecodeCompiler(
         mv.visitJumpInsn(IFNONNULL, ok)
         mv.visitInsn(POP)
         emitExpr(ctx, expr.right)
-        emitWiden(mv, model.typeOf(expr.right), resultType)
+        if (!resultType.isVoid) emitWiden(mv, model.typeOf(expr.right), resultType)
         mv.visitJumpInsn(GOTO, done)
         mv.visitLabel(ok)
-        emitResultCast(mv, RsfType.OBJECT, resultType)
+        // 阶段 84：`!void` 的 `?:`（`f() ?: logIt()`）结果类型是 void。
+        // 合成方法在成功时返回一个非 null 的标记，这里把它丢掉就行。
+        if (resultType.isVoid) {
+            mv.visitInsn(POP)
+        } else {
+            emitResultCast(mv, RsfType.OBJECT, resultType)
+        }
         mv.visitLabel(done)
     }
 
@@ -4397,7 +4437,10 @@ class BytecodeCompiler(
                 slot += p.slots
             }
             mv.visitMethodInsn(m.opcode, m.owner, m.target, m.targetDescriptor, m.itf)
-            if (m.result.isPrimitive) boxValue(mv, m.result.base)
+            // 阶段 84：目标返回 void 时（`!void` 的 `?:`）成功路径也要留一个**非 null** 的值——
+            // 调用点用 null 表示「失败」，成功标记只要非 null 即可（调用点随后 POP 掉）。
+            if (m.result.isVoid) mv.visitLdcInsn("ok")
+            else if (m.result.isPrimitive) boxValue(mv, m.result.base)
             mv.visitLabel(end)
             mv.visitInsn(ARETURN)
 
@@ -4662,6 +4705,11 @@ class BytecodeCompiler(
                 builtin.helperDesc
                     ?: throw IllegalStateException("内部错误：'${builtin.name}' 没有辅助方法描述符"),
                 false,
+            )
+
+            // 阶段 84：最近一条错误消息——程序类上的读取方法（初值 null 折成空串）
+            "lastErrorMessage" -> mv.visitMethodInsn(
+                INVOKESTATIC, programInternalName, LAST_ERROR_HELPER, LAST_ERROR_HELPER_DESC, false,
             )
 
             // 只有 native 侧才有（阶段 77 步骤 0）：Checker 在 JVM 目标里已经拦掉，

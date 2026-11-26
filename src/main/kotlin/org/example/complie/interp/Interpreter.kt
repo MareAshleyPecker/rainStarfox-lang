@@ -113,7 +113,22 @@ sealed class RsfPointer {
 }
 
 
+/**
+ * 最近一条错误消息（阶段 84，`lastErrorMessage()` 的内建实现）。
+ *
+ * 放在文件级而不是解释器实例上：`RsfFailure` 是异常、不带着解释器走，
+ * 而「最近一条错误」本来就是进程级的最后状态。每次跑程序（[Interpreter.runEntry] /
+ * [Interpreter.runSnippet]）开头清空，语义和 C 侧 `rsf_err_msg`、字节码侧的静态字段一致。
+ */
+internal var lastErrorMessageText: String = ""
+
+
 class RsfFailure(val msg: String) : RuntimeException(msg) {
+
+    init {
+        // 阶段 84：抛出的那一刻就记下——`?:` 的兜底里要能读到「刚才那条错误是什么」。
+        lastErrorMessageText = msg
+    }
 
     /**
      * 这个错误一路穿过的函数帧，**最外层在最前**（[Interpreter.call] / [callMethod] 记的）。
@@ -227,6 +242,8 @@ class Interpreter(
             val at = model.functionsNamed("main").firstOrNull()?.at
             throw RsfError("interp", problem, at?.line ?: 0, at?.column ?: 0, null)
         }
+        // 阶段 84：新的一次运行从「没有错误」开始（同一个 JVM 里可能跑多次：REPL、构建脚本）。
+        lastErrorMessageText = ""
         initGlobals()
         // 阶段 83 阶段 1：先跑 `#dep rule(...)` 里的规则，再跑 main。
         // 同一个解释器实例跑两段，是为了让**全局变量只初始化一次**——
@@ -310,6 +327,7 @@ class Interpreter(
      * 而不会被重复打印一遍。
      */
     fun runSnippet(body: LoweredFunction, startPc: Int): Any? {
+        lastErrorMessageText = ""
         enter(body.function.at, body.function.name)
         try {
             val slots = arrayOfNulls<Any>(body.slotCount)
@@ -597,7 +615,10 @@ class Interpreter(
             // 编译器自己的 [RsfError]（内部错误/诊断）不归用户程序管，原样往上穿。
             if (thrown is RsfError) throw thrown
             val handler = body.handlerAt(pc) ?: throw thrown
-            slots[handler.catchSlot] = Thrown.message(thrown)
+            val message = Thrown.message(thrown)
+            // 阶段 84：Java 异常也算「最近一条错误」，`?:` 的兜底里读得到它。
+            lastErrorMessageText = message
+            slots[handler.catchSlot] = message
             return execute(body, slots, handler.handlerPc, endPc)
         }
         // 走到函数末尾：void 函数正常结束
@@ -2333,6 +2354,8 @@ class Interpreter(
                 null
             }
             "stringBytes" -> (args[0] as String).toByteArray(Charsets.UTF_8)
+            // 阶段 84：最近一条错误消息（被 `?:` / catch 接住之后仍然保留）
+            "lastErrorMessage" -> lastErrorMessageText
             // 阶段 73：length() 数 UTF-16 码元，字节数要显式问
             "byteLength" -> (args[0] as String).toByteArray(Charsets.UTF_8).size
             // 阶段 73d：`s[a..b]` 解糖成 slice(s, from, to)；越界钳进合法区间（三端一致）

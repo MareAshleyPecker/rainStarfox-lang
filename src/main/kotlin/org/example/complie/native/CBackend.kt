@@ -961,9 +961,11 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
 
     /** `a ?: b`：C 里用语句表达式，保证 a 只求值一次。 */
     private fun elvis(e: ElvisExpr): String {
+        val want = model.typeOf(e)
         // 左边可能是泛型盒子（物理类型 rsf_val），结果类型取前端算好的那个
         val have = physicalType(e.left)
-        val want = model.typeOf(e)
+        // 阶段 84：`!void` 的 `?:`（`f() ?: logIt()`）——没有值可取，两边都只是「跑一下」。
+        if (want.isVoid) return elvisVoid(e.left, e.right)
         val code = expr(e.left)
         val test = when {
             have.base == RsfBase.STRING -> "_e.data == NULL"
@@ -978,14 +980,38 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
         }
         // 左边可能 fail：`?:` 必须自己接住这次 longjmp，否则错误会穿过整个表达式。
         // 语义：失败 → 取右边；成功但值为 null → 也取右边。
+        //
+        // 注意 `if (rsf_err)` 这一句：内置函数（parseInt / 四个文件函数）失败时**不跳**，
+        // 只是置错 + 返回零值，所以成功分支里也得再看一眼旗标，否则
+        // `parseInt("x") ?: -1` 会拿到 0、还把错误旗标漏给后面的语句。
         val h = "he_${trySeq++}"
         val right = expr(e.right)
         return "({ ${cType(want)} _out; ${cType(have)} _e; rsf_handler $h; " +
             "$h.prev = rsf_ctx_get()->handler; rsf_ctx_get()->handler = &$h; " +
             "if (setjmp($h.jb) == 0) { _e = $code; rsf_ctx_get()->handler = $h.prev; " +
-            "_out = ($test) ? (rsf_err = false, $right) : $pick; } " +
+            "if (rsf_err) { rsf_err = false; _out = $right; } " +
+            "else { _out = ($test) ? (rsf_err = false, $right) : $pick; } } " +
             "else { rsf_ctx_get()->handler = $h.prev; rsf_err = false; _out = $right; } " +
             "_out; })"
+    }
+
+    /**
+     * `!void` 上的 `?:`（阶段 84）：出错就执行右边的表达式，成功什么都不做。
+     *
+     * 没有值可以兜，所以不用 `_out` / `_e` 两个临时变量：左边当语句跑一遍，
+     * 内置函数的失败用 `if (rsf_err)` 补一次判断，真正的 `fail` 则由 setjmp 接住。
+     * 语句表达式末尾补一句 `(void)0`，让整个表达式是 void 类型（它只会出现在语句位置）。
+     */
+    private fun elvisVoid(left: Expr, right: Expr): String {
+        val h = "he_${trySeq++}"
+        val code = expr(left)
+        val fallback = expr(right)
+        return "({ rsf_handler $h; $h.prev = rsf_ctx_get()->handler; " +
+            "rsf_ctx_get()->handler = &$h; if (setjmp($h.jb) == 0) { $code; " +
+            "rsf_ctx_get()->handler = $h.prev; " +
+            "if (rsf_err) { rsf_err = false; $fallback; } } " +
+            "else { rsf_ctx_get()->handler = $h.prev; rsf_err = false; $fallback; } " +
+            "(void)0; })"
     }
 
     private fun floatLit(v: Float): String = if (v == Float.POSITIVE_INFINITY) "(1.0f/0.0f)" else if (v == Float.NEGATIVE_INFINITY) "(-1.0f/0.0f)" else v.toString() + "f"
@@ -1388,6 +1414,11 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
             "toUpper" -> return "rsf_to_upper(${expr(e.arguments[0])})"
             "toLower" -> return "rsf_to_lower(${expr(e.arguments[0])})"
             "readText" -> return "rsf_read_text(${expr(e.arguments[0])})"
+            // 阶段 84：最近一条错误消息。C 侧运行时本来就把消息留在 ctx 里
+            // （`rsf_set_err` 只在「还没有错」时写入，所以它一直是最初那条的原因），
+            // 没出过错时是零值——折成真正的空串，别把 NULL 交给打印函数。
+            "lastErrorMessage" ->
+                return "(rsf_err_msg.len > 0 && rsf_err_msg.data != NULL ? rsf_err_msg : rsf_str_lit(\"\", 0))"
             "writeText" -> return "rsf_write_text(${expr(e.arguments[0])}, ${expr(e.arguments[1])})"
             "readBytes" -> return "rsf_read_bytes(${expr(e.arguments[0])})"
             "writeBytes" -> return "rsf_write_bytes(${expr(e.arguments[0])}, ${expr(e.arguments[1])})"
