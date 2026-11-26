@@ -252,6 +252,15 @@ fn main() -> void {
 `dependencies { javaInclude(…) cInclude(…) rule(…) }` 由**装载层**处理（和 `#dep` 同一条路），
 因为 jar 必须在分析之前进 classpath，所以块里只认字面量。`#dep` 仍可用，新写法是块语句。
 
+**`pkg-info.rsf`**（每包目录一份，元信息文件）：`pkg a.b` 让目录下的源码不必每份都写
+`pkg`；文件自己也写 `pkg` 时必须一致。其它 `键 "值"` 进元数据表（暂只记录）。
+它不进 AST、不被当源码编译，`compileAll` 与 module 目录列举都会跳过它。
+
+**导出清单门禁**：项目里存在 `module-impex.rsf` 时，**跨目录** import 的目标必须在
+清单里出现过（`export` / `exportjvm` / `extern` / `import` 任一）；**同目录不受限制**
+（包内互见，类比 Java 的 package-private）。构建脚本 `build.rsfs` 豁免。
+项目根按「哪个祖先目录有清单」算，不要求同时有 build.rsfs。
+
 **标准库 `stdlib/`**：`rsf_runtime.h` 现在只生成一份，放在 `stdlib/`（不进版本库），
 gcc 命令行固定带 `-I<stdlib>`；查找顺序见 `build/Stdlib.kt`（`RSF_STDLIB` →
 编译器位置往上找 → 当前目录往上找 → `./stdlib`）。

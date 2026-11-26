@@ -377,6 +377,8 @@ class ProjectBuildHost(
         val sources = dirFile.walkTopDown()
             .filter { it.isFile && !it.name.startsWith(".") }
             .filter { it.extension == "rsf" || it.extension == "rsfs" }
+            // 元信息与清单文件不是源码
+            .filter { it.name != PkgInfo.FILE_NAME && it.name != ModuleImpex.FILE_NAME }
             .sortedBy { it.path }
             .toList()
         for (source in sources) {

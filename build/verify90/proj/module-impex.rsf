@@ -1,0 +1,2 @@
+// a 包对外可见；b 包同目录互见，不需要列
+exportjvm "src/a/util.rsf"

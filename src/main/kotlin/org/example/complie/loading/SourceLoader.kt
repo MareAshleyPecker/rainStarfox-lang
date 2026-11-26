@@ -6,6 +6,8 @@ import org.example.complie.diag.SourceFile
 import org.example.complie.directives.BuildSettings
 import org.example.complie.directives.DepEntry
 import org.example.complie.directives.DepKind
+import org.example.build.ModuleImpex
+import org.example.build.PkgInfo
 import org.example.complie.directives.DirectiveRule
 import org.example.complie.lexing.Lexer
 import org.example.complie.parsing.Parser
@@ -150,6 +152,70 @@ class SourceLoader {
     private val globals = ArrayList<GlobalVarDecl>()
     private val configs = ArrayList<ConfigBlock>()
 
+    /** 目录 → 它的 pkg-info.rsf 包名（null 表示这个目录没有/没写 pkg）。 */
+    private val dirPackageCache = HashMap<File, String?>()
+
+    /** 项目根的 module-impex.rsf 清单（没有就 null）；键是规范化后的绝对路径。 */
+    private var manifestCache: Map<String, File>? = null
+    private var manifestRoot: File? = null
+
+    /**
+     * 阶段 84：清单门禁。项目根有 `module-impex.rsf` 时，跨目录 import 的目标
+     * 必须在清单里出现过（export / exportjvm / extern / import 任一）——
+     * **同目录的文件不受限制**（包内互见，类比 Java 的 package-private）。
+     *
+     * 构建脚本（build.rsfs）不受这条限制：它是驱动者，不是模块成员。
+     */
+    private fun gateImport(importer: SourceFile, target: File, imp: ImportDecl) {
+        val importerFile = File(importer.path).absoluteFile
+        if (importerFile.name == "build.rsfs") return
+        // 项目根按「哪个祖先目录有 module-impex.rsf」算——清单本身就是模块的边界，
+        // 不要求旁边一定还有 build.rsfs（单模块仓库可以只有清单）。
+        val root = findManifestRoot(importerFile.parentFile ?: importerFile) ?: return
+        val manifestFile = File(root, ModuleImpex.FILE_NAME)
+        if (!manifestFile.isFile) return
+        // 同目录：包内互见
+        if (target.parentFile?.canonicalFile == importerFile.parentFile?.canonicalFile) return
+        val listed = manifestEntries(root, manifestFile)
+        val canonical = target.canonicalFile.path
+        if (listed.containsKey(canonical)) return
+        throw RsfError(
+            "loader",
+            "'${target.name}' 没有出现在 ${ModuleImpex.FILE_NAME} 里：" +
+                "跨目录用它，要么在清单里加 export \"…\"（对外可见），" +
+                "要么加 import \"…\"（只在本模块内部用）。同目录的文件不受这条限制",
+            imp.at.line, imp.at.column, importer,
+        )
+    }
+
+    private fun findManifestRoot(from: File): File? {
+        var d: File? = from.absoluteFile
+        while (d != null) {
+            if (File(d, ModuleImpex.FILE_NAME).isFile) return d
+            d = d.parentFile
+        }
+        return null
+    }
+
+    private fun manifestEntries(root: File, manifestFile: File): Map<String, File> {
+        manifestCache?.let { if (manifestRoot == root) return it }
+        val map = LinkedHashMap<String, File>()
+        for (e in ModuleImpex.parse(manifestFile)) {
+            val f = if (File(e.path).isAbsolute) File(e.path) else File(root, e.path)
+            map[f.canonicalFile.path] = f
+        }
+        manifestCache = map
+        manifestRoot = root
+        return map
+    }
+
+    private fun pkgOfDir(dir: File?): String? {
+        if (dir == null) return null
+        return dirPackageCache.getOrPut(dir) {
+            runCatching { org.example.build.PkgInfo.readIn(dir)?.packageName }.getOrNull()
+        }
+    }
+
     /** 阶段 82：`build.rsfs` 的 `#build` 设置（`Directives.parse` 已经保证只有它能写）。 */
     private var build: BuildSettings? = null
 
@@ -246,10 +312,25 @@ class SourceLoader {
             return
         }
 
-        // 包声明：校验「文件真的在那个目录下」，根文件的包名留给生成 .class 用
-        program.packageName?.let { pkg ->
-            checkPackage(pkg, file, source)
-            if (files.first() === source) rootPackage = pkg
+        // 包声明：校验「文件真的在那个目录下」，根文件的包名留给生成 .class 用。
+        // 阶段 84：文件自己没写 pkg 时，继承同目录 pkg-info.rsf 里的包名；
+        // 两边都写就必须一致（两份声明说不同的包，没法猜哪份算数）。
+        val dirPkg = pkgOfDir(file.parentFile)
+        val declared = program.packageName
+        if (declared != null) {
+            if (dirPkg != null && dirPkg != declared) {
+                throw RsfError(
+                    "loader",
+                    "这个文件的 'pkg $declared' 和同目录 pkg-info.rsf 的 'pkg $dirPkg' 不一致：" +
+                        "包名只该在一处声明（写了 pkg-info.rsf 就从文件里删掉 pkg）",
+                    1, 1, source,
+                )
+            }
+            checkPackage(declared, file, source)
+            if (files.first() === source) rootPackage = declared
+        } else if (dirPkg != null) {
+            checkPackage(dirPkg, file, source)
+            if (files.first() === source) rootPackage = dirPkg
         }
 
         // 阶段 77：先记下来，等全部文件读完再挑（要知道 main 在哪份文件里）。
@@ -328,6 +409,7 @@ class SourceLoader {
 
                 is SourceImport -> {
                     val resolved = resolvePath(imp.path, dir, imp)
+                    gateImport(source, resolved, imp)
                     // 阶段 84：`import "native/util.c"` / `"util.h"` 不是 rsf 源码，
                     // 而是 C 依赖——`.c` 进链接（等于 cInclude）、`.h` 只进 `-I`（等于 hInclude）。
                     // 这是**唯一**按扩展名分流的地方：别的扩展名照旧当源码。
@@ -341,7 +423,9 @@ class SourceLoader {
                 is ModuleImport -> {
                     val moduleDir = resolveDir(imp.path, dir, imp)
                     val entries = moduleDir.listFiles { f ->
-                        f.isFile && (f.name.endsWith(".rsf") || f.name.endsWith(".rsfs"))
+                        f.isFile && (f.name.endsWith(".rsf") || f.name.endsWith(".rsfs")) &&
+                            // 两个特殊文件是元信息/清单，不是源码
+                            f.name != PkgInfo.FILE_NAME && f.name != ModuleImpex.FILE_NAME
                     }
                         ?.sortedBy { it.name }
                         ?: emptyList()

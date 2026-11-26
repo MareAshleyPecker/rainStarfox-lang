@@ -1,0 +1,4 @@
+// 包名来自同目录 pkg-info.rsf（这里不写 pkg）
+fn helper() -> Int {
+    rtn 7
+}

@@ -299,3 +299,11 @@ gmon.out
 
 ### 标准库：运行时头是生成的，只留 README 与以后的 rsf 模块 ###
 /stdlib/rsf_runtime.h
+
+### 判据台（阶段 84：pkg-info 与导出清单门禁）###
+!/build/verify90/
+/build/verify90/**
+!/build/verify90/**/
+!/build/verify90/**/*.sh
+!/build/verify90/**/*.rsf
+!/build/verify90/**/*.rsfs

@@ -1,0 +1,5 @@
+import "../a/util.rsf"
+
+fn main() -> void {
+    println(intToString(helper()))
+}
