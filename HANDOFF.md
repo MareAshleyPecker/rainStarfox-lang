@@ -14,11 +14,10 @@
   `rsf run` 是 cargo run 语义，`module-impex.rsf` + 模块别名按包组织标准库。
 - **标准库**：`stdlib/{lang,io,std,classfile}`，模块用「类 + 静态方法」组织
   （`Text.join` / `Io.readLines` / `Lang.…` / `Exception.…`）。
-- **下一步**：根除 `try/catch`（五步，见 §10）。①②③ 已完成：`?:` 的 void 兜底 +
-  `lastErrorMessage()`（判据 `verify99`）、`stdlib` 与 `rsfSrc/lang` 的示例全迁完、
-  自举侧也补上了新表面（parity 9/9）。
-  **卡点**：数组越界这类「运行期故障」`?:` 接不住，`rsfSrc/lang/arrays.rsf` 的 3 处
-  `try` 因此留着；得先定下故障怎么接，才能继续迁移 `rsfSrc/bootstrap` 并删语法。
+- **下一步**：根除 `try/catch`（五步，见 §10）。①②③ 已完成，运行期故障也拍了板
+  （不捕获、直接中止：C 后端补了边界检查，字节码入口 main 加了兜底，判据 `verify100`）。
+  **现在只剩 ④**：`rsfSrc/bootstrap` 里 33 处 `try` 兼着 catch 控制流信号，
+  得逐处重构才能删语法（⑤）。
 
 ## 1. 这台机器怎么跑
 
@@ -56,6 +55,7 @@ sh tools/dev/probe.sh --cmp /tmp/x.rsf   # 单文件探针 + 对拍
 | `verify97` | `try` 表达式、`catch` 三种写法、不再误报不可达 | — |
 | `verify98` | `fail 种类, 消息`、种类名编译期校验 | — |
 | `verify99` | `?:` 的 void 兜底、`lastErrorMessage()`、三端输出对拍 | gcc |
+| `verify100` | 运行期故障三端中止（越界 / 负长度，消息 + 退出码 1） | gcc |
 
 ## 2. 2026-11-26 这一轮落地了什么
 
@@ -84,6 +84,7 @@ sh tools/dev/probe.sh --cmp /tmp/x.rsf   # 单文件探针 + 对拍
 | `e1d6088` | `?:` 的 void 兜底 + `lastErrorMessage()`（根除 try/catch 第 1 步，判据 `verify99`） |
 | `a0766ca` | `?:` 的 void 兜底也接受 `!T` 左边（只要「出错时做点什么」时值可以丢） |
 | `57cc206` | 示例里的 `try/catch` 迁到 `?:` + `lastErrorMessage()`，自举侧同步（parity 9/9） |
+| `16d2b2c` | 运行期故障三端统一中止：C 补边界检查、字节码入口 main 兜底、判据 `verify100` |
 
 规则：
 - `.rsfs` 与 `.rsf` 同语言，唯一差别是**允许没有 main**；
@@ -315,14 +316,18 @@ fn main() -> void {
 （已完成 Io）→ ③ 迁移 `rsfSrc/lang` 19 处（parity 示例）→ ④ 迁移 `rsfSrc/bootstrap`
 31 处并跑通自举 → ⑤ 删掉 `try {} catch {}` 语法（Parser 报迁移提示，自举 Parser 同步）。
 
-**卡点（⑤ 之前的硬前提）：运行期故障怎么办。** 数组越界、`!!` 打到 null、除零这类
-**不是 `!T` 调用**，`?:` 接不住——`rsfSrc/lang/arrays.rsf` 里那 3 处 `try` 就是这么留下的。
-两条路要用户拍板：
-1. 把 `?:` 放宽成「任何可能出错的表达式」：JVM 侧得把左边整个表达式抬进合成方法
-   （现在的 OrElse 只支持「一次调用」），C 侧还得先给数组加边界检查；
-2. 只让 `?:` 管 `!T`，另配一个只接故障的窄构造（`trap { … }` 之类），
-   或者干脆接受「故障直接中止程序、给清晰消息」。
-在这条定下来之前，`try {} catch {}` 不能删。
+**运行期故障：用户已拍板（2026-11-26）——不提供捕获手段，直接中止。**
+
+数组越界 / 负长度 / `!!` 打到 null / 除零都不是 `!T` 调用，`?:` 接不住，也不另配构造：
+程序中止、打一条清晰消息、退出码 1。为此这轮补了两件事（判据 `verify100`）：
+
+- **C 后端从「相信程序员」改成做边界检查**：数组读写插 `rsf_arr_check`、
+  `new T[n]` 插 `rsf_arr_len_check`，消息与 `ArrayRuntime` 一字不差；
+- **字节码侧入口 main 外包一层兜底**：没接住的 `RuntimeException` 打
+  `运行期错误: <消息>` + `System.exit(1)`，不再甩一整段堆栈。
+
+所以「故障」这条线三端现在是同一个口径。注意：C 后端做检查有性能代价，
+以后要「关掉检查跑」的话得另加开关。
 
 **① 已完成**（判据 `verify99`）：
 
@@ -350,8 +355,10 @@ parity 仍是 9/9（输出有意改了两处小节标题，其余逐字节不变
 （`tryCallProtected` / `stTry` 接住时记消息）、`Parser.rsf` 的 `try 表达式` 解糖
 （与 Kotlin 侧逐字对应）、`isBuiltinName` 认得新名字。
 
-**唯一留下的 `try`**：`rsfSrc/lang/arrays.rsf` 的 3 处（越界/负长度故障），
-原因见上面那个卡点。
+**`try {} catch {}` 现在只剩自举编译器自己的源码在用**（`rsfSrc/bootstrap`，33 处）。
+它们不只是接错误，还兼着 catch 解释器的控制流信号（`sig` / `signalKind`），
+所以 ④ 得逐处重构（把「catch 到信号就改走别处」抽成返回值/状态机），不能机械替换。
+这一步做完才能删语法（⑤）。
 
 **自举侧的已知缺口**：`Checker.rsf` 压根没有内置函数表（`parseInt` / `readText` 也不认），
 所以 `CheckCli.rsf` 检查这些示例会报「未定义的函数」——这是老缺口，不是这次引进的；
