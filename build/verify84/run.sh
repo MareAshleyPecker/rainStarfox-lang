@@ -77,4 +77,13 @@ MAIN_LOG_LINE=$(grep -n 'main 在规则之后' build.log | cut -d: -f1)
 [ "$RULE_LINE" -lt "$MAIN_LOG_LINE" ] || fail "规则在 main 之后才跑"
 grep -q '规则里的 exec' build.log || fail "规则里的 exec 没跑"
 
+# 8. 规则里的声明内建进了依赖清单（c/h/dir/java 四种都有）
+LOCK=.rsfdeps/lock.json
+[ -f "$LOCK" ] || fail "没有依赖锁文件"
+for kind in c h java dir; do
+    grep -q "\"kind\": \"$kind\"" "$LOCK" || fail "锁文件里没有 $kind 依赖"
+done
+grep -q 'demo.jar' "$LOCK" || fail "java 依赖没进锁文件"
+grep -q '"path": "res"' "$LOCK" || fail "dir 依赖没进锁文件"
+
 echo "verify84: 全过"

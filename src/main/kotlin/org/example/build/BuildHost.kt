@@ -47,6 +47,14 @@ interface BuildHost {
     /** 记一条先后约束：`a` 要先于 `b`（名字或路径都认）。 */
     fun need(from: String, to: String)
 
+    /**
+     * 往依赖清单里加一条（规则体里的 `java(...)` / `c(...)` / `h(...)` / `dir(...)`）。
+     *
+     * [kind] 是 `DepKind.keyword`；清单与 `#dep { … }` 块共用同一份，
+     * 所以锁文件、存在性校验都只有一条路。
+     */
+    fun declareDep(kind: String, path: String)
+
     /** 目标表（跑完 main 之后由 `rsf build` 拿走排好的顺序）。 */
     fun plan(): BuildPlan
 }
@@ -122,6 +130,14 @@ class ProjectBuildHost(
             throw RsfError("build", "'${spec.origin}' 里的源路径是空的")
         }
         buildPlan.add(spec)
+    }
+
+    override fun declareDep(kind: String, path: String) {
+        if (path.isBlank()) throw RsfError("build", "$kind(\"\")：路径不能是空的")
+        val depKind = DepKind.entries.firstOrNull { it.keyword == kind }
+            ?: throw RsfError("build", "不认识的依赖种类 '$kind'")
+        // 和 #dep 块一样：声明只是声明，存在性留给 writeLock 统一校验
+        collectedDeps.add(DepEntry(depKind, path))
     }
 
     override fun need(from: String, to: String) {
@@ -215,7 +231,9 @@ class ProjectBuildHost(
         val deps = collectedDeps
         val missing = deps.filter { it.kind != DepKind.RULE }.mapNotNull { entry ->
             val file = if (File(entry.target).isAbsolute) File(entry.target) else File(root, entry.target)
-            if (file.isFile) null else entry.display()
+            // dir 指的是目录里的全部文件，所以校验 isDirectory（别的种类都是文件）
+            val present = if (entry.kind == DepKind.DIR) file.isDirectory else file.isFile
+            if (present) null else entry.display()
         }
         if (missing.isNotEmpty()) {
             throw RsfError(
@@ -234,7 +252,8 @@ class ProjectBuildHost(
             sb.append("    {")
             sb.append("\"kind\": \"").append(entry.kind.keyword).append("\", ")
             sb.append("\"path\": ").append(json(entry.target))
-            if (entry.kind != DepKind.RULE) {
+            // 目录不记 size/sha256：那要遍历整棵子树，v1 只记路径（存在性上面校验过了）
+            if (entry.kind != DepKind.RULE && entry.kind != DepKind.DIR) {
                 val file = if (File(entry.target).isAbsolute) File(entry.target) else File(root, entry.target)
                 sb.append(", \"size\": ").append(file.length())
                 sb.append(", \"sha256\": \"").append(sha256(file)).append("\"")

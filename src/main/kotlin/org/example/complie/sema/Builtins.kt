@@ -312,6 +312,38 @@ object Builtins {
         doc = "改构建顺序：need(\"a\", \"b\") 表示先做 a 再做 b（只有 build.rsfs 里能用）",
     )
 
+    // ---------------------------------------------- 规则里的依赖声明（阶段 83 步骤 2）
+
+    /**
+     * `java("libs/x.jar")` / `c("native/util.c")` / `h("native/util.h")` / `dir("res")`。
+     *
+     * 四个都只做一件事：往构建宿主的依赖清单里加一条（和 `#dep { … }` 块里那些同一张表）。
+     * 有了它们，规则体才是「代码」——可以先 `exec` 生成、再按条件 `c(...)` 收文件，
+     * 而不是只能写死在块里。
+     *
+     * **名字只在构建脚本里占用**：`java` / `c` / `h` 都是很短的名字，普通程序里
+     * `fn c(...)` 照样能写（见 Checker 的 `BUILTINS_BUILD_ONLY`）。
+     */
+    val DEP_JAVA = Builtin(
+        "java", listOf(RsfType.STRING), RsfType.VOID, buildOnly = true,
+        doc = "声明一个 jar 依赖：java(\"libs/x.jar\")（只有构建脚本里能用）",
+    )
+
+    val DEP_C = Builtin(
+        "c", listOf(RsfType.STRING), RsfType.VOID, buildOnly = true,
+        doc = "声明一个 C 源文件依赖：c(\"native/util.c\")（只有构建脚本里能用）",
+    )
+
+    val DEP_H = Builtin(
+        "h", listOf(RsfType.STRING), RsfType.VOID, buildOnly = true,
+        doc = "声明一个 C 头文件依赖：h(\"native/util.h\")（只有构建脚本里能用）",
+    )
+
+    val DEP_DIR = Builtin(
+        "dir", listOf(RsfType.STRING), RsfType.VOID, buildOnly = true,
+        doc = "声明一个目录依赖：dir(\"res\")（只有构建脚本里能用）",
+    )
+
     /** 带签名的内置函数（`print` / `println` 是单参数特例，签名不在这里表达）。 */
     val ALL: List<Builtin> = listOf(
         TO_BYTE, TO_CHAR, CHAR_TO_INT, INT_TO_STRING, PARSE_INT,
@@ -320,6 +352,7 @@ object Builtins {
         JVM_CALL, JVM_NEW, JVM_CALL_ON,
         MEM_BYTES, MEM_PEAK, GC_COLLECT,
         OUT_DIR, COMPILE, COMPILE_ALL, EXEC, TARGET, NEED,
+        DEP_JAVA, DEP_C, DEP_H, DEP_DIR,
     )
 
     private val BY_NAME: Map<String, Builtin> = ALL.associateBy { it.name }

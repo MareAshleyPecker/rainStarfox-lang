@@ -273,3 +273,33 @@ Next slice: the declaration builtins `java/c/h/dir` for rule bodies, then jar on
 the analyse classpath (which is what "build scripts can call jars" actually
 needs), then `need` lines inside `#target`, then settling `compile`/`compileAll`
 versus the target table.
+
+## Rule bodies can declare deps — and `c` / `h` stay legal names elsewhere
+
+Step 2 of the build track: `java(...)`, `c(...)`, `h(...)`, `dir(...)` are now
+builtins, `Builtin.buildOnly`, available in build scripts. They append to the
+same `DepEntry` set that `#dep { … }` blocks feed, so the lock file and the
+existence check have exactly one implementation. `dir` is a new `DepKind`:
+validated with `isDirectory`, stored without a hash (hashing a tree in v1 is not
+worth it).
+
+The interesting part is the name scoping. `c` and `h` are one-letter names, and
+the checker's rule "a user function may not shadow a builtin" is global — adding
+those builtins would have made `fn c(x : Int)` illegal in *every* program. So the
+reservation is narrowed to `build.rsfs`, which takes **three** guards, because
+letter-by-letter each one hid a different failure:
+
+1. declaration: `BUILTINS_BUILD_ONLY` names are only reserved when
+   `currentSource.name == build.rsfs`;
+2. call resolution in the checker: if a user function of that name exists, bind
+   to it instead of the builtin — without this, `fn c` declared fine but
+   `c(41)` was resolved as the builtin and produced a "build scripts only" error
+   at the call site;
+3. the three dispatch points (interpreter, bytecode, C): skip the builtin branch
+   when `model.callTargets[expr]` says the call is already bound to a user
+   function — without this, `fn c` ran through the interpreter and survived
+   compilation, then died at runtime inside the builtin.
+
+Verified on all three engines: a program with `fn c(x : Int)` prints `42` via
+`rsf run`, via the class file, and via `--c --link`. `build/verify84` gained the
+four declarations and asserts all of them land in `.rsfdeps/lock.json`.

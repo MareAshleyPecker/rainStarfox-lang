@@ -111,7 +111,7 @@ import "core/Vec.rsf" as vec { push, size }   // 只注入这两个
 | 阶段 | 做什么 | 状态 |
 |---|---|---|
 | 0 读指令 | `#dep` / `#build` / `#target`（挖成空格）与 `#def`（解糖成函数） | 做了 |
-| 1 跑规则 | `#def 名字 { … }` 定义的规则，`#dep rule("名字")` 按声明顺序调用 | 做了（声明式，不跑字符串协议） |
+| 1 跑规则 | `#def 名字 { … }` 定义的规则，`#dep rule("名字")` 按声明顺序调用 | 做了（规则体是代码） |
 | 2 跑 main | 追加 `target()` / `need()`；`exec()` 只在这里可用 | 做了 |
 | 3 出产物 | 按表顺序（有 `need` 就拓扑序），复用 `--c --link` / `--jar`；第一个失败即停并打印完整命令 | 做了 |
 
@@ -155,6 +155,17 @@ import "build/rules.rsfs"
 - `#dep rule("名字")` 在**装载期**校验：认不出来就报错，并列出已知规则与零参数函数。
 - 规则和 main 在**同一个解释器实例**里跑（`runEntry(rules)` 先跑规则再跑入口），
   全局变量只初始化一次——否则 `const val X = readText(...)` 这种初值会被算两遍。
+- 规则体里能做的「计算」只有两类：`exec("…")` 与调用 rsf 函数 / 类。声明依赖用四个内建
+  `java(...)` / `c(...)` / `h(...)` / `dir(...)`，进的是和 `#dep { … }` **同一份清单**
+  （锁文件、存在性校验只有一条路；`dir` 校验 `isDirectory`、锁文件里不记哈希）。
+
+`java` / `c` / `h` / `dir` 这些名字**只在 build.rsfs 里被占用**——普通程序里
+`fn c(x : Int)` 是正常写法，不该因为构建脚本存在被禁掉。为此有三处守卫，缺一处都会出岔子：
+
+1. Checker 的保留名检查跳过「构建脚本专用内建」（`BUILTINS_BUILD_ONLY`）；
+2. Checker 的**调用解析**：有同名用户函数时先认用户函数（否则声明成功、调用却落到内建上）；
+3. 解释器 / 字节码 / C 三个内建分派点：`callTargets` 已解析到用户函数时不走内建
+   （否则运行期被内建截走）。
 
 三处与最初设计不同，都是有意的：
 
@@ -174,9 +185,7 @@ import "build/rules.rsfs"
 jar 目标 `java -jar build/out/tool.jar` 打印正常。
 
 下一步（按顺序，一步一刀）：
-1. 规则里的声明内建：`java(...)` / `c(...)` / `h(...)` / `dir(...)`——现在规则只能
-   `exec` 和调函数，还不能声明依赖（`#dep` 块里才行）；
-2. jar 进分析期 classpath（`URLClassLoader` 读 `.rsfdeps` 里声明的 jar）——没有这一步
+1. jar 进分析期 classpath（`URLClassLoader` 读 `.rsfdeps` 里声明的 jar）——没有这一步
    「构建脚本调 jar」只是口号；
 3. `#target` 里写 `need` 行（现在是 main 里才能写），以及 `--list` 只看计划不构建；
 4. `compile()` / `compileAll()` 与目标表的关系收口：明确「compile 立即编、target 进计划」。

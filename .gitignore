@@ -257,3 +257,7 @@ gmon.out
 !/build/verify84/**/*.rsfs
 !/build/verify84/**/*.txt
 !/build/verify84/**/*.md
+!/build/verify84/**/*.c
+!/build/verify84/**/*.h
+# 占位 jar：只是让 java(...) 的依赖声明有实物可校验（不是真能加载的包）
+!/build/verify84/proj/libs/demo.jar

@@ -4453,9 +4453,13 @@ class BytecodeCompiler(
         }
 
         // 阶段 16：带签名的内置函数（toByte / toChar / charToInt / parseInt / isDigit…）
-        Builtins[expr.name]?.let { builtin ->
-            emitBuiltinCall(ctx, expr, builtin)
-            return
+        // 阶段 83：用户函数优先——Checker 记了 callTargets 就说明这个位置调的是用户函数
+        // （构建脚本专用内建不抢名字），不能被同名内建截走。
+        if (model.callTargets[expr] == null) {
+            Builtins[expr.name]?.let { builtin ->
+                emitBuiltinCall(ctx, expr, builtin)
+                return
+            }
         }
 
         // 类里按名字直接调本类方法（隐式 this / 隐式类名）
@@ -4656,7 +4660,8 @@ class BytecodeCompiler(
 
             // 阶段 81：构建脚本的宿主能力只在 `rsf build` 驱动 build.rsfs 时注入，
             // 编进 class 里就没有宿主了。
-            "outDir", "compile", "compileAll", "exec", "target", "need" -> throw RsfError(
+            "outDir", "compile", "compileAll", "exec", "target", "need",
+                "java", "c", "h", "dir" -> throw RsfError(
                 "build",
                 "'${builtin.name}' 只有构建脚本里能用（rsf build 驱动 build.rsfs 时注入），编成 .class 之后没有编译器可调",
             )

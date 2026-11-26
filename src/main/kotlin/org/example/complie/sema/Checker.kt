@@ -406,7 +406,12 @@ class Checker(
     private fun declareFunctions() {
         for (fn in program.functions) {
             currentSource = sourceOfFunction[fn] ?: source
-            if (fn.name in BUILTINS) {
+            // 构建脚本专用的内建（exec / target / need / java / c / h / dir / compile…）
+            // 只在 build.rsfs 里占名字：`java` `c` `h` 都是很短的名字，普通程序里
+            // `fn c(x : Int)` 是正常写法，不该因为构建脚本的存在被禁掉。
+            val reservedHere = fn.name in BUILTINS &&
+                !(fn.name in BUILTINS_BUILD_ONLY && currentSource.name != Directives.BUILD_SCRIPT)
+            if (reservedHere) {
                 throw err("'${fn.name}' 是内置函数，不能重定义", fn.at)
             }
             if (classTable.containsKey(fn.name)) {
@@ -7215,7 +7220,18 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
         }
 
         // 阶段 16：带签名的内置函数（toByte / toChar / charToInt / parseInt / isDigit…）
-        Builtins[expr.name]?.let { return checkBuiltinCall(expr, it) }
+        //
+        // 阶段 83 例外：构建脚本专用的内建（c / h / java / dir / exec / target / need…）
+        // **不抢用户函数的名字**。普通程序里 `fn c(x : Int)` 是正常写法，这种内建在
+        // 非 build.rsfs 里本来就不生效。只是「有用户函数就叫用户函数」——
+        // 没有同名函数时仍然走内建，这样 `exec(...)` 写错位置拿到的是
+        // 「只有构建脚本里能用」，而不是莫名其妙的「找不到函数 exec」。
+        val shadowedByUserFunction = expr.name in BUILTINS_BUILD_ONLY &&
+            source.name != Directives.BUILD_SCRIPT &&
+            functionTable[expr.name]?.isNotEmpty() == true
+        if (!shadowedByUserFunction) {
+            Builtins[expr.name]?.let { return checkBuiltinCall(expr, it) }
+        }
 
         // **自动 new**：名字解析到「可以构造的类型」就当构造处理，
         // `Point(1, 2)` 与 `new Point(1, 2)` 走的是同一段 [checkConstruction]。
@@ -8100,6 +8116,16 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
          * 这张表管两件事：**用户不能重定义内置函数**，以及补全列表里能认出它们。
          */
         val BUILTINS: Set<String> = Builtins.PRINT_LIKE + Builtins.NAMES
+
+        /**
+         * 只在构建脚本（项目根的 `build.rsfs`）里占名字的内建。
+         *
+         * [BUILTINS] 里的名字一律不许被用户函数重定义，但这几个是**构建脚本专用**的
+         * （`Builtin.buildOnly`），普通程序里没有必要为它们让路——尤其是 `c` / `h`
+         * 这种单字母名字。Checker 按「当前文件是不是 build.rsfs」决定它们生效不生效。
+         */
+        val BUILTINS_BUILD_ONLY: Set<String> =
+            Builtins.ALL.filter { it.buildOnly }.map { it.name }.toSet()
     }
 }
 

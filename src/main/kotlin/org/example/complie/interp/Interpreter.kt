@@ -2202,7 +2202,13 @@ class Interpreter(
         }
 
         // 阶段 16：带签名的内置函数（toByte / toChar / charToInt / parseInt / isDigit…）
-        Builtins[expr.name]?.let { return evalBuiltin(expr, it, slots, body) }
+        //
+        // 阶段 83：**用户函数优先**。Checker 已经把「这里调的是用户函数」记进
+        // callTargets（构建脚本专用内建 java / c / h / dir 不抢名字），如果这里还按名字
+        // 先认内建，普通程序里的 `fn c(x : Int)` 就会在运行期被内建截走。
+        if (model.callTargets[expr] == null) {
+            Builtins[expr.name]?.let { return evalBuiltin(expr, it, slots, body) }
+        }
 
         // 类里按名字直接调本类方法（隐式 this / 隐式类名）
         model.classModel.implicitCalls[expr]?.let { member ->
@@ -2354,6 +2360,15 @@ class Interpreter(
                         null
                     }
                 }
+            }
+            // 阶段 83 步骤 2：规则体里的依赖声明。和 `#dep { … }` 进的是同一份清单，
+            // 所以锁文件与存在性校验只有一条路。
+            "java", "c", "h", "dir" -> {
+                val host = buildHost ?: throw RsfFailure(
+                    "'${builtin.name}' 只有构建脚本里能用：依赖清单由 'rsf build' 驱动 build.rsfs 时注入。",
+                )
+                host.declareDep(builtin.name, args[0] as String)
+                null
             }
             "readBytes" -> fileCall(builtin.name, args[0] as String) {
                 Files.readAllBytes(Paths.get(it))
