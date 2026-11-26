@@ -5,6 +5,7 @@ import org.example.complie.diag.RsfError
 import org.example.complie.diag.SourceFile
 import org.example.complie.directives.BuildSettings
 import org.example.complie.directives.DepEntry
+import org.example.complie.directives.DirectiveRule
 import org.example.complie.directives.DirectiveTarget
 import org.example.complie.lexing.Lexer
 import org.example.complie.parsing.Parser
@@ -80,6 +81,13 @@ class LoadedProgram(
      * 拆到被 import 的模块里会让人猜不到最终按哪份清单构建（指令解析已拦掉）。
      */
     val targets: List<DirectiveTarget> = emptyList(),
+    /**
+     * 阶段 83：所有参与编译的文件里 `#def` 声明的构建规则（保持载入顺序）。
+     *
+     * `#dep rule("名字")` 就按这张表认名字；规则体本身已经是普通函数（解糖过了），
+     * 所以「规则在哪份文件里」不影响调用——只要那份文件被 import 进来。
+     */
+    val rules: List<DirectiveRule> = emptyList(),
 ) {
     /** 合成一个 Program 交给 Checker。 */
     fun toProgram(): Program =
@@ -138,6 +146,7 @@ class SourceLoader {
 
     /** 阶段 82：各文件 `#dep` 声明的依赖（`java`/`c`/`h`/`rule`），按出现顺序去重。 */
     private val deps = LinkedHashSet<DepEntry>()
+    private val rules = ArrayList<DirectiveRule>()
     /** 阶段 85：各文件的全局变量，按载入顺序合并（初值就按这个顺序跑）。 */
     private val globals = ArrayList<GlobalVarDecl>()
 
@@ -190,6 +199,7 @@ class SourceLoader {
             deps = deps.toList(),
             build = build,
             targets = root.directives.targets,
+            rules = rules.toList(),
             globals = globals.toList(),
         )
     }
@@ -249,6 +259,7 @@ class SourceLoader {
         // 阶段 82：`#dep` 相加、`#build` 只认 build.rsfs（Directives.parse 已保证唯一）。
         source.directives.deps.forEach { deps.add(it) }
         source.directives.build?.let { if (build == null) build = it }
+        rules.addAll(source.directives.rules)
         // 阶段 85：合并全局变量（整程序一份；顺序 = 载入顺序，初值就按这个顺序跑）。
         for (g in program.globals) globals.add(g)
 

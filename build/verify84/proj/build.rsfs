@@ -1,3 +1,9 @@
+import "build/rules.rsfs"
+
+#dep {
+    rule("genDeps")
+}
+
 #target {
     @/src/main.rsf -> exe
     @/res/data.txt -> copy -> build/out/copied.txt
@@ -9,7 +15,7 @@
 }
 
 fn main() -> void {
-    println("规则准备好了")
+    println("main 在规则之后")
     target("@/src/lib.rsf", "lib")
     need("@/src/lib.rsf", "@/src/main.rsf")
     if (exec("echo 来自 exec 的一行") != 0) {

@@ -51,12 +51,25 @@ data class DirectiveTarget(
     fun display(): String = "$src -> $kind" + (out?.let { " -> $it" } ?: "")
 }
 
+/**
+ * `#def` 声明的一条构建规则：`#def extraDeps { … }`。
+ *
+ * 块里是**普通 rsf 语句**，解糖后就是 `fn extraDeps() -> void { … }`（见 [Directives.parse]）。
+ * 规则与普通函数共用命名空间——两条同名声明会被 Checker 当成重复声明挡掉，正是想要的效果。
+ *
+ * [name] 同时是 `#dep rule("extraDeps")` 里引用的那个名字；[line] 用于报错定位
+ * （规则体里的报错由 AST 自己带行列，这个行号只服务于「规则表」层面的消息）。
+ */
+data class DirectiveRule(val name: String, val line: Int)
+
 /** 一份文件解析出来的指令。 */
 class ParsedDirectives(
     val deps: List<DepEntry>,
     val build: BuildSettings?,
     /** `#target` 块里声明的产物（声明顺序就是构建顺序）。 */
     val targets: List<DirectiveTarget>,
+    /** `#def` 声明的构建规则（跨文件合并成一张表，重名由 Checker 报重复声明）。 */
+    val rules: List<DirectiveRule>,
     val stripped: String,
 )
 
@@ -90,6 +103,7 @@ object Directives {
     val DEP_KEYWORD: String = "#dep"
     val BUILD_KEYWORD: String = "#build"
     val TARGET_KEYWORD: String = "#target"
+    val DEF_KEYWORD: String = "#def"
 
     private val ENTRY: Regex = Regex("""^([A-Za-z_][A-Za-z0-9_]*)\s*\(\s*(.*?)\s*\)\s*$""")
     private val STRING_ARG: Regex = Regex("""^"((?:[^"\\]|\\.)*)"$""")
@@ -100,8 +114,12 @@ object Directives {
         val endLine: Int,
         val start: Int,
         val end: Int,
+        /** 开块那个 `{` 的下标（`#def` 解糖时要从这里往后原样保留）。 */
+        val brace: Int,
         val body: String,
         val bodyLine: Int,
+        /** 只有 `#def` 有：规则名。 */
+        val name: String? = null,
     )
 
     /**
@@ -109,12 +127,15 @@ object Directives {
      */
     fun parse(source: SourceFile): ParsedDirectives {
         val text = source.text
-        if (!text.contains(DEP_KEYWORD) && !text.contains(BUILD_KEYWORD) && !text.contains(TARGET_KEYWORD)) {
-            return ParsedDirectives(emptyList(), null, emptyList(), WarningDirectives.strip(text))
+        if (!text.contains(DEP_KEYWORD) && !text.contains(BUILD_KEYWORD) &&
+            !text.contains(TARGET_KEYWORD) && !text.contains(DEF_KEYWORD)
+        ) {
+            return ParsedDirectives(emptyList(), null, emptyList(), emptyList(), WarningDirectives.strip(text))
         }
         val blocks = scan(source, text)
         val deps = ArrayList<DepEntry>()
         val targets = ArrayList<DirectiveTarget>()
+        val rules = ArrayList<DirectiveRule>()
         var build: BuildSettings? = null
         for (block in blocks) {
             when (block.keyword) {
@@ -133,6 +154,7 @@ object Directives {
                     }
                     build = parseBuild(source, block)
                 }
+                DEF_KEYWORD -> rules.add(DirectiveRule(block.name!!, block.startLine))
                 TARGET_KEYWORD -> {
                     if (source.name != BUILD_SCRIPT) {
                         throw err(
@@ -146,7 +168,7 @@ object Directives {
                 }
             }
         }
-        return ParsedDirectives(deps, build, targets, stripBlocks(text, blocks))
+        return ParsedDirectives(deps, build, targets, rules, stripBlocks(text, blocks))
     }
 
     const val BUILD_SCRIPT: String = "build.rsfs"
@@ -313,6 +335,7 @@ object Directives {
                     text.startsWith(DEP_KEYWORD, j) -> DEP_KEYWORD
                     text.startsWith(BUILD_KEYWORD, j) -> BUILD_KEYWORD
                     text.startsWith(TARGET_KEYWORD, j) -> TARGET_KEYWORD
+                    text.startsWith(DEF_KEYWORD, j) -> DEF_KEYWORD
                     else -> null
                 }
                 if (keyword != null) {
@@ -332,8 +355,20 @@ object Directives {
     private fun readBlock(source: SourceFile, text: String, start: Int, keyword: String, line: Int): Block {
         var i = start + keyword.length
         while (i < text.length && (text[i] == ' ' || text[i] == '\t')) i++
+        // `#def` 比别的块多一个规则名：`#def extraDeps { … }`。
+        var name: String? = null
+        if (keyword == DEF_KEYWORD) {
+            val nameStart = i
+            while (i < text.length && (text[i].isLetterOrDigit() || text[i] == '_')) i++
+            name = text.substring(nameStart, i)
+            if (name.isEmpty() || !name.first().let { it.isLetter() || it == '_' }) {
+                throw err(source, "'#def' 后面要跟规则名（标识符），例：#def extraDeps { … }", line)
+            }
+            while (i < text.length && (text[i] == ' ' || text[i] == '\t')) i++
+        }
         if (i >= text.length || text[i] != '{') {
-            throw err(source, "'$keyword' 后面要跟一个 '{'（例：$keyword { … }）", line)
+            val shape = if (keyword == DEF_KEYWORD) "$keyword 名字 { … }" else "$keyword { … }"
+            throw err(source, "'$keyword' 后面要跟一个 '{'（例：$shape）", line)
         }
         val bodyStart = i + 1
         var j = bodyStart
@@ -364,8 +399,10 @@ object Directives {
                             endLine = closeLine,
                             start = start,
                             end = if (k < text.length) k + 1 else text.length,
+                            brace = i,
                             body = text.substring(bodyStart, j),
                             bodyLine = line,
+                            name = name,
                         )
                     }
                 }
@@ -375,15 +412,34 @@ object Directives {
         throw err(source, "'$keyword' 块没有收尾的 '}'", line)
     }
 
-    /** 把块整体挖成空格（长度不变、换行保留）。 */
+    /**
+     * 把块挖掉，交给词法器。
+     *
+     * 两种处理：
+     * - `#dep` / `#build` / `#target`：整块挖成空格（长度不变、换行保留），
+     *   所以行列号与原文完全对齐，AST 里看不到它们；
+     * - `#def`：**解糖**成 `fn 名字() -> void { … }`。只改开头那一段、`{` 之后原样保留，
+     *   于是规则体里每个字符的行列都不动——体里报的错仍然指回用户写的那一行。
+     *   （换行数也不变：开头段和原文的 `#def 名字 ` 都只有一行。）
+     */
     private fun stripBlocks(text: String, blocks: List<Block>): String {
         if (blocks.isEmpty()) return WarningDirectives.strip(text)
-        val sb = StringBuilder(text)
-        for (block in blocks) {
-            for (i in block.start until block.end) {
-                if (sb[i] != '\n') sb.setCharAt(i, ' ')
+        val sb = StringBuilder(text.length + 64)
+        var at = 0
+        for (block in blocks.sortedBy { it.start }) {
+            if (block.start < at) continue
+            sb.append(text, at, block.start)
+            if (block.keyword == DEF_KEYWORD) {
+                sb.append("fn ").append(block.name).append("() -> void ")
+                sb.append(text, block.brace, block.end)
+            } else {
+                for (i in block.start until block.end) {
+                    sb.append(if (text[i] == '\n') '\n' else ' ')
+                }
             }
+            at = block.end
         }
+        sb.append(text, at, text.length)
         return WarningDirectives.strip(sb.toString())
     }
 

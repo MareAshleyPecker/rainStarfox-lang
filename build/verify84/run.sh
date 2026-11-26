@@ -5,7 +5,8 @@
 #   1. 阶段 0 的 #target（exe + copy 带显式产物路径）与阶段 2 的 target() 都进了同一张表；
 #   2. need 真的改了顺序（lib 在 main 之前）；
 #   3. 三种产物的内容对：跑得出输出、目标文件是 ELF/obj、复制件字节一致；
-#   4. exec 的退出码回到了脚本里（echo 成功 -> 不打印「exec 失败」）。
+#   4. exec 的退出码回到了脚本里（echo 成功 -> 不打印「exec 失败」）；
+#   5. #dep rule("genDeps") 在阶段 1 先跑，且跑在 main 之前。
 #
 # 用法：  sh build/verify84/run.sh
 # 前置：  sh tools/dev/kb.sh（编出 build/dev/classes）
@@ -68,5 +69,12 @@ MAIN_LINE=$(grep -n '目标 main' build.log | cut -d: -f1)
 # 6. exec 的退出码回到了脚本里
 grep -q '来自 exec 的一行' build.log || fail "exec 没跑"
 grep -q 'exec 失败' build.log && fail "exec 成功却走了失败分支"
+
+# 7. 阶段 1：规则先跑，且跑在 main 之前
+grep -q '规则 genDeps 先跑' build.log || fail "阶段 1 没跑规则"
+RULE_LINE=$(grep -n '规则 genDeps 先跑' build.log | cut -d: -f1)
+MAIN_LOG_LINE=$(grep -n 'main 在规则之后' build.log | cut -d: -f1)
+[ "$RULE_LINE" -lt "$MAIN_LOG_LINE" ] || fail "规则在 main 之后才跑"
+grep -q '规则里的 exec' build.log || fail "规则里的 exec 没跑"
 
 echo "verify84: 全过"

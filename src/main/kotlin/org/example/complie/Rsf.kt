@@ -80,7 +80,9 @@ object Rsf {
         model: SemanticModel,
         out: PrintStream = System.out,
         buildHost: org.example.build.BuildHost? = null,
-    ): Any? = Interpreter(model, out, buildHost).runEntry()
+        /** 阶段 83 阶段 1：先按顺序跑的构建规则（`#dep rule(...)`）。 */
+        rules: List<String> = emptyList(),
+    ): Any? = Interpreter(model, out, buildHost).runEntry(rules)
 
     // ------------------------------------------------------------------ 编译
 

@@ -1,0 +1,8 @@
+// 构建规则：一个 #def 就是一条规则，块里是普通 rsf 语句。
+// 规则可以被 #dep { rule("名字") } 引用（装载期解析），也可以在 main 里直接当函数调。
+#def genDeps {
+    println("规则 genDeps 先跑")
+    if (exec("echo 规则里的 exec") != 0) {
+        println("规则里的 exec 失败")
+    }
+}

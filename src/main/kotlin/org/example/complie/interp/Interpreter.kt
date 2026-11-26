@@ -215,7 +215,7 @@ class Interpreter(
     private val globals = LinkedHashMap<String, Any?>()
 
     /** 从 main 开始执行。 */
-    fun runEntry(): Any? {
+    fun runEntry(rules: List<String> = emptyList()): Any? {
         // 阶段 25 K3 起类继承在解释器里**跑得动了**，K1 那道解释器守卫就撤了。
         // 注意另一道守卫还在（`codegen/BytecodeCompiler.kt`，K2 的活）：`rsf build`
         // 遇到带父类的程序仍然显式报「字节码后端还没实现」，那条由 K2 拆。
@@ -227,6 +227,18 @@ class Interpreter(
             throw RsfError("interp", problem, at?.line ?: 0, at?.column ?: 0, null)
         }
         initGlobals()
+        // 阶段 83 阶段 1：先跑 `#dep rule(...)` 里的规则，再跑 main。
+        // 同一个解释器实例跑两段，是为了让**全局变量只初始化一次**——
+        // 两次 new Interpreter 的话，`const val X = readText(...)` 这种初值会被算两遍。
+        for (name in rules) {
+            val decl = model.functionsNamed(name).firstOrNull { it.params.isEmpty() }
+                ?: throw RsfError(
+                    "build",
+                    "#dep rule(\"$name\")：找不到零参数的顶层函数 '$name'。" +
+                        "规则写成 #def $name { … }，它就是 fn $name() -> void",
+                )
+            call(decl, emptyList())
+        }
         return call(model.entry!!, emptyList())
     }
 

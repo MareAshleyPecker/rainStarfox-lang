@@ -104,14 +104,14 @@ import "core/Vec.rsf" as vec { push, size }   // 只注入这两个
 5. 判据：新增 `build/verify83/`，正例（三种导入形态）+ 负例（同名冲突、缺名导入、
    `@/` 越界）各若干，并保证九示例不受影响。
 
-## 8. rsf build 线（阶段 83；四阶段已接上，规则阶段待做）
+## 8. rsf build 线（阶段 83；四个阶段都跑得动了）
 
 四阶段，缺一个都会让语义含糊：
 
 | 阶段 | 做什么 | 状态 |
 |---|---|---|
-| 0 读指令 | `#dep` / `#build` / `#target`（装载期挖成空格，不进 AST） | 做了 |
-| 1 跑规则 | `#dep rule("f")` 里的函数（**无依赖**），返回值按 `c:/h:/lib:/jar:/dir:` 前缀展开 | **没做**，遇到时打一行「这一阶段还不执行」 |
+| 0 读指令 | `#dep` / `#build` / `#target`（挖成空格）与 `#def`（解糖成函数） | 做了 |
+| 1 跑规则 | `#def 名字 { … }` 定义的规则，`#dep rule("名字")` 按声明顺序调用 | 做了（声明式，不跑字符串协议） |
 | 2 跑 main | 追加 `target()` / `need()`；`exec()` 只在这里可用 | 做了 |
 | 3 出产物 | 按表顺序（有 `need` 就拓扑序），复用 `--c --link` / `--jar`；第一个失败即停并打印完整命令 | 做了 |
 
@@ -131,7 +131,32 @@ import "core/Vec.rsf" as vec { push, size }   // 只注入这两个
 内建（只在 build.rsfs 可用）：`exec(cmd : String) -> Int`、`target(src : String, kind : String) -> void`、
 `need(a : String, b : String) -> void`。
 
-两处与最初设计不同，都是有意的：
+`#def` 是规则的定义（阶段 83 用声明式替换了最初「规则函数返回 `c:/h:/…` 前缀串」的设想）：
+
+```rsf
+// build/rules.rsfs —— 规则可以放在被 import 的模块里
+#def genDeps {
+    println("先跑我")
+    exec("protoc --cpp_out=gen proto/x.proto")
+}
+
+// build.rsfs
+import "build/rules.rsfs"
+#dep {
+    rule("genDeps")
+}
+```
+
+- `#def 名字 { … }` 在装载期**解糖**成 `fn 名字() -> void { … }`：只改开头那一段、
+  `{` 之后原样保留，所以规则体里每个字符的行列都不动，体里报错仍指回用户写的那一行
+  （已验证：`println(nope)` 报在原文第 3 行第 13 列）。
+- 规则因此就是普通函数：main 里可以直接调，规则之间也能互相调；两条同名 `#def`
+  会走 Checker 的「函数重复定义」，不用另写一套重名检测。
+- `#dep rule("名字")` 在**装载期**校验：认不出来就报错，并列出已知规则与零参数函数。
+- 规则和 main 在**同一个解释器实例**里跑（`runEntry(rules)` 先跑规则再跑入口），
+  全局变量只初始化一次——否则 `const val X = readText(...)` 这种初值会被算两遍。
+
+三处与最初设计不同，都是有意的：
 
 - **`exec` 不标 `!Int`**：退出码非零是构建脚本要判断的**正常结果**
   （`if (exec("git rev-parse") != 0) …`），标了 `!` 就得给每条命令套 try。
@@ -148,8 +173,10 @@ import "core/Vec.rsf" as vec { push, size }   // 只注入这两个
 一条 `rsf build` 出 `main`、`lib.o`、`copied.txt`，再 `./build/out/main` 打印正常；
 jar 目标 `java -jar build/out/tool.jar` 打印正常。
 
-下一步（按价值排）：
-1. 阶段 1：`#dep rule(...)` 调顶层函数——要给解释器加一个「按名字调用」的入口；
-2. `#target` 里写 `need` 行（现在是 main 里才能写），以及 `--list` 只看计划不构建；
-3. `compile()` / `compileAll()` 这两个阶段 81 的旧内建与目标表的关系要收口：要么归并，
-   要么明确「compile 立即编、target 进计划」两条语义（现在两种都在，文档里得写清）。
+下一步（按顺序，一步一刀）：
+1. 规则里的声明内建：`java(...)` / `c(...)` / `h(...)` / `dir(...)`——现在规则只能
+   `exec` 和调函数，还不能声明依赖（`#dep` 块里才行）；
+2. jar 进分析期 classpath（`URLClassLoader` 读 `.rsfdeps` 里声明的 jar）——没有这一步
+   「构建脚本调 jar」只是口号；
+3. `#target` 里写 `need` 行（现在是 main 里才能写），以及 `--list` 只看计划不构建；
+4. `compile()` / `compileAll()` 与目标表的关系收口：明确「compile 立即编、target 进计划」。

@@ -230,3 +230,46 @@ today `rsf build` merely prints a warning that rules are not executed. Also
 open: `compile()`/`compileAll()` (stage 81) now coexist with the target table
 and their relationship needs to be settled in the docs — `compile` compiles
 immediately, `target` only records intent.
+
+## Build rules — `#def` replaced the string-prefix protocol (stage 83, phase 1)
+
+The design said rules are functions that return strings with `c:/h:/lib:/jar:/dir:`
+prefixes, and `#dep rule("f")` names one. That was a stringly-typed escape hatch
+and it also needed an interpreter entry to "call this top-level function by
+name". Replaced by a declaration, at the user's suggestion:
+
+```rsf
+#def genDeps {
+    exec("protoc --out=gen proto/x.proto")
+}
+#dep { rule("genDeps") }
+```
+
+Mechanism: `#def 名字 { … }` is rewritten **at load time** into
+`fn 名字() -> void { … }` — only the header token is replaced, everything from
+`{` to the closing `}` is kept byte-for-byte. So body lines and columns are
+untouched and errors inside a rule body point at the line the user wrote
+(verified: `println(nope)` reports line 3, col 13, the original position).
+Newlines are preserved, so nothing after the block drifts either.
+
+Consequences that fell out for free:
+
+- rules are ordinary functions — callable from `main`, from each other, and from
+  an imported module (`build/rules.rsfs`), matching "rules can be referenced
+  from other scripts";
+- duplicate `#def foo` in two files is caught by the existing checker as a
+  duplicate function declaration — no second duplicate-detection path;
+- `#dep rule("x")` is validated **before anything runs**: unknown names report
+  the known rules and the available zero-arg functions.
+
+`runEntry(rules)` runs the rules and then `main` inside the **same interpreter
+instance**, so globals initialise once. Two `Interpreter` objects would have run
+`const val X = readText(...)` twice.
+
+`build/verify84` now includes a rule module and asserts the rule prints before
+`main` and that its `exec` ran.
+
+Next slice: the declaration builtins `java/c/h/dir` for rule bodies, then jar on
+the analyse classpath (which is what "build scripts can call jars" actually
+needs), then `need` lines inside `#target`, then settling `compile`/`compileAll`
+versus the target table.

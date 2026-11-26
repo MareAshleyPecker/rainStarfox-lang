@@ -261,16 +261,27 @@ class Cli {
                         TargetSpec.of(t.src, t.kind, t.out, "build.rsfs 第 ${t.line} 行的 #target"),
                     )
                 }
-                // 阶段 1（`#dep rule(...)` 调构建函数）还没做：明说出来，不假装执行过。
-                val pendingRules = loadedScript.deps.filter { it.kind == DepKind.RULE }
-                if (pendingRules.isNotEmpty()) {
-                    System.err.println(
-                        "[rsf] 注意：#dep rule(...) 这一阶段还不执行：" +
-                            pendingRules.joinToString("、") { "${it.target}()" },
-                    )
+                // 阶段 1：`#dep rule(...)` 里的规则，按声明顺序先跑。
+                // 名字在装载期就校验：规则就是函数（#def 解糖出来的），所以「认得出名字」
+                // 和「函数在不在」是同一件事——写错立刻报，并列出能用的名字。
+                val ruleNames = loadedScript.deps.filter { it.kind == DepKind.RULE }.map { it.target }
+                if (ruleNames.isNotEmpty()) {
+                    val zeroArg = scriptModel.functions.filter { it.params.isEmpty() }.map { it.name }
+                    val missing = ruleNames.filter { it !in zeroArg }
+                    if (missing.isNotEmpty()) {
+                        val knownRules = loadedScript.rules.map { it.name }
+                        throw RsfError(
+                            "build",
+                            "#dep rule(...) 指不到函数：${missing.joinToString("、")}。" +
+                                "已知规则：${if (knownRules.isEmpty()) "（没有 #def）" else knownRules.joinToString("、")}；" +
+                                "可调的零参数函数：${zeroArg.joinToString("、")}",
+                        )
+                    }
+                    println("[rsf] 规则：" + ruleNames.joinToString(" -> "))
                 }
                 // 阶段 2：跑 main。target / need / exec 都只有这里能用（宿主由上面这行注入）。
-                Rsf.interpret(scriptModel, System.out, host)
+                // 规则和 main 在同一个解释器实例里跑，全局变量只初始化一次。
+                Rsf.interpret(scriptModel, System.out, host, ruleNames)
                 // 依赖可能在脚本或任一被编译的源文件里声明，所以锁文件写在跑完之后。
                 if (host.hasDeps()) {
                     val lock = host.writeLock()
