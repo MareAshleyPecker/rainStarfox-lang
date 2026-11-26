@@ -103,3 +103,29 @@ import "core/Vec.rsf" as vec { push, size }   // 只注入这两个
 4. `rsfSrc/bootstrap/Sources.rsf`：同一套规则的 rsf 版（parity 的关键一步）；
 5. 判据：新增 `build/verify83/`，正例（三种导入形态）+ 负例（同名冲突、缺名导入、
    `@/` 越界）各若干，并保证九示例不受影响。
+
+## 8. rsf build 线（设计定稿，下一轮从这里开始写代码）
+
+四阶段，缺一个都会让语义含糊：
+
+| 阶段 | 做什么 |
+|---|---|
+| 0 读指令 | `#dep` / `#build` / `#target`（装载期挖成空格，不进 AST） |
+| 1 跑规则 | `#dep rule("f")` 里的函数（**无依赖**），返回值按 `c:/h:/lib:/jar:/dir:` 前缀展开 |
+| 2 跑 main | 追加 `target()` / `need()`；`exec()` 只在这里可用 |
+| 3 出产物 | 按表顺序（有 `need` 就拓扑序），复用 `--c --link` / `--jar`；第一个失败即停并打印完整命令 |
+
+目标表：`TargetSpec{ name, src, kind, out? }`，`kind ∈ {exe, lib, jar, copy}`。
+两种写法进同一张表：`#target { @/a.rsf -> exe }` 与 `target("@/a.rsf", exe)`；
+名字取文件名，重名报错并列两处来源；声明顺序即构建顺序，`need(a, b)` 只改顺序。
+
+内建（只在 build.rsfs 可用；C 后端显式拒绝）：
+`exec(cmd : String) -> !Int`、`target(src : String, kind) -> void`、`need(a : String, b : String) -> void`。
+
+落地顺序：
+1. `sema/Builtins.kt` 声明三个内建（带“仅构建脚本”标记）；
+2. `interp/Interpreter.kt` 实现 exec（ProcessBuilder + /bin/sh -c）与计划表；
+3. `Main.kt` 的 `cmdBuild`：跑四阶段，target 复用现成的 `--c --link` / `--jar`；
+4. `directives/Directives.kt` 加 `#target` 块（和 `#dep` 同一套挖掘写法）；
+5. `bytecode` / `C` 后端遇到这三个内建直接报错；
+6. 判据：一个小项目（一个 `c:` + 一个 `h:` + 一个 `copy` 目录）能一条 `rsf build` 出产物。
