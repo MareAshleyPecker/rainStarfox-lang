@@ -266,6 +266,19 @@ fn main() -> void {
 
 ## 10. `.rsfs` 语法定稿（进行中，逐条拍板）
 
+**错误种类**（阶段 84 第二步的表面部分）：
+
+```rsf
+fail range, "n 不能为负：" + intToString(n)   // 也认 fail "range", "…"
+```
+
+种类表在 `complie/diag/ErrorKinds.kt`（io / parse / range / state / todo /
+unreachable / runtime / user）。写错种类是**编译期**错误并列出可用的；
+生成的消息统一是 `种类: 消息`，和 `Exception.kindOf` 的约定一致。
+
+**还没做**：把 `!T` 的载荷从 `String` 换成 `(kind, message)`——那要动 C 运行时、
+三个后端与自举（约 3–4 个专项），届时这张表直接变成枚举取值。
+
 **错误处理的新表面**（阶段 84 第一步；语义仍是现有的 try/catch，三端未动）：
 
 ```rsf

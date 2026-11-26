@@ -1,0 +1,21 @@
+fn risky(n : Int) -> !Int {
+    if (n < 0) { fail range, "n 不能为负：" + intToString(n) }
+    rtn n * 2
+}
+
+fn ioFail() -> !void {
+    fail io, "打不开"
+}
+
+fn main() -> void {
+    try {
+        println(intToString(risky(-1)!!))
+    } catch e {
+        println("种类: " + e)
+    }
+    try {
+        try ioFail()
+    } catch e {
+        println("第二个: " + e)
+    }
+}

@@ -3419,8 +3419,32 @@ class Parser(
                 "'fail' 后面要跟错误消息，写法是 'fail \"出错了\"'（消息必须是 String 表达式）",
             )
         }
-        val message = parseExpr()
-        return FailStmt(message, failTok.at)
+        val first = parseExpr()
+        // 阶段 84：`fail 种类, 消息`——种类是短标识（io / parse / range / …），
+        // 编译期校验。解糖成 `fail "种类: 消息"`，所以三端与自举都不受影响。
+        if (check(TokenKind.COMMA)) {
+            advance() // ,
+            val kindName = when (first) {
+                is VarExpr -> first.name
+                is StringLit -> first.value
+                else -> throw error(
+                    peek(),
+                    "fail 的两个参数写法是 'fail 种类, 消息'，种类必须是标识符或字符串字面量" +
+                        "（可用的：${org.example.complie.diag.ErrorKinds.ALL.joinToString(" / ")}）",
+                )
+            }
+            if (!org.example.complie.diag.ErrorKinds.isKnown(kindName)) {
+                throw error(
+                    peek(),
+                    "不认识的错误种类 '$kindName'。可用的：${org.example.complie.diag.ErrorKinds.ALL.joinToString(" / ")}",
+                )
+            }
+            val message = parseExpr()
+            val prefix = StringLit(org.example.complie.diag.ErrorKinds.format(kindName, ""), failTok.at)
+            // prefix 形如 "io: "，直接拼上消息
+            return FailStmt(BinaryExpr(TokenKind.PLUS, prefix, message, failTok.at), failTok.at)
+        }
+        return FailStmt(first, failTok.at)
     }
 
     /**
