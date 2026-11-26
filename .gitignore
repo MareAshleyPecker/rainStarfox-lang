@@ -342,3 +342,10 @@ gmon.out
 !/build/verify96/**/
 !/build/verify96/**/*.sh
 !/build/verify96/**/*.rsf
+
+### 判据台（阶段 84：try/catch 新表面）###
+!/build/verify97/
+/build/verify97/**
+!/build/verify97/**/
+!/build/verify97/**/*.sh
+!/build/verify97/**/*.rsf

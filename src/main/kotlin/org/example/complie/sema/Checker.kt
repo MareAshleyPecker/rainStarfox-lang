@@ -6019,7 +6019,9 @@ class Checker(
 
     // ------------------------------------------------------------------ 控制流分析
     private fun analyzeFlow(fn: FuncDecl, loweredFn: LoweredFunction) {
-        val cf = ControlFlow(loweredFn.instructions, loweredFn.labelIndex)
+        // handlers 必须一起传：异常边也是 CFG 的边，不传的话 catch 体会被判成不可达，
+        // 既误报「不可达代码」，也让依赖这张图的后续分析漏掉处理器路径。
+        val cf = ControlFlow(loweredFn.instructions, loweredFn.labelIndex, loweredFn.handlers)
         val reach = cf.reachable()
 
         for (i in 0 until cf.size) {

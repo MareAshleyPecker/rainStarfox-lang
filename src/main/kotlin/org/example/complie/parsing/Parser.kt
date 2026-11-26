@@ -3437,6 +3437,21 @@ class Parser(
      */
     private fun parseTry(): Stmt {
         val tryTok = advance() // try
+        // 阶段 84：`try 表达式`（Zig 风格）——出错就向上抛，成功就丢掉值。
+        // 解糖成等价的 `try { 表达式 } catch (e : String) { fail e }`，
+        // 所以三端语义完全不用改；`!void` 也能用它传播（以前只能写三件套）。
+        if (!check(TokenKind.LBRACE)) {
+            val expr = parseExpr()
+            val catchName = "e"
+            val bodyStmt = ExprStmt(expr, expr.at)
+            val rethrow = FailStmt(VarExpr(catchName, tryTok.at), tryTok.at)
+            return TryStmt(
+                body = Block(listOf(bodyStmt), tryTok.at),
+                catchName = catchName,
+                catchBody = Block(listOf(rethrow), tryTok.at),
+                at = tryTok.at,
+            )
+        }
         val body = parseBody("try")
 
         if (!check(TokenKind.KW_CATCH)) {
@@ -3449,34 +3464,47 @@ class Parser(
         }
         advance() // catch
 
-        expect(
-            TokenKind.LPAREN,
-            "catch 后面需要 '('，写法是 catch (错误变量 : String)，例如 catch (e : String)",
-        )
-        val nameTok = expect(
-            TokenKind.IDENT,
-            "catch 里需要错误变量名，写法是 catch (e : String)（也可以写老写法 catch (e String)）",
-        )
-
-        // 两种风格的分流只看名字后面那个记号，和 parseParam 一样无歧义：
-        //   `:` 开头 → Kotlin 风格；直接就是 `String` → Java 风格。
-        if (match(TokenKind.COLON)) {
-            if (!check(TokenKind.KW_STRING)) {
-                throw error(peek(), catchTypeError(nameTok.lexeme))
+        // 阶段 84：三种写法都收——
+        //   catch { … }       不要绑定（错误不关心）
+        //   catch e { … }     要绑定，类型就是 String（不再写）
+        //   catch (e : String) / catch (e String)   老写法，兼容
+        val name: String
+        when {
+            check(TokenKind.LBRACE) -> {
+                // 用源码写不出来的名字：不暴露给用户，也不会有重名
+                name = "\u0000catch"
             }
-            advance() // String
-        } else if (check(TokenKind.KW_STRING)) {
-            advance() // String（老写法 catch (e String)）
-        } else {
-            throw error(peek(), catchTypeError(nameTok.lexeme))
+            check(TokenKind.LPAREN) -> {
+                advance() // (
+                val nameTok = expect(
+                    TokenKind.IDENT,
+                    "catch 里需要错误变量名，写法是 catch (e : String) / catch (e) / catch e / catch",
+                )
+                // 名字后面可以有类型（:` String` 或老写法 `String`），也可以没有
+                if (match(TokenKind.COLON)) {
+                    if (!check(TokenKind.KW_STRING)) {
+                        throw error(peek(), catchTypeError(nameTok.lexeme))
+                    }
+                    advance() // String
+                } else if (check(TokenKind.KW_STRING)) {
+                    advance() // String（老写法 catch (e String)）
+                }
+                expect(
+                    TokenKind.RPAREN,
+                    "catch 的参数表没有闭合，缺少 ')'（写法是 catch (e : String) / catch (e)）",
+                )
+                name = nameTok.lexeme
+            }
+            check(TokenKind.IDENT) -> {
+                name = advance().lexeme
+            }
+            else -> throw error(
+                peek(),
+                "catch 后面要么是 '{'（不要绑定），要么是错误变量名（catch e { … } 或 catch (e : String) { … }）",
+            )
         }
-
-        expect(
-            TokenKind.RPAREN,
-            "catch 的参数表没有闭合，缺少 ')'（写法是 catch (e : String)）",
-        )
         val catchBody = parseBody("catch")
-        return TryStmt(body, nameTok.lexeme, catchBody, tryTok.at)
+        return TryStmt(body, name, catchBody, tryTok.at)
     }
 
     /**

@@ -266,6 +266,23 @@ fn main() -> void {
 
 ## 10. `.rsfs` 语法定稿（进行中，逐条拍板）
 
+**错误处理的新表面**（阶段 84 第一步；语义仍是现有的 try/catch，三端未动）：
+
+```rsf
+try writeText(p, s)                     // Zig 风格：!void 也能直接传播
+try readText(p)                         // 丢弃值的语句形式
+try { f() } catch { … }                 // 不要绑定
+try { f() } catch e { … }               // 要绑定，不写类型
+try { f() } catch (e : String) { … }    // 老写法，兼容
+```
+
+`try 表达式` 解糖成等价的 `try { 表达式 } catch (e : String) { fail e }`，
+所以只能在可能失败的函数（`!T`）里用——在 `void` 函数里会明确报错。
+
+顺带修掉一个老 bug：`Checker.analyzeFlow` 构造 `ControlFlow` 时**没传 handlers**，
+异常边不在 CFG 里，导致 **每个** catch 体都被误报「不可达代码」（现有代码里一直有，
+只是没人细看）。已修，判据 verify97 断言不再误报。
+
 **标准库布局**（阶段 84）：`stdlib/{lang,io,std,classfile}`，模块用**类 + 静态方法**组织
 （`Text.join(...)` / `Io.readLines(...)` / `Lang.parseIntOr(...)` / `Conv.toInt(...)`），
 因为 rsf 里 `名.成员` 的左边必须是类型名。
