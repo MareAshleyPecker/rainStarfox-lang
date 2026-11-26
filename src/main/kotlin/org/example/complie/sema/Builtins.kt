@@ -357,6 +357,15 @@ object Builtins {
 
     private val BY_NAME: Map<String, Builtin> = ALL.associateBy { it.name }
 
+    /**
+     * 「只在构建脚本里能用」的全部名字（阶段 84：**这里才是唯一的一份**）。
+     *
+     * 以前这份名单被抄在三个地方（Checker 的保留名检查、字节码后端的拒绝分支、
+     * C 后端的拒绝分支），加一个 `javaInclude` 就要改三遍，漏一处就是
+     * 「JVM 侧能编过、native 侧报错」这种没人想要的差异。现在三处都读 [BUILD_ONLY]。
+     */
+    val BUILD_ONLY: Set<String> = ALL.filter { it.buildOnly }.map { it.name }.toSet()
+
     val NAMES: Set<String> = BY_NAME.keys
 
     operator fun get(name: String): Builtin? = BY_NAME[name]

@@ -4673,8 +4673,7 @@ class BytecodeCompiler(
 
             // 阶段 81：构建脚本的宿主能力只在 `rsf build` 驱动 build.rsfs 时注入，
             // 编进 class 里就没有宿主了。
-            "outDir", "compile", "compileAll", "exec", "target", "need",
-                "javaInclude", "cInclude", "hInclude", "dirInclude" -> throw RsfError(
+            in Builtins.BUILD_ONLY -> throw RsfError(
                 "build",
                 "'${builtin.name}' 只有构建脚本里能用（rsf build 驱动 build.rsfs 时注入），编成 .class 之后没有编译器可调",
             )

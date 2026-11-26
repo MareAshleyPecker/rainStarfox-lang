@@ -8136,8 +8136,7 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
          * （`Builtin.buildOnly`），普通程序里没有必要为它们让路——尤其是 `c` / `h`
          * 这种单字母名字。Checker 按「当前文件是不是 build.rsfs」决定它们生效不生效。
          */
-        val BUILTINS_BUILD_ONLY: Set<String> =
-            Builtins.ALL.filter { it.buildOnly }.map { it.name }.toSet()
+        val BUILTINS_BUILD_ONLY: Set<String> = Builtins.BUILD_ONLY
     }
 }
 

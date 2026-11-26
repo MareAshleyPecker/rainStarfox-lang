@@ -1,5 +1,6 @@
 package org.example.complie.native
 
+import org.example.complie.sema.Builtins
 import org.example.complie.ast.*
 import org.example.complie.diag.RsfError
 import org.example.complie.lexing.TokenKind
@@ -1367,8 +1368,7 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
             "memPeak" -> return "rsf_mem_peak()"
             "gcCollect" -> return "rsf_gc_collect()"
             // 阶段 81：构建脚本的宿主能力只有 `rsf build` 驱动 build.rsfs 时才有
-            "outDir", "compile", "compileAll", "exec", "target", "need",
-                "javaInclude", "cInclude", "hInclude", "dirInclude" ->
+            in Builtins.BUILD_ONLY ->
                 fail("内置函数 ${e.name}（只有构建脚本里能用，产物里没有编译器可调）")
             "stringBytes" -> return "rsf_str_bytes(${expr(e.arguments[0])})"
             "byteLength" -> return "rsf_str_byte_len(${expr(e.arguments[0])})"
