@@ -5,6 +5,7 @@ import org.example.complie.diag.RsfError
 import org.example.complie.diag.SourceFile
 import org.example.complie.directives.BuildSettings
 import org.example.complie.directives.DepEntry
+import org.example.complie.directives.DirectiveTarget
 import org.example.complie.lexing.Lexer
 import org.example.complie.parsing.Parser
 import java.io.File
@@ -72,6 +73,13 @@ class LoadedProgram(
     val globals: List<GlobalVarDecl> = emptyList(),
     /** 阶段 82：`build.rsfs` 里的 `#build { … }`；别的文件写了会报错。 */
     val build: BuildSettings? = null,
+    /**
+     * 阶段 83：`build.rsfs` 里的 `#target { … }` 声明（声明顺序就是构建顺序）。
+     *
+     * 和 [build] 一样只取自根文件：它描述的是「整份项目要产出什么」，
+     * 拆到被 import 的模块里会让人猜不到最终按哪份清单构建（指令解析已拦掉）。
+     */
+    val targets: List<DirectiveTarget> = emptyList(),
 ) {
     /** 合成一个 Program 交给 Checker。 */
     fun toProgram(): Program =
@@ -181,6 +189,7 @@ class SourceLoader {
             gc = resolveGc(root),
             deps = deps.toList(),
             build = build,
+            targets = root.directives.targets,
             globals = globals.toList(),
         )
     }

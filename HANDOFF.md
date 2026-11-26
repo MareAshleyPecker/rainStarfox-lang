@@ -104,28 +104,52 @@ import "core/Vec.rsf" as vec { push, size }   // 只注入这两个
 5. 判据：新增 `build/verify83/`，正例（三种导入形态）+ 负例（同名冲突、缺名导入、
    `@/` 越界）各若干，并保证九示例不受影响。
 
-## 8. rsf build 线（设计定稿，下一轮从这里开始写代码）
+## 8. rsf build 线（阶段 83；四阶段已接上，规则阶段待做）
 
 四阶段，缺一个都会让语义含糊：
 
-| 阶段 | 做什么 |
-|---|---|
-| 0 读指令 | `#dep` / `#build` / `#target`（装载期挖成空格，不进 AST） |
-| 1 跑规则 | `#dep rule("f")` 里的函数（**无依赖**），返回值按 `c:/h:/lib:/jar:/dir:` 前缀展开 |
-| 2 跑 main | 追加 `target()` / `need()`；`exec()` 只在这里可用 |
-| 3 出产物 | 按表顺序（有 `need` 就拓扑序），复用 `--c --link` / `--jar`；第一个失败即停并打印完整命令 |
+| 阶段 | 做什么 | 状态 |
+|---|---|---|
+| 0 读指令 | `#dep` / `#build` / `#target`（装载期挖成空格，不进 AST） | 做了 |
+| 1 跑规则 | `#dep rule("f")` 里的函数（**无依赖**），返回值按 `c:/h:/lib:/jar:/dir:` 前缀展开 | **没做**，遇到时打一行「这一阶段还不执行」 |
+| 2 跑 main | 追加 `target()` / `need()`；`exec()` 只在这里可用 | 做了 |
+| 3 出产物 | 按表顺序（有 `need` 就拓扑序），复用 `--c --link` / `--jar`；第一个失败即停并打印完整命令 | 做了 |
 
-目标表：`TargetSpec{ name, src, kind, out? }`，`kind ∈ {exe, lib, jar, copy}`。
-两种写法进同一张表：`#target { @/a.rsf -> exe }` 与 `target("@/a.rsf", exe)`；
-名字取文件名，重名报错并列两处来源；声明顺序即构建顺序，`need(a, b)` 只改顺序。
+目标表：`TargetSpec{ name, src, kind, out? }`，`kind ∈ {exe, lib, jar, copy}`（`build/BuildPlan.kt`）。
+两种写法进同一张表：`#target { @/a.rsf -> exe }` 与 `target("@/a.rsf", "exe")`；
+名字取文件名，重名报错并列两处来源；声明顺序即构建顺序，`need(a, b)` 只改顺序（稳定拓扑排序，成环报错）。
 
-内建（只在 build.rsfs 可用；C 后端显式拒绝）：
-`exec(cmd : String) -> !Int`、`target(src : String, kind) -> void`、`need(a : String, b : String) -> void`。
+`#target` 的第三个 `->` 段可省，写了就是显式产物路径：
 
-落地顺序：
-1. `sema/Builtins.kt` 声明三个内建（带“仅构建脚本”标记）；
-2. `interp/Interpreter.kt` 实现 exec（ProcessBuilder + /bin/sh -c）与计划表；
-3. `Main.kt` 的 `cmdBuild`：跑四阶段，target 复用现成的 `--c --link` / `--jar`；
-4. `directives/Directives.kt` 加 `#target` 块（和 `#dep` 同一套挖掘写法）；
-5. `bytecode` / `C` 后端遇到这三个内建直接报错；
-6. 判据：一个小项目（一个 `c:` + 一个 `h:` + 一个 `copy` 目录）能一条 `rsf build` 出产物。
+```
+#target {
+    @/src/main.rsf -> exe
+    @/res/data.txt -> copy -> build/out/copied.txt
+}
+```
+
+内建（只在 build.rsfs 可用）：`exec(cmd : String) -> Int`、`target(src : String, kind : String) -> void`、
+`need(a : String, b : String) -> void`。
+
+两处与最初设计不同，都是有意的：
+
+- **`exec` 不标 `!Int`**：退出码非零是构建脚本要判断的**正常结果**
+  （`if (exec("git rev-parse") != 0) …`），标了 `!` 就得给每条命令套 try。
+  真正算失败的是「命令起不来」，那种直接中止构建并指出是哪些路径按项目根解析的。
+- **`target` 的 kind 写字符串**：rsf 里的裸标识符不是值；`#target` 块中没有类型系统，
+  所以那边可以写裸 `exe`，函数这边写 `"exe"`，两边最终都进同一张表。
+
+三道关卡，缺一不可：
+1. `Checker.checkBuiltinCall`：`source.name != build.rsfs` 就报错（构建脚本 import 的模块按根文件算，照样允许）；
+2. 解释器：没有宿主时抛「只有构建脚本里能用」（`rsf script` 之类绕过项目的路径兜底）；
+3. `CBackend` / `BytecodeCompiler`：分派表里显式 `fail` / `RsfError`（产物里没有编译器可调）。
+
+判据（已跑通）：`#target` 的 exe + main 里 `target(lib)` + `need` 改序 + `copy` 带显式路径，
+一条 `rsf build` 出 `main`、`lib.o`、`copied.txt`，再 `./build/out/main` 打印正常；
+jar 目标 `java -jar build/out/tool.jar` 打印正常。
+
+下一步（按价值排）：
+1. 阶段 1：`#dep rule(...)` 调顶层函数——要给解释器加一个「按名字调用」的入口；
+2. `#target` 里写 `need` 行（现在是 main 里才能写），以及 `--list` 只看计划不构建；
+3. `compile()` / `compileAll()` 这两个阶段 81 的旧内建与目标表的关系要收口：要么归并，
+   要么明确「compile 立即编、target 进计划」两条语义（现在两种都在，文档里得写清）。

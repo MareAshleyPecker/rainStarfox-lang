@@ -42,6 +42,15 @@ class Builtin(
      * 在 JVM 目标里调用会让 Checker 直接报错（阶段 77 步骤 0）。
      */
     val nativeOnly: Boolean = false,
+    /**
+     * 只有构建脚本（项目根目录的 `build.rsfs`）里能用（阶段 83）。
+     *
+     * 这类函数**没有编译产物的实现**：它们由 `rsf build` 注入的宿主承接（读磁盘、
+     * 起进程、往计划表里加目标），编成 `.class` 或 `.c` 之后就没有宿主了。
+     * 两道关卡：Checker 按「当前文件是不是 build.rsfs」拦一次（位置最准、报错最早），
+     * 两个代码生成后端再拦一次（`rsf script` 之类绕过项目装载的路径也跑不掉）。
+     */
+    val buildOnly: Boolean = false,
 ) {
     /** `charAt(Int) -> Char` 这种可读签名（可能失败的带 `!`）。补全列表也用它。 */
     fun display(): String {
@@ -255,20 +264,52 @@ object Builtins {
      * [org.example.build.BuildHost]）承接；普通程序里调用会在解释期报「只有构建脚本里能用」。
      */
     val OUT_DIR = Builtin(
-        "outDir", emptyList(), RsfType.STRING,
+        "outDir", emptyList(), RsfType.STRING, buildOnly = true,
         doc = "产物目录（只有 build.rsfs 里能用）",
     )
 
     /** `compile(path) -> String`：编译一个源文件，返回产物路径（只有构建脚本里能用）。 */
     val COMPILE = Builtin(
-        "compile", listOf(RsfType.STRING), RsfType.STRING,
+        "compile", listOf(RsfType.STRING), RsfType.STRING, buildOnly = true,
         doc = "编译一个源文件，返回产物路径（只有 build.rsfs 里能用）",
     )
 
     /** `compileAll(dir) -> Int`：编译目录下全部 .rsf / .rsfs，返回文件数（只有构建脚本里能用）。 */
     val COMPILE_ALL = Builtin(
-        "compileAll", listOf(RsfType.STRING), RsfType.INT,
+        "compileAll", listOf(RsfType.STRING), RsfType.INT, buildOnly = true,
         doc = "编译目录下全部 .rsf / .rsfs，返回编译了几个文件（只有 build.rsfs 里能用）",
+    )
+
+    // ------------------------------------------------- 构建计划（阶段 83，rsf build 四阶段）
+
+    /**
+     * `exec(cmd) -> Int`：跑一条 shell 命令，返回退出码（只有构建脚本里能用）。
+     *
+     * **故意不标 `!Int`**：退出码非零是构建脚本要判断的**正常结果**
+     * （`if (exec("git rev-parse") != 0) …`），不是「失败」；标了 `!` 就得给每一条命令
+     * 套一层 try。真正算失败的是「命令起不来」（没有 sh、路径权限），那种情况直接中止构建。
+     */
+    val EXEC = Builtin(
+        "exec", listOf(RsfType.STRING), RsfType.INT, buildOnly = true,
+        doc = "跑一条 shell 命令（工作目录是项目根），返回退出码（只有 build.rsfs 里能用）",
+    )
+
+    /**
+     * `target(src, kind) -> void`：往计划表里加一个产物（只有构建脚本里能用）。
+     *
+     * `kind` 写字符串 `"exe"` / `"lib"` / `"jar"` / `"copy"`——rsf 里的裸标识符不是值，
+     * 而 `#target { … -> exe }` 那种块里没有类型系统，所以那边写裸关键字、这边写字符串，
+     * 两边都进同一张表（[org.example.build.BuildPlan]）。
+     */
+    val TARGET = Builtin(
+        "target", listOf(RsfType.STRING, RsfType.STRING), RsfType.VOID, buildOnly = true,
+        doc = "加一个构建目标：target(\"@/src/app.rsf\", \"exe\")，种类 exe/lib/jar/copy（只有 build.rsfs 里能用）",
+    )
+
+    /** `need(a, b) -> void`：先做 a 再做 b（名字或路径都认，只有构建脚本里能用）。 */
+    val NEED = Builtin(
+        "need", listOf(RsfType.STRING, RsfType.STRING), RsfType.VOID, buildOnly = true,
+        doc = "改构建顺序：need(\"a\", \"b\") 表示先做 a 再做 b（只有 build.rsfs 里能用）",
     )
 
     /** 带签名的内置函数（`print` / `println` 是单参数特例，签名不在这里表达）。 */
@@ -278,7 +319,7 @@ object Builtins {
         READ_TEXT, WRITE_TEXT, READ_BYTES, WRITE_BYTES,
         JVM_CALL, JVM_NEW, JVM_CALL_ON,
         MEM_BYTES, MEM_PEAK, GC_COLLECT,
-        OUT_DIR, COMPILE, COMPILE_ALL,
+        OUT_DIR, COMPILE, COMPILE_ALL, EXEC, TARGET, NEED,
     )
 
     private val BY_NAME: Map<String, Builtin> = ALL.associateBy { it.name }

@@ -1,0 +1,3 @@
+fn twice(x : Int) -> Int {
+    rtn x * 2
+}

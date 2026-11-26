@@ -1,0 +1,18 @@
+#target {
+    @/src/main.rsf -> exe
+    @/res/data.txt -> copy -> build/out/copied.txt
+}
+
+#build {
+    out("build/out")
+    target("c")
+}
+
+fn main() -> void {
+    println("规则准备好了")
+    target("@/src/lib.rsf", "lib")
+    need("@/src/lib.rsf", "@/src/main.rsf")
+    if (exec("echo 来自 exec 的一行") != 0) {
+        println("exec 失败")
+    }
+}

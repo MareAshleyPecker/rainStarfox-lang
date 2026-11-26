@@ -33,15 +33,35 @@ data class BuildSettings(
     val name: String? = null,
 )
 
+/**
+ * `#target` 块里的一行：`@/src/app.rsf -> exe`。
+ *
+ * [src] 是相对项目根的路径（`@/` 前缀可写可不写），[out] 是可省的显式产物路径
+ * （`@/src/app.rsf -> exe -> bin/app`）。
+ *
+ * 这里只做**词法层面的**收集，不认识「exe / lib / jar / copy」的含义——
+ * 目标表与顺序约束在 [org.example.build.BuildPlan] 里，构建命令负责把它们接起来。
+ */
+data class DirectiveTarget(
+    val src: String,
+    val kind: String,
+    val out: String?,
+    val line: Int,
+) {
+    fun display(): String = "$src -> $kind" + (out?.let { " -> $it" } ?: "")
+}
+
 /** 一份文件解析出来的指令。 */
 class ParsedDirectives(
     val deps: List<DepEntry>,
     val build: BuildSettings?,
+    /** `#target` 块里声明的产物（声明顺序就是构建顺序）。 */
+    val targets: List<DirectiveTarget>,
     val stripped: String,
 )
 
 /**
- * 文件级指令 `#dep { … }` 与 `#build { … }`。
+ * 文件级指令 `#dep { … }`、`#build { … }` 与 `#target { … }`。
  *
  * 和 `#NoWarning!!` 一样是**预处理**：在词法之前把整块挖成空格（长度不变、换行保留），
  * 所以行列号与原文完全对齐，AST 里看不到它们。
@@ -69,6 +89,7 @@ object Directives {
 
     val DEP_KEYWORD: String = "#dep"
     val BUILD_KEYWORD: String = "#build"
+    val TARGET_KEYWORD: String = "#target"
 
     private val ENTRY: Regex = Regex("""^([A-Za-z_][A-Za-z0-9_]*)\s*\(\s*(.*?)\s*\)\s*$""")
     private val STRING_ARG: Regex = Regex("""^"((?:[^"\\]|\\.)*)"$""")
@@ -88,11 +109,12 @@ object Directives {
      */
     fun parse(source: SourceFile): ParsedDirectives {
         val text = source.text
-        if (!text.contains(DEP_KEYWORD) && !text.contains(BUILD_KEYWORD)) {
-            return ParsedDirectives(emptyList(), null, WarningDirectives.strip(text))
+        if (!text.contains(DEP_KEYWORD) && !text.contains(BUILD_KEYWORD) && !text.contains(TARGET_KEYWORD)) {
+            return ParsedDirectives(emptyList(), null, emptyList(), WarningDirectives.strip(text))
         }
         val blocks = scan(source, text)
         val deps = ArrayList<DepEntry>()
+        val targets = ArrayList<DirectiveTarget>()
         var build: BuildSettings? = null
         for (block in blocks) {
             when (block.keyword) {
@@ -111,9 +133,20 @@ object Directives {
                     }
                     build = parseBuild(source, block)
                 }
+                TARGET_KEYWORD -> {
+                    if (source.name != BUILD_SCRIPT) {
+                        throw err(
+                            source,
+                            "'#target' 只能写在项目根目录的 $BUILD_SCRIPT 里：它描述的是整份项目要产出什么" +
+                                "（可执行文件、库、jar、要复制的资源），写进普通源文件会让人猜不到最终按哪份清单构建",
+                            block.startLine,
+                        )
+                    }
+                    targets.addAll(parseTargets(source, block))
+                }
             }
         }
-        return ParsedDirectives(deps, build, stripBlocks(text, blocks))
+        return ParsedDirectives(deps, build, targets, stripBlocks(text, blocks))
     }
 
     const val BUILD_SCRIPT: String = "build.rsfs"
@@ -155,6 +188,56 @@ object Directives {
         }
         return out
     }
+
+    /**
+     * 解析 `#target` 块：一行一个目标，`路径 -> 种类`，第三段可省（显式产物路径）。
+     *
+     * 路径与种类都允许加引号（`"@/a.rsf" -> "exe"`），但不必——块里的 `->` 已经
+     * 把两段分开了，引号在这里只是给路径里带空格的人留的余地。
+     * 品类不在这里判断含义，只校验拼写（合法的四种由 [org.example.build.TargetKind] 定）。
+     */
+    private fun parseTargets(source: SourceFile, block: Block): List<DirectiveTarget> {
+        val out = ArrayList<DirectiveTarget>()
+        var line = block.bodyLine
+        for (raw in block.body.split("\n")) {
+            val text = raw.trim()
+            if (text.isEmpty()) {
+                line++
+                continue
+            }
+            val parts = text.split("->").map { it.trim() }
+            if (parts.size < 2 || parts.size > 3 || parts.any { it.isEmpty() }) {
+                throw err(
+                    source,
+                    "'#target' 里一行写一个产物：路径 -> 种类（可省第三段写产物路径）" +
+                        "，例：@/src/app.rsf -> exe。实际读到 '$text'",
+                    line,
+                )
+            }
+            val src = unquote(parts[0])
+            val kind = unquote(parts[1])
+            val outPath = if (parts.size == 3) unquote(parts[2]) else null
+            if (src.isEmpty()) throw err(source, "'#target' 里的源路径不能是空的", line)
+            val kinds = org.example.build.TargetKind.KEYWORDS
+            if (org.example.build.TargetKind.of(kind) == null) {
+                throw err(source, "'#target' 里的种类只能写 $kinds，实际给了 '$kind'", line)
+            }
+            if (outPath != null && outPath.isEmpty()) {
+                throw err(source, "'#target' 第三段写了就要有内容（产物路径），或者整段省掉", line)
+            }
+            out.add(DirectiveTarget(src = src, kind = kind, out = outPath, line = line))
+            line++
+        }
+        return out
+    }
+
+    /** 去掉一层首尾引号（`"a b.rsf"` -> `a b.rsf`）。 */
+    private fun unquote(text: String): String =
+        if (text.length >= 2 && text.first() == '"' && text.last() == '"') {
+            text.substring(1, text.length - 1)
+        } else {
+            text
+        }
 
     private fun parseBuild(source: SourceFile, block: Block): BuildSettings {
         var outDir: String? = null
@@ -229,6 +312,7 @@ object Directives {
                 val keyword = when {
                     text.startsWith(DEP_KEYWORD, j) -> DEP_KEYWORD
                     text.startsWith(BUILD_KEYWORD, j) -> BUILD_KEYWORD
+                    text.startsWith(TARGET_KEYWORD, j) -> TARGET_KEYWORD
                     else -> null
                 }
                 if (keyword != null) {

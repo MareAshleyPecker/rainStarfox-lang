@@ -8,6 +8,7 @@ import org.example.complie.diag.Severity
 import org.example.complie.diag.SourceFile
 import org.example.complie.diag.WarningKind
 import org.example.complie.diag.WarningDirectives
+import org.example.complie.directives.Directives
 import org.example.complie.interop.ClassPath
 import org.example.complie.interop.JvmClass
 import org.example.complie.interop.JvmMethod
@@ -7510,6 +7511,17 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
             throw err(
                 "'${builtin.name}' 只有 native 侧才有：它读的是 native 运行时的内存统计，" +
                     "JVM 侧由 JVM 自己管堆。把所在声明标成 'native'，或在这份文件头写 'target native'。",
+                expr.at,
+            )
+        }
+        // 阶段 83：构建脚本专用的内建（exec / target / need / compile / compileAll / outDir）。
+        // 它们靠 `rsf build` 注入的宿主干活，编进产物之后没有宿主可调，所以只允许出现在
+        // 项目根目录的 build.rsfs 里（被它 import 进来的模块也算：整份程序按 build.rsfs 分析）。
+        if (builtin.buildOnly && source.name != Directives.BUILD_SCRIPT) {
+            throw err(
+                "'${builtin.name}' 只有构建脚本里能用：它由 'rsf build' 驱动项目根目录的 " +
+                    "${Directives.BUILD_SCRIPT} 时注入，" +
+                    "普通程序里没有「项目」「产物目录」「构建计划」这些东西。",
                 expr.at,
             )
         }

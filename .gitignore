@@ -246,3 +246,14 @@ bin/
 gmon.out
 
 /rsfinitTest
+
+### 判据台（阶段 83：rsf build 四阶段）###
+# 只留脚本与项目骨架（.rsfs/.rsf/.txt），编译产物与 build/out 不进库
+!/build/verify84/
+/build/verify84/**
+!/build/verify84/**/
+!/build/verify84/**/*.sh
+!/build/verify84/**/*.rsf
+!/build/verify84/**/*.rsfs
+!/build/verify84/**/*.txt
+!/build/verify84/**/*.md

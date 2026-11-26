@@ -2323,6 +2323,26 @@ class Interpreter(
                     else -> host.compileAll(args[0] as String)
                 }
             }
+            // 阶段 83：构建计划的三个内建（exec / target / need）。同样是宿主能力，
+            // 普通程序里没有宿主——消息里说清楚「只有 build.rsfs 能用」，
+            // 而不是让 exec 变成空操作。
+            "exec", "target", "need" -> {
+                val host = buildHost ?: throw RsfFailure(
+                    "'${builtin.name}' 只有构建脚本里能用：它由 'rsf build' 驱动 build.rsfs 时注入。",
+                )
+                when (builtin.name) {
+                    // 退出码非零是正常返回值（脚本自己判断），只有起不来命令才抛错
+                    "exec" -> host.exec(args[0] as String)
+                    "target" -> {
+                        host.target(args[0] as String, args[1] as String)
+                        null
+                    }
+                    else -> {
+                        host.need(args[0] as String, args[1] as String)
+                        null
+                    }
+                }
+            }
             "readBytes" -> fileCall(builtin.name, args[0] as String) {
                 Files.readAllBytes(Paths.get(it))
             }

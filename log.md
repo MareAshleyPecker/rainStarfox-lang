@@ -185,3 +185,48 @@ the platform linker build `.so`/`.dll` (export tables are the linker's job);
 `export fn` decides visibility and `rsf_` prefixes the symbol. Only write PE
 `.edata` / ELF `.dynsym` by hand if the single-file, no-toolchain goal becomes
 real.
+
+## rsf build — four phases are wired (stage 83)
+
+`rsf build` in a project directory now runs the four phases from `HANDOFF.md` §8.
+What actually exists:
+
+- `build/BuildPlan.kt` — `TargetKind {exe, lib, jar, copy}`, `TargetSpec`,
+  and `BuildPlan`: declaration order is build order; `need(a, b)` is a stable
+  topological edge (accepts a target name *or* a source path); duplicate names
+  and cycles fail at declaration/ordering time with both origins listed.
+- `build/BuildHost.kt` — `exec` / `target` / `need` on the host interface.
+  `exec` runs `/bin/sh -c` with the project root as cwd and `inheritIO`, so gcc
+  output is visible live and the exit code goes back to the script.
+- `sema/Builtins.kt` — `Builtin.buildOnly`, used by `exec`/`target`/`need`
+  (and retro-fitted onto the older `outDir`/`compile`/`compileAll`).
+- `directives/Directives.kt` — `#target { @/a.rsf -> exe }`, optional third
+  `-> out` segment; only allowed in the root `build.rsfs`, same as `#build`.
+- `Main.kt` — phase 0 seeds the plan from `#target`, phase 2 interprets
+  `build.rsfs` with the host, phase 3 walks `plan.ordered()` and emits
+  exe (`--c --link`), lib (`gcc -c`), jar (JVM backend + `writeJar`), copy.
+  `emitNative` / `linkExe` / `compileObject` / `buildJar` were extracted from
+  the single-file path so `rsf build x.rsf --c --link` and the target table
+  share one implementation.
+
+Two deliberate deviations from the written design, both documented in §8:
+
+- `exec` returns `Int`, not `!Int`. A non-zero exit is a *normal* value the
+  build script branches on; only "the command could not start" aborts.
+- `kind` is a string in `target(src, kind)`. A bare identifier is not a value
+  in rsf; the `#target` block has no type system, so it keeps the bare `exe`.
+
+Enforcement has three layers: Checker (file must be named `build.rsfs`),
+interpreter (no host → clear failure), and both codegen backends (explicit
+refusal, since a compiled artifact has no compiler to call).
+
+`build/verify84/run.sh` is the reproducible judge: a small project with
+`exe` + `lib` + `copy` (explicit output path), `need` reversing the default
+order, and an `exec` whose exit code the script checks.
+
+Not done yet: phase 1 (`#dep rule("f")` calling a build function) — it needs a
+"call this top-level function by name" entry point on the interpreter, and
+today `rsf build` merely prints a warning that rules are not executed. Also
+open: `compile()`/`compileAll()` (stage 81) now coexist with the target table
+and their relationship needs to be settled in the docs — `compile` compiles
+immediately, `target` only records intent.

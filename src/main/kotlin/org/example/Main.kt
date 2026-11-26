@@ -1,6 +1,9 @@
 package org.example
 
+
 import org.example.build.ProjectBuildHost
+import org.example.build.TargetKind
+import org.example.build.TargetSpec
 import org.example.complie.BuildResult
 import org.example.complie.Rsf
 import org.example.complie.ast.BuildTarget
@@ -8,7 +11,9 @@ import org.example.complie.codegen.disassemble
 import org.example.complie.diag.RsfError
 import org.example.complie.diag.SourceFile
 import org.example.complie.interp.Interpreter
+import org.example.complie.directives.DepKind
 import org.example.complie.interp.RsfFailure
+import org.example.complie.loading.LoadedProgram
 import org.example.complie.lsp.EditorSupport
 import org.example.complie.native.CBackend
 import org.example.complie.sema.SemanticModel
@@ -89,10 +94,15 @@ class Cli {
             |// 项目构建脚本：入口是 main，规则可以拆到 build/ 下的模块里。
             |import "build/defaults.rsfs"
             |
+            |// 要产出什么（声明顺序就是构建顺序）。
+            |// 种类：exe 可执行文件 / lib 目标文件 / jar 可执行包 / copy 原样复制。
+            |#target {
+            |    @/src/main.rsf -> exe
+            |}
+            |
             |// 产物设置（只认项目根的 build.rsfs）。命令行给的 -o / --c / --meta 压过这里。
             |#build {
             |    out("build/out")
-            |    target("auto")
             |}
             |
             |// 依赖写在这里或任意源文件里，构建末尾汇总进 .rsfdeps/lock.json。
@@ -103,9 +113,10 @@ class Cli {
             |
             |fn main() -> void {
             |    println("构建 " + projectName() + "（" + targetName() + "）")
-            |    // 把 src/ 下每个 .rsf / .rsfs 编到产物目录；只编一个就换成 compile("src/main.rsf")。
-            |    val count = compileAll("src")
-            |    println("编译 " + intToString(count) + " 个文件 -> " + outDir())
+            |    // 也可以在这里动态加目标，顺序照样是声明顺序：
+            |    // target("@/src/tool.rsf", "jar")
+            |    // 要改顺序就写 need("a", "b")（先 a 后 b）。
+            |    // 要跑外部命令写 exec("命令")：返回退出码，非零由你自己判断。
             |}
             """.trimMargin(),
             Charsets.UTF_8,
@@ -243,12 +254,30 @@ class Cli {
                 if (loadedScript.deps.isNotEmpty()) {
                     println("[rsf] 依赖: ${loadedScript.deps.joinToString("、") { it.display() }}")
                 }
+                // 阶段 0：`#target` 块里声明的目标先入表——声明顺序就是构建顺序，
+                // 所以它一定排在 main 里 `target()` 加的那些前面。
+                for (t in loadedScript.targets) {
+                    host.addTarget(
+                        TargetSpec.of(t.src, t.kind, t.out, "build.rsfs 第 ${t.line} 行的 #target"),
+                    )
+                }
+                // 阶段 1（`#dep rule(...)` 调构建函数）还没做：明说出来，不假装执行过。
+                val pendingRules = loadedScript.deps.filter { it.kind == DepKind.RULE }
+                if (pendingRules.isNotEmpty()) {
+                    System.err.println(
+                        "[rsf] 注意：#dep rule(...) 这一阶段还不执行：" +
+                            pendingRules.joinToString("、") { "${it.target}()" },
+                    )
+                }
+                // 阶段 2：跑 main。target / need / exec 都只有这里能用（宿主由上面这行注入）。
                 Rsf.interpret(scriptModel, System.out, host)
                 // 依赖可能在脚本或任一被编译的源文件里声明，所以锁文件写在跑完之后。
                 if (host.hasDeps()) {
                     val lock = host.writeLock()
                     println("[rsf] 依赖锁文件: ${lock.path}")
                 }
+                // 阶段 3：按计划出产物（第一个失败即停，异常直接冒到 CLI）。
+                buildPlanned(host, effMeta)
                 return 0
             }
         }
@@ -274,21 +303,7 @@ class Cli {
 
         if (cMode) {
             for (warning in model.warnings) System.err.println("[rsf] 警告: $warning")
-            // 运行时是共享头文件（rsf_runtime.h），不再随每份 .c 携带：
-            // 先确保 out 里的头文件与当前编译器同源，再让这份 .c 做唯一的 RSF_RUNTIME_IMPL 定义。
-            val backend = CBackend(model, withEntry = !cLib, emitImpl = true)
-            outDir.mkdirs()
-            if (backend.ensureRuntimeLib(outDir)) {
-                println("[rsf] 已生成 ${File(outDir, "rsf_runtime.h").path}")
-            }
-            val text = backend.emit()
-            val out = File(outDir, "$name.c")
-            out.writeText(
-                if (metaBlob != null) text + RsfMeta.cDeclaration(metaBlob) else text,
-                Charsets.UTF_8,
-            )
-            println("[rsf] 已生成 ${out.path}")
-            if (metaBlob != null) println("[rsf] 已嵌入源码元数据（${metaBlob.size} 字节，节 ${RsfMeta.SECTION}）")
+            val out = emitNative(loaded, model, name, outDir, metaBlob, withEntry = !cLib)
             // 阶段 60b：JVM → native 的桥。符号名要跟 JVM 类名一致，所以这里用同一个 name。
             if (cJni) {
                 val bridge = File(outDir, "${name}_jni.c")
@@ -300,14 +315,7 @@ class Cli {
             if (cLib) {
                 println("[rsf] 这是库（没有 main）: gcc -c ${out.path} -o ${File(outDir, "$name.o").path}")
             } else if (link) {
-                // 直接调系统 C 编译器出可执行文件；失败时把命令原样打出来，方便手调
-                val exe = File(outDir, if (isWindows()) "$name.exe" else name)
-                val cc = System.getenv("CC") ?: "gcc"
-                val cmd = listOf(cc, "-std=c11", "-O1", "-w", out.path, "-o", exe.path, "-lm")
-                println("[rsf] 链接: ${cmd.joinToString(" ")}")
-                val rc = ProcessBuilder(cmd).inheritIO().start().waitFor()
-                if (rc != 0) throw RsfError("build", "链接失败（${cc} 退出码 $rc）")
-                println("[rsf] 已生成 ${exe.path}")
+                linkExe(out, outDir, name)
             } else {
                 println("[rsf] 编译: gcc ${out.path} -o ${File(outDir, "$name.exe").path} -lm")
             }
@@ -719,6 +727,165 @@ class Cli {
     }
 
     /** 把这次生成的 .class 打成一个可执行 jar（有 main 就写 Main-Class）。 */
+    // ---------------------------------------------------- rsf build 的四阶段（阶段 83）
+
+    /**
+     * 阶段 3：按目标表出产物。
+     *
+     * 顺序由 [BuildPlan.ordered] 定（声明顺序 + `need` 约束）；**第一个失败即停**，
+     * 异常一路冒到 CLI——半成品留在磁盘上不可怕，继续编下去才可怕。
+     */
+    private fun buildPlanned(host: ProjectBuildHost, meta: Boolean) {
+        val plan = host.plan()
+        if (plan.isEmpty()) {
+            println("[rsf] 目标表是空的：构建脚本既没写 #target 块，也没调 target(...)，没有产物可出")
+            return
+        }
+        val ordered = plan.ordered()
+        println("[rsf] 构建顺序：" + ordered.joinToString(" -> ") { it.name })
+        val outRoot = host.resolveInProject(host.outDir())
+        outRoot.mkdirs()
+        for (spec in ordered) buildOne(host, spec, outRoot, meta)
+    }
+
+    /** 出一个目标。[spec] 的源路径与产物路径都按项目根解析。 */
+    private fun buildOne(host: ProjectBuildHost, spec: TargetSpec, outRoot: File, meta: Boolean) {
+        val src = host.resolveInProject(spec.src)
+        if (!src.isFile) {
+            throw RsfError(
+                "build",
+                "目标 '${spec.name}' 的源文件不存在：'${spec.src}'（按项目根解析成 ${src.path}）",
+            )
+        }
+        // 显式产物路径优先（`#target` 的第三段）；没写就按种类放到产物目录里。
+        val dest = spec.out?.let { host.resolveInProject(it) }
+        val started = System.currentTimeMillis()
+        val produced: File = when (spec.kind) {
+            // copy 不编译：配置、资源、脚本原样搬进产物目录（文件名保留扩展名）
+            TargetKind.COPY -> {
+                val target = dest ?: File(outRoot, src.name)
+                target.parentFile?.mkdirs()
+                src.copyTo(target, overwrite = true)
+                target
+            }
+            // exe：native 后端出 .c，再交给系统 C 编译器链接成可执行文件
+            TargetKind.EXE -> {
+                val loaded = Rsf.load(src, target = BuildTarget.NATIVE)
+                val model = Rsf.analyze(loaded)
+                for (warning in model.warnings) System.err.println("[rsf] 警告: $warning")
+                val cFile = emitNative(loaded, model, spec.name, outRoot, metaBlobOf(loaded, "native", spec.name, meta), withEntry = true)
+                val exe = linkExe(cFile, outRoot, spec.name)
+                relocate(exe, dest)
+            }
+            // lib：只编成目标文件，不链接（给别人 `gcc app.o` 用）
+            TargetKind.LIB -> {
+                val loaded = Rsf.load(src, target = BuildTarget.NATIVE)
+                val model = Rsf.analyze(loaded)
+                for (warning in model.warnings) System.err.println("[rsf] 警告: $warning")
+                val cFile = emitNative(loaded, model, spec.name, outRoot, metaBlobOf(loaded, "native", spec.name, meta), withEntry = false)
+                relocate(compileObject(cFile, outRoot, spec.name), dest)
+            }
+            // jar：JVM 后端 + 打包（和单文件模式的 --jar 完全同一条路）
+            TargetKind.JAR -> {
+                val jarFile = buildJar(src, outRoot, spec.name, metaBlobOf(Rsf.load(src), "jvm", spec.name, meta))
+                relocate(jarFile, dest)
+            }
+        }
+        val ms = System.currentTimeMillis() - started
+        println("[rsf] 目标 ${spec.name}（${spec.kind.keyword}）-> ${produced.path}（${ms} ms）")
+    }
+
+    /** 显式产物路径：把刚出的文件搬过去（同目录时什么都不做）。 */
+    private fun relocate(produced: File, dest: File?): File {
+        if (dest == null) return produced
+        if (dest.absoluteFile == produced.absoluteFile) return produced
+        dest.parentFile?.mkdirs()
+        produced.copyTo(dest, overwrite = true)
+        produced.delete()
+        return dest
+    }
+
+    /** 把已分析好的 native 程序落成一份 .c（连运行时头），返回 .c 路径。 */
+    private fun emitNative(
+        loaded: LoadedProgram,
+        model: SemanticModel,
+        name: String,
+        outDir: File,
+        metaBlob: ByteArray?,
+        withEntry: Boolean,
+    ): File {
+        // 运行时是共享头文件（rsf_runtime.h），不再随每份 .c 携带：
+        // 先确保 out 里的头文件与当前编译器同源，再让这份 .c 做唯一的 RSF_RUNTIME_IMPL 定义。
+        val backend = CBackend(model, withEntry = withEntry, emitImpl = true)
+        outDir.mkdirs()
+        if (backend.ensureRuntimeLib(outDir)) {
+            println("[rsf] 已生成 ${File(outDir, "rsf_runtime.h").path}")
+        }
+        val text = backend.emit()
+        val out = File(outDir, "$name.c")
+        out.writeText(
+            if (metaBlob != null) text + RsfMeta.cDeclaration(metaBlob) else text,
+            Charsets.UTF_8,
+        )
+        println("[rsf] 已生成 ${out.path}")
+        if (metaBlob != null) {
+            println("[rsf] 已嵌入源码元数据（${metaBlob.size} 字节，节 ${RsfMeta.SECTION}）")
+        }
+        return out
+    }
+
+    /** 调系统 C 编译器链接出可执行文件；失败时把命令原样打出来，方便手调。 */
+    private fun linkExe(cFile: File, outDir: File, name: String): File {
+        val exe = File(outDir, if (isWindows()) "$name.exe" else name)
+        val cc = System.getenv("CC") ?: "gcc"
+        val cmd = listOf(cc, "-std=c11", "-O1", "-w", cFile.path, "-o", exe.path, "-lm")
+        println("[rsf] 链接: ${cmd.joinToString(" ")}")
+        val rc = ProcessBuilder(cmd).inheritIO().start().waitFor()
+        if (rc != 0) throw RsfError("build", "链接失败（${cc} 退出码 $rc）：${cmd.joinToString(" ")}")
+        println("[rsf] 已生成 ${exe.path}")
+        return exe
+    }
+
+    /** `gcc -c` 出一个目标文件（`lib` 种类的产物）。 */
+    private fun compileObject(cFile: File, outDir: File, name: String): File {
+        val obj = File(outDir, if (isWindows()) "$name.obj" else "$name.o")
+        val cc = System.getenv("CC") ?: "gcc"
+        val cmd = listOf(cc, "-std=c11", "-O1", "-w", "-c", cFile.path, "-o", obj.path)
+        println("[rsf] 编译: ${cmd.joinToString(" ")}")
+        val rc = ProcessBuilder(cmd).inheritIO().start().waitFor()
+        if (rc != 0) throw RsfError("build", "编目标文件失败（${cc} 退出码 $rc）：${cmd.joinToString(" ")}")
+        println("[rsf] 已生成 ${obj.path}")
+        return obj
+    }
+
+    /** JVM 后端 + 打 jar。 */
+    private fun buildJar(file: File, outDir: File, name: String, metaBlob: ByteArray?): File {
+        val loaded = Rsf.load(file, target = BuildTarget.JVM)
+        val model = Rsf.analyze(loaded)
+        for (warning in model.warnings) System.err.println("[rsf] 警告: $warning")
+        val result = Rsf.build(model, loaded.root, name, outDir, metaBlob)
+        for (warning in result.warnings) System.err.println("[rsf] 警告: $warning")
+        val launch = model.packageName
+            ?.takeIf { it.isNotEmpty() }
+            ?.let { "$it.${result.className}" }
+            ?: result.className
+        val jar = writeJar(outDir, name, result, if (model.entry != null) launch else null)
+        println("[rsf] 已打包 ${jar.path}")
+        return jar
+    }
+
+    /** `--meta` 的整块：源码快照 + 符号表 + 构建信息；不要元数据时给 null。 */
+    private fun metaBlobOf(loaded: LoadedProgram, side: String, name: String, meta: Boolean): ByteArray? =
+        if (!meta) {
+            null
+        } else {
+            RsfMeta.encode(
+                RsfMeta.snapshotsOf(loaded),
+                RsfMeta.symbolsOf(loaded),
+                RsfMeta.describe(side, name),
+            )
+        }
+
     private fun writeJar(outDir: File, name: String, result: BuildResult, mainClass: String?): File {
         val jar = File(outDir, "$name.jar")
         val manifest = java.util.jar.Manifest()
