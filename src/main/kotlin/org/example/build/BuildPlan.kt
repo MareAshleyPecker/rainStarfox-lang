@@ -47,13 +47,25 @@ data class TargetSpec(
     /** 显式产物路径；写 `out(...)` 才有，否则按 [kind] 的约定推。 */
     val out: String? = null,
     val origin: String,
+    /**
+     * 这个产物是 **JVM 对外 API**（`module-impex.rsf` 里的 `exportjvm`）。
+     *
+     * 接口上的类型必须能被 Java/Kotlin 直接表达——见 [JvmExport]。
+     */
+    val jvmApi: Boolean = false,
 ) {
     companion object {
         /**
          * 从「源路径 + 种类关键字」造一行。两种写法（`#target` 块与 `target()` 调用）
          * 都从这里过，所以「名字取文件主名」这条规矩只有一处实现。
          */
-        fun of(src: String, kindKeyword: String, out: String?, origin: String): TargetSpec {
+        fun of(
+            src: String,
+            kindKeyword: String,
+            out: String?,
+            origin: String,
+            jvmApi: Boolean = false,
+        ): TargetSpec {
             val kind = TargetKind.of(kindKeyword)
                 ?: throw RsfError(
                     "build",
@@ -64,7 +76,7 @@ data class TargetSpec(
             if (name.isEmpty() || name == "." || name == "..") {
                 throw RsfError("build", "'$origin' 里认不出文件名（'$src'）——目标名取的是文件主名")
             }
-            return TargetSpec(name, src, kind, out, origin)
+            return TargetSpec(name, src, kind, out, origin, jvmApi)
         }
     }
 }

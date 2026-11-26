@@ -6,6 +6,7 @@ package org.example
 // 所以函数体一个字都没改，搬迁的风险只在包可见性上（同包＝不用 import）。
 
 import org.example.build.ImpexKind
+import org.example.build.JvmExport
 import org.example.build.ModuleImpex
 import org.example.build.ProjectBuildHost
 import org.example.build.TargetKind
@@ -144,6 +145,7 @@ internal fun Cli.cmdBuild(rest: List<String>): Int {
                                 TargetSpec.of(
                                     e.path, "jar", null,
                                     "${ModuleImpex.FILE_NAME} 第 ${e.line} 行的 exportjvm",
+                                    jvmApi = true,
                                 ),
                             )
                             ImpexKind.EXPORT_C -> host.addTarget(
@@ -351,7 +353,10 @@ internal fun Cli.buildOne(host: ProjectBuildHost, spec: TargetSpec, outRoot: Fil
             }
             // jar：JVM 后端 + 打包（和单文件模式的 --jar 完全同一条路）
             TargetKind.JAR -> {
-                val jarFile = buildJar(src, outRoot, spec.name, metaBlobOf(Rsf.load(src), "jvm", spec.name, meta))
+                val loadedJvm = Rsf.load(src)
+                // exportjvm 的产物是给别人调的 API：签名只能用 JVM 原生类型
+                if (spec.jvmApi) JvmExport.validate(Rsf.analyze(loadedJvm), spec.origin)
+                val jarFile = buildJar(src, outRoot, spec.name, metaBlobOf(loadedJvm, "jvm", spec.name, meta))
                 relocate(jarFile, dest)
             }
         }

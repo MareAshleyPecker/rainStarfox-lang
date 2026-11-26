@@ -40,4 +40,21 @@ printf 'exportjvm "src/Nope.rsf"\n' >> module-impex.rsf
 "$JAVA" -cp "$CP" org.example.MainKt build > bad.log 2>&1 && fail "引用不存在的文件居然构建成功"
 grep -q 'module-impex.rsf 第 6 行' bad.log || { cat bad.log; fail "报错没指到清单的行"; }
 
+# 5. exportjvm 的签名约束：非原生类型要被拦下
+cat > src/Bad.rsf <<'RSF'
+class Box {
+    var n : Int = 1
+}
+
+fn make() -> Box {
+    rtn new Box()
+}
+RSF
+# 第 4 步往清单里写过不存在的文件，这里重写一份干净的
+cat > module-impex.rsf <<'RSF'
+exportjvm "src/Bad.rsf"
+RSF
+"$JAVA" -cp "$CP" org.example.MainKt build > bad-type.log 2>&1 && fail "非原生类型居然能导出"
+grep -q 'JVM 调用方没法直接用' bad-type.log || { cat bad-type.log; fail "类型约束没报出可读消息"; }
+
 echo "verify88: 全过"
