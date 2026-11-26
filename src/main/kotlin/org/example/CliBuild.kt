@@ -157,9 +157,12 @@ internal fun Cli.cmdBuild(rest: List<String>): Int {
                                     "${ModuleImpex.FILE_NAME} 第 ${e.line} 行的 extern",
                                 ),
                             )
-                            // import / export：v1 只校验存在。普通 rsf 的可见性由 import 管，
-                            // 「导出面」真正的检查要等 module-impex 的语义定完（见 HANDOFF 第 10 节）
+                            // import / export：文件形态只校验存在（可见性由 import 与门禁管）
                             ImpexKind.IMPORT, ImpexKind.EXPORT -> Unit
+                            // 包形态：装载器按它解析 `import std.Vec`，这里不用再做什么
+                            ImpexKind.PACKAGE_IMPORT, ImpexKind.PACKAGE_EXPORT -> Unit
+                            // module 形态：装载器按别名解析 `import std.Vec`，这里不用再做什么
+                            ImpexKind.MODULE_DECL -> Unit
                         }
                     }
                     if (entries.isNotEmpty()) {

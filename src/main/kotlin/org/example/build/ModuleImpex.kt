@@ -10,16 +10,44 @@ enum class ImpexKind(val keyword: String) {
     EXPORT("export"),
     EXPORT_JVM("exportjvm"),
     EXPORT_C("extern"),
+    /** `export pkg std`：把**一个包**（目录）导出给普通 rsf（Java/Kotlin 的 import 那样用）。 */
+    PACKAGE_EXPORT("export pkg"),
+    /** `import pkg classfile`：包只在仓库内部用（旧写法，保留）。 */
+    PACKAGE_IMPORT("import pkg"),
+    /** `module "<目录>" to <别名> [{ 成员… }]`：按别名成包（推荐写法）。 */
+    MODULE_DECL("module"),
     ;
 
     companion object {
         fun of(word: String): ImpexKind? = entries.firstOrNull { it.keyword == word }
+
+        /** 先按两段关键字（`export pkg` / `import pkg`）匹配，再按单段匹配。 */
+        fun ofLine(text: String): ImpexKind? =
+            entries.filter { it.keyword.contains(' ') }.firstOrNull { text.startsWith(it.keyword + " ") }
+                ?: entries.filter { !it.keyword.contains(' ') }
+                    .firstOrNull { text.startsWith(it.keyword + " ") }
+
         val KEYWORDS: String = entries.joinToString(" / ") { it.keyword }
     }
 }
 
-/** 一条清单项：[path] 相对项目根（`@/` 前缀可写可不写）。 */
-data class ImpexEntry(val kind: ImpexKind, val path: String, val line: Int)
+/**
+ * 一条清单项：[path] 对文件形态是相对项目根的路径，对 `module "…" to alias` 是目录。
+ *
+ * [alias] / [members] / [internal] 只有模块形态才有：
+ * - `module "stdlib/std" to std` —— 整包对外，源码里 `import std.Vec`；
+ * - `module "stdlib/std" to std { Vec Text }` —— 只开放这两个成员；
+ * - `internal module "stdlib/classfile" to classfile` —— 只在仓库内部可用。
+ */
+data class ImpexEntry(
+    val kind: ImpexKind,
+    val path: String,
+    val line: Int,
+    val alias: String? = null,
+    /** null = 整包；非空 = 白名单。 */
+    val members: Set<String>? = null,
+    val internal: Boolean = false,
+)
 
 /**
  * `module-impex.rsf`：一个模块的**对外面貌**（阶段 84）。
@@ -53,25 +81,85 @@ object ModuleImpex {
         var line = 0
         for (raw in source.text.lines()) {
             line++
-            val text = stripComment(raw).trim()
+            var text = stripComment(raw).trim()
             if (text.isEmpty()) continue
-            val space = text.indexOfFirst { it == ' ' || it == '\t' }
-            if (space < 0) {
-                throw err(file, source, line, "'$text' 少了参数：一行一条，写成 ${ImpexKind.KEYWORDS} \"路径\"")
+            // `internal module "…" to alias`：前缀决定可见性
+            var isInternal = false
+            if (text.startsWith("internal ")) {
+                isInternal = true
+                text = text.removePrefix("internal ").trim()
             }
-            val word = text.substring(0, space)
-            val kind = ImpexKind.of(word)
+            if (text.startsWith("module ")) {
+                out.add(parseModuleDecl(file, source, text, line, isInternal))
+                continue
+            }
+            val kind = ImpexKind.ofLine(text)
                 ?: throw err(
                     file, source, line,
-                    "不认识的清单项 '$word'。可用的：${ImpexKind.KEYWORDS}（一行一条，写成 '$word \"路径\"'）",
+                    "不认识的清单项 '$text'。可用的：${ImpexKind.KEYWORDS}" +
+                        "（文件形态写带引号的路径，包形态写包名，例：export pkg std）",
                 )
-            val arg = text.substring(space).trim()
+            val arg = text.substring(kind.keyword.length).trim()
+            // 包形态：参数是不带引号的包名
+            if (kind == ImpexKind.PACKAGE_EXPORT || kind == ImpexKind.PACKAGE_IMPORT) {
+                if (!Regex("^[A-Za-z_][A-Za-z0-9_]*$").matches(arg)) {
+                    throw err(file, source, line, "包名要写标识符（例：${kind.keyword} std），实际读到 '$arg'")
+                }
+                out.add(ImpexEntry(kind, arg, line))
+                continue
+            }
             val path = unquote(arg)
-                ?: throw err(file, source, line, "$word 后面要写带引号的路径，实际读到 '$arg'")
-            if (path.isEmpty()) throw err(file, source, line, "$word 后面的路径不能是空的")
+                ?: throw err(file, source, line, "'${kind.keyword}' 后面要写带引号的路径，实际读到 '$arg'")
+            if (path.isEmpty()) throw err(file, source, line, "'${kind.keyword}' 后面的路径不能是空的")
             out.add(ImpexEntry(kind, path, line))
         }
         return out
+    }
+
+    /**
+     * `module "stdlib/std" to std { Vec Text }`
+     *
+     * 语法正好是「目录 → 别名」再加上可选的白名单：`to` 读起来就是"把左边这个目录
+     * 叫作右边这个名字"，和源码里的 `std.Vec` 对得上。
+     */
+    private fun parseModuleDecl(
+        file: File,
+        source: SourceFile,
+        text: String,
+        line: Int,
+        isInternal: Boolean,
+    ): ImpexEntry {
+        val rest = text.removePrefix("module").trim()
+        if (!rest.startsWith("\"")) {
+            throw err(file, source, line, "module 后面要写带引号的目录，例：module \"stdlib/std\" to std")
+        }
+        val end = rest.indexOf('"', 1)
+        if (end < 0) throw err(file, source, line, "module 的目录少了收尾引号")
+        val dir = rest.substring(1, end)
+        var tail = rest.substring(end + 1).trim()
+        if (!tail.startsWith("to ")) {
+            throw err(file, source, line, "module \"$dir\" 后面要写 'to 别名'，例：module \"$dir\" to std")
+        }
+        tail = tail.removePrefix("to ").trim()
+        val brace = tail.indexOf('{')
+        val alias = (if (brace >= 0) tail.substring(0, brace) else tail).trim()
+        if (!Regex("^[A-Za-z_][A-Za-z0-9_]*$").matches(alias)) {
+            throw err(file, source, line, "别名要写标识符（例：to std），实际读到 '$alias'")
+        }
+        var members: Set<String>? = null
+        if (brace >= 0) {
+            val close = tail.lastIndexOf('}')
+            if (close < brace) throw err(file, source, line, "module 的成员列表缺少收尾的 '}'")
+            members = tail.substring(brace + 1, close)
+                .split(',', ' ', '\t')
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+                .toSet()
+            if (members.isEmpty()) {
+                throw err(file, source, line, "module 的成员列表是空的：整包开放就别写 '{}'")
+            }
+        }
+        return ImpexEntry(ImpexKind.MODULE_DECL, dir, line, alias, members, isInternal)
     }
 
     /** `"a.rsf"` -> `a.rsf`；不是带引号的字符串就返回 null。 */

@@ -6,6 +6,7 @@ import org.example.complie.lexing.SourceLine
 import org.example.complie.lexing.TokenKind
 import org.example.complie.sema.Binding
 import org.example.complie.sema.RsfBase
+import org.example.complie.sema.RsfType
 import org.example.complie.sema.SemanticModel
 
 /**
@@ -41,6 +42,18 @@ class LlvmBackend(private val model: SemanticModel) {
     /** 条件表达式 → i1。 */
     private fun cond(e: Expr, slotOf: (Binding) -> String): String {
         val t = fresh()
+        if (e is BinaryExpr && model.typeOf(e.left).base == RsfBase.STRING) {
+            // 字符串比较：== / != 走 strcmp（rsf 的字符串是值语义）
+            if (e.op != TokenKind.EQ && e.op != TokenKind.NE) {
+                fail(e.at, "--ll 的字符串比较只支持 == / !=")
+            }
+            val l = strValue(e.left, slotOf)
+            val r = strValue(e.right, slotOf)
+            val c = fresh()
+            out("  $c = call i32 @strcmp(i8* $l, i8* $r)")
+            out("  $t = icmp ${if (e.op == TokenKind.EQ) "eq" else "ne"} i32 $c, 0")
+            return t
+        }
         if (e is BinaryExpr) {
             val l = value(e.left, slotOf)
             val r = value(e.right, slotOf)
@@ -73,7 +86,13 @@ class LlvmBackend(private val model: SemanticModel) {
 
         body.append("; 由 rsf 的 LLVM 文本 IR 后端生成\n")
         body.append("declare i32 @printf(i8*, ...)\n")
-        body.append("declare i32 @putchar(i32)\n\n")
+        body.append("declare i32 @putchar(i32)\n")
+        body.append("declare i8* @malloc(i64)\n")
+        body.append("declare i8* @memcpy(i8*, i8*, i64)\n")
+        body.append("declare i64 @strlen(i8*)\n")
+        body.append("declare i32 @strcmp(i8*, i8*)\n")
+        body.append("declare i32 @snprintf(i8*, i64, i8*, ...)\n\n")
+        emitRuntime()
 
         // C 入口：调 rsf_fn_main 后返回 0
         body.append("define i32 @main() {\n")
@@ -100,11 +119,13 @@ class LlvmBackend(private val model: SemanticModel) {
         for (fn in model.functions) {
             if (fn.body == null) continue
             val ret = model.returnTypeOf(fn)
-            if (ret.base != RsfBase.INT && ret.base != RsfBase.VOID) {
-                fail(fn.at, "--ll 现在只支持 Int / void 返回（'${fn.name}' 是 ${ret.rsfName}）")
+            if (ret.base != RsfBase.INT && ret.base != RsfBase.VOID && ret.base != RsfBase.STRING) {
+                fail(fn.at, "--ll 现在只支持 Int / String / void（'${fn.name}' 返回 ${ret.rsfName}）")
             }
             for (t in model.paramTypes[fn].orEmpty()) {
-                if (t.base != RsfBase.INT) fail(fn.at, "--ll 现在只支持 Int 参数（'${fn.name}' 里有 ${t.rsfName}）")
+                if (t.base != RsfBase.INT && t.base != RsfBase.STRING) {
+                    fail(fn.at, "--ll 现在只支持 Int / String 参数（'${fn.name}' 里有 ${t.rsfName}）")
+                }
             }
         }
     }
@@ -114,29 +135,39 @@ class LlvmBackend(private val model: SemanticModel) {
 
     private fun fnName(fn: FuncDecl): String = "rsf_fn_" + fn.name
 
+    /** rsf 类型 → LLVM 值类型。字符串用 `i8*`（NUL 结尾，和 C 一致）。 */
+    private fun llType(t: RsfType): String = when (t.base) {
+        RsfBase.VOID -> "void"
+        RsfBase.STRING -> "i8*"
+        RsfBase.INT -> "i32"
+        else -> fail(SourceLine(1, 1), "--ll 还不支持类型 ${t.rsfName}")
+    }
+
+    private fun slotType(b: Binding): String = llType(b.type)
+
     private fun fresh(prefix: String = "t"): String = "%${prefix}${tmp++}"
 
     // ------------------------------------------------------------------ 函数
 
     private fun emitFunction(fn: FuncDecl) {
         val bodyIr = model.loweredOf(fn)
-        val retType = if (model.returnTypeOf(fn).base == RsfBase.VOID) "void" else "i32"
+        val retType = llType(model.returnTypeOf(fn))
         val params = model.paramBindings[fn].orEmpty()
-        val paramsText = params.mapIndexed { i, b -> "i32 %p$i" }.joinToString(", ")
+        val paramsText = params.mapIndexed { i, b -> "${llType(b.type)} %p$i" }.joinToString(", ")
         out("define $retType @${fnName(fn)}($paramsText) {")
         out("entry:")
 
         // 每个绑定一个 alloca（v1 不做寄存器化，交给 LLVM 的 mem2reg）
         val slots = LinkedHashMap<Binding, String>()
         fun slotOf(b: Binding): String = slots.getOrPut(b) { "%slot${slots.size}" }
-        for (b in params) out("  ${slotOf(b)} = alloca i32")
+        for (b in params) out("  ${slotOf(b)} = alloca ${slotType(b)}")
         for (instr in bodyIr.instructions) {
             if (instr is IVarDecl) {
                 val b = model.declBindings[instr.stmt] ?: fail(instr.stmt.at, "内部：变量声明没有绑定")
-                if (b !in slots) out("  ${slotOf(b)} = alloca i32")
+                if (b !in slots) out("  ${slotOf(b)} = alloca ${slotType(b)}")
             }
         }
-        for ((i, b) in params.withIndex()) out("  store i32 %p$i, i32* ${slotOf(b)}")
+        for ((i, b) in params.withIndex()) out("  store ${llType(b.type)} %p$i, ${slotType(b)}* ${slotOf(b)}")
 
         var previousWasBranch = false
         for ((idx, instr) in bodyIr.instructions.withIndex()) {
@@ -152,17 +183,22 @@ class LlvmBackend(private val model: SemanticModel) {
             when (instr) {
                 is IVarDecl -> {
                     val b = model.declBindings[instr.stmt] ?: fail(instr.stmt.at, "内部：没有绑定")
-                    out("  store i32 ${value(instr.stmt.initializer, ::slotOf)}, i32* ${slotOf(b)}")
+                    out("  store ${slotType(b)} ${anyValue(instr.stmt.initializer, ::slotOf)}, ${slotType(b)}* ${slotOf(b)}")
                 }
                 is IAssign -> {
                     val b = model.assignRefs[instr.stmt] ?: fail(instr.stmt.at, "内部：没有绑定")
-                    out("  store i32 ${value(instr.stmt.value, ::slotOf)}, i32* ${slotOf(b)}")
+                    out("  store ${slotType(b)} ${anyValue(instr.stmt.value, ::slotOf)}, ${slotType(b)}* ${slotOf(b)}")
                 }
                 is IExpr -> emitExprStmt(instr.stmt, ::slotOf)
                 is IReturn -> {
                     val v = instr.stmt.value
-                    if (v == null || retType == "void") out("  ret $retType${if (retType == "void") "" else " 0"}")
-                    else out("  ret i32 ${value(v, ::slotOf)}")
+                    out(
+                        when {
+                            v == null || retType == "void" -> "  ret void"
+                            retType == "i8*" -> "  ret i8* ${strValue(v, ::slotOf)}"
+                            else -> "  ret i32 ${value(v, ::slotOf)}"
+                        },
+                    )
                     blockOpen = false
                 }
                 is ILabel -> {
@@ -182,7 +218,15 @@ class LlvmBackend(private val model: SemanticModel) {
                 else -> fail(instr.at, "--ll 还不支持这类语句")
             }
         }
-        if (blockOpen) out("  ret $retType${if (retType == "void") "" else " 0"}")
+        if (blockOpen) {
+            out(
+                when (retType) {
+                    "void" -> "  ret void"
+                    "i8*" -> "  ret i8* null"
+                    else -> "  ret i32 0"
+                },
+            )
+        }
         out("}")
         blockOpen = true
         out("")
@@ -190,6 +234,40 @@ class LlvmBackend(private val model: SemanticModel) {
 
     private fun out(line: String) {
         body.append(line).append('\n')
+    }
+
+    /**
+     * 字符串运行期：`intToString` 与 `+` 拼接。
+     *
+     * 用 libc 的 `snprintf` / `strlen` / `malloc` / `memcpy`——和 C 后端产物的语义一致
+     * （NUL 结尾、堆分配、不判空）。以后自研运行时接上来时，只要替换这几个符号，
+     * 上层代码生成不用动。
+     */
+    private fun emitRuntime() {
+        out("define i8* @rsf_int_to_string(i32 %v) {")
+        out("entry:")
+        out("  %buf = call i8* @malloc(i64 16)")
+        out("  %fmt = getelementptr inbounds [3 x i8], [3 x i8]* @.str.int, i64 0, i64 0")
+        out("  %r = call i32 (i8*, i64, i8*, ...) @snprintf(i8* %buf, i64 16, i8* %fmt, i32 %v)")
+        out("  ret i8* %buf")
+        out("}")
+        out("")
+        out("define i8* @rsf_str_concat(i8* %a, i8* %b) {")
+        out("entry:")
+        out("  %la = call i64 @strlen(i8* %a)")
+        out("  %lb = call i64 @strlen(i8* %b)")
+        out("  %len = add i64 %la, %lb")
+        out("  %sz = add i64 %len, 1")
+        out("  %out = call i8* @malloc(i64 %sz)")
+        out("  %r1 = call i8* @memcpy(i8* %out, i8* %a, i64 %la)")
+        out("  %pa = getelementptr inbounds i8, i8* %out, i64 %la")
+        out("  %r2 = call i8* @memcpy(i8* %pa, i8* %b, i64 %lb)")
+        out("  %end = getelementptr inbounds i8, i8* %out, i64 %len")
+        out("  store i8 0, i8* %end")
+        out("  ret i8* %out")
+        out("}")
+        out("")
+        globals.append("@.str.int = private unnamed_addr constant [3 x i8] c\"%d\\00\"\n")
     }
 
     private fun emitExprStmt(stmt: ExprStmt, slotOf: (Binding) -> String) {
@@ -207,8 +285,7 @@ class LlvmBackend(private val model: SemanticModel) {
                     out("  ${fresh()} = call i32 (i8*, ...) @printf(i8* $fmt, i32 $v)")
                 }
                 RsfBase.STRING -> {
-                    val lit = arg as? StringLit ?: fail(arg.at, "println 的字符串暂时只支持字面量")
-                    val data = strPtr(lit.value)
+                    val data = strValue(arg, slotOf)
                     val fmt = strPtr("%s\n")
                     out("  ${fresh()} = call i32 (i8*, ...) @printf(i8* $fmt, i8* $data)")
                 }
@@ -225,8 +302,57 @@ class LlvmBackend(private val model: SemanticModel) {
 
     private fun targetOf(e: CallExpr): FuncDecl = model.callTargets[e] ?: fail(e.at, "--ll 只支持调用用户函数")
 
-    private fun args(e: CallExpr, slotOf: (Binding) -> String): String =
-        e.arguments.joinToString(", ") { "i32 ${value(it, slotOf)}" }
+    private fun args(e: CallExpr, slotOf: (Binding) -> String): String = callArgs(e, slotOf)
+
+    /** 按静态类型取值：字符串走 [strValue]，其余走 [value]。 */
+    private fun anyValue(e: Expr, slotOf: (Binding) -> String): String {
+        val t = model.typeOf(e)
+        return if (t.base == RsfBase.STRING) strValue(e, slotOf) else value(e, slotOf)
+    }
+
+    /**
+     * 字符串表达式 → `i8*`。
+     *
+     * 用 NUL 结尾的 C 字符串：`println` 直接交 `printf("%s")`，拼接交运行期助手
+     * （`strlen` + `malloc` + `memcpy`）。这套表示和 C 后端一致，两个后端的
+     * 字符串语义因此不会分家。
+     */
+    private fun strValue(e: Expr, slotOf: (Binding) -> String): String = when (e) {
+        is StringLit -> strPtr(e.value)
+        is VarExpr -> {
+            val b = model.varRefs[e] ?: fail(e.at, "内部：变量读取没有绑定")
+            val t = fresh()
+            out("  $t = load i8*, i8** ${slotOf(b)}")
+            t
+        }
+        is BinaryExpr -> {
+            if (e.op != TokenKind.PLUS) fail(e.at, "--ll 的字符串只支持 '+' 拼接")
+            val l = strValue(e.left, slotOf)
+            val r = strValue(e.right, slotOf)
+            val t = fresh()
+            out("  $t = call i8* @rsf_str_concat(i8* $l, i8* $r)")
+            t
+        }
+        is CallExpr -> {
+            if (e.name == "intToString") {
+                val t = fresh()
+                out("  $t = call i8* @rsf_int_to_string(i32 ${value(e.arguments[0], slotOf)})")
+                return t
+            }
+            val target = model.callTargets[e] ?: fail(e.at, "--ll 只支持调用用户函数")
+            val t = fresh()
+            out("  $t = call i8* @${fnName(target)}(${callArgs(e, slotOf)})")
+            t
+        }
+        else -> fail(e.at, "--ll 还不支持这种字符串表达式")
+    }
+
+    /** 调用的实参：逐个按静态类型取，拼成 `i32 3, i8* %t` 这种形式。 */
+    private fun callArgs(e: CallExpr, slotOf: (Binding) -> String): String =
+        e.arguments.joinToString(", ") { arg ->
+            val t = model.typeOf(arg)
+            "${llType(t)} ${anyValue(arg, slotOf)}"
+        }
 
     /** 整数表达式 → SSA 值（常量或临时寄存器名）。 */
     private fun value(e: Expr, slotOf: (Binding) -> String): String = when (e) {
@@ -257,8 +383,12 @@ class LlvmBackend(private val model: SemanticModel) {
             t
         }
         is CallExpr -> {
+            val target = targetOf(e)
+            if (model.returnTypeOf(target).base == RsfBase.STRING) {
+                fail(e.at, "内部：字符串返回的函数应该走 strValue")
+            }
             val t = fresh()
-            out("  $t = call i32 @${fnName(targetOf(e))}(${args(e, slotOf)})")
+            out("  $t = call i32 @${fnName(target)}(${args(e, slotOf)})")
             t
         }
         else -> fail(e.at, "--ll 还不支持这种整数表达式")

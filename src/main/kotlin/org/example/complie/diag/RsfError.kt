@@ -12,15 +12,22 @@ class RsfError(
     val source: SourceFile? = null,
 ) : RuntimeException(detail) {
 
+    /** 标准库提示（名字是标准库里的东西时，告诉用户该 import 哪一条）。 */
+    private fun hint(): String = try {
+        org.example.build.StdlibIndex.hintFor(detail)
+    } catch (e: Throwable) {
+        ""
+    }
+
     fun render(): String {
         val sb = StringBuilder()
         val file = source?.name ?: "<source>"
         if (line > 0 && column > 0) {
-            sb.append("$file:$line:$column: error[$phase]: $detail")
+            sb.append("$file:$line:$column: error[$phase]: $detail").append(hint())
         } else if (line > 0) {
-            sb.append("$file:$line: error[$phase]: $detail")
+            sb.append("$file:$line: error[$phase]: $detail").append(hint())
         } else {
-            sb.append("$file: error[$phase]: $detail")
+            sb.append("$file: error[$phase]: $detail").append(hint())
         }
         val text = source?.lineAt(line)
         if (text != null) {

@@ -1,4 +1,4 @@
-import "../core/HashMap.rsf"
+import "../std/HashMap.rsf"
 
 // 阶段 64d：自己写 class 文件（不依赖 ASM）
 //

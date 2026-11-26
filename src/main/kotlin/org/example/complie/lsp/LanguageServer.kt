@@ -266,13 +266,45 @@ class LanguageServer(
             val items = EditorSupport
                 .completions(file, doc?.text, line + 1, character + 1, baseDir, script)
                 .map { item ->
-                    JsonValue.Obj(
-                        linkedMapOf(
-                            "label" to JsonValue.Str(item.label),
-                            "kind" to JsonValue.Num(kindOf(item.kind).toDouble()),
-                            "detail" to JsonValue.Str(item.detail),
-                        ),
+                    val fields = linkedMapOf<String, JsonValue>(
+                        "label" to JsonValue.Str(item.label),
+                        "kind" to JsonValue.Num(kindOf(item.kind).toDouble()),
+                        "detail" to JsonValue.Str(item.detail),
                     )
+                    // 标准库自动导入：选中即插入 `import std.Vec`（插在最后一条 import 之后）
+                    val imp = item.insertImport
+                    if (imp != null) {
+                        val lastImport = (doc?.text ?: "").lines().withIndex()
+                            .filter { (_, l) -> l.trim().startsWith("import ") || l.trim().startsWith("module ") }
+                            .maxOfOrNull { (i, _) -> i } ?: -1
+                        val at = lastImport + 1
+                        fields["additionalTextEdits"] = JsonValue.Arr(
+                            listOf(
+                                JsonValue.Obj(
+                                    linkedMapOf(
+                                        "range" to JsonValue.Obj(
+                                            linkedMapOf(
+                                                "start" to JsonValue.Obj(
+                                                    linkedMapOf(
+                                                        "line" to JsonValue.Num(at.toDouble()),
+                                                        "character" to JsonValue.Num(0.0),
+                                                    ),
+                                                ),
+                                                "end" to JsonValue.Obj(
+                                                    linkedMapOf(
+                                                        "line" to JsonValue.Num(at.toDouble()),
+                                                        "character" to JsonValue.Num(0.0),
+                                                    ),
+                                                ),
+                                            ),
+                                        ),
+                                        "newText" to JsonValue.Str(imp + "\n"),
+                                    ),
+                                ),
+                            ),
+                        )
+                    }
+                    JsonValue.Obj(fields)
                 }
             return JsonValue.Obj(
                 linkedMapOf("isIncomplete" to JsonValue.Bool(false), "items" to JsonValue.Arr(items)),

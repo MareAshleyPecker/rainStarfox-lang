@@ -321,3 +321,10 @@ gmon.out
 !/build/verify93/**/
 !/build/verify93/**/*.sh
 !/build/verify93/**/*.rsf
+
+### 判据台（阶段 84：标准库自动导入）###
+!/build/verify94/
+/build/verify94/**
+!/build/verify94/**/
+!/build/verify94/**/*.sh
+!/build/verify94/**/*.rsf

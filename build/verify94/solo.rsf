@@ -1,0 +1,5 @@
+fn main() -> void {
+    var v = new Vec&<Int>()
+    v.push(7)
+    println(intToString(v.get(0)))
+}

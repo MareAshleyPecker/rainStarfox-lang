@@ -39,7 +39,7 @@ import java.lang.Double
 import java.lang.Float
 import java.lang.Integer
 import java.lang.Long
-import "../classfile/ClassFile.rsf"
+import "../../stdlib/classfile/ClassFile.rsf"
 // 阶段 21：注解伴生类的 `annotationType()` 里要 `LDC Type.getObjectType(注解接口内部名)`
 // —— ASM 把它写成 CONSTANT_Class 常量，跟 `LDC String` 的常量池形态不同，不能混用。
 
