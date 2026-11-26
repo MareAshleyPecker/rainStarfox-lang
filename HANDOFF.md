@@ -266,6 +266,27 @@ fn main() -> void {
 
 ## 10. `.rsfs` 语法定稿（进行中，逐条拍板）
 
+**根除 try/catch 的计划**（阶段 84，用户拍板；早期设计债，越堆越多，现在清理）：
+
+目标形态只剩四个运算符 + 两个查询函数，`try { } catch { }` 整块消失：
+
+| 现在 | 替换 |
+|---|---|
+| `expr!!` | 不变（取值/向上抛） |
+| `try expr` | 不变（传播，`!void` 也行）——已实现 |
+| `expr ?: fallback` | 不变（出错取值） |
+| `try { f() } catch { }` | `f() ?: <void 表达式>`（要加：允许 void 兜底） |
+| `try { } catch e { 用 e }` | `expr ?: null` + 判空 + `lastErrorMessage()`（要加） |
+| `catch e { 多语句 }` | 抽函数，或 `?: null` + `if` |
+| `finally` | 以后换 `defer` |
+
+五步：① `?:` void 兜底 + `lastErrorMessage()`（三端 + 判据）→ ② 迁移 `stdlib` 的 3 处
+（已完成 Io）→ ③ 迁移 `rsfSrc/lang` 19 处（parity 示例）→ ④ 迁移 `rsfSrc/bootstrap`
+31 处并跑通自举 → ⑤ 删掉 `try {} catch {}` 语法（Parser 报迁移提示，自举 Parser 同步）。
+
+现状：`stdlib/io/Io.rsf` 的 3 处重抛已改成 `try 表达式`；`rsfSrc/lang/errors.rsf`
+是错误模型的教学示例，等 ① 做完再迁移（它要用到“最后一条错误”）。
+
 **错误种类**（阶段 84 第二步的表面部分）：
 
 ```rsf

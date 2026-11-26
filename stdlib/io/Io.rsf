@@ -10,12 +10,8 @@ pub class Io {
 
     /// 写整个文本文件（覆盖）。失败时 `!void`。
     pub stc fn writeAllText(path : String, text : String) -> !void {
-        // `!void` 没有值可以取，所以用 try + fail 原样往上抛（见 rsfSrc/lang/files.rsf）
-        try {
-            writeText(path, text)
-        } catch (e : String) {
-            fail e
-        }
+        // `!void` 直接传播：try 表达式（阶段 84）已覆盖过去那种 try/catch/fail 三件套
+        try writeText(path, text)
     }
 
     /// 读整个二进制文件。失败时 `!Byte[]`。
@@ -23,11 +19,7 @@ pub class Io {
 
     /// 写整个二进制文件（覆盖）。失败时 `!void`。
     pub stc fn writeAllBytes(path : String, data : Byte[]) -> !void {
-        try {
-            writeBytes(path, data)
-        } catch (e : String) {
-            fail e
-        }
+        try writeBytes(path, data)
     }
 
     /// 读文本并按行切开（`\n` / `\r\n` 都认，末尾空行丢掉）。
@@ -44,11 +36,7 @@ pub class Io {
             out = out + lines[i] + "\n"
             i = i + 1
         }
-        try {
-            writeText(path, out)
-        } catch (e : String) {
-            fail e
-        }
+        try writeText(path, out)
     }
 
     /// 读文本，失败时给兜底值（等价于 readText(path) ?: fallback）。
