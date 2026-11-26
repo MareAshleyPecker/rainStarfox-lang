@@ -10,6 +10,7 @@ import org.example.complie.directives.DepKind
 import org.example.complie.lexing.Lexer
 import org.example.complie.native.CBackend
 import org.example.complie.interop.ClassPath
+import org.example.build.Stdlib
 import org.example.complie.parsing.Parser
 import org.example.meta.RsfMeta
 import java.io.File
@@ -332,7 +333,7 @@ class ProjectBuildHost(
             null
         }
         val backend = CBackend(model, withEntry = true, emitImpl = true)
-        backend.ensureRuntimeLib(outDir)
+        backend.ensureRuntimeLib(Stdlib.dir())
         val text = backend.emit()
         val out = File(outDir, "$name.c")
         out.writeText(if (metaBlob != null) text + RsfMeta.cDeclaration(metaBlob) else text, Charsets.UTF_8)

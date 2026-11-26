@@ -14,7 +14,7 @@ project {
     ver = projectVersion
 }
 
-#dep {
+dependencies {
     rule("genDeps")
 }
 

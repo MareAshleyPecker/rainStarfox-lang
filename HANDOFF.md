@@ -243,6 +243,16 @@ fn main() -> void {
 
 ## 10. `.rsfs` 语法定稿（进行中，逐条拍板）
 
+**块语句家族**（阶段 84，都不带 `#`）：`project { 字段 = 值 }`、
+`target { 动词(参数) }`、`dependencies { 声明 }`，以及 `rsf run` 的 cargo 语义。
+
+`dependencies { javaInclude(…) cInclude(…) rule(…) }` 由**装载层**处理（和 `#dep` 同一条路），
+因为 jar 必须在分析之前进 classpath，所以块里只认字面量。`#dep` 仍可用，新写法是块语句。
+
+**标准库 `stdlib/`**：`rsf_runtime.h` 现在只生成一份，放在 `stdlib/`（不进版本库），
+gcc 命令行固定带 `-I<stdlib>`；查找顺序见 `build/Stdlib.kt`（`RSF_STDLIB` →
+编译器位置往上找 → 当前目录往上找 → `./stdlib`）。
+
 **`rsf run` 是 cargo run 语义**（阶段 84）：在项目目录里不带文件名时，先跑四阶段构建，
 再从产物里挑一个运行——只有一个可运行的（`exe` / `jar`）就跑它，多个必须
 `rsf run --bin <名字>`；`--` 之后的参数原样转给程序。带文件名的 `rsf run a.rsf`

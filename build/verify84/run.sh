@@ -102,4 +102,8 @@ printf '#target {\n}\n\nfn main() -> void {}
 "$JAVA" -cp "$CP" org.example.MainKt check legacy.rsf > legacy.log 2>&1 && fail "#target 居然还能用"
 grep -q '已经改成块语句' legacy.log || { cat legacy.log; fail "#target 的迁移提示不对"; }
 
+# 10. 标准库：运行时头在 stdlib 里，gcc 命令行带 -I<stdlib>
+[ -f stdlib/rsf_runtime.h ] || fail "没生成 stdlib/rsf_runtime.h"
+grep -q -- "-I.*/stdlib" build.log || fail "gcc 命令行没带 -I<stdlib>"
+
 echo "verify84: 全过"

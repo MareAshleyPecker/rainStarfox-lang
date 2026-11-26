@@ -213,11 +213,15 @@ class CBackend(
      * 返回本次是否真正写出。注意这与「哪个 .c 定义 RSF_RUNTIME_IMPL」无关——
      * 后者每次 build 仍须恰好一个（构建侧给其中一个 CBackend 传 emitImpl=true）。
      */
-    fun ensureRuntimeLib(outDir: java.io.File): Boolean {
-        val f = java.io.File(outDir, "rsf_runtime.h")
+    /**
+     * 把运行时头写进**标准库目录**（阶段 84）。以前是每个产物目录各写一份，
+     * 同一份内容到处复制，`clean` 之后还得靠下次构建重写。
+     */
+    fun ensureRuntimeLib(stdlibDir: java.io.File): Boolean {
+        val f = java.io.File(stdlibDir, "rsf_runtime.h")
         val want = runtimeLibSource()
         if (f.exists() && f.readText() == want) return false
-        outDir.mkdirs()
+        stdlibDir.mkdirs()
         f.writeText(want)
         return true
     }

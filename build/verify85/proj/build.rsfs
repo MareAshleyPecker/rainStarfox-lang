@@ -1,6 +1,6 @@
 import demo.Util
 
-#dep {
+dependencies {
     javaInclude("libs")
 }
 

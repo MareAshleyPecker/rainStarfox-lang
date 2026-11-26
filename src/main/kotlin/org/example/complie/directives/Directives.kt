@@ -90,6 +90,16 @@ object Directives {
     val BUILD_KEYWORD: String = "#build"
     val DEF_KEYWORD: String = "#def"
 
+    /**
+     * `dependencies { … }`：依赖声明块（阶段 84，不带 `#`——它是语言级块语句）。
+     *
+     * **为什么它在装载期处理、而不是像 project/target 那样在解释期求值**：
+     * `javaInclude("libs")` 声明的 jar 必须在**分析源码之前**进 classpath，
+     * 否则构建脚本自己都 import 不到 jar 里的类。所以块里只认字面量路径，
+     * 由装载层直接读走——这也意味着块里写的表达式不会被求值（写了会报错）。
+     */
+    val DEPS_BLOCK: String = "dependencies"
+
     private val ENTRY: Regex = Regex("""^([A-Za-z_][A-Za-z0-9_]*)\s*\(\s*(.*?)\s*\)\s*$""")
     private val STRING_ARG: Regex = Regex("""^"((?:[^"\\]|\\.)*)"$""")
 
@@ -125,6 +135,7 @@ object Directives {
         // 用户根本不知道这里本该是一条指令。
         rejectUnknownDirective(source, text)
         if (!text.contains(DEP_KEYWORD) && !text.contains(BUILD_KEYWORD) &&
+            !text.contains(DEPS_BLOCK) &&
             !text.contains(DEF_KEYWORD)
         ) {
             return ParsedDirectives(emptyList(), null, emptyList(), WarningDirectives.strip(text))
@@ -151,6 +162,7 @@ object Directives {
                     build = parseBuild(source, block)
                 }
                 DEF_KEYWORD -> rules.add(DirectiveRule(block.name!!, block.startLine))
+                DEPS_BLOCK -> deps.addAll(parseDeps(source, block))
             }
         }
         return ParsedDirectives(deps, build, rules, stripBlocks(text, blocks))
@@ -313,6 +325,8 @@ object Directives {
                 var j = i
                 while (j < text.length && (text[j] == ' ' || text[j] == '\t')) j++
                 val keyword = when {
+                    // `dependencies {` 是块语句（不带 #）；`dependencies` 当变量名时后面不会是 {
+                    text.startsWith(DEPS_BLOCK, j) && text.getOrNull(j + DEPS_BLOCK.length)?.let { it == ' ' || it == '\t' || it == '{' } == true -> DEPS_BLOCK
                     text.startsWith(DEP_KEYWORD, j) -> DEP_KEYWORD
                     text.startsWith(BUILD_KEYWORD, j) -> BUILD_KEYWORD
                     text.startsWith(DEF_KEYWORD, j) -> DEF_KEYWORD

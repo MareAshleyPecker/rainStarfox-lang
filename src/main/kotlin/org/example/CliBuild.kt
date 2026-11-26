@@ -9,6 +9,7 @@ import org.example.build.ImpexKind
 import org.example.build.JvmExport
 import org.example.build.ModuleImpex
 import org.example.build.ProjectBuildHost
+import org.example.build.Stdlib
 import org.example.build.TargetKind
 import org.example.build.TargetSpec
 import org.example.complie.BuildResult
@@ -238,7 +239,10 @@ internal fun Cli.cmdBuild(rest: List<String>): Int {
                     includeDirs = depFiles(loaded.deps, DepKind.H) { File(it) }.mapNotNull { it.parentFile },
                 )
             } else {
-                println("[rsf] 编译: gcc ${out.path} -o ${File(outDir, "$name.exe").path} -lm")
+                println(
+                    "[rsf] 编译: gcc -I${Stdlib.dir().path} ${out.path} -o " +
+                        "${File(outDir, "$name.exe").path} -lm",
+                )
             }
             return 0
         }
@@ -388,8 +392,9 @@ internal fun Cli.emitNative(
         // 先确保 out 里的头文件与当前编译器同源，再让这份 .c 做唯一的 RSF_RUNTIME_IMPL 定义。
         val backend = CBackend(model, withEntry = withEntry, emitImpl = true)
         outDir.mkdirs()
-        if (backend.ensureRuntimeLib(outDir)) {
-            println("[rsf] 已生成 ${File(outDir, "rsf_runtime.h").path}")
+        val stdlib = Stdlib.dir()
+        if (backend.ensureRuntimeLib(stdlib)) {
+            println("[rsf] 已生成 ${File(stdlib, Stdlib.RUNTIME_HEADER).path}")
         }
         val text = backend.emit()
         val out = File(outDir, "$name.c")
@@ -428,6 +433,8 @@ internal fun Cli.linkExe(
         val cc = System.getenv("CC") ?: "gcc"
         val cmd = ArrayList<String>()
         cmd += listOf(cc, "-std=c11", "-O1", "-w")
+        // 标准库目录总在最前面：`#include "rsf_runtime.h"` 靠它找到
+        cmd += "-I${Stdlib.dir().path}"
         for (dir in includeDirs.distinct()) cmd += "-I${dir.path}"
         cmd += cFile.path
         for (src in extraSources.distinctBy { it.path }) cmd += src.path
@@ -446,6 +453,7 @@ internal fun Cli.compileObject(cFile: File, outDir: File, name: String, includeD
         val cc = System.getenv("CC") ?: "gcc"
         val cmd = ArrayList<String>()
         cmd += listOf(cc, "-std=c11", "-O1", "-w", "-c")
+        cmd += "-I${Stdlib.dir().path}"
         for (dir in includeDirs.distinct()) cmd += "-I${dir.path}"
         cmd += listOf(cFile.path, "-o", obj.path)
         cmd as List<String>
