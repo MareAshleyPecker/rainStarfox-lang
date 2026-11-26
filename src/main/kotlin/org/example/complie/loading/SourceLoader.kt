@@ -453,11 +453,22 @@ class SourceLoader {
     }
 
     /** 清单里声明的包目录（`export pkg std` → `<root>/stdlib/std`）。 */
-    private fun packageDirs(root: File, manifestFile: File): List<File> =
-        ModuleImpex.parse(manifestFile)
-            .filter { it.kind == ImpexKind.PACKAGE_EXPORT || it.kind == ImpexKind.PACKAGE_IMPORT }
-            .map { File(root, "stdlib/${it.path}") }
-            .filter { it.isDirectory }
+    private fun packageDirs(root: File, manifestFile: File): List<File> {
+        val dirs = ArrayList<File>()
+        for (e in ModuleImpex.parse(manifestFile)) {
+            when (e.kind) {
+                // 老写法：`export pkg std` / `import pkg std` 的路径是**相对 stdlib/** 的包名
+                ImpexKind.PACKAGE_EXPORT, ImpexKind.PACKAGE_IMPORT ->
+                    dirs += File(root, "stdlib/${e.path}")
+                // 阶段 84b：`module "stdlib/x" to x { … }` 的路径是仓库相对路径。
+                // 模块目录里的文件属于同一个模块，仓库内部按路径 import 不该被门禁挡住
+                // （对外开放面仍由别名成员表管）。自举的 class 写出器就是这样用的。
+                ImpexKind.MODULE_DECL -> dirs += File(root, e.path)
+                else -> {}
+            }
+        }
+        return dirs.filter { it.isDirectory }
+    }
 
     private fun manifestEntries(root: File, manifestFile: File): Map<String, File> {
         manifestCache?.let { if (manifestRoot == root) return it }

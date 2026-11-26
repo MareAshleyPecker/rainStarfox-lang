@@ -787,7 +787,10 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
             val field = model.classModel.bareFieldWrites[s]
             val global = if (field == null) runCatching { model.bindingOf(s) }.getOrNull() else null
             if (field != null) {
-                pad(indent) + fieldRef("self", field.className, s.name) + " = " + expr(s.value) + ";\n"
+                // 阶段 84：字段写入也要按字段类型适配——`?String` 字段写 null 要落成
+                // `rsf_str_null()`，不能是 C 的 NULL（String 在 C 里是结构体）
+                pad(indent) + fieldRef("self", field.className, s.name) + " = " +
+                    adapt(field.type, physicalType(s.value), expr(s.value)) + ";\n"
             } else if (global?.global == true) {
                 pad(indent) + globalName(s.name) + " = " +
                     adapt(global.type, physicalType(s.value), expr(s.value)) + ";" + NL
@@ -810,8 +813,9 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
                     adapt(want, physicalType(s.value), expr(s.value)) + ");\n"
             } else {
                 val field = model.classModel.fieldWrites[s] ?: fail("成员赋值")
+                // 阶段 84：同上——按字段类型适配，`?String` 字段写 null 才是 rsf_str_null()
                 pad(indent) + fieldRef(expr(s.target.receiver), field.className, s.target.name) +
-                    " = " + expr(s.value) + ";\n"
+                    " = " + adapt(field.type, physicalType(s.value), expr(s.value)) + ";\n"
             }
         }
         is SuperCallStmt, is ThisCallStmt -> ""
@@ -991,7 +995,12 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
         // 只是置错 + 返回零值，所以成功分支里也得再看一眼旗标，否则
         // `parseInt("x") ?: -1` 会拿到 0、还把错误旗标漏给后面的语句。
         val h = "he_${trySeq++}"
+        // 兜底值按 `?:` 的结果类型求（`readText(p) ?: null` 的 null 要落成
+        // `rsf_str_null()`，不能是 C 的 NULL——String 在 C 里是结构体）
+        val savedExpected = expectedType
+        expectedType = want
         val right = expr(e.right)
+        expectedType = savedExpected
         return "({ ${cType(want)} _out; ${cType(have)} _e; rsf_handler $h; " +
             "$h.prev = rsf_ctx_get()->handler; rsf_ctx_get()->handler = &$h; " +
             "if (setjmp($h.jb) == 0) { _e = $code; rsf_ctx_get()->handler = $h.prev; " +

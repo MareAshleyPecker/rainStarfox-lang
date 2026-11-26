@@ -191,6 +191,16 @@ class Checker(
     private var tryDepth = 0
 
     /**
+     * 正在检查某个 `?:` 的**兜底那一侧**吗（阶段 84）。
+     *
+     * 兜底本身就是「接住错误之后做的事」，它自己再出错是很自然的事（原样重抛、
+     * 或者处理到一半又失败）——这种失败应该从整个 `?:` 往外走。所以兜底里允许
+     * 直接 `fail`、也允许调用没显式处理的 `!T` 函数，**前提是外层接得住**
+     * （当前函数是 `!T`，或者还在某个 try 块里）。
+     */
+    private var elvisFallbackDepth = 0
+
+    /**
      * 「这个调用上的错误已经被显式处理」——就是 `?:` 的左边 / `!!` 的操作数**那一个**调用。
      *
      * 用节点身份而不是布尔开关：`f(parse("x")) ?: "d"` 里 `?:` 处理的是 `f(...)`
@@ -5942,6 +5952,15 @@ class Checker(
             )
         }
         if (tryDepth > 0 || currentFn.ret.mayError) return
+        // `?:` 的兜底里重抛（`f() ?: rethrow()` 里的 rethrow 自己 fail）：往外走
+        if (elvisFallbackDepth > 0) {
+            throw err(
+                "'fail' 出现在 '?:' 的兜底里，而这个错误没人接得住：当前函数 '${currentFn.name}' " +
+                    "的返回类型是 ${currentFn.ret.display()}（不是 !T）。" +
+                    "要让兜底能重抛，就把当前函数写成 '!……'",
+                stmt.at,
+            )
+        }
         throw err(
             "'fail' 要用在 !T 函数里，或者包进 try 块：当前函数 '${currentFn.name}' 的返回类型是 " +
                 "${currentFn.ret.display()}（不是 !T），这里也不在任何 try 块内，所以这个错误没人接得住。" +
@@ -7140,7 +7159,13 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
     private fun checkElvis(expr: ElvisExpr): RsfType {
         // 左边的错误由这个 `?:` 兜住，所以这里不再要求调用点处理
         val left = handling(expr.left) { type(expr.left) }
-        val right = type(expr.right)
+        // 兜底那一侧：自己再出错就往外走，所以那里不强制处理错误（见 [elvisFallbackDepth]）
+        elvisFallbackDepth++
+        val right = try {
+            type(expr.right)
+        } finally {
+            elvisFallbackDepth--
+        }
         val errFn = errorCallOf(expr.left)
         if (left.isVoid && errFn == null) {
             throw err(
@@ -7264,12 +7289,16 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
     private fun requireErrorHandled(name: String, retDisplay: String, node: Expr, at: SourceLine) {
         if (tryDepth > 0) return
         if (node === handledNode) return
+        // `?:` 的兜底里：失败从这个表达式往外走，外层接得住就行
+        if (elvisFallbackDepth > 0 && currentFn.ret.mayError) return
         throw err(
             "'$name' 的返回类型是 '$retDisplay'（可能失败），" +
-                "调用它必须显式处理错误。三种写法任选一种：" +
-                "(a) 包进 try { ... } catch (e : String) { ... }；" +
-                "(b) 给兜底值 ${name}(...) ?: 默认值；" +
-                "(c) 往上抛 ${name}(...)!!（这样本函数的返回类型也得写成 !T）",
+                "调用它必须显式处理错误。四种写法任选一种：" +
+                "(a) 给兜底值 ${name}(...) ?: 默认值；" +
+                "(b) 只要「出错时做点什么」就 ${name}(...) ?: 兜底函数()，" +
+                "兜底写成 -> void 的函数，消息用 lastErrorMessage() 取；" +
+                "(c) 往上抛 ${name}(...)!!（这样本函数的返回类型也得写成 !T）；" +
+                "(d) 返回 void 的用 try ${name}(...)（本函数也得是 !T）",
             at,
         )
     }

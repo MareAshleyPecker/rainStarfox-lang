@@ -3461,89 +3461,32 @@ class Parser(
      */
     private fun parseTry(): Stmt {
         val tryTok = advance() // try
-        // 阶段 84：`try 表达式`（Zig 风格）——出错就向上抛，成功就丢掉值。
-        // 解糖成等价的 `try { 表达式 } catch (e : String) { fail e }`，
-        // 所以三端语义完全不用改；`!void` 也能用它传播（以前只能写三件套）。
-        if (!check(TokenKind.LBRACE)) {
-            val expr = parseExpr()
-            val catchName = "e"
-            val bodyStmt = ExprStmt(expr, expr.at)
-            val rethrow = FailStmt(VarExpr(catchName, tryTok.at), tryTok.at)
-            return TryStmt(
-                body = Block(listOf(bodyStmt), tryTok.at),
-                catchName = catchName,
-                catchBody = Block(listOf(rethrow), tryTok.at),
-                at = tryTok.at,
-            )
-        }
-        val body = parseBody("try")
-
-        if (!check(TokenKind.KW_CATCH)) {
-            val t = peek()
+        // 阶段 84：`try { … } catch { … }` 整块退休（用户拍板，见 HANDOFF §10）。
+        // 运行期故障（越界 / `!!` 打到 null / 除零）没有语言内的捕获手段：一律中止程序
+        // 并打一条清晰的错误消息。`!T` 的错误处理只剩下面几种写法。
+        if (check(TokenKind.LBRACE)) {
             throw error(
-                t,
-                "try 块后面必须跟一个 catch，写法是 try { ... } catch (e : String) { ... }" +
-                    "（实际读到 ${t.describe()}）",
-            )
-        }
-        advance() // catch
-
-        // 阶段 84：三种写法都收——
-        //   catch { … }       不要绑定（错误不关心）
-        //   catch e { … }     要绑定，类型就是 String（不再写）
-        //   catch (e : String) / catch (e String)   老写法，兼容
-        val name: String
-        when {
-            check(TokenKind.LBRACE) -> {
-                // 用源码写不出来的名字：不暴露给用户，也不会有重名
-                name = "\u0000catch"
-            }
-            check(TokenKind.LPAREN) -> {
-                advance() // (
-                val nameTok = expect(
-                    TokenKind.IDENT,
-                    "catch 里需要错误变量名，写法是 catch (e : String) / catch (e) / catch e / catch",
-                )
-                // 名字后面可以有类型（:` String` 或老写法 `String`），也可以没有
-                if (match(TokenKind.COLON)) {
-                    if (!check(TokenKind.KW_STRING)) {
-                        throw error(peek(), catchTypeError(nameTok.lexeme))
-                    }
-                    advance() // String
-                } else if (check(TokenKind.KW_STRING)) {
-                    advance() // String（老写法 catch (e String)）
-                }
-                expect(
-                    TokenKind.RPAREN,
-                    "catch 的参数表没有闭合，缺少 ')'（写法是 catch (e : String) / catch (e)）",
-                )
-                name = nameTok.lexeme
-            }
-            check(TokenKind.IDENT) -> {
-                name = advance().lexeme
-            }
-            else -> throw error(
                 peek(),
-                "catch 后面要么是 '{'（不要绑定），要么是错误变量名（catch e { … } 或 catch (e : String) { … }）",
+                "try { ... } catch { ... } 已经移除。错误处理改用这几种写法：" +
+                    "(a) 出错时有值可用就 f(...) ?: 兜底值；" +
+                    "(b) 只要「出错时做点什么」就 f(...) ?: 兜底函数()，兜底写成 -> void 的函数，" +
+                    "消息用 lastErrorMessage() 取；" +
+                    "(c) 往上抛用 f(...)!!（有返回值）或 try f(...)（!void）。" +
+                    "多语句的守卫抽成一个 !T 函数，调用点再用 ?: 兜底",
             )
         }
-        val catchBody = parseBody("catch")
-        return TryStmt(body, name, catchBody, tryTok.at)
-    }
-
-    /**
-     * catch 变量的类型写坏了。两种成因（写了别的类型 / 干脆没写类型）共用一段文案，
-     * 因为**两种写法都要给出来**：用户看到的是「这里该怎么写」，不是「你哪里错了」。
-     */
-    private fun catchTypeError(name: String): String {
-        val t = peek()
-        val what = if (t.kind.isTypeKeyword) {
-            "catch 的错误变量类型只能是 String（错误消息本身就是字符串），实际写的是 '${t.lexeme}'"
-        } else {
-            "catch 里缺少错误变量的类型（实际读到 ${t.describe()}）"
-        }
-        return "$what。两种写法都可以：Kotlin 风格 'catch ($name : String)'，" +
-            "或者 Java 风格 'catch ($name String)'"
+        // `try 表达式`（Zig 风格）：出错就向上抛，成功就丢掉值。解糖成内部 TryStmt
+        // （`try { 表达式 } catch (e) { fail e }`），三端语义不用改；`!void` 也能用它传播。
+        val expr = parseExpr()
+        val catchName = "e"
+        val bodyStmt = ExprStmt(expr, expr.at)
+        val rethrow = FailStmt(VarExpr(catchName, tryTok.at), tryTok.at)
+        return TryStmt(
+            body = Block(listOf(bodyStmt), tryTok.at),
+            catchName = catchName,
+            catchBody = Block(listOf(rethrow), tryTok.at),
+            at = tryTok.at,
+        )
     }
 
     // ------------------------------------------------------------------ 表达式

@@ -7,23 +7,15 @@ fn readQuiet(path : String) -> !String {
     rtn readText(path)!!
 }
 
+fn report(prefix : String) -> void {
+    println(prefix + lastErrorMessage())
+}
+
+fn reportText(prefix : String) -> String {
+    rtn prefix + lastErrorMessage()
+}
+
 fn main() -> void {
-    try {
-        try writeQuiet("out.txt")
-        println(readQuiet("out.txt")!!)
-    } catch err {
-        println("IO 失败: " + err)
-    }
-    // catch 不要绑定
-    try {
-        parseInt("abc")!!
-    } catch {
-        println("解析失败（不关心原因）")
-    }
-    // catch e 不写类型
-    try {
-        parseInt("x")!!
-    } catch err {
-        println("捕获: " + err)
-    }
+    writeQuiet("out.txt") ?: report("写失败: ")
+    println(readQuiet("out.txt") ?: reportText("读失败: "))
 }
