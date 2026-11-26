@@ -134,8 +134,15 @@ object Directives {
     /**
      * 解析并校验。任何写错都当场报错（`RsfError`），不会静默失效。
      */
+    /** 全部内置指令（阶段 84：`#` 是**封闭**的，用户不能自己发明）。 */
+    val KNOWN: List<String> = listOf(DEP_KEYWORD, BUILD_KEYWORD, TARGET_KEYWORD, DEF_KEYWORD, NONE_WARNING)
+
     fun parse(source: SourceFile): ParsedDirectives {
         val text = source.text
+        // 阶段 84：`#` 只留给内置指令。写了不认识的 `#xxx` 就当场报错并列出可用的——
+        // 静默当成普通字符的话，报错会落在词法器里（「不认识的字符 '#'」），
+        // 用户根本不知道这里本该是一条指令。
+        rejectUnknownDirective(source, text)
         if (!text.contains(DEP_KEYWORD) && !text.contains(BUILD_KEYWORD) &&
             !text.contains(TARGET_KEYWORD) && !text.contains(DEF_KEYWORD)
         ) {
@@ -181,6 +188,44 @@ object Directives {
     }
 
     const val BUILD_SCRIPT: String = "build.rsfs"
+
+    /** `#NoWarning!!` 归 WarningDirectives 管，这里只当它「是已知指令」。 */
+    private const val NONE_WARNING = "#NoWarning!!"
+
+    /**
+     * 行首（只允许空白在前）的 `#名字`：不是内置指令就报错。
+     *
+     * 只认**行首**：正文里出现的 `#`（注释、字符串）不受影响，
+     * 和指令块「必须独立占行」的规矩一致。
+     */
+    private fun rejectUnknownDirective(source: SourceFile, text: String) {
+        var i = 0
+        var line = 1
+        while (i < text.length) {
+            val atLineStart = i == 0 || text[i - 1] == '\n'
+            if (atLineStart) {
+                var j = i
+                while (j < text.length && (text[j] == ' ' || text[j] == '\t')) j++
+                if (j < text.length && text[j] == '#') {
+                    val start = j
+                    j++ // 跳过 '#' 本身
+                    while (j < text.length && (text[j].isLetterOrDigit() || text[j] == '_' || text[j] == '!' || text[j] == '-')) j++
+                    val word = text.substring(start, j)
+                    if (word !in KNOWN && word != NONE_WARNING) {
+                        throw err(
+                            source,
+                            "未知的指令 '$word'：'#' 只留给内置指令（${KNOWN.joinToString(" / ")}）。" +
+                                "自己定义的东西不要用 '#'——项目配置写配置块（project { … }），" +
+                                "构建规则写 #def 然后 #dep 里引用",
+                            line,
+                        )
+                    }
+                }
+            }
+            if (text[i] == '\n') line++
+            i++
+        }
+    }
 
     private fun parseDeps(source: SourceFile, block: Block): List<DepEntry> {
         val out = ArrayList<DepEntry>()
