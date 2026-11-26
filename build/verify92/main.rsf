@@ -1,0 +1,9 @@
+fn twice(x : Int) -> Int {
+    rtn x * 2
+}
+
+fn main() -> void {
+    println(2 + 3 * 4)
+    println(twice(21))
+    println("from llvm ir")
+}

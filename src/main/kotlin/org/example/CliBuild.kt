@@ -24,6 +24,8 @@ import org.example.complie.directives.DepKind
 import org.example.complie.interp.RsfFailure
 import org.example.complie.loading.LoadedProgram
 import org.example.complie.lsp.EditorSupport
+import org.example.complie.native.AsmBackend
+import org.example.complie.native.LlvmBackend
 import org.example.complie.native.CBackend
 import org.example.complie.sema.SemanticModel
 import org.example.complie.util.input
@@ -46,6 +48,8 @@ internal fun Cli.cmdBuild(rest: List<String>): Int {
         var meta = false
         var jar = false
         var link = false
+        var asm = false
+        var llvm = false
         val positional = ArrayList<String>()
 
         var i = 0
@@ -68,6 +72,8 @@ internal fun Cli.cmdBuild(rest: List<String>): Int {
                 "--meta" -> meta = true
                 "--jar" -> jar = true
                 "--link" -> link = true
+                "--asm" -> asm = true
+                "--ll" -> llvm = true
                 else -> positional.add(a)
             }
             i++
@@ -203,7 +209,7 @@ internal fun Cli.cmdBuild(rest: List<String>): Int {
         }
         val file = requireFile(
             positional.firstOrNull(),
-            "build [<file.rsf>] [-o <dir>] [-n <类名>] [--dump] [--c [--lib] [--jni]]",
+            "build [<file.rsf>] [-o <dir>] [-n <类名>] [--dump] [--c [--lib] [--jni]] [--asm [--link]]",
         )
         // 阶段 60：`--c` 是 native 构建，只收 target native / 两侧都写的声明
         val loaded = Rsf.load(file, target = if (cMode) BuildTarget.NATIVE else BuildTarget.JVM)
@@ -221,6 +227,71 @@ internal fun Cli.cmdBuild(rest: List<String>): Int {
             null
         }
 
+        // 阶段 84：LLVM 文本 IR（native 线按 Zig 的路子先交给 LLVM）
+        if (llvm) {
+            val loadedLl = Rsf.load(file, target = BuildTarget.NATIVE)
+            val llModel = Rsf.analyze(loadedLl)
+            for (warning in llModel.warnings) System.err.println("[rsf] 警告: $warning")
+            val text = LlvmBackend(llModel).emit()
+            outDir.mkdirs()
+            val out = File(outDir, "$name.ll")
+            out.writeText(text, Charsets.UTF_8)
+            println("[rsf] 已生成 ${out.path}")
+            if (link) {
+                val exe = File(outDir, if (isWindows()) "$name.exe" else name)
+                // 优先 clang（一步到二进制）；没有就退回 llc + gcc（LLVM 只负责汇编）
+                val clang = System.getenv("CLANG") ?: "clang"
+                val ran = runOrNull(listOf(clang, "-O1", "-o", exe.path, out.path))
+                    ?: run {
+                        val llc = System.getenv("LLC") ?: listOf("llc", "llc-14", "llc-15", "llc-16", "llc-17")
+                            .firstOrNull { commandExists(it) }
+                            ?: throw RsfError(
+                                "build",
+                                "--ll 需要一个 LLVM 汇编器：装 clang，或者装 llvm（提供 llc），" +
+                                    "也可以用 CLANG / LLC 环境变量指定",
+                            )
+                        val asm = File(outDir, "$name.s")
+                        val cmd = listOf(llc, "-O1", out.path, "-o", asm.path)
+                        println("[rsf] 汇编: ${cmd.joinToString(" ")}")
+                        val rc = ProcessBuilder(cmd).inheritIO().start().waitFor()
+                        if (rc != 0) throw RsfError("build", "llc 汇编失败（退出码 $rc）")
+                        val cc = System.getenv("CC") ?: "gcc"
+                        val cmd2 = listOf(cc, "-o", exe.path, asm.path)
+                        println("[rsf] 链接: ${cmd2.joinToString(" ")}")
+                        val rc2 = ProcessBuilder(cmd2).inheritIO().start().waitFor()
+                        if (rc2 != 0) throw RsfError("build", "链接失败（$cc 退出码 $rc2）")
+                        0
+                    }
+                if (ran != 0) throw RsfError("build", "LLVM 汇编/链接失败（退出码 $ran）")
+                println("[rsf] 已生成 ${exe.path}")
+            } else {
+                println("[rsf] 汇编: clang -O1 $name.ll -o $name")
+            }
+            return 0
+        }
+        // 阶段 84：aarch64 直出汇编（自举线的第一块砖）
+        if (asm) {
+            val loadedAsm = Rsf.load(file, target = BuildTarget.NATIVE)
+            val asmModel = Rsf.analyze(loadedAsm)
+            for (warning in asmModel.warnings) System.err.println("[rsf] 警告: $warning")
+            val text = AsmBackend(asmModel).emit()
+            outDir.mkdirs()
+            val out = File(outDir, "$name.s")
+            out.writeText(text, Charsets.UTF_8)
+            println("[rsf] 已生成 ${out.path}")
+            if (link) {
+                val exe = File(outDir, if (isWindows()) "$name.exe" else name)
+                val cc = System.getenv("CC") ?: "gcc"
+                val cmd = listOf(cc, "-o", exe.path, out.path)
+                println("[rsf] 汇编+链接: ${cmd.joinToString(" ")}")
+                val rc = ProcessBuilder(cmd).inheritIO().start().waitFor()
+                if (rc != 0) throw RsfError("build", "汇编/链接失败（$cc 退出码 $rc）")
+                println("[rsf] 已生成 ${exe.path}")
+            } else {
+                println("[rsf] 链接: gcc -o $name ${out.path}")
+            }
+            return 0
+        }
         if (cMode) {
             for (warning in model.warnings) System.err.println("[rsf] 警告: $warning")
             val out = emitNative(loaded, model, name, outDir, metaBlob, withEntry = !cLib)
@@ -515,3 +586,16 @@ internal fun Cli.writeJar(outDir: File, name: String, result: BuildResult, mainC
 
 internal fun Cli.isWindows(): Boolean =
     System.getProperty("os.name").lowercase().contains("win")
+
+    /** 跑一条命令，命令不存在返回 null（用来探测 clang）；其它失败返回退出码。 */
+    private fun Cli.runOrNull(cmd: List<String>): Int? = try {
+        ProcessBuilder(cmd).inheritIO().start().waitFor()
+    } catch (e: java.io.IOException) {
+        null
+    }
+
+    private fun Cli.commandExists(name: String): Boolean = try {
+        ProcessBuilder(name, "--version").redirectErrorStream(true).start().waitFor() == 0
+    } catch (e: java.io.IOException) {
+        false
+    }

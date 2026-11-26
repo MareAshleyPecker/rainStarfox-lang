@@ -307,3 +307,10 @@ gmon.out
 !/build/verify90/**/*.sh
 !/build/verify90/**/*.rsf
 !/build/verify90/**/*.rsfs
+
+### 判据台（阶段 84：LLVM 文本 IR 后端）###
+!/build/verify92/
+/build/verify92/**
+!/build/verify92/**/
+!/build/verify92/**/*.sh
+!/build/verify92/**/*.rsf
