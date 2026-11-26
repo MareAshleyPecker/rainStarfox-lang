@@ -40,4 +40,11 @@ from llvm ir" ] || { echo "实际输出: $OUT"; fail "输出不对"; }
 COUT=$(./c/app) || fail "C 产物跑不起来"
 [ "$OUT" = "$COUT" ] || { echo "LLVM: $OUT"; echo "C   : $COUT"; fail "两个后端输出不一致"; }
 
+# 控制流（while / if-else）：两条后端必须一致
+cp "$HERE/control.rsf" .
+"$JAVA" -cp "$CP" org.example.MainKt build control.rsf --ll --link -o ll2 -n app > ll2.log 2>&1 || { cat ll2.log; fail "LLVM 编控制流失败"; }
+"$JAVA" -cp "$CP" org.example.MainKt build control.rsf --c --link -o c2 -n app > c2.log 2>&1 || { cat c2.log; fail "C 后端编控制流失败"; }
+L2=$(./ll2/app); C2=$(./c2/app)
+[ "$L2" = "$C2" ] || { echo "LLVM: $L2"; echo "C: $C2"; fail "控制流输出不一致"; }
+
 echo "verify92: 全过"

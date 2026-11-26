@@ -28,6 +28,41 @@ class LlvmBackend(private val model: SemanticModel) {
     private var tmp = 0
     /** 字符串常量：内容 → 全局符号名。 */
     private val strings = LinkedHashMap<String, String>()
+    /** 当前在发哪条指令（分支需要知道“不跳”该落到哪个块）。 */
+    private var currentIdx = 0
+    /** 当前基本块有没有结束（LLVM 要求每个块以 br/ret 收尾）。 */
+    private var blockOpen = true
+
+    /** 内部标签带不可见前缀（lowering 用的标记），LLVM 里要换成合法字符。 */
+    private fun blockLabel(name: String): String =
+        "bb_" + name.map { if (it.isLetterOrDigit() || it == '.' || it == '_') it else '_' }.joinToString("")
+    private fun nextBlock(instr: Instr): String = "bb_after_$currentIdx"
+
+    /** 条件表达式 → i1。 */
+    private fun cond(e: Expr, slotOf: (Binding) -> String): String {
+        val t = fresh()
+        if (e is BinaryExpr) {
+            val l = value(e.left, slotOf)
+            val r = value(e.right, slotOf)
+            val op = when (e.op) {
+                TokenKind.LT -> "slt"
+                TokenKind.GT -> "sgt"
+                TokenKind.LE -> "sle"
+                TokenKind.GE -> "sge"
+                TokenKind.EQ -> "eq"
+                TokenKind.NE -> "ne"
+                else -> fail(e.at, "--ll 还不支持这种条件（'${e.op}'）")
+            }
+            out("  $t = icmp $op i32 $l, $r")
+            return t
+        }
+        if (e is CallExpr) {
+            val v = value(e, slotOf)
+            out("  $t = icmp ne i32 $v, 0")
+            return t
+        }
+        fail(e.at, "--ll 的条件暂时只支持比较与函数调用")
+    }
 
     fun emit(): String {
         globals.setLength(0)
@@ -103,7 +138,17 @@ class LlvmBackend(private val model: SemanticModel) {
         }
         for ((i, b) in params.withIndex()) out("  store i32 %p$i, i32* ${slotOf(b)}")
 
-        for (instr in bodyIr.instructions) {
+        var previousWasBranch = false
+        for ((idx, instr) in bodyIr.instructions.withIndex()) {
+            currentIdx = idx
+            val needsLabel = instr is ILabel || previousWasBranch
+            if (previousWasBranch) blockOpen = false
+            if (needsLabel && instr !is ILabel) {
+                if (blockOpen) out("  br label %bb_after_${idx - 1}")
+                out("bb_after_${idx - 1}:")
+                blockOpen = true
+            }
+            previousWasBranch = instr is IGoto || instr is IBranch || instr is IReturn
             when (instr) {
                 is IVarDecl -> {
                     val b = model.declBindings[instr.stmt] ?: fail(instr.stmt.at, "内部：没有绑定")
@@ -118,12 +163,28 @@ class LlvmBackend(private val model: SemanticModel) {
                     val v = instr.stmt.value
                     if (v == null || retType == "void") out("  ret $retType${if (retType == "void") "" else " 0"}")
                     else out("  ret i32 ${value(v, ::slotOf)}")
+                    blockOpen = false
+                }
+                is ILabel -> {
+                    if (blockOpen) out("  br label %${blockLabel(instr.label)}")
+                    out("${blockLabel(instr.label)}:")
+                    blockOpen = true
+                }
+                is IGoto -> {
+                    out("  br label %${blockLabel(instr.label)}")
+                    blockOpen = false
+                }
+                is IBranch -> {
+                    val c = cond(instr.cond, ::slotOf)
+                    out("  br i1 $c, label %${blockLabel(instr.target)}, label %${nextBlock(instr)}")
+                    blockOpen = false
                 }
                 else -> fail(instr.at, "--ll 还不支持这类语句")
             }
         }
-        out("  ret $retType${if (retType == "void") "" else " 0"}")
+        if (blockOpen) out("  ret $retType${if (retType == "void") "" else " 0"}")
         out("}")
+        blockOpen = true
         out("")
     }
 
