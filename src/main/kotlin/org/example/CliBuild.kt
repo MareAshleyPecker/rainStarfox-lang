@@ -586,16 +586,3 @@ internal fun Cli.writeJar(outDir: File, name: String, result: BuildResult, mainC
 
 internal fun Cli.isWindows(): Boolean =
     System.getProperty("os.name").lowercase().contains("win")
-
-    /** 跑一条命令，命令不存在返回 null（用来探测 clang）；其它失败返回退出码。 */
-    private fun Cli.runOrNull(cmd: List<String>): Int? = try {
-        ProcessBuilder(cmd).inheritIO().start().waitFor()
-    } catch (e: java.io.IOException) {
-        null
-    }
-
-    private fun Cli.commandExists(name: String): Boolean = try {
-        ProcessBuilder(name, "--version").redirectErrorStream(true).start().waitFor() == 0
-    } catch (e: java.io.IOException) {
-        false
-    }

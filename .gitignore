@@ -314,3 +314,10 @@ gmon.out
 !/build/verify92/**/
 !/build/verify92/**/*.sh
 !/build/verify92/**/*.rsf
+
+### 判据台（阶段 84：rsf cc）###
+!/build/verify93/
+/build/verify93/**
+!/build/verify93/**/
+!/build/verify93/**/*.sh
+!/build/verify93/**/*.rsf

@@ -63,6 +63,7 @@ class Cli {
             "lsp" -> wrap { cmdLsp(argv.drop(1)) }
             "decompile" -> wrap { cmdDecompile(argv.drop(1)) }
             "lex" -> wrap { cmdLex(argv.drop(1)) }
+            "cc" -> cmdCc(argv.drop(1))
             "repl" -> repl()
             "help", "--help", "-h", "-?" -> { usage(); 0 }
             "version", "--version", "-v" -> { println("rainStarfox ${Rsf.VERSION}"); 0 }

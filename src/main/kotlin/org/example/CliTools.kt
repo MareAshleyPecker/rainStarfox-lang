@@ -281,3 +281,52 @@ internal fun Cli.runProject(bin: String?, programArgs: List<String>): Int {
     val process = ProcessBuilder(cmd).inheritIO().start()
     return process.waitFor()
 }
+
+/**
+ * `rsf cc`：把 rsf 自己出的 C 编出二进制（阶段 84，参照 `zig cc` 的角色）。
+ *
+ * C 后端生成的 `.c` 需要 `rsf_runtime.h`（在 stdlib 里）和 `-lm`。让用户每次
+ * 手写 `gcc -I<stdlib> … -lm` 既容易错、也把“工具链细节”漏给了用户。
+ * 这个命令做三件事：
+ *
+ * 1. 找到系统 C 编译器（`CC` 环境变量 > `gcc` > `clang`）；
+ * 2. 自动补上 `-std=c11`、`-I<stdlib>`、`-lm`；
+ * 3. 其余参数原样透传（`-c` / `-o` / `-shared` / `-I` 都照旧）。
+ *
+ * 它**不**自己实现 C 编译器（那是另一条路，见 §11 自研后端）；作用是把
+ * “编 rsf 产物需要哪些开关”收进工具链里，用户不用记。
+ */
+internal fun Cli.cmdCc(rest: List<String>): Int {
+    if (rest.isEmpty() || rest.contains("-h") || rest.contains("--help")) {
+        println("用法: rsf cc <文件.c> [其它 C 编译器参数]")
+        println("自动补上: -std=c11 -I<标准库> -lm；编译器取 CC / gcc / clang")
+        return if (rest.isEmpty()) 2 else 0
+    }
+    val cc = System.getenv("CC")?.takeIf { it.isNotBlank() }
+        ?: listOf("gcc", "clang", "cc").firstOrNull { commandExists(it) }
+        ?: throw org.example.complie.diag.RsfError(
+            "cli",
+            "rsf cc 找不到 C 编译器：装 gcc 或 clang，或者用 CC 环境变量指定",
+        )
+    val cmd = ArrayList<String>()
+    cmd += cc
+    cmd += listOf("-std=c11", "-I${org.example.build.Stdlib.dir().path}")
+    cmd += rest
+    // -lm 只在链接时有用；加了也不碍事（-c 时 gcc 会忽略）
+    if (!rest.contains("-c")) cmd += "-lm"
+    println("[rsf] $cc: ${cmd.joinToString(" ")}")
+    return ProcessBuilder(cmd).inheritIO().start().waitFor()
+}
+
+internal fun Cli.commandExists(name: String): Boolean = try {
+    ProcessBuilder(name, "--version").redirectErrorStream(true).start().waitFor() == 0
+} catch (e: java.io.IOException) {
+    false
+}
+
+/** 跑一条命令；命令不存在返回 null（用来探测 clang）。 */
+internal fun Cli.runOrNull(cmd: List<String>): Int? = try {
+    ProcessBuilder(cmd).inheritIO().start().waitFor()
+} catch (e: java.io.IOException) {
+    null
+}
