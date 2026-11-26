@@ -353,6 +353,11 @@ parity 仍是 9/9（输出有意改了两处小节标题，其余逐字节不变
 **唯一留下的 `try`**：`rsfSrc/lang/arrays.rsf` 的 3 处（越界/负长度故障），
 原因见上面那个卡点。
 
+**自举侧的已知缺口**：`Checker.rsf` 压根没有内置函数表（`parseInt` / `readText` 也不认），
+所以 `CheckCli.rsf` 检查这些示例会报「未定义的函数」——这是老缺口，不是这次引进的；
+`lastErrorMessage()` 同样只在 `Interp.rsf` 里认得。要补的话是「给自举 Checker 加内置签名表」
+这一件事，顺手就能把 `parseInt` 之类一起补上。
+
 **错误种类**（阶段 84 第二步的表面部分）：
 
 ```rsf
