@@ -18,6 +18,8 @@
   `try expr` / `!!`）、运行期故障直接中止（C 补边界检查、字节码入口兜底，`verify100`）、
   示例与自举源码全迁完、语法已删除（`verify97`）。parity 9/9，判据 84–100 全绿。
   接下来看 §12 的其余条目：`!T` 载荷 `(kind, message)`、`Any` / `Unit`、LSP 跳转、`defer`。
+- **已知 bug**：单独一份 `KNOWN-BUGS.md`（C 的 `?String = null`、除零、字符串越界三端不一致、
+  `ui_demo` 清单门禁、自举 Checker 缺内置表），每条都带最小复现与改法。
 
 ## 1. 这台机器怎么跑
 
@@ -31,8 +33,10 @@ sh tools/dev/quick.sh     # 上面三步一条命令（约 75s，成功只打 pa
 sh tools/dev/probe.sh --cmp /tmp/x.rsf   # 单文件探针 + 对拍
 ```
 
-- 依赖：`~/.gradle/caches/modules-2/files-2.1` 里的 `kotlin-compiler-embeddable:2.3.10`、
-  `asm:9.9.1`。换机器先把 `~/.gradle` 拷过来。
+- 依赖：`~/.gradle/caches/modules-2/files-2.1` 里的 kotlinc / ASM / stdlib。
+  **版本不写死**：`kb.sh` 每个 artifact 取缓存里版本号最大的那一份（2026-11-28 缓存刷新、
+  2.3.10 被清掉，写死版本号直接编不了）。换机器先把 `~/.gradle` 拷过来。
+- **已知 bug 清单在 `KNOWN-BUGS.md`**（可复现、带改法），接手时先扫一遍。
 - 原生解释器读输入用环境变量 `rsf.interp.file`（rsf 的 `main` 接不到命令行参数）。
 - gcc 链接要带 `-lm`（`fmod`）。
 - 编译器命令：`java -cp build/dev/classes:$(cat build/dev/rt.cp) org.example.MainKt <子命令>`。

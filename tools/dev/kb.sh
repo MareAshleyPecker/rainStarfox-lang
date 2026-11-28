@@ -2,6 +2,9 @@
 # 编译 Kotlin 编译器本体（不经过 gradle：本机没有 JDK 25，jvmToolchain(25) 过不去）。
 # 依赖全部取自 ~/.gradle/caches；产物落 build/dev/classes。
 #
+# **版本不写死**：每个 artifact 取缓存里版本号最大的那一份。缓存会随 gradle 刷新而变
+# （2026-11-28 就遇到过：缓存里 2.3.10 被清掉、只剩 2.4.21，写死版本号直接编不了）。
+#
 # 用法： sh tools/dev/kb.sh [-q]
 set -e
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
@@ -14,17 +17,39 @@ if [ ! -d "$C" ]; then
     exit 1
 fi
 
-KC=$(find "$C/org.jetbrains.kotlin/kotlin-compiler-embeddable/2.3.10" \
-          "$C/org.jetbrains.kotlin/kotlin-daemon-embeddable/2.3.10" \
-          "$C/org.jetbrains.kotlin/kotlin-script-runtime/2.3.10" \
-          "$C/org.jetbrains.kotlin/kotlin-stdlib/2.3.10" \
-          "$C/org.jetbrains.intellij.deps/trove4j/1.0.20200330" \
-          "$C/org.jetbrains/annotations/13.0" \
-          "$C/org.jetbrains.kotlinx/kotlinx-coroutines-core-jvm/1.9.0" \
-          "$C/org.jetbrains.kotlin/kotlin-reflect/2.2.0" -name '*.jar' 2>/dev/null | tr '\n' ':')
-RT=$(find "$C/org.jetbrains.kotlin/kotlin-stdlib/2.3.10" \
-         "$C/org.ow2.asm/asm/9.9.1" "$C/org.ow2.asm/asm-util/9.9.1" \
-         "$C/org.ow2.asm/asm-tree/9.9.1" "$C/org.ow2.asm/asm-analysis/9.9.1" -name '*.jar' 2>/dev/null | tr '\n' ':')
+# 某个 artifact 下「版本号最大」那一份里的第一个 jar（没有就输出空）
+jar_of() {
+    d=$(ls "$C/$1" 2>/dev/null | sort -V | tail -1)
+    [ -n "$d" ] || return 0
+    find "$C/$1/$d" -name '*.jar' 2>/dev/null | head -1
+}
+
+KC=""
+for a in \
+    org.jetbrains.kotlin/kotlin-compiler-embeddable \
+    org.jetbrains.kotlin/kotlin-daemon-embeddable \
+    org.jetbrains.kotlin/kotlin-script-runtime \
+    org.jetbrains.kotlin/kotlin-stdlib \
+    org.jetbrains.intellij.deps/trove4j \
+    org.jetbrains/annotations \
+    org.jetbrains.kotlinx/kotlinx-coroutines-core-jvm \
+    org.jetbrains.kotlin/kotlin-reflect
+do
+    j=$(jar_of "$a")
+    [ -n "$j" ] && KC="$KC$j:"
+done
+
+RT=""
+for a in \
+    org.jetbrains.kotlin/kotlin-stdlib \
+    org.ow2.asm/asm \
+    org.ow2.asm/asm-util \
+    org.ow2.asm/asm-tree \
+    org.ow2.asm/asm-analysis
+do
+    j=$(jar_of "$a")
+    [ -n "$j" ] && RT="$RT$j:"
+done
 
 if [ -z "$KC" ] || [ -z "$RT" ]; then
     echo "依赖 jar 找不全（kotlinc 或 asm/stdlib 缺）" >&2
