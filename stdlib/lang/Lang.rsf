@@ -1,0 +1,36 @@
+// rsf 标准库：lang（语言级小工具）
+//
+// 用 `Lang.xxx(...)` 调用（和 Io / Text 一致）。这里只放**不重复**的东西：
+// 字符串处理在 std/Text 与 std/Strings 里，不再提供 isBlank / repeat / join 的同名版本。
+pub class Lang {
+    /// 解析整数，失败给 [fallback]（等价于 parseInt(s) ?: fallback）。
+    pub stc fn parseIntOr(text : String, fallback : Int) -> Int {
+        rtn parseInt(text) ?: fallback
+    }
+
+    /// 空串或全空白时用 [fallback]，否则原样返回（配置项/环境变量常见写法）。
+    pub stc fn defaultIfBlank(text : String, fallback : String) -> String {
+        var i = 0
+        while (i < text.length()) {
+            if (!isWhitespace(text.charAt(i))) { rtn text }
+            i = i + 1
+        }
+        rtn fallback
+    }
+
+    /// 把换行与制表压成空格（打日志、拼单行消息用）。
+    pub stc fn oneLine(text : String) -> String {
+        var out = ""
+        var i = 0
+        while (i < text.length()) {
+            var c = text.charAt(i)
+            if (c == '\n' || c == '\r' || c == '\t') {
+                out = out + " "
+            } else {
+                out = out + c
+            }
+            i = i + 1
+        }
+        rtn out
+    }
+}

@@ -127,6 +127,14 @@ enum class TokenKind(val text: String) {
      */
     KW_EXPORT("export"),
 
+    /**
+     * `extern fn name(...) -> Ret`：声明一个**外部 C 函数**（只有签名，没有体）。
+     *
+     * 和 `export` 同一个阶段（84）加进来：这是 rsf 调 C 的唯一入口。
+     * 后端只在 native 侧支持它，JVM/解释器遇到调用会明确报错。
+     */
+    KW_EXTERN("extern"),
+
     /** 阶段 60：只在 JVM（class）侧编译的函数修饰词。 */
     KW_JVM("jvm"),
 
@@ -331,7 +339,8 @@ enum class TokenKind(val text: String) {
      */
     val isModifierKeyword: Boolean
         get() = isControlKeyword || isStaticKeyword || isInheritKeyword ||
-            this == KW_OVERRIDE || this == KW_NATIVE || this == KW_JVM || this == KW_EXPORT
+            this == KW_OVERRIDE || this == KW_NATIVE || this == KW_JVM || this == KW_EXPORT ||
+            this == KW_EXTERN
 }
 
 data class Token(

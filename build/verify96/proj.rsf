@@ -1,0 +1,22 @@
+module "stdlib/lang" to lang { Lang, Exception }
+
+fn ioFail() -> !String {
+    fail Exception.io("a.txt", "打不开")
+}
+
+fn unexpected() -> void {
+    println("不该到这里")
+}
+
+fn printLastError() -> void {
+    println(lastErrorMessage())
+}
+
+fn main() -> void {
+    var e = ioFail() ?: lastErrorMessage()
+    println(Exception.kindOf(e))
+    println(Exception.messageOf(e))
+    println(Exception.isKind(e, "io"))
+    Exception.check(1 < 2, "不会触发") ?: unexpected()
+    Exception.checkKind(false, "range", "越界了") ?: printLastError()
+}

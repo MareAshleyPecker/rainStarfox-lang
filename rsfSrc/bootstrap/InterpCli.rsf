@@ -41,17 +41,10 @@ fn main() -> void {
     //                          包成 "运行期错误: 解析失败：…"；这里显式走同一条出口，
     //                          消息逐字相同
     //   * 装载期错误（找不到被 import 的文件等，17e 新增）-> 也走 "运行期错误: …"
-    var ast : Node = new Node(NodeKind.ERROR)
-    var loaded = false
-    var message = ""
-    try {
-        ast = loadProgram(path)!!
-        loaded = true
-    } catch (loadError : String) {
-        message = loadError
-        loaded = false
-    }
-    if (!loaded) {
+    // `loadProgram` 失败：`?: null` 折成 null，再把消息从 lastErrorMessage() 取回来
+    var maybeAst = loadProgram(path) ?: null
+    if (maybeAst == null) {
+        var message = lastErrorMessage()
         if (message.startsWith("读不到文件：")) {
             System.err.println(message)
         } else {
@@ -60,21 +53,24 @@ fn main() -> void {
         System.exit(1)
         rtn
     }
+    var ast = maybeAst!!
 
-    try {
-        runProgram(ast)!!
-    } catch (e : String) {
-        if (isSignal(e) && signalKind(e) == "X") {
-            // 带外信号（`!!` 打到 null、除以零）：Kotlin 版那边抛的是 JVM 异常，
-            // 消息就是载荷本身
-            System.err.println("运行期错误: " + signalPayload(e))
-        } else if (isSignal(e)) {
-            System.err.println("运行期错误: 内部信号 " + signalKind(e) + " 没有被接住")
-        } else {
-            System.err.println("运行期错误: " + e)
-        }
-        System.exit(1)
-        rtn
-    }
+    runProgram(ast) ?: reportRuntimeFailure()
     rtn
+}
+
+// 运行期失败（包括被 `!!` 折成信号的带外错误）统一出口：
+// 与 Kotlin 版 Main.kt 的「运行期错误: …」逐字一致。
+fn reportRuntimeFailure() -> void {
+    var e = lastErrorMessage()
+    if (isSignal(e) && signalKind(e) == "X") {
+        // 带外信号（`!!` 打到 null、除以零）：Kotlin 版那边抛的是 JVM 异常，
+        // 消息就是载荷本身
+        System.err.println("运行期错误: " + signalPayload(e))
+    } else if (isSignal(e)) {
+        System.err.println("运行期错误: 内部信号 " + signalKind(e) + " 没有被接住")
+    } else {
+        System.err.println("运行期错误: " + e)
+    }
+    System.exit(1)
 }

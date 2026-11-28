@@ -32,17 +32,10 @@ fn baseNameOfPath(path : String) -> String {
 
 fn main() -> void {
     var path = pickRunFile()
-    var ast : Node = new Node(NodeKind.ERROR)
-    var loaded = false
-    var message = ""
-    try {
-        ast = loadProgram(path)!!
-        loaded = true
-    } catch (loadError : String) {
-        message = loadError
-        loaded = false
-    }
-    if (!loaded) {
+    // `loadProgram` 失败：`?: null` 折成 null，再把消息从 lastErrorMessage() 取回来
+    var maybeAst = loadProgram(path) ?: null
+    if (maybeAst == null) {
+        var message = lastErrorMessage()
         if (message.startsWith("读不到文件：")) {
             System.err.println(message)
         } else {
@@ -51,20 +44,22 @@ fn main() -> void {
         System.exit(1)
         rtn
     }
+    var ast = maybeAst!!
     var ws = new WarnSink()
     ws.printWarnings(ast, path)
-    try {
-        runProgram(ast)!!
-    } catch (e : String) {
-        if (isSignal(e) && signalKind(e) == "X") {
-            System.err.println("运行期错误: " + signalPayload(e))
-        } else if (isSignal(e)) {
-            System.err.println("运行期错误: 内部信号 " + signalKind(e) + " 没有被接住")
-        } else {
-            System.err.println("运行期错误: " + e)
-        }
-        System.exit(1)
-        rtn
-    }
+    runProgram(ast) ?: reportRuntimeFailure()
     rtn
+}
+
+// 运行期失败统一出口（与 Kotlin 版 Main.kt 的「运行期错误: …」逐字一致）
+fn reportRuntimeFailure() -> void {
+    var e = lastErrorMessage()
+    if (isSignal(e) && signalKind(e) == "X") {
+        System.err.println("运行期错误: " + signalPayload(e))
+    } else if (isSignal(e)) {
+        System.err.println("运行期错误: 内部信号 " + signalKind(e) + " 没有被接住")
+    } else {
+        System.err.println("运行期错误: " + e)
+    }
+    System.exit(1)
 }

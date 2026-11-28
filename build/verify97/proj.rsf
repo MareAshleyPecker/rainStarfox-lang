@@ -1,0 +1,21 @@
+fn writeQuiet(path : String) -> !void {
+    try writeText(path, "hi")      // !void 直接传播
+}
+
+fn readQuiet(path : String) -> !String {
+    try readText(path)             // 语句形式：丢弃值
+    rtn readText(path)!!
+}
+
+fn report(prefix : String) -> void {
+    println(prefix + lastErrorMessage())
+}
+
+fn reportText(prefix : String) -> String {
+    rtn prefix + lastErrorMessage()
+}
+
+fn main() -> void {
+    writeQuiet("out.txt") ?: report("写失败: ")
+    println(readQuiet("out.txt") ?: reportText("读失败: "))
+}

@@ -1,0 +1,54 @@
+// rsf 标准库：Conv（常用转换）
+//
+// 全是 `Conv.xxx(...)`。原则：**会失败的就返回可空**（`?Int` 等），由调用方 `?:`；
+// 不失败的才直接给值。这样接口上不用记"这个到底会不会炸"。
+pub class Conv {
+    /// 字符串 → Int，失败给 null。
+    pub stc fn toIntOrNull(s : String) -> ?Int { rtn parseInt(s) ?: null }
+
+    /// 字符串 → Int，失败给 [fallback]。
+    pub stc fn toInt(s : String, fallback : Int) -> Int { rtn parseInt(s) ?: fallback }
+
+    /// 字符串 → Bool（`true` / `false` / `1` / `0`，大小写不敏感），其它给 null。
+    pub stc fn toBoolOrNull(s : String) -> ?Bool {
+        var lower = ""
+        var i = 0
+        while (i < s.length()) {
+            lower = lower + toLower(s.charAt(i))
+            i = i + 1
+        }
+        if (lower == "true" || lower == "1") { rtn true }
+        if (lower == "false" || lower == "0") { rtn false }
+        rtn null
+    }
+
+    /// 任意基础值 → 字符串（Int / Long / Bool / Double / Char）。
+    pub stc fn toString(value : Int) -> String { rtn intToString(value) }
+
+    /// Bool → 字符串（`"true"` / `"false"`）。
+    pub stc fn toString(value : Bool) -> String {
+        if (value) { rtn "true" }
+        rtn "false"
+    }
+
+    /// Char → 单字符字符串。
+    pub stc fn toString(value : Char) -> String {
+        var out = ""
+        rtn out + value
+    }
+
+    /// 字符串 → UTF-8 字节。
+    pub stc fn toBytes(s : String) -> Byte[] { rtn stringBytes(s) }
+
+    /// 字符串 → 码元数组（按下标访问比 charAt 快）。
+    pub stc fn toChars(s : String) -> Char[] {
+        var out = new Char[s.length()]
+        var i = 0
+        while (i < s.length()) {
+            out[i] = s.charAt(i)
+            i = i + 1
+        }
+        rtn out
+    }
+
+}

@@ -246,3 +246,127 @@ bin/
 gmon.out
 
 /rsfinitTest
+
+### 判据台（阶段 83：rsf build 四阶段）###
+# 只留脚本与项目骨架（.rsfs/.rsf/.txt），编译产物与 build/out 不进库
+!/build/verify84/
+/build/verify84/**
+!/build/verify84/**/
+!/build/verify84/**/*.sh
+!/build/verify84/**/*.rsf
+!/build/verify84/**/*.rsfs
+!/build/verify84/**/*.txt
+!/build/verify84/**/*.md
+!/build/verify84/**/*.c
+!/build/verify84/**/*.h
+# 占位 jar：只是让 java(...) 的依赖声明有实物可校验（不是真能加载的包）
+!/build/verify84/proj/libs/demo.jar
+
+### 判据台（阶段 84：jar 进分析期 classpath）###
+# jar 由脚本当场用 rsf 编出来再打包，仓库里只留脚本与源码
+!/build/verify85/
+/build/verify85/**
+!/build/verify85/**/
+!/build/verify85/**/*.sh
+!/build/verify85/**/*.rsf
+!/build/verify85/**/*.rsfs
+
+### 判据台（阶段 84：extern fn 调 C）###
+!/build/verify86/
+/build/verify86/**
+!/build/verify86/**/
+!/build/verify86/**/*.sh
+!/build/verify86/**/*.rsf
+!/build/verify86/**/*.rsfs
+!/build/verify86/**/*.c
+!/build/verify86/**/*.h
+
+### 判据台（阶段 84：module-impex.rsf）###
+!/build/verify88/
+/build/verify88/**
+!/build/verify88/**/
+!/build/verify88/**/*.sh
+!/build/verify88/**/*.rsf
+!/build/verify88/**/*.rsfs
+
+### 判据台（阶段 84：rsf run 的 cargo run 语义）###
+!/build/verify89/
+/build/verify89/**
+!/build/verify89/**/
+!/build/verify89/**/*.sh
+!/build/verify89/**/*.rsf
+!/build/verify89/**/*.rsfs
+
+### 标准库：运行时头是生成的，只留 README 与以后的 rsf 模块 ###
+/stdlib/rsf_runtime.h
+
+### 判据台（阶段 84：pkg-info 与导出清单门禁）###
+!/build/verify90/
+/build/verify90/**
+!/build/verify90/**/
+!/build/verify90/**/*.sh
+!/build/verify90/**/*.rsf
+!/build/verify90/**/*.rsfs
+
+### 判据台（阶段 84：LLVM 文本 IR 后端）###
+!/build/verify92/
+/build/verify92/**
+!/build/verify92/**/
+!/build/verify92/**/*.sh
+!/build/verify92/**/*.rsf
+
+### 判据台（阶段 84：rsf cc）###
+!/build/verify93/
+/build/verify93/**
+!/build/verify93/**/
+!/build/verify93/**/*.sh
+!/build/verify93/**/*.rsf
+
+### 判据台（阶段 84：标准库自动导入）###
+!/build/verify94/
+/build/verify94/**
+!/build/verify94/**/
+!/build/verify94/**/*.sh
+!/build/verify94/**/*.rsf
+
+### 判据台（阶段 84：标准库常用面）###
+!/build/verify95/
+/build/verify95/**
+!/build/verify95/**/
+!/build/verify95/**/*.sh
+!/build/verify95/**/*.rsf
+
+### 判据台（阶段 84：Exception 结构化错误串）###
+!/build/verify96/
+/build/verify96/**
+!/build/verify96/**/
+!/build/verify96/**/*.sh
+!/build/verify96/**/*.rsf
+
+### 判据台（阶段 84：try/catch 新表面）###
+!/build/verify97/
+/build/verify97/**
+!/build/verify97/**/
+!/build/verify97/**/*.sh
+!/build/verify97/**/*.rsf
+
+### 判据台（阶段 84：fail 带种类）###
+!/build/verify98/
+/build/verify98/**
+!/build/verify98/**/
+!/build/verify98/**/*.sh
+!/build/verify98/**/*.rsf
+
+### 判据台（阶段 84：?: 的 void 兜底与 lastErrorMessage）###
+!/build/verify99/
+/build/verify99/**
+!/build/verify99/**/
+!/build/verify99/**/*.sh
+!/build/verify99/**/*.rsf
+
+### 判据台（阶段 84：运行期故障直接中止）###
+!/build/verify100/
+/build/verify100/**
+!/build/verify100/**/
+!/build/verify100/**/*.sh
+!/build/verify100/**/*.rsf

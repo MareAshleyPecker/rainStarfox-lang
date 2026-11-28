@@ -60,12 +60,18 @@ fn shot(r : Renderer, cv : Canvas, path : String) -> void {
         i = i + 3
         p = p + 1
     }
-    try {
-        writeBytes(path, bytes)
-        println("wrote " + path)
-    } catch (e : String) {
-        println("fail " + e)
-    }
+    writeShot(path, bytes) ?: reportWrite()
+}
+
+// 写文件 + 成功时报一句：整段抽成 !T 函数，调用点用 void 兜底接失败
+fn writeShot(path : String, bytes : Byte[]) -> !void {
+    try writeBytes(path, bytes)
+    println("wrote " + path)
+}
+
+// 写失败时只打印一句话的兜底（值丢掉，消息从 lastErrorMessage() 取）
+fn reportWrite() -> void {
+    println("fail " + lastErrorMessage())
 }
 
 fn main() {

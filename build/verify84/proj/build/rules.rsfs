@@ -1,0 +1,16 @@
+// 构建规则：一个 #def 就是一条规则，块里是普通 rsf 语句。
+// 规则可以被 #dep { rule("名字") } 引用（装载期解析），也可以在 main 里直接当函数调。
+//
+// 块里能做的事只有两类：exec（跑命令）和调用 rsf 函数 / 类。
+// 声明依赖用四个内建：javaInclude / cInclude / hInclude / dirInclude——它们进的是和 #dep 块同一份清单。
+#def genDeps {
+    println("规则 genDeps 先跑")
+    if (exec("echo 规则里的 exec") != 0) {
+        println("规则里的 exec 失败")
+    }
+    // 给目录就是「里面同类型的文件」；也可以一次给多个路径
+    cInclude("native")
+    hInclude("native")
+    dirInclude("res")
+    javaInclude("libs")
+}

@@ -9,9 +9,12 @@ import org.example.complie.directives.DepEntry
 import org.example.complie.directives.DepKind
 import org.example.complie.lexing.Lexer
 import org.example.complie.native.CBackend
+import org.example.complie.interop.ClassPath
+import org.example.build.Stdlib
 import org.example.complie.parsing.Parser
 import org.example.meta.RsfMeta
 import java.io.File
+import java.net.URLClassLoader
 import java.security.MessageDigest
 
 /**
@@ -32,6 +35,49 @@ interface BuildHost {
 
     /** 编译一个目录下的全部 `.rsf` / `.rsfs`，返回编译了几个文件。 */
     fun compileAll(dir: String): Int
+
+    /**
+     * 跑一条 shell 命令（`/bin/sh -c`，工作目录是项目根），返回退出码。
+     *
+     * 只有**起不来**（找不到 sh、没有权限）才算失败；退出码非零原样返回，
+     * 让脚本自己 `if (exec("...") != 0)` 决定要不要停——构建脚本需要这个判断。
+     */
+    fun exec(cmd: String): Int
+
+    /** 往目标表里加一行：`target("@/src/app.rsf", "exe")`。 */
+    fun target(src: String, kind: String)
+
+    /** 同 [target]，但显式给出产物路径（`copy("a.txt", "build/out/b.txt")`）。 */
+    fun targetTo(src: String, kind: String, out: String)
+
+    /** 记一条先后约束：`a` 要先于 `b`（名字或路径都认）。 */
+    fun need(from: String, to: String)
+
+    /**
+     * `run { use 名字 }` 的一行。
+     *
+     * `project` / `dependencies` 是显式声明（它们本来就全局生效）；
+     * 其它名字当「默认运行哪个产物」记下来，`rsf run` 没有 --bin 时用它。
+     */
+    fun use(name: String)
+
+    /**
+     * 往依赖清单里加一条（规则体里的 `java(...)` / `c(...)` / `h(...)` / `dir(...)`）。
+     *
+     * [kind] 是 `DepKind.keyword`；清单与 `#dep { … }` 块共用同一份，
+     * 所以锁文件、存在性校验都只有一条路。
+     */
+    fun declareDep(kind: String, path: String)
+
+    /**
+     * 配置块的一项：`project { name = x }` 解糖成 `config("project", "name", x)`。
+     *
+     * 字段名与类型由宿主按 schema 校验（现在只有 `project` 一块）。
+     */
+    fun config(block: String, field: String, value: String)
+
+    /** 目标表（跑完 main 之后由 `rsf build` 拿走排好的顺序）。 */
+    fun plan(): BuildPlan
 }
 
 /**
@@ -44,6 +90,55 @@ interface BuildHost {
  * @param meta   是否把源码快照打进产物（`--meta` 或 `#build { meta(true) }`）。
  * @param deps   `#dep` 声明的依赖，用于写 `.rsfdeps/lock.json`（见 [writeLock]）。
  */
+/**
+ * 一条依赖声明展开成若干条：**给目录就是里面同类型的文件**（阶段 84）。
+ *
+ * ```
+ * javaInclude("libs")            // libs 下的所有 .jar（按名字排序，顺序确定）
+ * javaInclude("a.jar", "b.jar")  // 各自一条
+ * cInclude("native")             // native 下的所有 .c
+ * hInclude("native")             // native 下的所有 .h
+ * dirInclude("res")              // 不展开：它本来就是「整个目录」
+ * ```
+ *
+ * 为什么在**声明时**展开而不是出产物时：锁文件要记具体文件（大小、哈希），
+ * 声明时展开，清单与磁盘就一一对应；代价是「先声明、后由 exec 生成」的目录
+ * 抓不到——那种情况把 `exec` 写在 include 之前。
+ *
+ * 路径不存在时**原样保留**这一条：报错的责任在 writeLock（一处报错，消息统一），
+ * 而不是在这里静默丢掉一个用户写错的名字。
+ */
+internal fun expandDep(entry: DepEntry, root: File): List<DepEntry> {
+    // rule 指向的是函数名；dirInclude 表示「整个目录」，都不是文件清单
+    if (entry.kind == DepKind.RULE || entry.kind == DepKind.DIR) return listOf(entry)
+    val path = if (entry.target.startsWith("@/")) entry.target.substring(2) else entry.target
+    val file = if (File(path).isAbsolute) File(path) else File(root, path)
+    if (!file.isDirectory) return listOf(entry)
+    val ext = when (entry.kind) {
+        DepKind.JAVA -> "jar"
+        DepKind.C -> "c"
+        DepKind.H -> "h"
+        else -> return listOf(entry)
+    }
+    val files = file.listFiles()
+        ?.filter { it.isFile && it.extension.equals(ext, ignoreCase = true) }
+        ?.sortedBy { it.name }
+        .orEmpty()
+    if (files.isEmpty()) return listOf(entry)
+    return files.map { DepEntry(entry.kind, relativeToRoot(it, root)) }
+}
+
+/** 项目内的文件记相对路径（锁文件才可移植）；不在项目里就记绝对路径。 */
+internal fun relativeToRoot(file: File, root: File): String {
+    val base = root.absoluteFile.normalize()
+    val target = file.absoluteFile.normalize()
+    return try {
+        target.relativeTo(base).path
+    } catch (e: IllegalArgumentException) {
+        target.path
+    }
+}
+
 class ProjectBuildHost(
     private val root: File = File("."),
     private val srcDir: File = File("src"),
@@ -53,15 +148,178 @@ class ProjectBuildHost(
     private val deps: List<DepEntry> = emptyList(),
 ) : BuildHost {
 
-    private val outDir: File = if (outDir.isAbsolute) outDir else File(root, outDir.path)
+    private val outDir: File = (if (outDir.isAbsolute) outDir else File(root, outDir.path)).normalize()
 
     /** 依赖：脚本自己声明的 + 每个被编译文件里声明的（`#dep` 可以写在任意源文件里）。 */
-    private val collectedDeps = LinkedHashSet<DepEntry>(deps)
+    private val collectedDeps = LinkedHashSet(deps.flatMap { expandDep(it, root) })
 
     /** 有没有依赖需要写锁文件。 */
     fun hasDeps(): Boolean = collectedDeps.isNotEmpty()
 
     override fun outDir(): String = outDir.path
+
+    /** 目标表：`#target` 块（阶段 0）与 `target()` 调用（阶段 2）都进这一张。 */
+    private val buildPlan = BuildPlan()
+
+    override fun plan(): BuildPlan = buildPlan
+
+    /** `project { … }` 的字段（阶段 84；`export` 先只记录，等 module-export 那条线）。 */
+    var projectName: String? = null
+        private set
+    var projectVersion: String? = null
+        private set
+    var projectExport: String? = null
+        private set
+
+    /** `run { use … }` 里选中的默认产物（没写就是 null）。 */
+    var runTarget: String? = null
+        private set
+
+    override fun use(name: String) {
+        when (name) {
+            "project", "dependencies" -> Unit // 显式声明；这两块本来就全局生效
+            else -> {
+                // 同一个 name 写两次不算错，但换名字要报错——否则不知道按哪条跑
+                val previous = runTarget
+                if (previous != null && previous != name) {
+                    throw RsfError(
+                        "build",
+                        "run { } 里选了两个不同的产物：'$previous' 和 '$name'。只留一条",
+                    )
+                }
+                runTarget = name
+            }
+        }
+    }
+
+    override fun config(block: String, field: String, value: String) {
+        when (block) {
+            "project" -> when (field) {
+                "name" -> projectName = value
+                "ver" -> projectVersion = value
+                "export" -> projectExport = value
+                else -> throw RsfError(
+                    "build",
+                    "project { … } 里没有字段 '$field'。可用的：name（产物名）/ ver（版本）/ export（对外导出的名字）",
+                )
+            }
+            else -> throw RsfError(
+                "build",
+                "不认识的配置块 '$block'。现在只有 project { … }",
+            )
+        }
+    }
+
+    /**
+     * 跑一条命令：工作目录固定为项目根（脚本里写的相对路径全是按项目根算的），
+     * 输出**直接继承**到当前终端——构建日志要实时看得见，也不要替用户吞掉 gcc 的报错。
+     *
+     * 只有「起不来」才抛；退出码非零原样返回给脚本判断。
+     */
+    override fun exec(cmd: String): Int {
+        if (cmd.isBlank()) throw RsfError("build", "exec(\"\")：命令不能是空的")
+        val shell = if (System.getProperty("os.name").lowercase().contains("win")) "cmd" else "/bin/sh"
+        val argv = if (shell == "cmd") listOf(shell, "/c", cmd) else listOf(shell, "-c", cmd)
+        println("[rsf] 执行: $cmd")
+        val process = try {
+            ProcessBuilder(argv).directory(root).inheritIO().start()
+        } catch (e: Exception) {
+            throw RsfError("build", "exec：起不了命令 '$cmd'（${e.message}）。构建脚本里写的路径按项目根目录解析")
+        }
+        return process.waitFor()
+    }
+
+    /**
+     * `target(src, kind)`：往计划表里加一行。
+     *
+     * [src] 必须是**文件**（`@/` 前缀按项目根解析，和 import 一致）；此处只做形状校验，
+     * 文件存不存在留到出产物阶段——构建脚本里先声明、后生成是正常写法（`exec` 造出文件再 copy）。
+     */
+    override fun target(src: String, kind: String) {
+        addTarget(TargetSpec.of(src, kind, null, "构建脚本里 target(\"$src\", \"$kind\")"))
+    }
+
+    override fun targetTo(src: String, kind: String, out: String) {
+        addTarget(TargetSpec.of(src, kind, out, "构建脚本里 $kind(\"$src\", \"$out\")"))
+    }
+
+    /** 直接加一行已经造好的目标（`#target` 块走这里，它自带行号与可选的产物路径）。 */
+    fun addTarget(spec: TargetSpec) {
+        // 源路径在这里只做「写没写」的形状校验；文件在不在留到出产物阶段——
+        // 构建脚本里「先 exec 生成、后 copy」是正常写法，过早检查会误报。
+        if (spec.src.isBlank()) {
+            throw RsfError("build", "'${spec.origin}' 里的源路径是空的")
+        }
+        buildPlan.add(spec)
+    }
+
+    override fun declareDep(kind: String, path: String) {
+        if (path.isBlank()) throw RsfError("build", "$kind(\"\")：路径不能是空的")
+        val depKind = DepKind.entries.firstOrNull { it.keyword == kind }
+            ?: throw RsfError("build", "不认识的依赖种类 '$kind'")
+        // 和 #dep 块一样：声明只是声明，存在性留给 writeLock 统一校验。
+        // 给目录的话在这里展开成里面的文件（多条路径来自 vararg，见解释器）。
+        var added = false
+        for (entry in expandDep(DepEntry(depKind, path), root)) {
+            if (collectedDeps.add(entry)) added = true
+        }
+        // 阶段 84：规则里**当场**声明的 jar 要立刻生效——后面 `compile()` 分析源码时
+        // Checker 就得能看见里面的类。已经装过的同一批路径不会重复装（见 installJars）。
+        if (added && depKind == DepKind.JAVA) installJars()
+    }
+
+    /**
+     * 把清单里所有 `java(...)` 的 jar 装进 [ClassPath]（阶段 84）。
+     *
+     * 为什么不用 `-cp`：构建脚本要调的 jar 是**项目的一部分**（`#dep` 里声明、
+     * 跟着仓库走），不该要求用户先改启动命令。这里用 URLClassLoader，父加载器是
+     * 系统那个，所以 JDK 类照旧。
+     *
+     * 已经在清单里出现过的同一批路径不重复装（装一次就会清一次 ClassPath 的缓存）。
+     */
+    fun installJars() {
+        val jars = javaDeps().map { resolveInProject(it) }.filter { it.isFile }
+        if (jars.isEmpty()) {
+            if (installedOnce) ClassPath.installLoader(null)
+            return
+        }
+        if (installedOnce && jars == installedJars) return
+        val urls = jars.map { it.toURI().toURL() }.toTypedArray()
+        ClassPath.installLoader(URLClassLoader(urls, ClassLoader.getSystemClassLoader()))
+        installedJars = jars
+        installedOnce = true
+        println("[rsf] 依赖 jar: " + jars.joinToString("、") { it.name })
+    }
+
+    private var installedJars: List<File> = emptyList()
+    private var installedOnce = false
+
+    /** 清单里的 `javaInclude(...)` 路径（相对项目根）。 */
+    fun javaDeps(): List<String> = collectedDeps.filter { it.kind == DepKind.JAVA }.map { it.target }
+
+    /** 清单里的 C 源文件（绝对路径；链接时要交给 gcc）。 */
+    fun cDeps(): List<File> = filesOf(DepKind.C)
+
+    /** 清单里的 C 头文件（绝对路径；它们的目录要进 `-I`）。 */
+    fun hDeps(): List<File> = filesOf(DepKind.H)
+
+    private fun filesOf(kind: DepKind): List<File> =
+        collectedDeps.filter { it.kind == kind }.map { resolveInProject(it.target) }.filter { it.isFile }
+
+    override fun need(from: String, to: String) {
+        if (from.isBlank() || to.isBlank()) throw RsfError("build", "need(\"$from\", \"$to\")：两个参数都要写")
+        buildPlan.need(from, to)
+    }
+
+    /** 按项目根解析脚本里写的路径（`@/` 前缀与 import 同义）。 */
+    fun resolveInProject(path: String): File {
+        val p = if (path.startsWith("@/")) path.substring(2) else path
+        val f = File(p)
+        return (if (f.isAbsolute) f else File(root, p)).normalize()
+    }
+
+    /** 项目根（出产物阶段按它算相对路径）。 */
+    fun root(): File = root
 
     /** 这份文件该编到哪一侧：显式设置优先，`auto` 时看它自己有没有 `native` 声明。 */
     private fun targetOf(file: File): String {
@@ -104,15 +362,14 @@ class ProjectBuildHost(
             null
         }
         val backend = CBackend(model, withEntry = true, emitImpl = true)
-        backend.ensureRuntimeLib(outDir)
+        backend.ensureRuntimeLib(Stdlib.dir())
         val text = backend.emit()
         val out = File(outDir, "$name.c")
         out.writeText(if (metaBlob != null) text + RsfMeta.cDeclaration(metaBlob) else text, Charsets.UTF_8)
         return out.path
     }
 
-    override fun compileAll(dir: String): Int {
-        val name = dir.ifEmpty { srcDir.path }
+    override fun compileAll(dir: String): Int {        val name = dir.ifEmpty { srcDir.path }
         val dirFile = if (File(name).isAbsolute) File(name) else File(root, name)
         if (!dirFile.isDirectory) {
             throw RsfError("build", "compileAll：'${dirFile.path}' 不是目录（构建脚本里写相对路径时，基准是项目根目录）")
@@ -120,6 +377,8 @@ class ProjectBuildHost(
         val sources = dirFile.walkTopDown()
             .filter { it.isFile && !it.name.startsWith(".") }
             .filter { it.extension == "rsf" || it.extension == "rsfs" }
+            // 元信息与清单文件不是源码
+            .filter { it.name != PkgInfo.FILE_NAME && it.name != ModuleImpex.FILE_NAME }
             .sortedBy { it.path }
             .toList()
         for (source in sources) {
@@ -140,7 +399,9 @@ class ProjectBuildHost(
         val deps = collectedDeps
         val missing = deps.filter { it.kind != DepKind.RULE }.mapNotNull { entry ->
             val file = if (File(entry.target).isAbsolute) File(entry.target) else File(root, entry.target)
-            if (file.isFile) null else entry.display()
+            // dir 指的是目录里的全部文件，所以校验 isDirectory（别的种类都是文件）
+            val present = if (entry.kind == DepKind.DIR) file.isDirectory else file.isFile
+            if (present) null else entry.display()
         }
         if (missing.isNotEmpty()) {
             throw RsfError(
@@ -159,7 +420,8 @@ class ProjectBuildHost(
             sb.append("    {")
             sb.append("\"kind\": \"").append(entry.kind.keyword).append("\", ")
             sb.append("\"path\": ").append(json(entry.target))
-            if (entry.kind != DepKind.RULE) {
+            // 目录不记 size/sha256：那要遍历整棵子树，v1 只记路径（存在性上面校验过了）
+            if (entry.kind != DepKind.RULE && entry.kind != DepKind.DIR) {
                 val file = if (File(entry.target).isAbsolute) File(entry.target) else File(root, entry.target)
                 sb.append(", \"size\": ").append(file.length())
                 sb.append(", \"sha256\": \"").append(sha256(file)).append("\"")

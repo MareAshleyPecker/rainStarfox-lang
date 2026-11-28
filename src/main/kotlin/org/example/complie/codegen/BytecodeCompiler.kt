@@ -85,6 +85,27 @@ private const val CONCAT_HELPER_DESC = "(Ljava/lang/String;Ljava/lang/String;)Lj
 private const val SLICE_HELPER = "__rsf_slice"
 private const val SLICE_DESC = "(Ljava/lang/String;II)Ljava/lang/String;"
 
+/**
+ * 阶段 84：`lastErrorMessage()` 在程序类上的静态字段与读取方法。
+ *
+ * 只在**程序里真调过** `lastErrorMessage()` 时才发（`model.usesLastErrorMessage`），
+ * 所以没调过的程序产物一个字节都不变。字段名也带 `$`，rsf 源码写不出来。
+ */
+private const val LAST_ERROR_FIELD = "__rsf_lastErrorMessage"
+private const val LAST_ERROR_HELPER = "__rsf_lastErrorMessage\$rt"
+private const val LAST_ERROR_HELPER_DESC = "()Ljava/lang/String;"
+private const val LAST_ERROR_FIELD_DESC = "Ljava/lang/String;"
+
+/**
+ * 阶段 84：入口 `main` 里**没被接住**的运行期错误（越界 / `!!` 打到 null / 用户 `!T` 漏处理）
+ * 由这个辅助方法收尾：打 `运行期错误: <消息>` 到 stderr，退出码 1。
+ *
+ * 为什么要它：`try {} catch {}` 退休之后（用户拍板）故障一律中止程序，
+ * 而 JVM 默认打的是整段堆栈——和解释器、C 后端那句 `运行期错误: …` 不是一个口径。
+ */
+private const val UNCAUGHT_HELPER = "__rsf_uncaught\$rt"
+private const val UNCAUGHT_DESC = "(Ljava/lang/Throwable;)V"
+
 class BytecodeCompiler(
     private val model: SemanticModel,
     private val sourceName: String,
@@ -115,6 +136,19 @@ class BytecodeCompiler(
      * 也不需要临时目录。
      */
     fun compileBytes(className: String, meta: ByteArray? = null): List<Pair<String, ByteArray>> {
+        // 阶段 84：extern 是「外部 C 函数」，只有 native 侧能把它变成一次 C 调用。
+        // 编成 .class 时它既没有体也没有对应物，早报比让 JVM 在运行期 NoSuchMethodError 好。
+        for (fn in model.functions) {
+            if (fn.isExtern) {
+                throw RsfError(
+                    "codegen",
+                    "'extern fn ${fn.name}(...)' 只有 native 侧才有：它声明的是外部 C 符号" +
+                        "（函数体在 .c 里，由 cInclude 链接进来），JVM 上没有这个符号。" +
+                        "用 'rsf build --c' 构建，或者把它挪进 native 侧",
+                    fn.at.line, fn.at.column, null,
+                )
+            }
+        }
         // 阶段 25 K2：K1 在这里的那道守卫（「带父类的类还不能 build」）已经撤掉——
         // 带父类的类现在真的生成 extends、父类构造链、父链字段与虚分派。
         programInternalName = className
@@ -468,6 +502,10 @@ class BytecodeCompiler(
         }
         // 阶段 73d：切片越界钳位（只有本程序用过 `s[a..b]` 才发）
         if (usedSlice) emitSliceHelper(cw)
+        // 阶段 84：`lastErrorMessage()` 的静态字段与读取方法（只有本程序用过才发）
+        if (model.usesLastErrorMessage) emitLastErrorMessageHelper(cw)
+        // 阶段 84：入口 main 的「没接住的错误」收尾（与解释器 / C 后端同一条消息）
+        if (model.entry != null) emitUncaughtHelper(cw)
         cw.visitEnd()
         return cw
     }
@@ -518,10 +556,7 @@ class BytecodeCompiler(
         emitConcat(mv)
         mv.visitLdcInsn(Builtins.PARSE_INT_SUFFIX)
         emitConcat(mv)
-        mv.visitMethodInsn(
-            INVOKESPECIAL, "java/lang/RuntimeException", "<init>", "(Ljava/lang/String;)V", false,
-        )
-        mv.visitInsn(ATHROW)
+        emitRuntimeExceptionThrow(mv)
         mv.visitMaxs(0, 0)
         mv.visitEnd()
     }
@@ -626,6 +661,62 @@ class BytecodeCompiler(
             "(II)Ljava/lang/String;", false,
         )
         mv.visitInsn(ARETURN)
+        mv.visitMaxs(0, 0)
+        mv.visitEnd()
+    }
+
+    /**
+     * 阶段 84：`lastErrorMessage()` 的落地——程序类上一个静态字段 + 一个读取方法。
+     *
+     * 字段由 [emitRuntimeExceptionThrow] 在**每次抛错时**写入（抛出的 `RuntimeException`
+     * 里本来就是那条消息，直接 `getMessage()` 落进字段，不额外拼串）。
+     * 读取方法把「还没有过错误」的 null 折成空串——C 侧 `rsf_err_msg` 初值也是空串，
+     * 两端于是同一种可观察行为。
+     *
+     * 只在 [SemanticModel.usesLastErrorMessage] 为真时发，旧程序产物逐字节不变。
+     */
+    private fun emitLastErrorMessageHelper(cw: ClassWriter) {
+        cw.visitField(ACC_PUBLIC or ACC_STATIC, LAST_ERROR_FIELD, LAST_ERROR_FIELD_DESC, null, null)
+            .visitEnd()
+        val mv = cw.visitMethod(ACC_PUBLIC or ACC_STATIC, LAST_ERROR_HELPER, LAST_ERROR_HELPER_DESC, null, null)
+        mv.visitCode()
+        val ok = Label()
+        mv.visitFieldInsn(GETSTATIC, programInternalName, LAST_ERROR_FIELD, LAST_ERROR_FIELD_DESC)
+        mv.visitInsn(DUP)
+        mv.visitJumpInsn(IFNONNULL, ok)
+        mv.visitInsn(POP)
+        mv.visitLdcInsn("")
+        mv.visitLabel(ok)
+        mv.visitInsn(ARETURN)
+        mv.visitMaxs(0, 0)
+        mv.visitEnd()
+    }
+
+    /**
+     * 阶段 84：入口 main 里没接住的错误 → `运行期错误: <消息>` + 退出码 1。
+     *
+     * 解释器（Main.kt 的 wrap）和 C 运行时（rsf_throw 的兜底）打的是同一句话，
+     * 三端因此一样：不会一边是干净的一行、一边是整段堆栈。
+     */
+    private fun emitUncaughtHelper(cw: ClassWriter) {
+        val mv = cw.visitMethod(
+            ACC_PRIVATE or ACC_STATIC, UNCAUGHT_HELPER, UNCAUGHT_DESC, null, null,
+        )
+        mv.visitCode()
+        mv.visitFieldInsn(GETSTATIC, "java/lang/System", "err", "Ljava/io/PrintStream;")
+        mv.visitLdcInsn("运行期错误: ")
+        mv.visitMethodInsn(
+            INVOKEVIRTUAL, "java/io/PrintStream", "print", "(Ljava/lang/String;)V", false,
+        )
+        mv.visitFieldInsn(GETSTATIC, "java/lang/System", "err", "Ljava/io/PrintStream;")
+        mv.visitVarInsn(ALOAD, 0)
+        mv.visitMethodInsn(INVOKEVIRTUAL, "java/lang/Throwable", "getMessage", "()Ljava/lang/String;", false)
+        mv.visitMethodInsn(
+            INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false,
+        )
+        mv.visitInsn(ICONST_1)
+        mv.visitMethodInsn(INVOKESTATIC, "java/lang/System", "exit", "(I)V", false)
+        mv.visitInsn(RETURN)
         mv.visitMaxs(0, 0)
         mv.visitEnd()
     }
@@ -852,6 +943,13 @@ class BytecodeCompiler(
         mv.visitMethodInsn(
             INVOKESPECIAL, "java/lang/RuntimeException", "<init>", "(Ljava/lang/String;)V", false,
         )
+        // 阶段 84：抛出的同时把消息记进程序类的静态字段（`lastErrorMessage()` 读它）。
+        // 栈上是异常对象，DUP 一份取 getMessage，原对象留着给 ATHROW。
+        if (model.usesLastErrorMessage) {
+            mv.visitInsn(DUP)
+            mv.visitMethodInsn(INVOKEVIRTUAL, "java/lang/Throwable", "getMessage", "()Ljava/lang/String;", false)
+            mv.visitFieldInsn(PUTSTATIC, programInternalName, LAST_ERROR_FIELD, LAST_ERROR_FIELD_DESC)
+        }
         mv.visitInsn(ATHROW)
     }
 
@@ -2739,6 +2837,15 @@ class BytecodeCompiler(
             )
         }
 
+        // 阶段 84：入口 main 整体套一层「没人接住的错误」兜底——try/catch 语法退休之后，
+        // 故障一律中止程序，JVM 侧要打的也是解释器 / C 后端那一句 `运行期错误: …`，
+        // 而不是一整段堆栈。范围只框住指令循环，函数末尾的防御性 throw 不在里面。
+        val catchAll = closure == null && isEntry(fn)
+        val allStart = Label()
+        val allEnd = Label()
+        val allHandler = Label()
+        if (catchAll) mv.visitLabel(allStart)
+
         for ((i, instr) in body.instructions.withIndex()) {
             // 处理器用到的三个标签即使落在不可达位置也必须 visit 一次：
             // `try { rtn 1 } catch (e : String) { ... }` 的 try.end 就在 RETURN 后面，
@@ -2933,14 +3040,9 @@ class BytecodeCompiler(
                 // 直接用 JDK 现成的异常类型，不新造类——解释器那边抛的 RsfFailure
                 // 也带着同样的消息，两端的可观察行为一致（谁接住、消息是什么）。
                 is IFail -> {
-                    mv.visitTypeInsn(NEW, "java/lang/RuntimeException")
-                    mv.visitInsn(DUP)
+                    emitRuntimeExceptionHeader(mv)
                     emitExpr(ctx, instr.stmt.message)
-                    mv.visitMethodInsn(
-                        INVOKESPECIAL, "java/lang/RuntimeException", "<init>",
-                        "(Ljava/lang/String;)V", false,
-                    )
-                    mv.visitInsn(ATHROW)
+                    emitRuntimeExceptionThrow(mv)
                 }
 
                 is IGoto -> mv.visitJumpInsn(GOTO, labels[instr.label]!!)
@@ -3004,14 +3106,9 @@ class BytecodeCompiler(
                         // 没写 else 且 case 穷尽：静态上到不了这里（值只可能是 null）。
                         // 发的形状和 `fail "..."` 一模一样（`throw new RuntimeException(消息)`），
                         // 解释器那边抛的是同一个消息的 RsfFailure——两端的 catch 与输出因此一致。
-                        mv.visitTypeInsn(NEW, "java/lang/RuntimeException")
-                        mv.visitInsn(DUP)
+                        emitRuntimeExceptionHeader(mv)
                         mv.visitLdcInsn(EnumRuntime.noMatchFailure(model.typeOf(instr.stmt.subject).simpleExternalName))
-                        mv.visitMethodInsn(
-                            INVOKESPECIAL, "java/lang/RuntimeException", "<init>",
-                            "(Ljava/lang/String;)V", false,
-                        )
-                        mv.visitInsn(ATHROW)
+                        emitRuntimeExceptionThrow(mv)
                     }
                     for ((i, pad) in pads.withIndex()) {
                         mv.visitLabel(pad)
@@ -3041,6 +3138,18 @@ class BytecodeCompiler(
                 )
                 mv.visitInsn(ATHROW)
             }
+        }
+
+        // 阶段 84：关掉「兜底窗口」。处理器**必须在所有正常出口之后**——否则它会掉进
+        // 正常出口的 fall-through 里，校验器会拿两套栈帧对撞（VerifyError: stack map）。
+        if (catchAll) {
+            mv.visitLabel(allEnd)
+            mv.visitTryCatchBlock(allStart, allEnd, allHandler, "java/lang/RuntimeException")
+            mv.visitLabel(allHandler)
+            mv.visitMethodInsn(
+                INVOKESTATIC, programInternalName, UNCAUGHT_HELPER, UNCAUGHT_DESC, false,
+            )
+            mv.visitInsn(RETURN)
         }
 
         // 体发完、visitMaxs 之前：发 LVT 的结束标签，再逐条写表（见 beginLvt）
@@ -4216,10 +4325,16 @@ class BytecodeCompiler(
         mv.visitJumpInsn(IFNONNULL, ok)
         mv.visitInsn(POP)
         emitExpr(ctx, expr.right)
-        emitWiden(mv, model.typeOf(expr.right), resultType)
+        if (!resultType.isVoid) emitWiden(mv, model.typeOf(expr.right), resultType)
         mv.visitJumpInsn(GOTO, done)
         mv.visitLabel(ok)
-        emitResultCast(mv, RsfType.OBJECT, resultType)
+        // 阶段 84：`!void` 的 `?:`（`f() ?: logIt()`）结果类型是 void。
+        // 合成方法在成功时返回一个非 null 的标记，这里把它丢掉就行。
+        if (resultType.isVoid) {
+            mv.visitInsn(POP)
+        } else {
+            emitResultCast(mv, RsfType.OBJECT, resultType)
+        }
         mv.visitLabel(done)
     }
 
@@ -4384,7 +4499,10 @@ class BytecodeCompiler(
                 slot += p.slots
             }
             mv.visitMethodInsn(m.opcode, m.owner, m.target, m.targetDescriptor, m.itf)
-            if (m.result.isPrimitive) boxValue(mv, m.result.base)
+            // 阶段 84：目标返回 void 时（`!void` 的 `?:`）成功路径也要留一个**非 null** 的值——
+            // 调用点用 null 表示「失败」，成功标记只要非 null 即可（调用点随后 POP 掉）。
+            if (m.result.isVoid) mv.visitLdcInsn("ok")
+            else if (m.result.isPrimitive) boxValue(mv, m.result.base)
             mv.visitLabel(end)
             mv.visitInsn(ARETURN)
 
@@ -4453,9 +4571,13 @@ class BytecodeCompiler(
         }
 
         // 阶段 16：带签名的内置函数（toByte / toChar / charToInt / parseInt / isDigit…）
-        Builtins[expr.name]?.let { builtin ->
-            emitBuiltinCall(ctx, expr, builtin)
-            return
+        // 阶段 83：用户函数优先——Checker 记了 callTargets 就说明这个位置调的是用户函数
+        // （构建脚本专用内建不抢名字），不能被同名内建截走。
+        if (model.callTargets[expr] == null) {
+            Builtins[expr.name]?.let { builtin ->
+                emitBuiltinCall(ctx, expr, builtin)
+                return
+            }
         }
 
         // 类里按名字直接调本类方法（隐式 this / 隐式类名）
@@ -4647,6 +4769,11 @@ class BytecodeCompiler(
                 false,
             )
 
+            // 阶段 84：最近一条错误消息——程序类上的读取方法（初值 null 折成空串）
+            "lastErrorMessage" -> mv.visitMethodInsn(
+                INVOKESTATIC, programInternalName, LAST_ERROR_HELPER, LAST_ERROR_HELPER_DESC, false,
+            )
+
             // 只有 native 侧才有（阶段 77 步骤 0）：Checker 在 JVM 目标里已经拦掉，
             // 走到这里说明是 `target native` 却要出字节码，明确报错而不是内部错误。
             "memBytes", "memPeak", "gcCollect" -> throw RsfError(
@@ -4656,7 +4783,7 @@ class BytecodeCompiler(
 
             // 阶段 81：构建脚本的宿主能力只在 `rsf build` 驱动 build.rsfs 时注入，
             // 编进 class 里就没有宿主了。
-            "outDir", "compile", "compileAll" -> throw RsfError(
+            in Builtins.BUILD_ONLY -> throw RsfError(
                 "build",
                 "'${builtin.name}' 只有构建脚本里能用（rsf build 驱动 build.rsfs 时注入），编成 .class 之后没有编译器可调",
             )

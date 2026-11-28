@@ -1,0 +1,17 @@
+// 仓库的对外面貌（阶段 84）。
+//
+// `module "<目录>" to <别名> [{ 成员… }]`：目录 → 别名。源码里用别名访问成员：
+//     import std.Vec        // 一个成员（白名单里限定的那些）
+//     import std.*          // 整个模块
+//     module "stdlib/std" to std { Vec Text }   // 只开放 Vec 与 Text
+// `internal` 前缀 = 只在仓库内部可用。
+//
+// 点分 import 先查这张别名表，没命中才按 JVM 类解析（`import java.lang.Math` 照旧）。
+
+internal module "stdlib/classfile" to classfile
+
+module "stdlib/lang" to lang { Lang, Exception }
+module "stdlib/io" to io { Io }
+
+// 成员列表写在同一行：清单是**逐行**解析的（没有跨行括号）
+module "stdlib/std" to std { Vec ArrayList Bits BitSet Conv Deque HashMap IntHeap IntMap Iter Numbers Queue Random Sets Sorts Strings Text }

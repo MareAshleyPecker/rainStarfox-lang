@@ -1,0 +1,38 @@
+import "build/rules.rsfs"
+
+const val projectName = "verify84"
+const val projectVersion = "1.0"
+
+// 配置块：字段 = 表达式；表达式可以引用 const val（它在 globals 之后求值）
+fn markConfig() -> String {
+    println("配置块先求值")
+    rtn projectName
+}
+
+project {
+    name = markConfig()
+    ver = projectVersion
+}
+
+dependencies {
+    rule("genDeps")
+}
+
+target {
+    exe("@/src/main.rsf")
+    copy("@/res/data.txt", "build/out/copied.txt")
+}
+
+#build {
+    out("build/out")
+    target("c")
+}
+
+fn main() -> void {
+    println("main 在规则之后")
+    target("@/src/lib.rsf", "lib")
+    need("@/src/lib.rsf", "@/src/main.rsf")
+    if (exec("echo 来自 exec 的一行") != 0) {
+        println("exec 失败")
+    }
+}

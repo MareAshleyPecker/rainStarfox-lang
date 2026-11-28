@@ -118,6 +118,7 @@ private val KEYWORDS: Map<String, TokenKind> = buildMap {
     // 这种写法必须继续能编，所以由 Parser 按「文件首部的标识符 target」识别。
     put("native", TokenKind.KW_NATIVE)
     put("export", TokenKind.KW_EXPORT)
+    put("extern", TokenKind.KW_EXTERN)
     put("jvm", TokenKind.KW_JVM)
 
     put("as", TokenKind.KW_AS)

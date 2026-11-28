@@ -42,6 +42,15 @@ class Builtin(
      * 在 JVM 目标里调用会让 Checker 直接报错（阶段 77 步骤 0）。
      */
     val nativeOnly: Boolean = false,
+    /**
+     * 只有构建脚本（项目根目录的 `build.rsfs`）里能用（阶段 83）。
+     *
+     * 这类函数**没有编译产物的实现**：它们由 `rsf build` 注入的宿主承接（读磁盘、
+     * 起进程、往计划表里加目标），编成 `.class` 或 `.c` 之后就没有宿主了。
+     * 两道关卡：Checker 按「当前文件是不是 build.rsfs」拦一次（位置最准、报错最早），
+     * 两个代码生成后端再拦一次（`rsf script` 之类绕过项目装载的路径也跑不掉）。
+     */
+    val buildOnly: Boolean = false,
 ) {
     /** `charAt(Int) -> Char` 这种可读签名（可能失败的带 `!`）。补全列表也用它。 */
     fun display(): String {
@@ -78,6 +87,7 @@ class Builtin(
  * | `writeText(String, String) -> !void` | 写文本（覆盖） | `Files.write` + 同上 |
  * | `readBytes(String) -> !Byte[]` | 读二进制 | `Files.readAllBytes` + 同上 |
  * | `writeBytes(String, Byte[]) -> !void` | 写二进制（自举落盘 `.class` 用它） | `Files.write` + 同上 |
+ * | `lastErrorMessage() -> String` | 最近一条错误消息（阶段 84） | 程序类上的静态字段 / C 的 `rsf_err_msg` |
  *
  * 分类与大小写这三对**直接调 `java.lang.Character` 的对应方法**（解释器也是），
  * 这样 Unicode 边界情况（比如 `isWhitespace` 不认不间断空格、`toUpper` 对非字母原样返回）
@@ -191,6 +201,27 @@ object Builtins {
         helperDesc = FileRuntime.WRITE_BYTES_HELPER_DESC,
     )
 
+    /**
+     * `lastErrorMessage() -> String`：最近一条错误消息（阶段 84）。
+     *
+     * 根除 `try/catch` 的配套表面：以前要读错误内容只能写
+     * `try { … } catch e { … }`，现在可以
+     *
+     * ```rsf
+     * f() ?: reportFailure()        // reportFailure 里读 lastErrorMessage()
+     * ```
+     *
+     * 语义是**最近一次抛出的错误**（被 `?:` 或 catch 接住之后消息仍然保留），
+     * 所以它也能在错误处理完之后再取一次。还没有任何错误时是空串。
+     *
+     * 三端各有一个槽：解释器 / 字节码是「最近一次抛错时记下的串」，
+     * C 侧直接用运行时的 `rsf_err_msg`（它本来就在 `rsf_set_err` 里留着）。
+     */
+    val LAST_ERROR_MESSAGE = Builtin(
+        "lastErrorMessage", emptyList(), RsfType.STRING,
+        doc = "最近一条错误消息（被 ?: / catch 接住后仍保留；还没有错误时是空串）",
+    )
+
     // ------------------------------------------------------------------ native → JVM（阶段 62）
 
     /** `jvmCall(类名, 方法名, 参数…) -> String`：native 侧起 JVM 调静态方法（实参都是 String）。 */
@@ -255,33 +286,161 @@ object Builtins {
      * [org.example.build.BuildHost]）承接；普通程序里调用会在解释期报「只有构建脚本里能用」。
      */
     val OUT_DIR = Builtin(
-        "outDir", emptyList(), RsfType.STRING,
+        "outDir", emptyList(), RsfType.STRING, buildOnly = true,
         doc = "产物目录（只有 build.rsfs 里能用）",
     )
 
     /** `compile(path) -> String`：编译一个源文件，返回产物路径（只有构建脚本里能用）。 */
     val COMPILE = Builtin(
-        "compile", listOf(RsfType.STRING), RsfType.STRING,
+        "compile", listOf(RsfType.STRING), RsfType.STRING, buildOnly = true,
         doc = "编译一个源文件，返回产物路径（只有 build.rsfs 里能用）",
     )
 
     /** `compileAll(dir) -> Int`：编译目录下全部 .rsf / .rsfs，返回文件数（只有构建脚本里能用）。 */
     val COMPILE_ALL = Builtin(
-        "compileAll", listOf(RsfType.STRING), RsfType.INT,
+        "compileAll", listOf(RsfType.STRING), RsfType.INT, buildOnly = true,
         doc = "编译目录下全部 .rsf / .rsfs，返回编译了几个文件（只有 build.rsfs 里能用）",
+    )
+
+    // ------------------------------------------------- 构建计划（阶段 83，rsf build 四阶段）
+
+    /**
+     * `exec(cmd) -> Int`：跑一条 shell 命令，返回退出码（只有构建脚本里能用）。
+     *
+     * **故意不标 `!Int`**：退出码非零是构建脚本要判断的**正常结果**
+     * （`if (exec("git rev-parse") != 0) …`），不是「失败」；标了 `!` 就得给每一条命令
+     * 套一层 try。真正算失败的是「命令起不来」（没有 sh、路径权限），那种情况直接中止构建。
+     */
+    val EXEC = Builtin(
+        "exec", listOf(RsfType.STRING), RsfType.INT, buildOnly = true,
+        doc = "跑一条 shell 命令（工作目录是项目根），返回退出码（只有 build.rsfs 里能用）",
+    )
+
+    /**
+     * `target(src, kind) -> void`：往计划表里加一个产物（只有构建脚本里能用）。
+     *
+     * `kind` 写字符串 `"exe"` / `"lib"` / `"jar"` / `"copy"`——rsf 里的裸标识符不是值，
+     * 而 `#target { … -> exe }` 那种块里没有类型系统，所以那边写裸关键字、这边写字符串，
+     * 两边都进同一张表（[org.example.build.BuildPlan]）。
+     */
+    val TARGET = Builtin(
+        "target", listOf(RsfType.STRING, RsfType.STRING), RsfType.VOID, buildOnly = true,
+        doc = "加一个构建目标：target(\"@/src/app.rsf\", \"exe\")，种类 exe/lib/jar/copy（只有 build.rsfs 里能用）",
+    )
+
+    /** `need(a, b) -> void`：先做 a 再做 b（名字或路径都认，只有构建脚本里能用）。 */
+    val NEED = Builtin(
+        "need", listOf(RsfType.STRING, RsfType.STRING), RsfType.VOID, buildOnly = true,
+        doc = "改构建顺序：need(\"a\", \"b\") 表示先做 a 再做 b（只有 build.rsfs 里能用）",
+    )
+
+    // ---------------------------------------------- 规则里的依赖声明（阶段 83 步骤 2）
+
+    /**
+     * `javaInclude("libs/x.jar")` / `cInclude("native/util.c")` / `hInclude("native/util.h")` / `dirInclude("res")`。
+     *
+     * 四个都只做一件事：往构建宿主的依赖清单里加一条（和 `#dep { … }` 块里那些同一张表）。
+     * 有了它们，规则体才是「代码」——可以先 `exec` 生成、再按条件 `c(...)` 收文件，
+     * 而不是只能写死在块里。
+     *
+     * **名字只在构建脚本里占用**（见 Checker 的 `BUILTINS_BUILD_ONLY`）。改名成
+     * `…Include` 之后基本不会和用户函数撞车——`c` / `h` 这种单字母名字才是真的会撞。
+     */
+    val DEP_JAVA = Builtin(
+        "javaInclude", listOf(RsfType.STRING), RsfType.VOID, buildOnly = true, vararg = true,
+        doc = "声明 jar 依赖：javaInclude(\"libs/x.jar\", \"libs\")；给目录就是里面所有 *.jar（只有构建脚本里能用）",
+    )
+
+    val DEP_C = Builtin(
+        "cInclude", listOf(RsfType.STRING), RsfType.VOID, buildOnly = true, vararg = true,
+        doc = "声明 C 源文件依赖：cInclude(\"native/util.c\", \"native\")；给目录就是里面所有 *.c（只有构建脚本里能用）",
+    )
+
+    val DEP_H = Builtin(
+        "hInclude", listOf(RsfType.STRING), RsfType.VOID, buildOnly = true, vararg = true,
+        doc = "声明 C 头文件依赖：hInclude(\"native/util.h\", \"native\")；给目录就是里面所有 *.h（只有构建脚本里能用）",
+    )
+
+    val DEP_DIR = Builtin(
+        "dirInclude", listOf(RsfType.STRING), RsfType.VOID, buildOnly = true, vararg = true,
+        doc = "声明目录依赖：dirInclude(\"res\", \"assets\")；整个目录原样带走（只有构建脚本里能用）",
+    )
+
+    /**
+     * `__build_config(块名, 字段, 值)`：配置块解糖出来的内部调用（阶段 84）。
+     *
+     * `project { name = x }` 解析成 `__build_config("project", "name", x)`。
+     * 名字带下划线：这是**编译器的内部约定**，用户不该手写（写了也能用，但没意义——
+     * 它只是把值交给宿主）。字段是否存在、类型对不对，由宿主按 schema 校验。
+     */
+    val BUILD_CONFIG = Builtin(
+        "__build_config", listOf(RsfType.STRING, RsfType.STRING, RsfType.STRING), RsfType.VOID,
+        buildOnly = true,
+        doc = "内部：配置块解糖出来的调用（project { name = … }），不要手写",
+    )
+
+    // ------------------------------------------- 产物声明（target { … } 里用，阶段 84）
+
+    /**
+     * `target { exe("…") / lib("…") / jar("…") / copy("…", "…") }` 里的四个动词。
+     *
+     * 从 `#target` 指令改成块语句之后，产物声明和 `project { }` 同一套语法：
+     * 块里一行一条调用。四个都只往构建计划里加一行，顺序就是书写顺序。
+     */
+    val ART_EXE = Builtin(
+        "exe", listOf(RsfType.STRING), RsfType.VOID, buildOnly = true,
+        doc = "声明一个可执行文件产物：exe(\"@/src/main.rsf\")（只有构建脚本里能用）",
+    )
+
+    val ART_LIB = Builtin(
+        "lib", listOf(RsfType.STRING), RsfType.VOID, buildOnly = true,
+        doc = "声明一个目标文件产物：lib(\"@/src/lib.rsf\")（只有构建脚本里能用）",
+    )
+
+    val ART_JAR = Builtin(
+        "jar", listOf(RsfType.STRING), RsfType.VOID, buildOnly = true,
+        doc = "声明一个 JVM 包产物：jar(\"@/src/tool.rsf\")（只有构建脚本里能用）",
+    )
+
+    val ART_COPY = Builtin(
+        "copy", listOf(RsfType.STRING, RsfType.STRING), RsfType.VOID, buildOnly = true,
+        doc = "声明一次原样复制：copy(\"@/res/data.txt\", \"build/out/copied.txt\")（只有构建脚本里能用）",
+    )
+
+    /**
+     * `use 名字`：`run { use main }` 里的一行（阶段 84）。
+     *
+     * 语义是「这次运行要用到 X」：`project` / `dependencies` 表示项目配置与依赖已生效
+     * （它们本来就是全局的，这条是显式声明）；产物名则选中 `rsf run` 默认跑哪个。
+     * 按行执行，顺序即书写顺序。
+     */
+    val RUN_USE = Builtin(
+        "use", listOf(RsfType.STRING), RsfType.VOID, buildOnly = true,
+        doc = "run { use 名字 }：声明这次运行用到什么（项目配置 / 依赖 / 某个产物名）",
     )
 
     /** 带签名的内置函数（`print` / `println` 是单参数特例，签名不在这里表达）。 */
     val ALL: List<Builtin> = listOf(
         TO_BYTE, TO_CHAR, CHAR_TO_INT, INT_TO_STRING, PARSE_INT,
         IS_DIGIT, IS_LETTER, IS_WHITESPACE, TO_UPPER, TO_LOWER, STRING_BYTES, BYTE_LENGTH, SLICE,
-        READ_TEXT, WRITE_TEXT, READ_BYTES, WRITE_BYTES,
+        READ_TEXT, WRITE_TEXT, READ_BYTES, WRITE_BYTES, LAST_ERROR_MESSAGE,
         JVM_CALL, JVM_NEW, JVM_CALL_ON,
         MEM_BYTES, MEM_PEAK, GC_COLLECT,
-        OUT_DIR, COMPILE, COMPILE_ALL,
+        OUT_DIR, COMPILE, COMPILE_ALL, EXEC, TARGET, NEED,
+        DEP_JAVA, DEP_C, DEP_H, DEP_DIR, BUILD_CONFIG,
+        ART_EXE, ART_LIB, ART_JAR, ART_COPY, RUN_USE,
     )
 
     private val BY_NAME: Map<String, Builtin> = ALL.associateBy { it.name }
+
+    /**
+     * 「只在构建脚本里能用」的全部名字（阶段 84：**这里才是唯一的一份**）。
+     *
+     * 以前这份名单被抄在三个地方（Checker 的保留名检查、字节码后端的拒绝分支、
+     * C 后端的拒绝分支），加一个 `javaInclude` 就要改三遍，漏一处就是
+     * 「JVM 侧能编过、native 侧报错」这种没人想要的差异。现在三处都读 [BUILD_ONLY]。
+     */
+    val BUILD_ONLY: Set<String> = ALL.filter { it.buildOnly }.map { it.name }.toSet()
 
     val NAMES: Set<String> = BY_NAME.keys
 

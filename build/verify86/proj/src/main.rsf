@@ -1,0 +1,11 @@
+// C 依赖：`.c` 进链接、`.h` 进 -I。两个 import 就是顺序无关的声明，
+// 不用再写 #dep { cInclude(...) }。
+import "native/util.c"
+import "native/util.h"
+
+// 外部 C 函数：只有签名，函数体在 util.c 里
+extern fn util_add(a : Int, b : Int) -> Int
+
+fn main() -> void {
+    println("C 说：" + intToString(util_add(40, 2)))
+}

@@ -736,6 +736,8 @@ class SemanticModel(
     val propertyWrites: IdentityHashMap<MemberAssignStmt, UserMember.Method> = IdentityHashMap(),
     /** 阶段 85：全局变量声明（按声明顺序初始化）。 */
     val globalVars: List<GlobalVarDecl> = emptyList(),
+    /** 阶段 84：顶层配置块（`project { … }`），按书写顺序在 globals 之后求值。 */
+    val configs: List<org.example.complie.ast.ConfigBlock> = emptyList(),
     /** 阶段 85：全局变量 → 绑定（类型 + 能不能写）。 */
     val globalBindings: Map<String, Binding> = emptyMap(),
     /** 阶段 85：读全局变量的 VarExpr。 */
@@ -954,6 +956,14 @@ class SemanticModel(
         addressedOwners = owners
         usesPointers = uses
     }
+
+    /**
+     * 这份程序调过 `lastErrorMessage()` 吗（阶段 84）？
+     *
+     * 字节码后端据此决定要不要在程序类上发「最近一条错误」的静态字段与读取方法。
+     * 没调过的程序产物一个字节都不变（和 [usesPointers] 同一个理由）。
+     */
+    var usesLastErrorMessage: Boolean = false
 
     fun isAddressed(binding: Binding): Boolean = binding in addressedBindings
 

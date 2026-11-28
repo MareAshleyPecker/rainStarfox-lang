@@ -1,24 +1,28 @@
-// rainStarfox 阶段 14 示例：错误返回 `!T` 与 try / catch
+// rainStarfox 阶段 14 示例：错误返回 `!T` 与它的四种处理方式
 //
 // 跑：rsf run   rsfSrc/lang/errors.rsf          （解释器，不落地任何 .class）
 //     rsf build rsfSrc/lang/errors.rsf          （字节码：生成 errors.class）
 //     java -cp out errors
 // 查：rsf check rsfSrc/lang/errors.rsf
 //
-// 约定（两条后端的可观察行为完全一致，有测试守着）：
-//   * 返回子句前面加 `!`：`fun f(...) -> !Int` 表示「可能失败」。正常路径返回的
+// 约定（三个后端的可观察行为完全一致，有测试守着）：
+//   * 返回子句前面加 `!`：`fn f(...) -> !Int` 表示「可能失败」。正常路径返回的
 //     就是 Int，出错时走**异常**这条路（JVM 上就是 RuntimeException）——所以
 //     `!T` 在字节码里和 `T` 是同一个描述符，不新造类型、也不装箱。
-//   * 调用 `!T` 函数必须显式处理错误，三种写法任选：
-//       (a) try { ... } catch (e : String) { ... }    catch 变量就是那条消息
-//       (b) f(...) ?: 兜底值                         出错就取右边的值
-//       (c) f(...)!!                                 往上抛：本函数也得是 !T
-//   * `fail "消息"` 只能写在 !T 函数里，或者 try 块里。
+//   * 调用 `!T` 函数必须显式处理错误，四种写法任选：
+//       (a) f(...) ?: 兜底值        出错就取右边的值
+//       (b) f(...) ?: 兜底()        只要「出错时做点什么」：兜底写成 -> void 的函数，
+//                                  值丢掉，消息从 lastErrorMessage() 取
+//       (c) f(...)!!                往上抛：本函数也得是 !T（有返回值的用它）
+//       (d) try f(...)              在 !T 函数里原样往上抛（!void 只能这么抛）
+//   * `fail "消息"` 只能写在 !T 函数里，或者 `?:` 的兜底里。
+//   * `lastErrorMessage()` 是「最近一条错误消息」：被 `?:` 接住之后仍然保留，
+//     所以兜底函数里读到的就是刚才那条。
 //
-// 一条边界写清楚（阶段 70 有变）：`try` 现在也接得住 Java 互调抛出来的异常——
-// 文案是 `完整类名: 消息`（例如 `java.lang.NumberFormatException: For input string: "abc"`），
-// 而 rsf 自己的失败仍然只是消息原文。`?:` 不变，还是只认 rsf 自己的错误。
-// 语言自带的 `parseInt` 阶段 16 起就把 Java 异常换成了 rsf 消息（见 rsfSrc/lang/stdlib.rsf）。
+// 旧表面 `try { ... } catch (e : String) { ... }` 已经移除（阶段 84）：
+// 错误处理用上面四种写法就够了，不再需要 catch 绑定。
+// **运行期故障**（数组越界、`!!` 打到 null、除零）不是 `!T` 调用、接不住——
+// 三端一律中止程序并打一条清晰的错误消息，消息格式见 `rsfSrc/lang/arrays.rsf` 开头。
 
 // ---------------------------------------------------------------- 可能失败的函数
 
@@ -52,68 +56,85 @@ fn check(n : Int) -> !void {
     rtn
 }
 
+// ---------------------------------------------------------------- 兜底函数
+//
+// 兜底函数有两个常见形状，看你要不要成功路径上的值：
+//   * -> void：只想「出错时干点什么」，值丢掉（(b) 写法）
+//   * 与左边同类型：既要值、又要出错时干点什么，成功路径照常返回那个值
+
+// 只打印、不要值的兜底
+fn reportText(prefix : String) -> void {
+    println(prefix + lastErrorMessage())
+}
+
+// 要有值的兜底：不需要值时用它自己的返回值当结果
+fn valueOrMessage(prefix : String) -> String {
+    rtn prefix + lastErrorMessage()
+}
+
 // ---------------------------------------------------------------- 入口
 
 fn main() -> void {
-    // (a) try / catch：catch 变量是 String，就是 fail 的那条消息
-    println("== (a) try / catch ==")
-    try {
-        println("正常路径：" + readNumber("12"))
-    } catch (e : String) {
-        println("出错了：" + e)         // 正常路径不会走到这里
-    }
+    // (a) 想接住消息：?: 的兜底读 lastErrorMessage()
+    println("== (a) 出错时读到消息 ==")
+    println("正常路径：" + (readNumber("12") ?: 0))
+    readNumber("") ?: reportText("出错了：")
 
-    try {
-        var n = readNumber("")        // 空字符串 → 里面 fail
-        println("n = " + n)             // 上面那行失败了，这句不会执行
-    } catch (e : String) {
-        println("出错了：" + e)
-    }
+    // (b) 兜底是 -> void 的函数：值被丢掉，只保留「出错时做点什么」
+    println()
+    println("== (b) ?: 的 void 兜底 ==")
+    failInside() ?: reportText("接住了：")
 
-    // try 里也可以自己 fail：消息照样由这个 catch 接住
-    try {
-        fail "这是 try 块里直接 fail 出来的"
-    } catch (e : String) {
-        println("接住了：" + e)
-    }
-
-    // (b) `?:` 给兜底值：出错就取右边，结果类型是非 ! 的正常类型
-    println("== (b) ?: 兜底 ==")
+    // (c) `?:` 给兜底值：出错就取右边，结果类型是非 ! 的正常类型
+    println()
+    println("== (c) ?: 兜底值 ==")
     println("出错的：" + (readNumber("") ?: -1))
     println("正常的：" + (readNumber("12") ?: -1))
+    // 要值的兜底：兜底函数自己返回和左边同类型的值（这里顺便演示 String 的兜底）
+    println(lookup(-1) ?: valueOrMessage("查询失败："))
 
-    // (c) `!!` 往上抛 + 错误跨多层函数传播：
-    //     main → describe → lookup（lookup 里 fail），最后由 main 的 try 接住
-    println("== (c) !! 往上抛，跨层传播 ==")
-    try {
-        println(describe(7))
-        println(describe(-1))           // 这里 fail，下面那句不会执行
-        println("这一行不会执行")
-    } catch (e : String) {
-        println("跨层接住：" + e)
-    }
+    // (d) `!!` 往上抛 + 错误跨层函数传播：
+    //     main → describeBoth → describe → lookup（lookup 里 fail），最后由 ?: 接住
+    println()
+    println("== (d) !! 往上抛，跨层传播 ==")
+    describeBoth() ?: reportText("跨层接住：")
 
-    // `!void` 函数：处理方式和其他 !T 一样
+    // `!void` 函数：处理方式和其他 !T 一样（`!void` 不能写 `!!`，用 try 传播）
+    println()
     println("== !void ==")
-    try {
-        check(3)
-        check(-3)
-        println("这一行不会执行")
-    } catch (e : String) {
-        println("check 失败：" + e)
-    }
+    checkBoth() ?: reportText("check 失败：")
 
-    // 循环 / 分支里同样能用：处理体不在保护范围内，所以那里再调 !T 仍要显式处理
+    // 循环 / 分支里同样能用：兜底函数可以带参数（这里要把下标拼进消息）
+    println()
     println("== 循环里逐条处理 ==")
     var i = 0
     while (i < 3) {
-        try {
-            println(lookup(i - 1)!!)    // i = 0 时是 -1，会失败
-        } catch (e : String) {
-            println("第 " + i + " 次失败：" + e)
-        }
+        println(lookup(i - 1) ?: indexFailure(i))
         i = i + 1
     }
 
     rtn
+}
+
+// 多语句的「出错就整段跳过」：抽成一个 !T 函数，调用点再用 `?:` 兜底
+// （旧写法是 `try { 一堆语句 } catch (e) { ... }`）
+fn failInside() -> !void {
+    fail "这是 ?: 兜底接住的 fail"
+}
+
+fn describeBoth() -> !void {
+    println(describe(7)!!)
+    println(describe(-1)!!)     // 这里 fail，下面那句不会执行
+    println("这一行不会执行")
+}
+
+fn checkBoth() -> !void {
+    try check(3)
+    try check(-3)               // 这里 fail，下面那句不会执行
+    println("这一行不会执行")
+}
+
+// 兜底也可以带参数：把「第几次」和错误消息拼成一句话返回
+fn indexFailure(i : Int) -> String {
+    rtn "第 " + i + " 次失败：" + lastErrorMessage()
 }

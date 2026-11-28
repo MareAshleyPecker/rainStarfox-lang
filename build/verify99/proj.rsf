@@ -1,0 +1,33 @@
+fn warn() -> void {
+    println("兜底: " + lastErrorMessage())
+}
+
+fn badParse() -> !Int {
+    rtn parseInt("x")!!
+}
+
+fn badWrite() -> !void {
+    fail state, "写不进去"
+}
+
+fn nothing() -> !void {
+    // 成功路径：兜底不该跑
+}
+
+fn main() -> void {
+    println("初始:[" + lastErrorMessage() + "]")
+    // ① !T 的 ?: 兜底（老的用法，确认没被 void 分支影响）
+    val n = badParse() ?: -1
+    println("函数兜底: " + intToString(n))
+    println("之后: " + lastErrorMessage())
+    // ② 内置 !T 的 ?: 兜底（C 侧以前会把错误旗标漏给后面的语句，打印 0 而不是 42）
+    val m = parseInt("y") ?: 42
+    println("内置兜底: " + intToString(m))
+    println("之后2: " + lastErrorMessage())
+    // ③ !void 的 ?: 兜底——根除 try/catch 的那条路
+    badWrite() ?: warn()
+    nothing() ?: warn()
+    parseInt("z") ?: warn()          // !T 也可以只要「出错时做点什么」，值丢掉
+    writeText("out.txt", "hi") ?: warn()
+    println("文件: " + (readText("out.txt") ?: "读不到"))
+}

@@ -5,6 +5,11 @@ import org.example.complie.diag.RsfError
 import org.example.complie.diag.SourceFile
 import org.example.complie.directives.BuildSettings
 import org.example.complie.directives.DepEntry
+import org.example.complie.directives.DepKind
+import org.example.build.ImpexKind
+import org.example.build.ModuleImpex
+import org.example.build.PkgInfo
+import org.example.complie.directives.DirectiveRule
 import org.example.complie.lexing.Lexer
 import org.example.complie.parsing.Parser
 import java.io.File
@@ -72,6 +77,18 @@ class LoadedProgram(
     val globals: List<GlobalVarDecl> = emptyList(),
     /** 阶段 82：`build.rsfs` 里的 `#build { … }`；别的文件写了会报错。 */
     val build: BuildSettings? = null,
+    /**
+     * 阶段 83：所有参与编译的文件里 `#def` 声明的构建规则（保持载入顺序）。
+     *
+     * `#dep rule("名字")` 就按这张表认名字；规则体本身已经是普通函数（解糖过了），
+     * 所以「规则在哪份文件里」不影响调用——只要那份文件被 import 进来。
+     */
+    val rules: List<DirectiveRule> = emptyList(),
+    /**
+     * 阶段 84：顶层配置块（`project { … }`）。**只能写在项目根的 build.rsfs 里**
+     * （装载时校验），求值在 globals 之后、规则与 main 之前。
+     */
+    val configs: List<ConfigBlock> = emptyList(),
 ) {
     /** 合成一个 Program 交给 Checker。 */
     fun toProgram(): Program =
@@ -87,6 +104,7 @@ class LoadedProgram(
             annotations = annotations,
             gc = gc,
             globals = globals,
+            configs = configs,
         )
 }
 
@@ -130,8 +148,346 @@ class SourceLoader {
 
     /** 阶段 82：各文件 `#dep` 声明的依赖（`java`/`c`/`h`/`rule`），按出现顺序去重。 */
     private val deps = LinkedHashSet<DepEntry>()
+    private val rules = ArrayList<DirectiveRule>()
     /** 阶段 85：各文件的全局变量，按载入顺序合并（初值就按这个顺序跑）。 */
     private val globals = ArrayList<GlobalVarDecl>()
+    private val configs = ArrayList<ConfigBlock>()
+
+    /** 目录 → 它的 pkg-info.rsf 包名（null 表示这个目录没有/没写 pkg）。 */
+    private val dirPackageCache = HashMap<File, String?>()
+
+    /** 每个源文件里 `module "…" to 别名` 的声明：别名 → (目录, 成员表)。 */
+    private val fileAliases = HashMap<File, MutableList<Pair<ModuleAlias, File>>>()
+
+    /** 别名声明要导入的成员：白名单就逐个找同名文件，没有名单就整包。 */
+    private fun loadAliasMembers(imp: ModuleAlias, dir: File, source: SourceFile) {
+        val files = dir.listFiles { f ->
+            f.isFile && f.name.endsWith(".rsf") && f.name != PkgInfo.FILE_NAME && f.name != ModuleImpex.FILE_NAME
+        }?.sortedBy { it.name }.orEmpty()
+        if (files.isEmpty()) {
+            throw RsfError("loader", "module \"${imp.path}\" 里没有 .rsf 文件", imp.at.line, imp.at.column, source)
+        }
+        val members = imp.members
+        if (members == null) {
+            for (f in files) loadFile(f.canonicalFile, null)
+            return
+        }
+        for (name in members) {
+            val hit = files.firstOrNull { it.nameWithoutExtension == name }
+                ?: throw RsfError(
+                    "loader",
+                    "module \"${imp.path}\" 里没有成员 '$name'。可用的：${files.joinToString("、") { it.nameWithoutExtension }}",
+                    imp.at.line, imp.at.column, source,
+                )
+            loadFile(hit.canonicalFile, null)
+        }
+    }
+
+    /** `import std.Vec` 命中本文件别名时，按名字取那一个成员。 */
+    private fun loadAliasMember(
+        imp: ClassImport,
+        alias: String,
+        member: String,
+        dir: File,
+        allowed: List<String>?,
+    ) {
+        if (member.isEmpty() || member == "*") {
+            val files = dir.listFiles { f ->
+                f.isFile && f.name.endsWith(".rsf") && f.name != PkgInfo.FILE_NAME && f.name != ModuleImpex.FILE_NAME
+            }?.sortedBy { it.name }.orEmpty()
+            for (f in files) loadFile(f.canonicalFile, null)
+            return
+        }
+        val name = member.substringAfterLast('.')
+        if (allowed != null && name !in allowed) {
+            throw RsfError(
+                "loader",
+                "模块 '$alias' 的成员表里没有 '$name'。写着的：${allowed.joinToString("、")}",
+                imp.at.line, imp.at.column, null,
+            )
+        }
+        val hit = dir.listFiles { f -> f.isFile && f.name == "$name.rsf" }?.firstOrNull()
+            ?: throw RsfError(
+                "loader",
+                "模块 '$alias'（${dir.path}）里没有 '$name.rsf'",
+                imp.at.line, imp.at.column, null,
+            )
+        loadFile(hit.canonicalFile, null)
+    }
+
+    /** 项目根的 module-impex.rsf 清单（没有就 null）；键是规范化后的绝对路径。 */
+    private var manifestCache: Map<String, File>? = null
+    private var manifestRoot: File? = null
+
+    /**
+     * 阶段 84：清单门禁。项目根有 `module-impex.rsf` 时，跨目录 import 的目标
+     * 必须在清单里出现过（export / exportjvm / extern / import 任一）——
+     * **同目录的文件不受限制**（包内互见，类比 Java 的 package-private）。
+     *
+     * 构建脚本（build.rsfs）不受这条限制：它是驱动者，不是模块成员。
+     */
+    private fun gateImport(importer: SourceFile, target: File, imp: ImportDecl) {
+        val importerFile = File(importer.path).absoluteFile
+        if (importerFile.name == "build.rsfs") return
+        // 项目根按「哪个祖先目录有 module-impex.rsf」算——清单本身就是模块的边界，
+        // 不要求旁边一定还有 build.rsfs（单模块仓库可以只有清单）。
+        val root = findManifestRoot(importerFile.parentFile ?: importerFile) ?: return
+        val manifestFile = File(root, ModuleImpex.FILE_NAME)
+        if (!manifestFile.isFile) return
+        // 同目录：包内互见
+        if (target.parentFile?.canonicalFile == importerFile.parentFile?.canonicalFile) return
+        val listed = manifestEntries(root, manifestFile)
+        val canonical = target.canonicalFile.path
+        if (listed.containsKey(canonical)) return
+        // 包形态：目标文件在清单声明的包目录下，就算对外提供（`export pkg std`）
+        for (dir in packageDirs(root, manifestFile)) {
+            if (canonical.startsWith(dir.canonicalFile.path + File.separator)) return
+        }
+        throw RsfError(
+            "loader",
+            "'${target.name}' 没有出现在 ${ModuleImpex.FILE_NAME} 里：" +
+                "跨目录用它，要么在清单里加 export \"…\"（对外可见），" +
+                "要么加 import \"…\"（只在本模块内部用）。同目录的文件不受这条限制",
+            imp.at.line, imp.at.column, importer,
+        )
+    }
+
+    /**
+     * `import std.Vec` / `import std.*` / `import std`：把一个包里的源码拉进来。
+     *
+     * `*` 或包名本身 = 整个目录；否则按最后一段找同名 `.rsf`（Java 的「一个类一个文件」）。
+     */
+    private fun loadPackageImport(imp: ClassImport, pkg: String, member: String, dir: File) {
+        if (!dir.isDirectory) {
+            throw RsfError(
+                "loader",
+                "包 '$pkg'（对应目录 ${dir.path}）不存在：module-impex.rsf 里的包名要和 stdlib/ 下的目录一致",
+                imp.at.line, imp.at.column, null,
+            )
+        }
+        val files = dir.listFiles { f ->
+            f.isFile && f.name.endsWith(".rsf") && f.name != PkgInfo.FILE_NAME && f.name != ModuleImpex.FILE_NAME
+        }?.sortedBy { it.name }.orEmpty()
+        val picked = when {
+            member.isEmpty() || member == "*" -> files
+            else -> {
+                val name = member.substringAfterLast('.')
+                val hit = files.firstOrNull { it.nameWithoutExtension == name }
+                    ?: throw RsfError(
+                        "loader",
+                        "包 '$pkg' 里没有 '$member'。可用的：${files.joinToString("、") { it.nameWithoutExtension }}",
+                        imp.at.line, imp.at.column, null,
+                    )
+                listOf(hit)
+            }
+        }
+        if (picked.isEmpty()) {
+            throw RsfError("loader", "包 '$pkg' 里没有 .rsf 文件", imp.at.line, imp.at.column, null)
+        }
+        for (f in picked) loadFile(f.canonicalFile, null)
+    }
+
+    /**
+     * `import std.Vec` / `import std.*` / `import std`：从别名指向的目录里取源码。
+     *
+     * 白名单（`module "stdlib/std" to std { Vec Text }`）在这里生效：
+     * 不在表里的成员直接报错并列出可用的，而不是让它掉进 JVM 类的报错。
+     */
+    private fun loadModuleMember(
+        imp: ClassImport,
+        alias: String,
+        member: String,
+        dir: File,
+        table: ModuleTable,
+    ) {
+        if (!dir.isDirectory) {
+            throw RsfError(
+                "loader",
+                "模块 '$alias' 的目录不存在：${dir.path}（module 清单里写的是相对项目根的路径）",
+                imp.at.line, imp.at.column, null,
+            )
+        }
+        val allowed = table.members[alias]
+        val files = dir.listFiles { f ->
+            f.isFile && f.name.endsWith(".rsf") && f.name != PkgInfo.FILE_NAME && f.name != ModuleImpex.FILE_NAME
+        }?.sortedBy { it.name }.orEmpty()
+        val visible = if (allowed == null) files else files.filter { it.nameWithoutExtension in allowed }
+        val picked = when {
+            member.isEmpty() || member == "*" -> visible
+            else -> {
+                val name = member.substringAfterLast('.')
+                if (allowed != null && name !in allowed) {
+                    throw RsfError(
+                        "loader",
+                        "模块 '$alias' 没有开放 '$name'。开放的成员：${allowed.joinToString("、")}",
+                        imp.at.line, imp.at.column, null,
+                    )
+                }
+                val hit = visible.firstOrNull { it.nameWithoutExtension == name }
+                    ?: throw RsfError(
+                        "loader",
+                        "模块 '$alias' 里没有 '$name'。可用的：${visible.joinToString("、") { it.nameWithoutExtension }}",
+                        imp.at.line, imp.at.column, null,
+                    )
+                listOf(hit)
+            }
+        }
+        if (picked.isEmpty()) {
+            throw RsfError("loader", "模块 '$alias' 里没有可导入的 .rsf 文件", imp.at.line, imp.at.column, null)
+        }
+        for (f in picked) loadFile(f.canonicalFile, null)
+    }
+
+    private fun findManifestRoot(from: File): File? {
+        var d: File? = from.absoluteFile
+        while (d != null) {
+            if (File(d, ModuleImpex.FILE_NAME).isFile) return d
+            d = d.parentFile
+        }
+        return null
+    }
+
+    /**
+     * 包的解析表：**项目自己的清单** + **工具链的清单**（标准库跟着编译器走）。
+     *
+     * 项目清单优先（同名包先看项目里的），没有项目清单时只用工具链的。
+     * 这就是为什么用户项目里不写 `module-impex.rsf` 也能 `import std.Vec`。
+     */
+    private fun packageTableFor(file: File): PackageTable? {
+        val projectRoot = findManifestRoot(file.parentFile ?: file)
+        val merged = LinkedHashMap<String, File>()
+        val exportedAll = LinkedHashSet<String>()
+        if (projectRoot != null) {
+            val t = packagesOf(projectRoot, File(projectRoot, ModuleImpex.FILE_NAME))
+            merged.putAll(t.dirs)
+            exportedAll.addAll(t.exported)
+        }
+        val toolchainRoot = org.example.build.Stdlib.dir().parentFile
+        if (toolchainRoot != null) {
+            val f = File(toolchainRoot, ModuleImpex.FILE_NAME)
+            if (f.isFile) {
+                val t = packagesOf(toolchainRoot, f)
+                for ((k, v) in t.dirs) merged.putIfAbsent(k, v)
+                exportedAll.addAll(t.exported)
+            }
+        }
+        if (merged.isEmpty()) return null
+        return PackageTable(merged, exportedAll)
+    }
+
+    /**
+     * 模块别名表：`module "stdlib/std" to std` → `std` 指向 `<根>/stdlib/std`。
+     *
+     * 源码里的 `import std.Vec` 先查这张表（命中就是 rsf 的包成员），
+     * 没命中才按 JVM 类解析——歧义因此只可能来自"别名和 JDK 包重名"，
+     * 而别名是你在清单里亲手起的。
+     */
+    private class ModuleTable(
+        val dirs: Map<String, File>,
+        val members: Map<String, Set<String>?>,
+        val internal: Set<String>,
+    )
+
+    private var moduleTable: ModuleTable? = null
+    private var moduleTableRoot: File? = null
+
+    private fun modulesOf(root: File, manifestFile: File): ModuleTable {
+        moduleTable?.let { if (moduleTableRoot == root) return it }
+        val dirs = LinkedHashMap<String, File>()
+        val members = LinkedHashMap<String, Set<String>?>()
+        val internal = LinkedHashSet<String>()
+        for (e in ModuleImpex.parse(manifestFile)) {
+            if (e.kind != ImpexKind.MODULE_DECL) continue
+            val alias = e.alias ?: continue
+            dirs[alias] = File(root, e.path)
+            members[alias] = e.members
+            if (e.internal) internal.add(alias)
+        }
+        val table = ModuleTable(dirs, members, internal)
+        moduleTable = table
+        moduleTableRoot = root
+        return table
+    }
+
+    /** 项目清单 + 工具链清单的别名表（项目优先）。 */
+    private fun moduleTableFor(file: File): ModuleTable? {
+        val dirs = LinkedHashMap<String, File>()
+        val members = LinkedHashMap<String, Set<String>?>()
+        val internal = LinkedHashSet<String>()
+        findManifestRoot(file.parentFile ?: file)?.let { root ->
+            val t = modulesOf(root, File(root, ModuleImpex.FILE_NAME))
+            for ((k, v) in t.dirs) if (!dirs.containsKey(k)) { dirs[k] = v; members[k] = t.members[k] }
+            internal.addAll(t.internal)
+        }
+        org.example.build.Stdlib.dir().parentFile?.let { root ->
+            val f = File(root, ModuleImpex.FILE_NAME)
+            if (f.isFile) {
+                val t = modulesOf(root, f)
+                for ((k, v) in t.dirs) if (!dirs.containsKey(k)) { dirs[k] = v; members[k] = t.members[k] }
+                internal.addAll(t.internal)
+            }
+        }
+        if (dirs.isEmpty()) return null
+        return ModuleTable(dirs, members, internal)
+    }
+
+    /** 清单里声明的包：包名 → 目录（约定 `<根>/stdlib/<包名>`），以及哪些包对外导出。 */
+    private class PackageTable(val dirs: Map<String, File>, val exported: Set<String>)
+
+    private var packageTable: PackageTable? = null
+    private var packageTableRoot: File? = null
+
+    private fun packagesOf(root: File, manifestFile: File): PackageTable {
+        packageTable?.let { if (packageTableRoot == root) return it }
+        val dirs = LinkedHashMap<String, File>()
+        val exported = LinkedHashSet<String>()
+        for (e in ModuleImpex.parse(manifestFile)) {
+            if (e.kind != ImpexKind.PACKAGE_EXPORT && e.kind != ImpexKind.PACKAGE_IMPORT) continue
+            dirs[e.path] = File(root, "stdlib/${e.path}")
+            if (e.kind == ImpexKind.PACKAGE_EXPORT) exported.add(e.path)
+        }
+        val table = PackageTable(dirs, exported)
+        packageTable = table
+        packageTableRoot = root
+        return table
+    }
+
+    /** 清单里声明的包目录（`export pkg std` → `<root>/stdlib/std`）。 */
+    private fun packageDirs(root: File, manifestFile: File): List<File> {
+        val dirs = ArrayList<File>()
+        for (e in ModuleImpex.parse(manifestFile)) {
+            when (e.kind) {
+                // 老写法：`export pkg std` / `import pkg std` 的路径是**相对 stdlib/** 的包名
+                ImpexKind.PACKAGE_EXPORT, ImpexKind.PACKAGE_IMPORT ->
+                    dirs += File(root, "stdlib/${e.path}")
+                // 阶段 84b：`module "stdlib/x" to x { … }` 的路径是仓库相对路径。
+                // 模块目录里的文件属于同一个模块，仓库内部按路径 import 不该被门禁挡住
+                // （对外开放面仍由别名成员表管）。自举的 class 写出器就是这样用的。
+                ImpexKind.MODULE_DECL -> dirs += File(root, e.path)
+                else -> {}
+            }
+        }
+        return dirs.filter { it.isDirectory }
+    }
+
+    private fun manifestEntries(root: File, manifestFile: File): Map<String, File> {
+        manifestCache?.let { if (manifestRoot == root) return it }
+        val map = LinkedHashMap<String, File>()
+        for (e in ModuleImpex.parse(manifestFile)) {
+            val f = if (File(e.path).isAbsolute) File(e.path) else File(root, e.path)
+            map[f.canonicalFile.path] = f
+        }
+        manifestCache = map
+        manifestRoot = root
+        return map
+    }
+
+    private fun pkgOfDir(dir: File?): String? {
+        if (dir == null) return null
+        return dirPackageCache.getOrPut(dir) {
+            runCatching { org.example.build.PkgInfo.readIn(dir)?.packageName }.getOrNull()
+        }
+    }
 
     /** 阶段 82：`build.rsfs` 的 `#build` 设置（`Directives.parse` 已经保证只有它能写）。 */
     private var build: BuildSettings? = null
@@ -181,6 +537,8 @@ class SourceLoader {
             gc = resolveGc(root),
             deps = deps.toList(),
             build = build,
+            rules = rules.toList(),
+            configs = configs.toList(),
             globals = globals.toList(),
         )
     }
@@ -227,10 +585,25 @@ class SourceLoader {
             return
         }
 
-        // 包声明：校验「文件真的在那个目录下」，根文件的包名留给生成 .class 用
-        program.packageName?.let { pkg ->
-            checkPackage(pkg, file, source)
-            if (files.first() === source) rootPackage = pkg
+        // 包声明：校验「文件真的在那个目录下」，根文件的包名留给生成 .class 用。
+        // 阶段 84：文件自己没写 pkg 时，继承同目录 pkg-info.rsf 里的包名；
+        // 两边都写就必须一致（两份声明说不同的包，没法猜哪份算数）。
+        val dirPkg = pkgOfDir(file.parentFile)
+        val declared = program.packageName
+        if (declared != null) {
+            if (dirPkg != null && dirPkg != declared) {
+                throw RsfError(
+                    "loader",
+                    "这个文件的 'pkg $declared' 和同目录 pkg-info.rsf 的 'pkg $dirPkg' 不一致：" +
+                        "包名只该在一处声明（写了 pkg-info.rsf 就从文件里删掉 pkg）",
+                    1, 1, source,
+                )
+            }
+            checkPackage(declared, file, source)
+            if (files.first() === source) rootPackage = declared
+        } else if (dirPkg != null) {
+            checkPackage(dirPkg, file, source)
+            if (files.first() === source) rootPackage = dirPkg
         }
 
         // 阶段 77：先记下来，等全部文件读完再挑（要知道 main 在哪份文件里）。
@@ -240,6 +613,19 @@ class SourceLoader {
         // 阶段 82：`#dep` 相加、`#build` 只认 build.rsfs（Directives.parse 已保证唯一）。
         source.directives.deps.forEach { deps.add(it) }
         source.directives.build?.let { if (build == null) build = it }
+        rules.addAll(source.directives.rules)
+        // 阶段 84：配置块。它描述「整份构件」，和 #build 一样只认项目根的 build.rsfs。
+        for (cfg in program.configs) {
+            if (source.name != "build.rsfs") {
+                throw RsfError(
+                    "loader",
+                    "配置块 ${cfg.name} { … } 只能写在项目根目录的 build.rsfs 里：" +
+                        "它描述的是整份构件的设置，写进普通源文件会让人猜不到最终用哪套",
+                    cfg.at.line, cfg.at.column, source,
+                )
+            }
+            configs.add(cfg)
+        }
         // 阶段 85：合并全局变量（整程序一份；顺序 = 载入顺序，初值就按这个顺序跑）。
         for (g in program.globals) globals.add(g)
 
@@ -292,14 +678,55 @@ class SourceLoader {
         for (imp in program.imports) {
             importDecls.add(imp)
             when (imp) {
-                is ClassImport -> classImports.add(imp.path)
+                is ClassImport -> {
+                    // 先查模块别名表：`import std.Vec` 命中 `module "…" to std` 就是 rsf 的包；
+                    // 没命中才按 JVM 类解析（`import java.lang.Math` 照旧）。
+                    val head = imp.path.substringBefore('.')
+                    // ① 本文件里 `module "…" to X` 声明的别名优先
+                    val local = fileAliases[file]?.firstOrNull { it.first.alias == head }
+                    if (local != null) {
+                        loadAliasMember(imp, head, imp.path.removePrefix(head).trimStart('.'), local.second, local.first.members)
+                        importDecls.remove(imp)
+                        continue
+                    }
+                    // ② 项目/工具链清单里的模块
+                    val table = moduleTableFor(file)
+                    val dir = table?.dirs?.get(head)
+                    if (dir != null) {
+                        loadModuleMember(imp, head, imp.path.removePrefix(head).trimStart('.'), dir, table)
+                        importDecls.remove(imp)
+                    } else {
+                        classImports.add(imp.path)
+                    }
+                }
 
-                is SourceImport -> loadFile(resolvePath(imp.path, dir, imp), null)
+                is SourceImport -> {
+                    val resolved = resolvePath(imp.path, dir, imp)
+                    gateImport(source, resolved, imp)
+                    // 阶段 84：`import "native/util.c"` / `"util.h"` 不是 rsf 源码，
+                    // 而是 C 依赖——`.c` 进链接（等于 cInclude）、`.h` 只进 `-I`（等于 hInclude）。
+                    // 这是**唯一**按扩展名分流的地方：别的扩展名照旧当源码。
+                    when (resolved.extension.lowercase()) {
+                        "c" -> deps.add(DepEntry(DepKind.C, depPath(resolved)))
+                        "h" -> deps.add(DepEntry(DepKind.H, depPath(resolved)))
+                        else -> loadFile(resolved, null)
+                    }
+                }
+
+                // 阶段 84：`module "stdlib/std" to std { Vec Text }`——声明即导入。
+                // 别名记进本文件的表（供 `import std.Vec` 用），成员按白名单/整包拉进来。
+                is ModuleAlias -> {
+                    val aliasDir = resolveDir(imp.path, dir, imp)
+                    fileAliases.getOrPut(file) { ArrayList() }.add(imp to aliasDir)
+                    loadAliasMembers(imp, aliasDir, source)
+                }
 
                 is ModuleImport -> {
                     val moduleDir = resolveDir(imp.path, dir, imp)
                     val entries = moduleDir.listFiles { f ->
-                        f.isFile && (f.name.endsWith(".rsf") || f.name.endsWith(".rsfs"))
+                        f.isFile && (f.name.endsWith(".rsf") || f.name.endsWith(".rsfs")) &&
+                            // 两个特殊文件是元信息/清单，不是源码
+                            f.name != PkgInfo.FILE_NAME && f.name != ModuleImpex.FILE_NAME
                     }
                         ?.sortedBy { it.name }
                         ?: emptyList()
@@ -316,7 +743,60 @@ class SourceLoader {
         }
     }
 
+    /**
+     * `@/xxx`：相对**项目根**（最近的、含 build.rsfs 的祖先目录）。
+     *
+     * 这样跨层引用不用写 `../../..`，层级一变也不用改：`@/rsfSrc/core/Vec.rsf`。
+     * 工程里没有 build.rsfs 时退回本次加载的根目录。
+     */
+    /** 从 [from] 往上找带 `build.rsfs` 的目录；没有项目就返回 null（`@/` 那种情况要求必须有）。 */
+    private fun findProjectRoot(from: File): File? {
+        var d: File? = from.absoluteFile
+        while (d != null) {
+            if (File(d, "build.rsfs").isFile) return d
+            d = d.parentFile
+        }
+        return null
+    }
+
+    private fun projectRoot(from: File): File {
+        var d: File? = from.absoluteFile
+        while (d != null) {
+            if (File(d, "build.rsfs").isFile) return d
+            d = d.parentFile
+        }
+        return rootDir ?: from.absoluteFile
+    }
+
+    /**
+     * 依赖清单里的路径：**相对项目根**（和 `#dep`、`@/` 同一套基准）。
+     *
+     * 不在项目里（比如系统里的 `.h`）就退回绝对路径——锁文件里至少还是一个能定位的路径。
+     */
+    private fun depPath(file: File): String {
+        // 有 build.rsfs 就相对项目根（与 `@/`、`#dep` 同一套基准）；没有项目就相对**当前目录**
+        // ——构建命令解析依赖时用的就是当前目录，两边必须同基准，否则清单里的路径指回别处。
+        val root = findProjectRoot(file.parentFile ?: file) ?: File(".").absoluteFile
+        return try {
+            file.absoluteFile.normalize().relativeTo(root.absoluteFile.normalize()).path
+        } catch (e: IllegalArgumentException) {
+            file.absolutePath
+        }
+    }
+
     private fun resolvePath(path: String, fromDir: File, imp: ImportDecl): File {
+        if (path.startsWith("@/")) {
+            val root = projectRoot(fromDir)
+            val f = File(root, path.removePrefix("@/"))
+            if (!f.isFile) {
+                throw RsfError(
+                    "loader",
+                    "找不到被 import 的文件 '$path'：@/ 指项目根 ${root.path}",
+                    imp.at.line, imp.at.column, files.last(),
+                )
+            }
+            return f.canonicalFile
+        }
         val candidates = searchBases(path, fromDir)
         val hit = candidates.firstOrNull { it.isFile }
         if (hit == null) {
@@ -330,7 +810,7 @@ class SourceLoader {
         return hit.canonicalFile
     }
 
-    private fun resolveDir(path: String, fromDir: File, imp: ModuleImport): File {
+    private fun resolveDir(path: String, fromDir: File, imp: ImportDecl): File {
         val candidates = searchBases(path, fromDir)
         val hit = candidates.firstOrNull { it.isDirectory }
         if (hit == null) {
@@ -356,6 +836,12 @@ class SourceLoader {
         bases.add(fromDir)
         bases.add(File("."))
         rootDir?.let { bases.add(it) }
+        // 标准库命名空间：`import "std/Vec.rsf"` 里的 `std` 是包名（= stdlib 下的目录）。
+        // 先项目、后工具链；工具链那份跟着**编译器**走，不跟项目走。
+        findManifestRoot(fromDir)?.let { bases.add(File(it, "stdlib")) }
+        org.example.build.Stdlib.dir().parentFile?.let { bases.add(File(it, "stdlib")) }
+        // 顺带也认 `import "stdlib/std/Vec.rsf"` 这种带前缀的完整路径
+        org.example.build.Stdlib.dir().parentFile?.let { bases.add(it) }
         return bases.map { File(it, cleaned) }
     }
 

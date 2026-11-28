@@ -1,0 +1,7 @@
+fn boom() -> !void {
+    fail "nope", "x"
+}
+
+fn main() -> void {
+    boom() ?: println("x")
+}

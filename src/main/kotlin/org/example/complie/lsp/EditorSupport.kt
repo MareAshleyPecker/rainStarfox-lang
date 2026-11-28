@@ -1,5 +1,6 @@
 package org.example.complie.lsp
 
+import org.example.build.ProjectJars
 import org.example.complie.Rsf
 import org.example.complie.ast.*
 import org.example.complie.diag.RsfError
@@ -59,6 +60,8 @@ object EditorSupport {
     fun diagnostics(file: File, baseDir: File?, text: String? = null, script: Boolean = false): List<Located> {
         val out = ArrayList<Located>()
         try {
+            // 阶段 84：先按项目根判定「编辑器该看见哪些 jar」，再分析
+            ProjectJars.installFor(file)
             val loaded = Rsf.load(file, baseDir, text, script = script)
             val model = Rsf.analyze(loaded)
             for (d in model.diagnostics) {
@@ -75,7 +78,7 @@ object EditorSupport {
                     underlineEnd(src, e.line, e.column),
                     "error",
                     e.phase,
-                    e.detail,
+                    e.detail + org.example.build.StdlibIndex.hintFor(e.detail),
                 ),
             )
         }
@@ -116,16 +119,36 @@ object EditorSupport {
 
     fun completionJson(file: File, text: String?, line: Int, col: Int, baseDir: File?): String {
         val items = completions(file, text, line, col, baseDir)
+        val sourceForEdit = if (text != null) SourceFile.of(file.path, text) else SourceFile.of(file)
         val sb = StringBuilder("{\"items\":[")
         for ((i, item) in items.withIndex()) {
             if (i > 0) sb.append(',')
             sb.append("{\"label\":\"").append(Json.escape(item.label)).append('"')
             sb.append(",\"kind\":\"").append(item.kind).append('"')
             sb.append(",\"detail\":\"").append(Json.escape(item.detail)).append('"')
+            val imp = item.insertImport
+            if (imp != null) {
+                // 插在最后一个 import 之后（没有 import 就插在第 0 行）
+                val at = lastImportLine(sourceForEdit, text) + 1
+                sb.append(",\"additionalTextEdits\":[{\"range\":{\"start\":{\"line\":")
+                    .append(at).append(",\"character\":0},\"end\":{\"line\":").append(at)
+                    .append(",\"character\":0}},\"newText\":\"").append(Json.escape(imp + "\n")).append("\"}]")
+            }
             sb.append('}')
         }
         sb.append("]}")
         return sb.toString()
+    }
+
+    /** 最后一条 import/module 语句的行号（0 基）；没有就 -1，用来插入自动导入。 */
+    private fun lastImportLine(source: SourceFile, text: String?): Int {
+        val body = text ?: source.text
+        var last = -1
+        body.lines().forEachIndexed { i, line ->
+            val t = line.trim()
+            if (t.startsWith("import ") || t.startsWith("module ")) last = i
+        }
+        return last
     }
 
     /** 补全的**类型化**结果（守护进程用；顺序与去重规则都在 [Completer] 里）。 */
@@ -137,6 +160,8 @@ object EditorSupport {
         var ownFunctions: List<FuncDecl> = emptyList()
         var allFunctions: List<FuncDecl> = emptyList()
         runCatching {
+            // 阶段 84：先按项目根判定「编辑器该看见哪些 jar」，再分析
+            ProjectJars.installFor(file)
             val loaded = Rsf.load(file, baseDir, text, script = script)
             allFunctions = loaded.functions
         }
@@ -151,7 +176,18 @@ object EditorSupport {
 }
 
 /** 一条补全建议。kind 会映射成编辑器的 CompletionItemKind。 */
-data class CompletionItem(val label: String, val kind: String, val detail: String)
+data class CompletionItem(
+    val label: String,
+    val kind: String,
+    val detail: String,
+    /**
+     * 选中这一项时要自动插入的 import（阶段 84）。
+     *
+     * 例：标准库 `Vec` → `import std.Vec`。详情里也写一遍，用户不选中也能看见
+     * 它需要哪条 import。null = 不需要额外编辑。
+     */
+    val insertImport: String? = null,
+)
 
 /**
  * 在「第 line 行第 col 列」这个位置算出可以补什么。
@@ -179,6 +215,8 @@ class Completer(
     fun items(): List<CompletionItem> {
         // 成员访问优先：`Math.` 这种要先看接收者
         memberItems()?.let { return it }
+        // `import ` 这一行单列：依赖 jar 里的类只有这里补得出来
+        importItems()?.let { return it }
 
         val out = ArrayList<CompletionItem>()
         for (k in KEYWORDS) {
@@ -206,8 +244,82 @@ class Completer(
         } else {
             fallbackItems(out)
         }
+        out.addAll(stdlibItems())
         return out.distinctBy { it.label + it.kind }
     }
+    /**
+     * 标准库里**还没导入**的符号（阶段 84）。
+     *
+     * 只认光标前的标识符前缀，并且跳过文件里已经 import 过的模块——
+     * 这样「写了 `Vec` 却忘了 import」时，补全列表里就有 `Vec`，选中即插入
+     * `import std.Vec`。成员范围以 `module-impex.rsf` 的声明为准。
+     */
+    private fun stdlibItems(): List<CompletionItem> {
+        val lineText = source.lineAt(line) ?: return emptyList()
+        val upto = lineText.take((col - 1).coerceIn(0, lineText.length))
+        // 只在「裸标识符」位置补：`x.` 之后是成员补全，`"` 里是字符串
+        val prefix = Regex("(?:^|[^A-Za-z0-9_.])([A-Za-z_][A-Za-z0-9_]*)$").find(upto)?.groupValues?.get(1)
+            ?: return emptyList()
+        if (importedModules().any { prefix == it || prefix.startsWith("$it.") }) return emptyList()
+        val text = source.text
+        return org.example.build.StdlibIndex.startingWith(prefix).mapNotNull { sym ->
+            // 已经 import 过这个模块就别再建议
+            if (text.contains("import ${sym.importSpec.removePrefix("import ")}")) return@mapNotNull null
+            CompletionItem(
+                label = sym.name,
+                kind = sym.kind,
+                detail = "标准库 · 选择后自动加入 ${sym.importSpec}",
+                insertImport = sym.importSpec,
+            )
+        }
+    }
+
+    /**
+     * 这个文件已经导入了哪些模块别名。
+     *
+     * 两种写法都算：`import std.Vec`（点分）与
+     * `module "stdlib/std" to std { … }`（声明即导入，阶段 84）。
+     */
+    private fun importedModules(): Set<String> {
+        val out = LinkedHashSet<String>()
+        for (line in source.text.lines()) {
+            val t = line.trim()
+            if (t.startsWith("import ")) {
+                val spec = t.removePrefix("import ").trim().substringBefore(' ')
+                if (!spec.startsWith("\"")) out.add(spec.substringBefore('.'))
+                continue
+            }
+            if (t.startsWith("module ")) {
+                val m = Regex("module \"[^\"]*\" to ([A-Za-z_][A-Za-z0-9_]*)").find(t)
+                if (m != null) out.add(m.groupValues[1])
+            }
+        }
+        return out
+    }
+
+    // ------------------------------------------------------------------ import
+
+    /**
+     * 光标停在 `import 前缀` 上时，给出**依赖 jar 里的类名**（阶段 84）。
+     *
+     * 只认「行首 import + 一个还没写完的点分名字」，所以别的位置不受影响；
+     * 没有任何依赖 jar 时返回 null，让调用方回到通用的候选列表。
+     *
+     * 为什么只补 jar 里的类、不补 JDK：JDK 那几千个类塞进来只会淹没候选，
+     * 而 `import java.lang.Math` 这种用户基本是自己写（或用 IDE 的 JDK 索引）。
+     */
+    private fun importItems(): List<CompletionItem>? {
+        val lineText = source.lineAt(line) ?: return null
+        val upto = lineText.take((col - 1).coerceIn(0, lineText.length))
+        val typed = IMPORT_TAIL.find(upto)?.groupValues?.get(1) ?: return null
+        val out = ArrayList<CompletionItem>()
+        for (name in ProjectJars.installedClassNames()) {
+            if (typed.isNotEmpty() && !name.startsWith(typed)) continue
+            out.add(CompletionItem(name, "class", "依赖 jar 里的类"))
+        }
+        return out.ifEmpty { null }
+    }
+
     // ------------------------------------------------------------------ 成员
 
     /** 光标前是 `xxx.` 或 `xxx.部分名字` 时，列出 xxx 的成员；不是则返回 null。 */
@@ -544,6 +656,9 @@ class Completer(
 
         /** 光标前是不是 `名字.` 或 `名字.部分`。 */
         val MEMBER_TAIL = Regex("([A-Za-z_][A-Za-z0-9_]*)\\s*\\.\\s*([A-Za-z_][A-Za-z0-9_]*)?$")
+
+        /** `import ` 之后那半个点分名字（可以为空）：`import demo.Ut` -> `demo.Ut`。 */
+        val IMPORT_TAIL = Regex("""^\s*import\s+([A-Za-z0-9_.]*)$""")
     }
 }
 

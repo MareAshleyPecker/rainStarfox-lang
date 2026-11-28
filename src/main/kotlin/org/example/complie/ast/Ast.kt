@@ -437,6 +437,15 @@ data class FuncDecl(
      */
     val isOverride: Boolean = false,
     /**
+     * 写没写 `extern`（阶段 84）：**外部 C 函数的声明**，只有签名没有体。
+     *
+     * 和 [body] 为 null 是同一件事的两个面：`extern fn util_ok() -> Int` 解析出来
+     * 就是「无体 + isExtern」。下游据此分流——Checker 不求值、C 后端发原型并直接调用、
+     * JVM/解释器显式拒绝。名字在 C 里**不加前缀**（`rsf_fn_` 只用于 rsf 自己的函数），
+     * 因为要调的就是外部那个符号。
+     */
+    val isExtern: Boolean = false,
+    /**
      * 显式写了 `final`（阶段 25；阶段 27 起它是**唯一**的收窄手段）：禁止被子类覆盖。
      *
      * 阶段 27 反转了旧法：方法**默认可覆盖**，只有写了 `final` 才封（DESIGN-27）。
@@ -534,9 +543,45 @@ data class ModuleImport(
     override val at: SourceLine,
 ) : ImportDecl
 
+/**
+ * 模块别名（阶段 84）：`module "stdlib/std" to std { Vec, Text }`。
+ *
+ * 写在**普通源文件**顶部：声明「把这个目录叫作 std，并把列出的成员导进来」，
+ * 声明完就能直接用（`new Vec&<Int>()`）。[members] 为 null 表示整包。
+ *
+ * 和 [ModuleImport] 的区别：那个只是"把目录里所有文件并进来"；这个是**起名字**
+ * 并给出可见成员表，源码里也能写 `import std.Vec`。
+ */
+data class ModuleAlias(
+    override val path: String,
+    val alias: String,
+    /** null = 整包；非空 = 只导入这些成员。 */
+    val members: List<String>?,
+    override val at: SourceLine,
+) : ImportDecl
+
+/**
+ * 配置块（阶段 84）：`project { name = projectName, ver = version }`。
+ *
+ * **它是声明，不是语句**——所以能和 `main` 并存，初值在 globals 之后、规则与 main 之前
+ * 求值一次（`const val projectName` 那种全局因此可以引用）。块名与字段由宿主按 schema
+ * 校验（现在只有 `project`）；[entries] 保持书写顺序。
+ */
+data class ConfigBlock(
+    val name: String,
+    /**
+     * 条目统一是**表达式**：`name = x` 解糖成 `__build_config("project","name",x)`，
+     * `exe("a.rsf")` 就是它自己。这样字段赋值与动词调用共用一条求值路径。
+     */
+    val entries: List<Expr>,
+    override val at: SourceLine,
+) : Node
+
 data class Program(
     val imports: List<ImportDecl>,
     val functions: List<FuncDecl>,
+    /** 阶段 84：顶层的配置块（`project { … }`），按书写顺序求值。 */
+    val configs: List<ConfigBlock> = emptyList(),
     /** 用户自定义类（阶段 12）。顶层函数和类是同一个命名空间里的两种声明。 */
     val classes: List<ClassDecl> = emptyList(),
     /**

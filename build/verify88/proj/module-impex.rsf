@@ -1,0 +1,5 @@
+// 模块对外面貌
+import    "src/lib.rsf"
+export    "src/lib.rsf"
+exportjvm "src/Tool.rsf"
+extern    "src/lib.rsf"

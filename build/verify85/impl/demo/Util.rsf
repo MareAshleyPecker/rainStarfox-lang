@@ -1,0 +1,7 @@
+pkg demo
+
+// 故意做成「只返回一个常量」：编出来的类不依赖 rsf 的任何运行期东西，
+// 单独打进 jar 之后用普通 java 就能读，正好当「外部 jar」的替身。
+fn version() -> String {
+    rtn "v1-from-jar"
+}

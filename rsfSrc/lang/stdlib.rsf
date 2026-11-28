@@ -11,7 +11,8 @@
 //   - 字符与码点互转：charToInt / toChar，以及窄化用的 toByte；
 //   - 字符串切片：length() / charAt(Int) -> Char / substring(Int, Int) -> String
 //     （这三个是 java.lang.String 自己的方法，走 JVM 互操作，不是内置函数）；
-//   - parseInt(String) -> !Int：唯一会「失败」的一个，三种处理方式在下面都演示了。
+//   - parseInt(String) -> !Int：唯一会「失败」的一个，下面演示三种处理方式
+//     （兜底值 `?: 默认值`、只要出错时做点什么 `?: -> void 的兜底`、`!!` 往上抛）。
 
 // ------------------------------------------------------------------ 字符分类
 
@@ -65,6 +66,17 @@ fn summarize(s : String) -> String {
         if (isWhitespace(c)) { spaces = spaces + 1 }
     }
     rtn "数字 " + digits + " 个，字母 " + letters + " 个，空白 " + spaces + " 个"
+}
+
+// 出错时只打印、不要值的兜底（`!T` 的 `?:` 兜底写成 -> void 的函数时，值被丢掉）
+fn reportParse() -> void {
+    println("接住了：" + lastErrorMessage())
+}
+
+// 出错时打印、同时给一个值的兜底（兜底函数自己决定返回什么）
+fn reportParseAsZero() -> Int {
+    println("接住了（兜底 0）：" + lastErrorMessage())
+    rtn 0
 }
 
 // ------------------------------------------------------------------ 主程序
@@ -129,13 +141,12 @@ fn main() -> void {
     println("parseInt(\"x\") ?: -1 = " + (parseInt("x") ?: -1))
     println("parseInt(\"99999999999\") ?: -1 = " + (parseInt("99999999999") ?: -1))
 
-    // (b) try / catch：接住错误消息本身
-    try {
-        var n = parseInt("12a")
-        println("不该走到这里：" + n)
-    } catch (e : String) {
-        println("接住了：" + e)
-    }
+    // (b) 只要「出错时做点什么」：兜底写成 -> void 的函数，值丢掉，
+    //     消息从 lastErrorMessage() 取（不想要值的时候这条最省事）
+    parseInt("12a") ?: reportParse()
+
+    // (b2) 想要「值 + 出错时做点什么」：兜底函数自己返回值
+    println("parseInt(\"7x\") 的兜底 = " + (parseInt("7x") ?: reportParseAsZero()))
 
     // (c) 正常路径：解析成功就是普通 Int
     var count = parseInt("108") ?: 0

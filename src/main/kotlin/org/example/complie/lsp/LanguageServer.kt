@@ -1,5 +1,6 @@
 package org.example.complie.lsp
 
+import org.example.build.ProjectJars
 import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
@@ -265,13 +266,45 @@ class LanguageServer(
             val items = EditorSupport
                 .completions(file, doc?.text, line + 1, character + 1, baseDir, script)
                 .map { item ->
-                    JsonValue.Obj(
-                        linkedMapOf(
-                            "label" to JsonValue.Str(item.label),
-                            "kind" to JsonValue.Num(kindOf(item.kind).toDouble()),
-                            "detail" to JsonValue.Str(item.detail),
-                        ),
+                    val fields = linkedMapOf<String, JsonValue>(
+                        "label" to JsonValue.Str(item.label),
+                        "kind" to JsonValue.Num(kindOf(item.kind).toDouble()),
+                        "detail" to JsonValue.Str(item.detail),
                     )
+                    // 标准库自动导入：选中即插入 `import std.Vec`（插在最后一条 import 之后）
+                    val imp = item.insertImport
+                    if (imp != null) {
+                        val lastImport = (doc?.text ?: "").lines().withIndex()
+                            .filter { (_, l) -> l.trim().startsWith("import ") || l.trim().startsWith("module ") }
+                            .maxOfOrNull { (i, _) -> i } ?: -1
+                        val at = lastImport + 1
+                        fields["additionalTextEdits"] = JsonValue.Arr(
+                            listOf(
+                                JsonValue.Obj(
+                                    linkedMapOf(
+                                        "range" to JsonValue.Obj(
+                                            linkedMapOf(
+                                                "start" to JsonValue.Obj(
+                                                    linkedMapOf(
+                                                        "line" to JsonValue.Num(at.toDouble()),
+                                                        "character" to JsonValue.Num(0.0),
+                                                    ),
+                                                ),
+                                                "end" to JsonValue.Obj(
+                                                    linkedMapOf(
+                                                        "line" to JsonValue.Num(at.toDouble()),
+                                                        "character" to JsonValue.Num(0.0),
+                                                    ),
+                                                ),
+                                            ),
+                                        ),
+                                        "newText" to JsonValue.Str(imp + "\n"),
+                                    ),
+                                ),
+                            ),
+                        )
+                    }
+                    JsonValue.Obj(fields)
                 }
             return JsonValue.Obj(
                 linkedMapOf("isIncomplete" to JsonValue.Bool(false), "items" to JsonValue.Arr(items)),
@@ -385,6 +418,7 @@ class LanguageServer(
         val file = File(path)
         val baseDir = file.parentFile ?: File(".").absoluteFile
         return try {
+            ProjectJars.installFor(file)
             val loaded = org.example.complie.Rsf.load(file, baseDir, documents[uri]?.text, script = script)
             RsfSymbols.references(loaded, symbol, includeDeclaration).map { usage ->
                 val owner = if (sameFile(usage.file, path)) uri else pathToUri(usage.file)
@@ -403,6 +437,7 @@ class LanguageServer(
         val doc = documents[uri]
         return try {
             val baseDir = file.parentFile ?: File(".").absoluteFile
+            ProjectJars.installFor(file)
             val loaded = org.example.complie.Rsf.load(file, baseDir, doc?.text, script = script)
             val root = loaded.root
             val symbol = RsfSymbols.resolveAt(loaded, root, line0, character0) ?: return null

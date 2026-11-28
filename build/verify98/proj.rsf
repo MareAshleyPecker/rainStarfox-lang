@@ -1,0 +1,17 @@
+fn risky(n : Int) -> !Int {
+    if (n < 0) { fail range, "n 不能为负：" + intToString(n) }
+    rtn n * 2
+}
+
+fn ioFail() -> !void {
+    fail io, "打不开"
+}
+
+fn report(prefix : String) -> void {
+    println(prefix + lastErrorMessage())
+}
+
+fn main() -> void {
+    risky(-1) ?: report("种类: ")
+    ioFail() ?: report("第二个: ")
+}

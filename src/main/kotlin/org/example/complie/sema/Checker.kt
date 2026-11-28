@@ -8,6 +8,7 @@ import org.example.complie.diag.Severity
 import org.example.complie.diag.SourceFile
 import org.example.complie.diag.WarningKind
 import org.example.complie.diag.WarningDirectives
+import org.example.complie.directives.Directives
 import org.example.complie.interop.ClassPath
 import org.example.complie.interop.JvmClass
 import org.example.complie.interop.JvmMethod
@@ -109,6 +110,14 @@ class Checker(
     /** 程序里出现过指针吗（决定字节码后端要不要发 `__rsf_ptr_*` 辅助方法）。 */
     private var usesPointers = false
 
+    /**
+     * 程序里调过 `lastErrorMessage()` 吗（阶段 84）。
+     *
+     * 字节码后端据此决定要不要在程序类上发「最近一条错误」的静态字段与读取方法：
+     * 没调过的程序**一个字节都不变**（和 `usesPointers` 同一个理由）。
+     */
+    private var usesLastErrorMessage = false
+
     // ---------------------------------------------------------------- 函数类型（阶段 30）
 
     /**
@@ -180,6 +189,16 @@ class Checker(
      * `catch` 的处理体**不在**保护范围内，所以进处理体前会把它减回去。
      */
     private var tryDepth = 0
+
+    /**
+     * 正在检查某个 `?:` 的**兜底那一侧**吗（阶段 84）。
+     *
+     * 兜底本身就是「接住错误之后做的事」，它自己再出错是很自然的事（原样重抛、
+     * 或者处理到一半又失败）——这种失败应该从整个 `?:` 往外走。所以兜底里允许
+     * 直接 `fail`、也允许调用没显式处理的 `!T` 函数，**前提是外层接得住**
+     * （当前函数是 `!T`，或者还在某个 try 块里）。
+     */
+    private var elvisFallbackDepth = 0
 
     /**
      * 「这个调用上的错误已经被显式处理」——就是 `?:` 的左边 / `!!` 的操作数**那一个**调用。
@@ -261,6 +280,8 @@ class Checker(
         // 所以放在函数声明之后、查任何函数体之前。
         declareGlobals()
         declareFunctions()
+        // 阶段 84：配置块的值可能调函数（`name = markConfig()`），所以排在函数声明之后。
+        checkConfigs()
         // 阶段 80：扩展函数按接收者类型收表（要在类/枚举/接口表填好之后，
         // 否则 `fn Box&<Int>.foo()` 里的 `Box` 还解析不出来）。
         collectExtensions()
@@ -271,6 +292,9 @@ class Checker(
         // 两处的报错文案会一起出现在用户改代码的第一轮里。
         checkOverrides()
         for (fn in program.functions) {
+            // 阶段 84：extern 函数只有签名（体在 C 那边），既没有东西可检查，
+            // 也没有东西可降级——它的返回类型直接从声明上取（见 declareFunctions）。
+            if (fn.isExtern) continue
             checkFunction(fn)
         }
         checkInterfaceBodies()
@@ -300,6 +324,7 @@ class Checker(
             memberTargets = memberTargets,
             extensionCalls = extensionCalls,
             globalVars = program.globals,
+            configs = program.configs,
             globalBindings = globalBindings,
             globalReads = globalReads,
             globalWrites = globalWrites,
@@ -342,7 +367,10 @@ class Checker(
             companionAnnotations = companionAnnotations,
             annotationAccessors = annotationAccessors.toList(),
             genericCalls = genericCalls,
-        ).also { it.setPointerInfo(addressedBindings.toSet(), HashMap(addressedOwners), usesPointers) }
+        ).also {
+            it.setPointerInfo(addressedBindings.toSet(), HashMap(addressedOwners), usesPointers)
+            it.usesLastErrorMessage = usesLastErrorMessage
+        }
     }
 
     // ------------------------------------------------------------------ 作用域
@@ -402,10 +430,38 @@ class Checker(
         }
     }
 
+    /**
+     * 配置块（`project { … }`）的值表达式：逐个类型检查。
+     *
+     * 排在 declareGlobals + declareFunctions 之后：块里既能引用 `const val`
+     * （否则变量读取没有绑定），也能调函数（否则报「未定义的函数」）。
+     */
+    private fun checkConfigs() {
+        for (cfg in program.configs) {
+            for (entry in cfg.entries) {
+                // 条目统一是表达式：字段赋值解糖成 __build_config(...)，动词调用就是它自己。
+                // 两者都要求「不返回值」——配置块不是表达式序列，值没人接。
+                val t = type(entry)
+                if (!t.isVoid) {
+                    throw err(
+                        "配置块 ${cfg.name} { … } 里的这一条没有返回值，别拿它当表达式用" +
+                            "（实际类型 ${t.rsfName}）",
+                        entry.at,
+                    )
+                }
+            }
+        }
+    }
+
     private fun declareFunctions() {
         for (fn in program.functions) {
             currentSource = sourceOfFunction[fn] ?: source
-            if (fn.name in BUILTINS) {
+            // 构建脚本专用的内建（exec / target / need / java / c / h / dir / compile…）
+            // 只在 build.rsfs 里占名字：`java` `c` `h` 都是很短的名字，普通程序里
+            // `fn c(x : Int)` 是正常写法，不该因为构建脚本的存在被禁掉。
+            val reservedHere = fn.name in BUILTINS &&
+                !(fn.name in BUILTINS_BUILD_ONLY && currentSource.name != Directives.BUILD_SCRIPT)
+            if (reservedHere) {
                 throw err("'${fn.name}' 是内置函数，不能重定义", fn.at)
             }
             if (classTable.containsKey(fn.name)) {
@@ -478,6 +534,15 @@ class Checker(
             // 阶段 14：`!T` 的语义是「正常路径返回 T，出错时走异常」——返回类型本身不用额外
             // 表示（returnTypes 里存的就是那个 T）。真正的约束在**调用方**：调用 !T 函数必须
             // 显式处理错误，见 requireErrorHandled。
+            // 阶段 84：extern 函数不走 rsf 的错误模型（它直接调 C 符号，没有 longjmp 这一层），
+            // 所以 `!T` 在它身上没有意义——现在就拒，别等生成代码时才炸。
+            if (fn.isExtern && fn.ret.mayError) {
+                throw err(
+                    "extern 函数不能写 '!${fn.ret.type.name}'：调的是 C 符号，失败与否由它在 C 里决定" +
+                        "（C 侧没有 rsf 的 longjmp 错误通道）。要区分成败就让它返回 Int 当错误码",
+                    fn.ret.at,
+                )
+            }
             returnTypes[fn] = resolveType(fn.ret.type)
             typeParams = savedTypeParams
         }
@@ -5887,6 +5952,15 @@ class Checker(
             )
         }
         if (tryDepth > 0 || currentFn.ret.mayError) return
+        // `?:` 的兜底里重抛（`f() ?: rethrow()` 里的 rethrow 自己 fail）：往外走
+        if (elvisFallbackDepth > 0) {
+            throw err(
+                "'fail' 出现在 '?:' 的兜底里，而这个错误没人接得住：当前函数 '${currentFn.name}' " +
+                    "的返回类型是 ${currentFn.ret.display()}（不是 !T）。" +
+                    "要让兜底能重抛，就把当前函数写成 '!……'",
+                stmt.at,
+            )
+        }
         throw err(
             "'fail' 要用在 !T 函数里，或者包进 try 块：当前函数 '${currentFn.name}' 的返回类型是 " +
                 "${currentFn.ret.display()}（不是 !T），这里也不在任何 try 块内，所以这个错误没人接得住。" +
@@ -5975,7 +6049,9 @@ class Checker(
 
     // ------------------------------------------------------------------ 控制流分析
     private fun analyzeFlow(fn: FuncDecl, loweredFn: LoweredFunction) {
-        val cf = ControlFlow(loweredFn.instructions, loweredFn.labelIndex)
+        // handlers 必须一起传：异常边也是 CFG 的边，不传的话 catch 体会被判成不可达，
+        // 既误报「不可达代码」，也让依赖这张图的后续分析漏掉处理器路径。
+        val cf = ControlFlow(loweredFn.instructions, loweredFn.labelIndex, loweredFn.handlers)
         val reach = cf.reachable()
 
         for (i in 0 until cf.size) {
@@ -7071,23 +7147,54 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
      *
      * 阶段 14 起它还有第二个用法：**左边是一个 `!T` 调用**时，出错就取右边的值
      * （`parseInt("") ?: -1`）。两种情况互相排斥，所以先用 `errorCallOf` 分流。
+     *
+     * 阶段 84 起还有第三种：右边是 void 表达式——只用来「出错时做点什么」，
+     * 结果类型是 void。这是根除 `try/catch` 时最常见的替换形式：
+     *
+     * ```rsf
+     * writeText(p, s) ?: reportFailure()     // 左边 !void
+     * parseInt(s) ?: reportFailure()         // 左边 !T：成功路径的值被丢掉（只能当语句写）
+     * ```
      */
     private fun checkElvis(expr: ElvisExpr): RsfType {
         // 左边的错误由这个 `?:` 兜住，所以这里不再要求调用点处理
         val left = handling(expr.left) { type(expr.left) }
-        val right = type(expr.right)
-        if (right.isVoid) {
-            throw err("'?:' 右边不能是 void 表达式", expr.at)
+        // 兜底那一侧：自己再出错就往外走，所以那里不强制处理错误（见 [elvisFallbackDepth]）
+        elvisFallbackDepth++
+        val right = try {
+            type(expr.right)
+        } finally {
+            elvisFallbackDepth--
         }
-
         val errFn = errorCallOf(expr.left)
-        if (errFn != null) {
-            if (left.isVoid) {
+        if (left.isVoid && errFn == null) {
+            throw err(
+                "'?:' 左边是 void 表达式，没有错误可以接：要「出错时做点什么」，" +
+                    "左边得是可能失败的调用（'!T' 函数 / parseInt 之类）",
+                expr.at,
+            )
+        }
+        if (right.isVoid) {
+            if (errFn == null) {
                 throw err(
-                    "'?:' 左边是 '!void' 调用（'$errFn' 没有值可以取），没有东西可以兜底",
+                    "'?:' 右边是 void 表达式，但左边不是可能失败的调用——这里没有错误要接。" +
+                        "要处理 null 就给个有值的兜底；要「出错时做点什么」就把左边写成 '!T' 调用",
                     expr.at,
                 )
             }
+            // 兜底是 void ⇒ 这个 `?:` 只为了「出错时做点什么」，成功路径的值被丢掉，
+            // 所以它只能当语句用（赋给变量会被「不能用 void 初始化」拦下）。
+            return RsfType.VOID
+        }
+        if (left.isVoid) {
+            throw err(
+                "'?:' 左边是 '!void' 调用（'$errFn' 没有返回值），右边也得是不返回值的表达式：" +
+                    "把兜底写成一个 '-> void' 的函数，例如 ${errFn}(…) ?: reportFailure()",
+                expr.at,
+            )
+        }
+
+        if (errFn != null) {
             if (left.isNullable) {
                 throw err(
                     "暂不支持在同一处同时用可空与错误返回：'$errFn' 既可能失败、" +
@@ -7182,12 +7289,16 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
     private fun requireErrorHandled(name: String, retDisplay: String, node: Expr, at: SourceLine) {
         if (tryDepth > 0) return
         if (node === handledNode) return
+        // `?:` 的兜底里：失败从这个表达式往外走，外层接得住就行
+        if (elvisFallbackDepth > 0 && currentFn.ret.mayError) return
         throw err(
             "'$name' 的返回类型是 '$retDisplay'（可能失败），" +
-                "调用它必须显式处理错误。三种写法任选一种：" +
-                "(a) 包进 try { ... } catch (e : String) { ... }；" +
-                "(b) 给兜底值 ${name}(...) ?: 默认值；" +
-                "(c) 往上抛 ${name}(...)!!（这样本函数的返回类型也得写成 !T）",
+                "调用它必须显式处理错误。四种写法任选一种：" +
+                "(a) 给兜底值 ${name}(...) ?: 默认值；" +
+                "(b) 只要「出错时做点什么」就 ${name}(...) ?: 兜底函数()，" +
+                "兜底写成 -> void 的函数，消息用 lastErrorMessage() 取；" +
+                "(c) 往上抛 ${name}(...)!!（这样本函数的返回类型也得写成 !T）；" +
+                "(d) 返回 void 的用 try ${name}(...)（本函数也得是 !T）",
             at,
         )
     }
@@ -7214,7 +7325,18 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
         }
 
         // 阶段 16：带签名的内置函数（toByte / toChar / charToInt / parseInt / isDigit…）
-        Builtins[expr.name]?.let { return checkBuiltinCall(expr, it) }
+        //
+        // 阶段 83 例外：构建脚本专用的内建（c / h / java / dir / exec / target / need…）
+        // **不抢用户函数的名字**。普通程序里 `fn c(x : Int)` 是正常写法，这种内建在
+        // 非 build.rsfs 里本来就不生效。只是「有用户函数就叫用户函数」——
+        // 没有同名函数时仍然走内建，这样 `exec(...)` 写错位置拿到的是
+        // 「只有构建脚本里能用」，而不是莫名其妙的「找不到函数 exec」。
+        val shadowedByUserFunction = expr.name in BUILTINS_BUILD_ONLY &&
+            source.name != Directives.BUILD_SCRIPT &&
+            functionTable[expr.name]?.isNotEmpty() == true
+        if (!shadowedByUserFunction) {
+            Builtins[expr.name]?.let { return checkBuiltinCall(expr, it) }
+        }
 
         // **自动 new**：名字解析到「可以构造的类型」就当构造处理，
         // `Point(1, 2)` 与 `new Point(1, 2)` 走的是同一段 [checkConstruction]。
@@ -7506,10 +7628,24 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
     }
 
     private fun checkBuiltinCall(expr: CallExpr, builtin: Builtin): RsfType {
+        // 阶段 84：用过 `lastErrorMessage()` 就告诉字节码后端「发那个静态字段」，
+        // 没用过的程序产物逐字节不变。
+        if (builtin.name == "lastErrorMessage") usesLastErrorMessage = true
         if (builtin.nativeOnly && currentTarget != BuildTarget.NATIVE && program.target != BuildTarget.NATIVE) {
             throw err(
                 "'${builtin.name}' 只有 native 侧才有：它读的是 native 运行时的内存统计，" +
                     "JVM 侧由 JVM 自己管堆。把所在声明标成 'native'，或在这份文件头写 'target native'。",
+                expr.at,
+            )
+        }
+        // 阶段 83：构建脚本专用的内建（exec / target / need / compile / compileAll / outDir）。
+        // 它们靠 `rsf build` 注入的宿主干活，编进产物之后没有宿主可调，所以只允许出现在
+        // 项目根目录的 build.rsfs 里（被它 import 进来的模块也算：整份程序按 build.rsfs 分析）。
+        if (builtin.buildOnly && source.name != Directives.BUILD_SCRIPT) {
+            throw err(
+                "'${builtin.name}' 只有构建脚本里能用：它由 'rsf build' 驱动项目根目录的 " +
+                    "${Directives.BUILD_SCRIPT} 时注入，" +
+                    "普通程序里没有「项目」「产物目录」「构建计划」这些东西。",
                 expr.at,
             )
         }
@@ -8088,6 +8224,15 @@ import 语句；java.lang 里的名字甀 MemberResolver 兜底、
          * 这张表管两件事：**用户不能重定义内置函数**，以及补全列表里能认出它们。
          */
         val BUILTINS: Set<String> = Builtins.PRINT_LIKE + Builtins.NAMES
+
+        /**
+         * 只在构建脚本（项目根的 `build.rsfs`）里占名字的内建。
+         *
+         * [BUILTINS] 里的名字一律不许被用户函数重定义，但这几个是**构建脚本专用**的
+         * （`Builtin.buildOnly`），普通程序里没有必要为它们让路——尤其是 `c` / `h`
+         * 这种单字母名字。Checker 按「当前文件是不是 build.rsfs」决定它们生效不生效。
+         */
+        val BUILTINS_BUILD_ONLY: Set<String> = Builtins.BUILD_ONLY
     }
 }
 

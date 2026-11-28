@@ -185,3 +185,207 @@ the platform linker build `.so`/`.dll` (export tables are the linker's job);
 `export fn` decides visibility and `rsf_` prefixes the symbol. Only write PE
 `.edata` / ELF `.dynsym` by hand if the single-file, no-toolchain goal becomes
 real.
+
+## rsf build — four phases are wired (stage 83)
+
+`rsf build` in a project directory now runs the four phases from `HANDOFF.md` §8.
+What actually exists:
+
+- `build/BuildPlan.kt` — `TargetKind {exe, lib, jar, copy}`, `TargetSpec`,
+  and `BuildPlan`: declaration order is build order; `need(a, b)` is a stable
+  topological edge (accepts a target name *or* a source path); duplicate names
+  and cycles fail at declaration/ordering time with both origins listed.
+- `build/BuildHost.kt` — `exec` / `target` / `need` on the host interface.
+  `exec` runs `/bin/sh -c` with the project root as cwd and `inheritIO`, so gcc
+  output is visible live and the exit code goes back to the script.
+- `sema/Builtins.kt` — `Builtin.buildOnly`, used by `exec`/`target`/`need`
+  (and retro-fitted onto the older `outDir`/`compile`/`compileAll`).
+- `directives/Directives.kt` — `#target { @/a.rsf -> exe }`, optional third
+  `-> out` segment; only allowed in the root `build.rsfs`, same as `#build`.
+- `Main.kt` — phase 0 seeds the plan from `#target`, phase 2 interprets
+  `build.rsfs` with the host, phase 3 walks `plan.ordered()` and emits
+  exe (`--c --link`), lib (`gcc -c`), jar (JVM backend + `writeJar`), copy.
+  `emitNative` / `linkExe` / `compileObject` / `buildJar` were extracted from
+  the single-file path so `rsf build x.rsf --c --link` and the target table
+  share one implementation.
+
+Two deliberate deviations from the written design, both documented in §8:
+
+- `exec` returns `Int`, not `!Int`. A non-zero exit is a *normal* value the
+  build script branches on; only "the command could not start" aborts.
+- `kind` is a string in `target(src, kind)`. A bare identifier is not a value
+  in rsf; the `#target` block has no type system, so it keeps the bare `exe`.
+
+Enforcement has three layers: Checker (file must be named `build.rsfs`),
+interpreter (no host → clear failure), and both codegen backends (explicit
+refusal, since a compiled artifact has no compiler to call).
+
+`build/verify84/run.sh` is the reproducible judge: a small project with
+`exe` + `lib` + `copy` (explicit output path), `need` reversing the default
+order, and an `exec` whose exit code the script checks.
+
+Not done yet: phase 1 (`#dep rule("f")` calling a build function) — it needs a
+"call this top-level function by name" entry point on the interpreter, and
+today `rsf build` merely prints a warning that rules are not executed. Also
+open: `compile()`/`compileAll()` (stage 81) now coexist with the target table
+and their relationship needs to be settled in the docs — `compile` compiles
+immediately, `target` only records intent.
+
+## Build rules — `#def` replaced the string-prefix protocol (stage 83, phase 1)
+
+The design said rules are functions that return strings with `c:/h:/lib:/jar:/dir:`
+prefixes, and `#dep rule("f")` names one. That was a stringly-typed escape hatch
+and it also needed an interpreter entry to "call this top-level function by
+name". Replaced by a declaration, at the user's suggestion:
+
+```rsf
+#def genDeps {
+    exec("protoc --out=gen proto/x.proto")
+}
+#dep { rule("genDeps") }
+```
+
+Mechanism: `#def 名字 { … }` is rewritten **at load time** into
+`fn 名字() -> void { … }` — only the header token is replaced, everything from
+`{` to the closing `}` is kept byte-for-byte. So body lines and columns are
+untouched and errors inside a rule body point at the line the user wrote
+(verified: `println(nope)` reports line 3, col 13, the original position).
+Newlines are preserved, so nothing after the block drifts either.
+
+Consequences that fell out for free:
+
+- rules are ordinary functions — callable from `main`, from each other, and from
+  an imported module (`build/rules.rsfs`), matching "rules can be referenced
+  from other scripts";
+- duplicate `#def foo` in two files is caught by the existing checker as a
+  duplicate function declaration — no second duplicate-detection path;
+- `#dep rule("x")` is validated **before anything runs**: unknown names report
+  the known rules and the available zero-arg functions.
+
+`runEntry(rules)` runs the rules and then `main` inside the **same interpreter
+instance**, so globals initialise once. Two `Interpreter` objects would have run
+`const val X = readText(...)` twice.
+
+`build/verify84` now includes a rule module and asserts the rule prints before
+`main` and that its `exec` ran.
+
+Next slice: the declaration builtins `java/c/h/dir` for rule bodies, then jar on
+the analyse classpath (which is what "build scripts can call jars" actually
+needs), then `need` lines inside `#target`, then settling `compile`/`compileAll`
+versus the target table.
+
+## Rule bodies can declare deps — and `c` / `h` stay legal names elsewhere
+
+Step 2 of the build track: `javaInclude(...)`, `cInclude(...)`, `hInclude(...)`, `dirInclude(...)` are now
+builtins, `Builtin.buildOnly`, available in build scripts. They append to the
+same `DepEntry` set that `#dep { … }` blocks feed, so the lock file and the
+existence check have exactly one implementation. `dir` is a new `DepKind`:
+validated with `isDirectory`, stored without a hash (hashing a tree in v1 is not
+worth it).
+
+The interesting part is the name scoping. `c` and `h` are one-letter names, and
+the checker's rule "a user function may not shadow a builtin" is global — adding
+those builtins would have made `fn c(x : Int)` illegal in *every* program. So the
+reservation is narrowed to `build.rsfs`, which takes **three** guards, because
+letter-by-letter each one hid a different failure:
+
+1. declaration: `BUILTINS_BUILD_ONLY` names are only reserved when
+   `currentSource.name == build.rsfs`;
+2. call resolution in the checker: if a user function of that name exists, bind
+   to it instead of the builtin — without this, `fn c` declared fine but
+   `c(41)` was resolved as the builtin and produced a "build scripts only" error
+   at the call site;
+3. the three dispatch points (interpreter, bytecode, C): skip the builtin branch
+   when `model.callTargets[expr]` says the call is already bound to a user
+   function — without this, `fn c` ran through the interpreter and survived
+   compilation, then died at runtime inside the builtin.
+
+Verified on all three engines: a program with `fn c(x : Int)` prints `42` via
+`rsf run`, via the class file, and via `--c --link`. `build/verify84` gained the
+four declarations and asserts all of them land in `.rsfdeps/lock.json`.
+
+## Jars on the analyse classpath, and the editor gets them too
+
+`ClassPath` used `ClassLoader.getSystemClassLoader()` for both resource reads and
+the interpreter's reflective calls. Now it has a replaceable loader:
+`installLoader(...)` also **clears the cache** — the cache stores `null` for
+"not found", so a jar added later would otherwise need a process restart.
+
+Two consumers, one loader:
+
+- the build command installs the jars from `#dep { javaInclude(...) }` **before**
+  analysing `build.rsfs`, so the script itself can `import demo.Util`;
+- jars declared *inside a rule* take effect immediately for later `compile()`
+  calls, but not for the build script that was already analysed (a real, and
+  unavoidable, ordering difference between static directives and runtime
+  declarations).
+
+The interpreter had twelve `Class.forName(...)` sites; all now go through
+`ClassPath.loadClass`. Without that the jar classes stayed invisible at runtime
+even though the checker could read their signatures — that was the actual test
+failure, not a hypothetical.
+
+Reused for the editor: `build/ProjectJars.kt` walks up from the edited file to the
+nearest `build.rsfs`, installs its jars, and keys the install on a fingerprint so
+a keystroke does not clear the classpath cache. It only ever reads `.class`
+bytes — never initialises a class, because initialising a project's jar inside
+the language server is not something an editor should do. Hooked into the four
+`Rsf.load` sites of `EditorSupport` and `LanguageServer`; `rsf complete` after
+`Util.` now lists `version` from the jar.
+
+Renames in the same slice, at the user's suggestion: `java` / `c` / `h` / `dir`
+became `javaInclude` / `cInclude` / `hInclude` / `dirInclude`. The old names
+were why "a user function named `c`" needed three separate guards; the longer
+names make that collision essentially impossible (the guards stay, but nothing
+depends on them any more). All four are variadic, and a directory argument
+expands to the matching files (`*.jar` / `*.c` / `*.h`); `dirInclude` stays a
+directory because that is what it means.
+
+## `import ` completion now lists classes from dependency jars
+
+`EditorSupport.importedClasses()` already resolved `import demo.Util` through
+`ClassPath`, so member completion after `Util.` worked as soon as the jar was
+installed. What was missing was the *import line itself*: typing `import ` offered
+keywords and builtins, never the classes you just added a jar for.
+
+`Completer.importItems()` recognises `^\s*import\s+([\w.]*)$`, and
+`ProjectJars.installedClassNames()` reads the jar entries (`demo/Util.class` ->
+`demo.Util`), dropping inner classes (`$`), `module-info`/`package-info` and
+`META-INF`, capped at 300. No dependency jars in the project -> returns null and
+the ordinary candidate list is used, so nothing changes for projects without jars.
+
+## Calling C from rsf — `extern fn`, and `.c` / `.h` through `import`
+
+The last hole in the build line was that `cInclude` / `hInclude` declared things
+nobody consumed: gcc never saw the `.c` files, `-I` never appeared, and rsf had
+no way to declare an external C function in the first place.
+
+Now:
+
+```rsf
+import "native/util.c"
+import "native/util.h"
+
+extern fn util_add(a : Int, b : Int) -> Int
+```
+
+`extern` is a top-level function modifier, same slot as `export`. It parses to
+"no body + `isExtern`"; the return clause is mandatory (same reasoning as abstract
+methods: otherwise "void" and "forgot to write" are indistinguishable), and `!T`
+is rejected at declaration time because the C side has no longjmp channel.
+
+C backend: the prototype uses the **C name** (no `rsf_fn_` prefix), the call site
+calls it by that name, and no definition is emitted. Bytecode and the interpreter
+reject extern explicitly — on the JVM the symbol simply does not exist.
+
+`import` routes `.c` / `.h` into the dependency list in the loader; no lexer or
+parser change was needed for that half. The path base had a real bug: dependency
+paths were made relative to the load root while the build command resolves them
+against the current directory, so a single-file build silently dropped the `.c`
+(it stayed in the list as `../native/util.c`, which resolved to the wrong place).
+Both sides now use "project root if a build.rsfs exists, otherwise the current
+directory".
+
+Known gap, recorded in HANDOFF §9: the bootstrap lexer/parser do not know
+`extern` yet (they know no directives at all), so sources using it are
+Kotlin-only for now.

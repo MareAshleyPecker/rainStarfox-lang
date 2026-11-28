@@ -3,6 +3,7 @@ package org.example.complie.interp
 import org.example.build.BuildHost
 import org.example.complie.ast.*
 import org.example.complie.diag.RsfError
+import org.example.complie.interop.ClassPath
 import org.example.complie.interop.JvmMethod
 import org.example.complie.interop.ResolvedField
 import org.example.complie.interop.ResolvedMethod
@@ -112,7 +113,22 @@ sealed class RsfPointer {
 }
 
 
+/**
+ * 最近一条错误消息（阶段 84，`lastErrorMessage()` 的内建实现）。
+ *
+ * 放在文件级而不是解释器实例上：`RsfFailure` 是异常、不带着解释器走，
+ * 而「最近一条错误」本来就是进程级的最后状态。每次跑程序（[Interpreter.runEntry] /
+ * [Interpreter.runSnippet]）开头清空，语义和 C 侧 `rsf_err_msg`、字节码侧的静态字段一致。
+ */
+internal var lastErrorMessageText: String = ""
+
+
 class RsfFailure(val msg: String) : RuntimeException(msg) {
+
+    init {
+        // 阶段 84：抛出的那一刻就记下——`?:` 的兜底里要能读到「刚才那条错误是什么」。
+        lastErrorMessageText = msg
+    }
 
     /**
      * 这个错误一路穿过的函数帧，**最外层在最前**（[Interpreter.call] / [callMethod] 记的）。
@@ -215,7 +231,7 @@ class Interpreter(
     private val globals = LinkedHashMap<String, Any?>()
 
     /** 从 main 开始执行。 */
-    fun runEntry(): Any? {
+    fun runEntry(rules: List<String> = emptyList()): Any? {
         // 阶段 25 K3 起类继承在解释器里**跑得动了**，K1 那道解释器守卫就撤了。
         // 注意另一道守卫还在（`codegen/BytecodeCompiler.kt`，K2 的活）：`rsf build`
         // 遇到带父类的程序仍然显式报「字节码后端还没实现」，那条由 K2 拆。
@@ -226,7 +242,21 @@ class Interpreter(
             val at = model.functionsNamed("main").firstOrNull()?.at
             throw RsfError("interp", problem, at?.line ?: 0, at?.column ?: 0, null)
         }
+        // 阶段 84：新的一次运行从「没有错误」开始（同一个 JVM 里可能跑多次：REPL、构建脚本）。
+        lastErrorMessageText = ""
         initGlobals()
+        // 阶段 83 阶段 1：先跑 `#dep rule(...)` 里的规则，再跑 main。
+        // 同一个解释器实例跑两段，是为了让**全局变量只初始化一次**——
+        // 两次 new Interpreter 的话，`const val X = readText(...)` 这种初值会被算两遍。
+        for (name in rules) {
+            val decl = model.functionsNamed(name).firstOrNull { it.params.isEmpty() }
+                ?: throw RsfError(
+                    "build",
+                    "#dep rule(\"$name\")：找不到零参数的顶层函数 '$name'。" +
+                        "规则写成 #def $name { … }，它就是 fn $name() -> void",
+                )
+            call(decl, emptyList())
+        }
         return call(model.entry!!, emptyList())
     }
 
@@ -237,12 +267,24 @@ class Interpreter(
      * 而且顺序就是源码里的顺序；前向引用在 Checker 里已经报成「未声明的变量」了。
      */
     private fun initGlobals() {
-        if (model.globalVars.isEmpty()) return
+        if (model.globalVars.isEmpty() && model.configs.isEmpty()) return
         val body = model.loweredOf(model.entry!!)
         val noSlots = arrayOfNulls<Any>(body.slotCount)
         for (decl in model.globalVars) {
             val binding = model.globalBindings.getValue(decl.name)
             globals[decl.name] = coerce(eval(decl.initializer, noSlots, body), binding.type)
+        }
+
+        // 阶段 84：顶层配置块（`project { … }`）在 globals 之后、规则与 main 之前求值一次。
+        // 这样 `const val projectName = "x"` 在块里可以直接引用。
+        for (cfg in model.configs) {
+            val host = buildHost ?: throw RsfFailure(
+                "配置块 ${cfg.name} { … } 只有构建脚本里能用：'rsf build' 驱动 build.rsfs 时才有宿主",
+            )
+            for (entry in cfg.entries) {
+                // 条目是表达式：字段赋值解糖成 __build_config(...)，动词调用自己去找宿主。
+                eval(entry, noSlots, body)
+            }
         }
     }
 
@@ -251,6 +293,13 @@ class Interpreter(
      * 这里只负责按参数类型做一次收敛（比如 Int 实参传给 Long 形参）。
      */
     fun call(fn: FuncDecl, args: List<Any?>): Any? {
+        // 阶段 84：extern 函数没有函数体，只有一次 C 调用——解释器跑在 JVM 上，没有那个符号。
+        if (fn.isExtern) {
+            throw RsfFailure(
+                "'extern fn ${fn.name}(...)' 只有 native 侧能跑：它调的是外部 C 函数，" +
+                    "解释器跑在 JVM 上。用 'rsf build --c --link' 构建后再运行",
+            )
+        }
         enter(fn.at, fn.name)
         try {
             val body = model.loweredOf(fn)
@@ -278,6 +327,7 @@ class Interpreter(
      * 而不会被重复打印一遍。
      */
     fun runSnippet(body: LoweredFunction, startPc: Int): Any? {
+        lastErrorMessageText = ""
         enter(body.function.at, body.function.name)
         try {
             val slots = arrayOfNulls<Any>(body.slotCount)
@@ -565,7 +615,10 @@ class Interpreter(
             // 编译器自己的 [RsfError]（内部错误/诊断）不归用户程序管，原样往上穿。
             if (thrown is RsfError) throw thrown
             val handler = body.handlerAt(pc) ?: throw thrown
-            slots[handler.catchSlot] = Thrown.message(thrown)
+            val message = Thrown.message(thrown)
+            // 阶段 84：Java 异常也算「最近一条错误」，`?:` 的兜底里读得到它。
+            lastErrorMessageText = message
+            slots[handler.catchSlot] = message
             return execute(body, slots, handler.handlerPc, endPc)
         }
         // 走到函数末尾：void 函数正常结束
@@ -901,7 +954,7 @@ class Interpreter(
 
         return when (val target = model.memberOf(expr)) {
             is ResolvedField -> {
-                val owner = Class.forName(target.field.owner.replace('/', '.'))
+                val owner = ClassPath.loadClass(target.field.owner.replace('/', '.'))
                 val field = owner.getDeclaredField(target.field.name).also { it.isAccessible = true }
                 if (target.field.isStatic) {
                     field.get(null)
@@ -913,7 +966,7 @@ class Interpreter(
             }
 
             is ResolvedMethod -> {
-                val owner = Class.forName(target.method.owner.replace('/', '.'))
+                val owner = ClassPath.loadClass(target.method.owner.replace('/', '.'))
                 val paramClasses = target.method.paramTypes.map { toJavaClass(it) }.toTypedArray()
                 val method = publicMethod(owner, target.method.name, paramClasses)
                 val receiver = if (target.method.isStatic) null else eval(expr.receiver, slots, body)
@@ -1197,7 +1250,7 @@ class Interpreter(
                     "还没有建立它的 JDK 父类实例",
                 -1, -1, null,
             )
-        val owner = Class.forName(target.method.owner.replace('/', '.'))
+        val owner = ClassPath.loadClass(target.method.owner.replace('/', '.'))
         val paramClasses = target.method.paramTypes.map { toJavaClass(it) }.toTypedArray()
         val method = publicMethod(owner, target.method.name, paramClasses)
         return method.invoke(receiver, *jvmCallArguments(target.method, args))
@@ -1304,7 +1357,7 @@ class Interpreter(
         val m = call.member.method
         val receiver = jdkReceiver(self)
         val owner = try {
-            Class.forName(m.owner.replace('/', '.'))
+            ClassPath.loadClass(m.owner.replace('/', '.'))
         } catch (e: ClassNotFoundException) {
             throw RsfError(
                 "interp",
@@ -1492,7 +1545,7 @@ class Interpreter(
                     continue
                 }
                 val cls = try {
-                    Class.forName(sup.internalName.replace('/', '.'))
+                    ClassPath.loadClass(sup.internalName.replace('/', '.'))
                 } catch (_: Throwable) {
                     continue
                 }
@@ -1750,7 +1803,7 @@ class Interpreter(
                 "内部错误：${sup.superClass.display} '${sup.superClass.name}' 里没有匹配的构造器",
                 -1, -1, null,
             )
-        val owner = Class.forName(internal.replace('/', '.'))
+        val owner = ClassPath.loadClass(internal.replace('/', '.'))
         val paramClasses = chosen.paramTypes.map { toJavaClass(it) }.toTypedArray()
         val javaCtor = owner.getDeclaredConstructor(*paramClasses)
         val adapted = args.mapIndexed { i, v ->
@@ -1866,7 +1919,7 @@ class Interpreter(
         slots: Array<Any?>,
         body: LoweredFunction,
     ): Any {
-        val owner = Class.forName(ctor.owner.replace('/', '.'))
+        val owner = ClassPath.loadClass(ctor.owner.replace('/', '.'))
         val paramClasses = ctor.paramTypes.map { toJavaClass(it) }.toTypedArray()
         // try 版而不是 `isAccessible = true`：JDK 内部那些没 opens 出来的包
         // （`java.lang.AbstractStringBuilder` 之类）会让强制版直接抛异常
@@ -2083,7 +2136,7 @@ class Interpreter(
     private fun jvmClassOf(target: RsfType): Class<*>? {
         val dotted = model.jvmRuntimeNameOf(target)
         return try {
-            Class.forName(dotted)
+            ClassPath.loadClass(dotted)
         } catch (e: ClassNotFoundException) {
             null
         }
@@ -2116,7 +2169,7 @@ class Interpreter(
         // 数组（`Int[][]` 的组件是 `Int[]`）——递归下去自然就对了。
         type.isArray -> java.lang.reflect.Array.newInstance(toJavaClass(type.elementType), 0).javaClass
         // 用户自定义类在解释器里就是 RsfObject（它没有对应的 .class 可以去加载，
-        // Class.forName("Point") 会直接 ClassNotFoundException）。所以 `Point[]` /
+        // ClassPath.loadClass("Point") 会直接 ClassNotFoundException）。所以 `Point[]` /
         // `Box&<Int>[]` 的元素类型按 RsfObject 建数组——这是解释器**内部**的载体，
         // 对 rsf 语义没有影响（元素读写仍然只经 rsf 的类型检查）。
         type.isExternal && model.classModel.classes.containsKey(type.externalName) ->
@@ -2125,12 +2178,12 @@ class Interpreter(
         type.isExternal && model.interfaces.containsKey(type.externalName) ->
             RsfObject::class.java
         // 阶段 19c：枚举同理——枚举的「类」是编译期才生成出来的（解释器根本不生成 .class），
-        // `Class.forName("TokenKind")` 必然 ClassNotFoundException。解释器里枚举值的载体
+        // `ClassPath.loadClass("TokenKind")` 必然 ClassNotFoundException。解释器里枚举值的载体
         // 是 [RsfEnumValue] 单例，所以 `TokenKind[]` 按它建数组。
         // 这个 `.class` 是 JVM 上的真实类（编译器自己编译出来的），不是生成的产物，
         // 所以反射建数组没有问题；元素读写照旧只经 rsf 的类型检查。
         type.isExternal && model.isEnumType(type) -> RsfEnumValue::class.java
-        type.isExternal -> Class.forName(type.externalName!!.replace('/', '.'))
+        type.isExternal -> ClassPath.loadClass(type.externalName!!.replace('/', '.'))
         // 类型参数擦除到 Object：反射调用时按 Object 找方法
         type.isTypeParam -> java.lang.Object::class.java
         type.base == RsfBase.STRING -> String::class.java
@@ -2190,7 +2243,13 @@ class Interpreter(
         }
 
         // 阶段 16：带签名的内置函数（toByte / toChar / charToInt / parseInt / isDigit…）
-        Builtins[expr.name]?.let { return evalBuiltin(expr, it, slots, body) }
+        //
+        // 阶段 83：**用户函数优先**。Checker 已经把「这里调的是用户函数」记进
+        // callTargets（构建脚本专用内建 …Include 不抢名字），如果这里还按名字
+        // 先认内建，普通程序里的 `fn c(x : Int)` 就会在运行期被内建截走。
+        if (model.callTargets[expr] == null) {
+            Builtins[expr.name]?.let { return evalBuiltin(expr, it, slots, body) }
+        }
 
         // 类里按名字直接调本类方法（隐式 this / 隐式类名）
         model.classModel.implicitCalls[expr]?.let { member ->
@@ -2295,6 +2354,8 @@ class Interpreter(
                 null
             }
             "stringBytes" -> (args[0] as String).toByteArray(Charsets.UTF_8)
+            // 阶段 84：最近一条错误消息（被 `?:` / catch 接住之后仍然保留）
+            "lastErrorMessage" -> lastErrorMessageText
             // 阶段 73：length() 数 UTF-16 码元，字节数要显式问
             "byteLength" -> (args[0] as String).toByteArray(Charsets.UTF_8).size
             // 阶段 73d：`s[a..b]` 解糖成 slice(s, from, to)；越界钳进合法区间（三端一致）
@@ -2322,6 +2383,67 @@ class Interpreter(
                     "compile" -> host.compile(args[0] as String)
                     else -> host.compileAll(args[0] as String)
                 }
+            }
+            // 阶段 83：构建计划的三个内建（exec / target / need）。同样是宿主能力，
+            // 普通程序里没有宿主——消息里说清楚「只有 build.rsfs 能用」，
+            // 而不是让 exec 变成空操作。
+            "exec", "target", "need" -> {
+                val host = buildHost ?: throw RsfFailure(
+                    "'${builtin.name}' 只有构建脚本里能用：它由 'rsf build' 驱动 build.rsfs 时注入。",
+                )
+                when (builtin.name) {
+                    // 退出码非零是正常返回值（脚本自己判断），只有起不来命令才抛错
+                    "exec" -> host.exec(args[0] as String)
+                    "target" -> {
+                        host.target(args[0] as String, args[1] as String)
+                        null
+                    }
+                    else -> {
+                        host.need(args[0] as String, args[1] as String)
+                        null
+                    }
+                }
+            }
+            // 阶段 83 步骤 2：规则体里的依赖声明。和 `#dep { … }` 进的是同一份清单，
+            // 所以锁文件与存在性校验只有一条路。
+            "javaInclude", "cInclude", "hInclude", "dirInclude" -> {
+                val host = buildHost ?: throw RsfFailure(
+                    "'${builtin.name}' 只有构建脚本里能用：依赖清单由 'rsf build' 驱动 build.rsfs 时注入。",
+                )
+                // 可以一次给多个路径（vararg）
+                for (arg in args) host.declareDep(builtin.name, arg as String)
+                null
+            }
+            // 阶段 84：`run { use 名字 }` 的一行
+            "use" -> {
+                val host = buildHost ?: throw RsfFailure(
+                    "'use' 只有构建脚本里能用：运行配置由 'rsf build' 驱动 build.rsfs 时注入。",
+                )
+                host.use(args[0] as String)
+                null
+            }
+            // 阶段 84：块语句里的产物声明（target { exe(…) / copy(…) }）
+            "exe", "lib", "jar" -> {
+                val host = buildHost ?: throw RsfFailure(
+                    "'${builtin.name}' 只有构建脚本里能用：产物声明由 'rsf build' 驱动 build.rsfs 时注入。",
+                )
+                host.target(args[0] as String, builtin.name)
+                null
+            }
+            "copy" -> {
+                val host = buildHost ?: throw RsfFailure(
+                    "'copy' 只有构建脚本里能用：产物声明由 'rsf build' 驱动 build.rsfs 时注入。",
+                )
+                host.targetTo(args[0] as String, "copy", args[1] as String)
+                null
+            }
+            // 阶段 84：配置块解糖出来的调用。块名与字段都按字符串交给宿主校验。
+            "__build_config" -> {
+                val host = buildHost ?: throw RsfFailure(
+                    "'${builtin.name}' 只有构建脚本里能用：配置块由 'rsf build' 驱动 build.rsfs 时注入。",
+                )
+                host.config(args[0] as String, args[1] as String, args[2] as String)
+                null
             }
             "readBytes" -> fileCall(builtin.name, args[0] as String) {
                 Files.readAllBytes(Paths.get(it))
@@ -2617,7 +2739,7 @@ class Interpreter(
         args.drop(from).map { it as String }
 
     private fun jvmClass(cls: String): Class<*> = try {
-        Class.forName(cls)
+        ClassPath.loadClass(cls)
     } catch (e: Throwable) {
         throw RsfFailure("jvmCall 失败：找不到类 '$cls'")
     }

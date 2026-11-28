@@ -112,6 +112,54 @@ pub class Strings {
     }
 
     // 全是 ASCII 数字且非空
+    /// 按行切分（`\n` / `\r\n` 都认；末尾空行丢掉）。
+    pub stc fn lines(s : String) -> String[] {
+        var out = new String[0]
+        if (s.length() == 0) { rtn out }
+        var parts = new String[8]
+        var count = 0
+        var start = 0
+        var i = 0
+        while (i < s.length()) {
+            var c = s.charAt(i)
+            if (c == '\n') {
+                var end = i
+                if (end > start && s.charAt(end - 1) == '\r') { end = end - 1 }
+                parts = put(parts, count, s.substring(start, end))
+                count = count + 1
+                start = i + 1
+            }
+            i = i + 1
+        }
+        if (start < s.length()) {
+            parts = put(parts, count, s.substring(start, s.length()))
+            count = count + 1
+        }
+        out = new String[count]
+        var k = 0
+        while (k < count) {
+            out[k] = parts[k]
+            k = k + 1
+        }
+        rtn out
+    }
+
+    // 小工具：往定长数组里写第 i 个，满了翻倍（静态：lines 本身是静态方法）
+    pub stc fn put(arr : String[], i : Int, value : String) -> String[] {
+        if (i < arr.length) {
+            arr[i] = value
+            rtn arr
+        }
+        var bigger = new String[arr.length * 2 + 4]
+        var k = 0
+        while (k < arr.length) {
+            bigger[k] = arr[k]
+            k = k + 1
+        }
+        bigger[i] = value
+        rtn bigger
+    }
+
     pub stc fn isDigits(s : String) -> Bool {
         if (s.length() == 0) { rtn false }
         var i = 0

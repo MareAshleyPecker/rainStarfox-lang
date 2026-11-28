@@ -1,5 +1,6 @@
 package org.example.complie.native
 
+import org.example.complie.sema.Builtins
 import org.example.complie.ast.*
 import org.example.complie.diag.RsfError
 import org.example.complie.lexing.TokenKind
@@ -117,7 +118,11 @@ class CBackend(
             if (table != null) sb.append(table)
         }
         sb.append('\n')
-        for (fn in model.functions.sortedBy { it.name }) sb.append(definition(fn, null))
+        for (fn in model.functions.sortedBy { it.name }) {
+            // 外部 C 函数没有体，只有上面那条原型
+            if (fn.isExtern) continue
+            sb.append(definition(fn, null))
+        }
         for (cls in classes.values) {
             for (fn in cls.methods) sb.append(definition(fn, cls))
             if (defaultCtorNames.containsKey(cls)) sb.append(defaultConstructor(cls))
@@ -208,11 +213,15 @@ class CBackend(
      * 返回本次是否真正写出。注意这与「哪个 .c 定义 RSF_RUNTIME_IMPL」无关——
      * 后者每次 build 仍须恰好一个（构建侧给其中一个 CBackend 传 emitImpl=true）。
      */
-    fun ensureRuntimeLib(outDir: java.io.File): Boolean {
-        val f = java.io.File(outDir, "rsf_runtime.h")
+    /**
+     * 把运行时头写进**标准库目录**（阶段 84）。以前是每个产物目录各写一份，
+     * 同一份内容到处复制，`clean` 之后还得靠下次构建重写。
+     */
+    fun ensureRuntimeLib(stdlibDir: java.io.File): Boolean {
+        val f = java.io.File(stdlibDir, "rsf_runtime.h")
         val want = runtimeLibSource()
         if (f.exists() && f.readText() == want) return false
-        outDir.mkdirs()
+        stdlibDir.mkdirs()
         f.writeText(want)
         return true
     }
@@ -531,8 +540,10 @@ class CBackend(
     private fun protoTop(fn: FuncDecl): String {
         val params = paramTypesOf(fn)
         val v = if (volatileLocals) "volatile " else ""
+        // 阶段 84：extern 用 C 里的**原名**，不加 `rsf_fn_` 前缀——要调的就是外部那个符号
+        val name = if (fn.isExtern) fn.name else fnName(fn)
         val list = fn.params.mapIndexed { i, p -> "$v${cType(params[i])} ${paramName(p.name)}" }
-        return "${cType(returnType(fn))} ${fnName(fn)}(${list.joinToString(", ").ifEmpty { "void" }})"
+        return "${cType(returnType(fn))} $name(${list.joinToString(", ").ifEmpty { "void" }})"
     }
 
     private fun protoMember(cls: ClassDecl, fn: FuncDecl): String {
@@ -776,7 +787,10 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
             val field = model.classModel.bareFieldWrites[s]
             val global = if (field == null) runCatching { model.bindingOf(s) }.getOrNull() else null
             if (field != null) {
-                pad(indent) + fieldRef("self", field.className, s.name) + " = " + expr(s.value) + ";\n"
+                // 阶段 84：字段写入也要按字段类型适配——`?String` 字段写 null 要落成
+                // `rsf_str_null()`，不能是 C 的 NULL（String 在 C 里是结构体）
+                pad(indent) + fieldRef("self", field.className, s.name) + " = " +
+                    adapt(field.type, physicalType(s.value), expr(s.value)) + ";\n"
             } else if (global?.global == true) {
                 pad(indent) + globalName(s.name) + " = " +
                     adapt(global.type, physicalType(s.value), expr(s.value)) + ";" + NL
@@ -799,8 +813,9 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
                     adapt(want, physicalType(s.value), expr(s.value)) + ");\n"
             } else {
                 val field = model.classModel.fieldWrites[s] ?: fail("成员赋值")
+                // 阶段 84：同上——按字段类型适配，`?String` 字段写 null 才是 rsf_str_null()
                 pad(indent) + fieldRef(expr(s.target.receiver), field.className, s.target.name) +
-                    " = " + expr(s.value) + ";\n"
+                    " = " + adapt(field.type, physicalType(s.value), expr(s.value)) + ";\n"
             }
         }
         is SuperCallStmt, is ThisCallStmt -> ""
@@ -811,8 +826,14 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
             val target = s.target
             val elem = elemCType(elementOf(model.typeOf(target.receiver)))
             val want = elementOf(model.typeOf(target.receiver))
-            pad(indent) + "(($elem*)" + expr(target.receiver) + ".data)[" + expr(target.index) + "] = " +
-                adapt(want, physicalType(s.value), expr(s.value)) + ";" + NL
+            val arr = "ar_" + (tempSeq++)
+            val ix = "ix_" + (tempSeq++)
+            // 阶段 84：写也做边界检查（消息与读越界同一条）
+            pad(indent) + "{ rsf_arr " + arr + " = " + expr(target.receiver) + "; " +
+                "int64_t " + ix + " = (int64_t)(" + expr(target.index) + "); " +
+                "rsf_arr_check(" + arr + ".len, " + ix + "); " +
+                "((" + elem + "*)" + arr + ".data)[" + ix + "] = " +
+                adapt(want, physicalType(s.value), expr(s.value)) + "; }" + NL
         }
         is ExprStmt -> pad(indent) + expr(s.expr) + ";\n"
         is ReturnStmt -> {
@@ -950,9 +971,11 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
 
     /** `a ?: b`：C 里用语句表达式，保证 a 只求值一次。 */
     private fun elvis(e: ElvisExpr): String {
+        val want = model.typeOf(e)
         // 左边可能是泛型盒子（物理类型 rsf_val），结果类型取前端算好的那个
         val have = physicalType(e.left)
-        val want = model.typeOf(e)
+        // 阶段 84：`!void` 的 `?:`（`f() ?: logIt()`）——没有值可取，两边都只是「跑一下」。
+        if (want.isVoid) return elvisVoid(e.left, e.right)
         val code = expr(e.left)
         val test = when {
             have.base == RsfBase.STRING -> "_e.data == NULL"
@@ -967,14 +990,43 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
         }
         // 左边可能 fail：`?:` 必须自己接住这次 longjmp，否则错误会穿过整个表达式。
         // 语义：失败 → 取右边；成功但值为 null → 也取右边。
+        //
+        // 注意 `if (rsf_err)` 这一句：内置函数（parseInt / 四个文件函数）失败时**不跳**，
+        // 只是置错 + 返回零值，所以成功分支里也得再看一眼旗标，否则
+        // `parseInt("x") ?: -1` 会拿到 0、还把错误旗标漏给后面的语句。
         val h = "he_${trySeq++}"
+        // 兜底值按 `?:` 的结果类型求（`readText(p) ?: null` 的 null 要落成
+        // `rsf_str_null()`，不能是 C 的 NULL——String 在 C 里是结构体）
+        val savedExpected = expectedType
+        expectedType = want
         val right = expr(e.right)
+        expectedType = savedExpected
         return "({ ${cType(want)} _out; ${cType(have)} _e; rsf_handler $h; " +
             "$h.prev = rsf_ctx_get()->handler; rsf_ctx_get()->handler = &$h; " +
             "if (setjmp($h.jb) == 0) { _e = $code; rsf_ctx_get()->handler = $h.prev; " +
-            "_out = ($test) ? (rsf_err = false, $right) : $pick; } " +
+            "if (rsf_err) { rsf_err = false; _out = $right; } " +
+            "else { _out = ($test) ? (rsf_err = false, $right) : $pick; } } " +
             "else { rsf_ctx_get()->handler = $h.prev; rsf_err = false; _out = $right; } " +
             "_out; })"
+    }
+
+    /**
+     * `!void` 上的 `?:`（阶段 84）：出错就执行右边的表达式，成功什么都不做。
+     *
+     * 没有值可以兜，所以不用 `_out` / `_e` 两个临时变量：左边当语句跑一遍，
+     * 内置函数的失败用 `if (rsf_err)` 补一次判断，真正的 `fail` 则由 setjmp 接住。
+     * 语句表达式末尾补一句 `(void)0`，让整个表达式是 void 类型（它只会出现在语句位置）。
+     */
+    private fun elvisVoid(left: Expr, right: Expr): String {
+        val h = "he_${trySeq++}"
+        val code = expr(left)
+        val fallback = expr(right)
+        return "({ rsf_handler $h; $h.prev = rsf_ctx_get()->handler; " +
+            "rsf_ctx_get()->handler = &$h; if (setjmp($h.jb) == 0) { $code; " +
+            "rsf_ctx_get()->handler = $h.prev; " +
+            "if (rsf_err) { rsf_err = false; $fallback; } } " +
+            "else { rsf_ctx_get()->handler = $h.prev; rsf_err = false; $fallback; } " +
+            "(void)0; })"
     }
 
     private fun floatLit(v: Float): String = if (v == Float.POSITIVE_INFINITY) "(1.0f/0.0f)" else if (v == Float.NEGATIVE_INFINITY) "(-1.0f/0.0f)" else v.toString() + "f"
@@ -1051,10 +1103,22 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
         return "$name($args)"
     }
 
+    /**
+     * 数组下标读。
+     *
+     * 阶段 84：加**边界检查**。`try {} catch {}` 退休之后，运行期故障在这里也必须中止
+     * （否则同一份源码三端行为不一致：解释器/字节码报错退出，C 侧悄悄读越界）。
+     * 消息与 ArrayRuntime 一字不差。用语句表达式，保证接收者与下标都只求值一次。
+     */
     private fun indexRead(e: IndexExpr): String {
         val arrayType = model.typeOf(e.receiver)
         val elem = elemCType(elementOf(arrayType))
-        return "(($elem*)${expr(e.receiver)}.data)[${expr(e.index)}]"
+        val arr = "ar_" + (tempSeq++)
+        val ix = "ix_" + (tempSeq++)
+        return "({ rsf_arr " + arr + " = " + expr(e.receiver) + "; " +
+            "int64_t " + ix + " = (int64_t)(" + expr(e.index) + "); " +
+            "rsf_arr_check(" + arr + ".len, " + ix + "); " +
+            "((" + elem + "*)" + arr + ".data)[" + ix + "]; })"
     }
 
     /**
@@ -1230,7 +1294,11 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
         if (e.dimensions.size != 1) fail("多维数组")
         // 元素类型用语义类型：泛型实参 T 也会落到 rsf_val（阶段 66）
         val elemSize = elemCType(elementOf(model.typeOf(e)))
-        return "rsf_arr_new(${expr(e.dimensions[0])}, (int64_t)sizeof($elemSize))"
+        val n = "len_" + (tempSeq++)
+        // 阶段 84：负数长度按运行期故障中止（消息与 ArrayRuntime.lengthFailure 一致）
+        return "({ int64_t " + n + " = (int64_t)(" + expr(e.dimensions[0]) + "); " +
+            "rsf_arr_len_check(" + n + "); " +
+            "rsf_arr_new(" + n + ", (int64_t)sizeof(" + elemSize + ")); })"
     }
 
     private fun baseOf(ref: TypeRef): RsfBase = when (ref.name) {
@@ -1353,13 +1421,16 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
                 })
             }
         }
-        when (e.name) {
+        // 阶段 83：用户函数优先。Checker 记了 callTargets 就说明这个位置调的是用户函数
+        // （构建脚本专用内建 …Include 不抢名字），不能被同名内建截走。
+        if (model.callTargets[e] == null) when (e.name) {
             "intToString" -> return "rsf_int_to_str(${expr(e.arguments[0])})"
             "memBytes" -> return "rsf_mem_bytes()"
             "memPeak" -> return "rsf_mem_peak()"
             "gcCollect" -> return "rsf_gc_collect()"
             // 阶段 81：构建脚本的宿主能力只有 `rsf build` 驱动 build.rsfs 时才有
-            "outDir", "compile", "compileAll" -> fail("内置函数 ${e.name}（只有构建脚本里能用）")
+            in Builtins.BUILD_ONLY ->
+                fail("内置函数 ${e.name}（只有构建脚本里能用，产物里没有编译器可调）")
             "stringBytes" -> return "rsf_str_bytes(${expr(e.arguments[0])})"
             "byteLength" -> return "rsf_str_byte_len(${expr(e.arguments[0])})"
         "slice" -> return "rsf_str_slice(${expr(e.arguments[0])}, " +
@@ -1374,6 +1445,11 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
             "toUpper" -> return "rsf_to_upper(${expr(e.arguments[0])})"
             "toLower" -> return "rsf_to_lower(${expr(e.arguments[0])})"
             "readText" -> return "rsf_read_text(${expr(e.arguments[0])})"
+            // 阶段 84：最近一条错误消息。C 侧运行时本来就把消息留在 ctx 里
+            // （`rsf_set_err` 只在「还没有错」时写入，所以它一直是最初那条的原因），
+            // 没出过错时是零值——折成真正的空串，别把 NULL 交给打印函数。
+            "lastErrorMessage" ->
+                return "(rsf_err_msg.len > 0 && rsf_err_msg.data != NULL ? rsf_err_msg : rsf_str_lit(\"\", 0))"
             "writeText" -> return "rsf_write_text(${expr(e.arguments[0])}, ${expr(e.arguments[1])})"
             "readBytes" -> return "rsf_read_bytes(${expr(e.arguments[0])})"
             "writeBytes" -> return "rsf_write_bytes(${expr(e.arguments[0])}, ${expr(e.arguments[1])})"
@@ -1411,6 +1487,8 @@ static void* rsf_unbox_ptr(rsf_val b) { return b.p; }
         }
         val target = model.callTargets[e] ?: fail("调用 '${e.name}'")
         val args = argsWithExpected(e.arguments, paramTypesOf(target))
+        // 阶段 84：extern 函数按 C 原名直接调（上面已经发过原型，链接时由 cInclude 的 .c 提供）
+        if (target.isExtern) return "${target.name}($args)"
         return "${fnName(target)}($args)"
     }
 
@@ -2851,6 +2929,46 @@ static inline void* rsf_grow(void* ptr, size_t oldSize, size_t newSize) {
 
             static void rsf_set_err(rsf_str msg) {
                 if (!rsf_err) { rsf_err = true; rsf_err_msg = msg; }
+            }
+
+            static void rsf_throw(void);
+
+            /* 阶段 84：数组的边界检查。越界/负长度是**运行期故障**：
+               `try {} catch {}` 退休后没有捕获手段，所以置错 + 立刻中止。
+               消息与 Kotlin 的 ArrayRuntime 一字不差（三端同一条）。 */
+            static void rsf_arr_index_fail(int64_t len, int64_t index) {
+                char buf[192];
+                int n = snprintf(buf, sizeof buf, "数组下标越界：长度 %lld，下标 %lld",
+                                 (long long)len, (long long)index);
+                if (n < 0) { n = 0; }
+                if (n > (int)sizeof buf - 1) { n = (int)sizeof buf - 1; }
+                char* p2 = (char*)malloc((size_t)n + 1);
+                if (n > 0) { memcpy(p2, buf, (size_t)n); }
+                p2[n] = 0;
+                rsf_str m; m.len = n; m.units1 = 0; m.data = p2;
+                rsf_set_err(m);
+                rsf_throw();
+            }
+
+            static void rsf_arr_len_fail(int64_t len) {
+                char buf[128];
+                int n = snprintf(buf, sizeof buf, "数组长度不能是负数：%lld", (long long)len);
+                if (n < 0) { n = 0; }
+                if (n > (int)sizeof buf - 1) { n = (int)sizeof buf - 1; }
+                char* p2 = (char*)malloc((size_t)n + 1);
+                if (n > 0) { memcpy(p2, buf, (size_t)n); }
+                p2[n] = 0;
+                rsf_str m; m.len = n; m.units1 = 0; m.data = p2;
+                rsf_set_err(m);
+                rsf_throw();
+            }
+
+            static void rsf_arr_check(int64_t len, int64_t index) {
+                if (index < 0 || index >= len) { rsf_arr_index_fail(len, index); }
+            }
+
+            static void rsf_arr_len_check(int64_t len) {
+                if (len < 0) { rsf_arr_len_fail(len); }
             }
 
             /* try 压栈的 setjmp 帧。fail = 置错 + longjmp 到最近一帧，

@@ -1,0 +1,24 @@
+// rsf 自己的构建脚本（阶段 84 的第一级 dogfooding）。
+//
+// 注意：这还不是自举——跑这段脚本的是用 Kotlin 写的 rsf 编译器。
+// 它的用处是把构建 API 的缺口暴露出来：多文件工程、C 依赖、产物命名。
+
+const val projectName = "rainStarfox"
+const val projectVersion = "0.9"
+
+project {
+    name = projectName
+    ver = projectVersion
+}
+
+target {
+    exe("@/rsfSrc/bootstrap/InterpCli.rsf")
+}
+
+#build {
+    out("build/out")
+}
+
+fn main() -> void {
+    println("构建 " + projectName + " " + projectVersion)
+}

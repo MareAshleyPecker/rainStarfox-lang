@@ -118,6 +118,7 @@ class Parser(
         val topLevelStmts = ArrayList<Stmt>()
         // 阶段 85：全局变量（`const var` / `const val`），位置自由、整程序一份。
         val globals = ArrayList<GlobalVarDecl>()
+        val configs = ArrayList<ConfigBlock>()
 
         // pkg 只能出现在最前面（在 import 之前），和 Java 的 package 一样
         var packageName: String? = null
@@ -131,6 +132,9 @@ class Parser(
         // 写两次多半是复制粘贴，静默取最后一个会让用户以为另一处生效了。
         fun takeHeaderDirective(): Boolean {
             if (!check(TokenKind.IDENT)) return false
+            // 阶段 84：`target { … }` 是产物块语句（和文件头指令 `target native` 同名），
+            // 靠「后面紧跟 `{`」区分——块语句交给下面的声明循环处理。
+            if (peek().lexeme == "target" && peek(1).kind == TokenKind.LBRACE) return false
             when (peek().lexeme) {
                 "target" -> {
                     val previous = targetAt
@@ -181,7 +185,11 @@ class Parser(
             } else if (check(TokenKind.KW_PKG)) {
                 val t = peek()
                 throw error(t, "'pkg' 只能写在文件最前面（在所有 import 之前）")
-            } else if (check(TokenKind.IDENT) && (peek().lexeme == "target" || peek().lexeme == "gc")) {
+            } else if (check(TokenKind.IDENT) && (peek().lexeme == "target" || peek().lexeme == "gc") &&
+                peek(1).kind != TokenKind.LBRACE
+            ) {
+                // 阶段 84：`target { … }` 是配置块（和这个文件头指令 `target native` 同名），
+                // 靠「后面紧跟 `{`」区分；这里只拦「写在声明之后的文件头指令」。
                 // 文件头指令写在声明之后：这里显式拦下，否则会掉进 parseFuncDecl 报一句
                 // 关于 `fun` 的错（用户看不懂「我只想写 gc off」为什么提到 fn）。
                 val t = peek()
@@ -227,6 +235,10 @@ class Parser(
                     "'mathematic' 是保留关键字（数学类预留）：语法还没定，编译器还没实现它" +
                         "（现在还只能当关键字用，不能当名字）",
                 )
+            } else if (isConfigBlockAhead()) {
+                // 阶段 84：`project { name = x }`。**顶层声明**，不是语句——
+                // 所以它能和 main 并存，并且在 main 之前求值（见 Interpreter.initGlobals）。
+                configs.add(parseConfigBlock())
             } else if (isConstDeclAhead()) {
                 globals.add(parseGlobalVarDecl())
             } else if (check(TokenKind.KW_VAR) || check(TokenKind.KW_VAL)) {
@@ -288,6 +300,7 @@ class Parser(
             imports = imports,
             functions = functions,
             classes = classes,
+            configs = configs,
             packageName = packageName,
             target = fileTarget,
             gc = gcDirective,
@@ -1820,6 +1833,27 @@ class Parser(
             if (path.isEmpty()) {
                 throw error(t, "${kw.lexeme} 的路径是空的")
             }
+            // 阶段 84：`module "路径" to 别名 { 成员… }`——声明模块别名，声明即可用。
+            if (isModule && check(TokenKind.IDENT) && peek().lexeme == "to") {
+                advance() // to
+                val aliasTok = expect(TokenKind.IDENT, "module … to 后面要写别名（例：to std）")
+                var members: List<String>? = null
+                if (check(TokenKind.LBRACE)) {
+                    advance()
+                    val names = ArrayList<String>()
+                    while (!check(TokenKind.RBRACE) && !check(TokenKind.EOF)) {
+                        val nameTok = expect(TokenKind.IDENT, "成员列表里要写标识符（例：{ Vec Text }）")
+                        names.add(nameTok.lexeme)
+                        if (!match(TokenKind.COMMA)) break
+                    }
+                    expect(TokenKind.RBRACE, "module 的成员列表缺少 '}'")
+                    if (names.isEmpty()) {
+                        throw error(aliasTok, "module 的成员列表是空的：整包导入就别写 '{}'")
+                    }
+                    members = names
+                }
+                return ModuleAlias(path, aliasTok.lexeme, members, kw.at)
+            }
             return if (isModule) ModuleImport(path, kw.at) else SourceImport(path, kw.at)
         }
 
@@ -1907,6 +1941,7 @@ class Parser(
         var declTarget = BuildTarget.BOTH
         var targetTok: Token? = null
         var exported = false
+        var isExtern = false
         while (true) {
             val m = peek()
             if (m.kind.isControlKeyword) {
@@ -1928,6 +1963,19 @@ class Parser(
                 }
                 if (exported) throw error(m, "'export' 写了两次")
                 exported = true
+                advance()
+                continue
+            }
+            // 阶段 84：`extern fn 名字(...) -> Ret` —— 外部 C 函数声明（只有签名）。
+            if (m.kind == TokenKind.KW_EXTERN) {
+                if (!allowExport) {
+                    throw error(m, "'extern' 只能写在顶层函数上：它声明的是外部 C 符号，方法没有这个身份")
+                }
+                if (isExtern) throw error(m, "'extern' 写了两次")
+                if (declTarget == BuildTarget.JVM) {
+                    throw error(m, "'extern' 与 'jvm' 不能一起写：外部 C 函数只存在于 native 侧")
+                }
+                isExtern = true
                 advance()
                 continue
             }
@@ -2127,7 +2175,25 @@ class Parser(
         // - 类里的 `abstract fun`（阶段 25）：同理，只写签名。**但返回子句必须写出来**，
         //   否则「省略返回子句 = void」这条规则与抽象方法撞在一起就分不清是不是漏写了体；
         // - 其余任何地方都要求有体。
-        val body: Block? = if (allowAbstractBody && !check(TokenKind.LBRACE)) {
+        val body: Block? = if (isExtern) {
+            // 外部 C 函数只有签名：不许有体，且返回子句必须写出来（和抽象方法同一个理由——
+            // 省了就分不清「返回 void」与「忘了写」）。
+            if (check(TokenKind.LBRACE)) {
+                throw error(
+                    peek(),
+                    "'extern' 函数只写签名：extern fn ${nameTok.lexeme}(...) -> 返回类型。" +
+                        "函数体在 C 那边，把 '{ ... }' 删掉",
+                )
+            }
+            if (ret.style == ReturnStyle.OMITTED) {
+                throw error(
+                    peek(),
+                    "extern 函数要写出返回子句：'extern fn ${nameTok.lexeme}(...) -> 返回类型'" +
+                        "（写 void 也要写出来：extern fn ${nameTok.lexeme}(...) -> void）",
+                )
+            }
+            null
+        } else if (allowAbstractBody && !check(TokenKind.LBRACE)) {
             // 接口里的方法天然是抽象的（没有体）。泛型方法在 v1 里不能是抽象方法，
             // 这条分支就是「接口里只写签名的泛型方法」——同样是 DESIGN-31 的禁区。
             if (typeParamSig.names.isNotEmpty()) {
@@ -2175,6 +2241,7 @@ class Parser(
             target = declTarget,
             exported = exported,
             receiverType = receiver,
+            isExtern = isExtern,
         )
     }
 
@@ -2604,8 +2671,99 @@ class Parser(
         return Block(statements, brace.at)
     }
 
+    /**
+     * `project { name = projectName, ver = version }` —— 配置块（阶段 84）。
+     *
+     * 只收 `字段 = 表达式`，一行一条（分号可选）。它是**声明**：值和 `const val`
+     * 一样在启动时求一次，所以能和 main 并存。字段与类型由宿主按 schema 校验。
+     */
+    private fun isConfigBlockAhead(): Boolean {
+        val t = peek()
+        return t.kind == TokenKind.IDENT && peek(1).kind == TokenKind.LBRACE &&
+            peek(1).at.line == t.at.line
+    }
+
+    private fun parseConfigBlock(): ConfigBlock {
+        val nameTok = advance()
+        advance() // '{'
+        val entries = ArrayList<Expr>()
+        while (!check(TokenKind.RBRACE) && !check(TokenKind.EOF)) {
+            val fieldTok = if (check(TokenKind.IDENT)) {
+                advance()
+            } else {
+                throw error(
+                    peek(),
+                    "配置块 ${nameTok.lexeme} { … } 里一行一条：字段赋值，或者动词调用" +
+                        "（例：exe(\"@/src/main.rsf\")）。实际读到 ${peek().describe()}",
+                )
+            }
+            if (!check(TokenKind.ASSIGN)) {
+                // 动词 + 裸名字：`use project`、`use main`（run 块用）。
+                // 名字按**字面量**传过去：它不是变量，而是产物名/块名。
+                if (check(TokenKind.IDENT)) {
+                    val target = advance()
+                    entries.add(
+                        CallExpr(
+                            name = fieldTok.lexeme,
+                            arguments = listOf(StringLit(target.lexeme, target.at)),
+                            at = fieldTok.at,
+                        ),
+                    )
+                    match(TokenKind.SEMI)
+                    continue
+                }
+                // 动词调用：`exe("a.rsf")`、`copy("a", "out")`——名字已经吃掉了，直接读实参表
+                if (!check(TokenKind.LPAREN)) {
+                    throw error(
+                        peek(),
+                        "配置块 ${nameTok.lexeme} { … } 里 '${fieldTok.lexeme}' 后面要么是等号（字段赋值），" +
+                            "要么是左括号（动词调用）。实际读到 ${peek().describe()}",
+                    )
+                }
+                val args = ArrayList<Expr>()
+                advance() // 吃掉左括号
+                if (!check(TokenKind.RPAREN)) {
+                    do {
+                        args.add(parseExpr())
+                    } while (match(TokenKind.COMMA))
+                }
+                expect(TokenKind.RPAREN, "配置块里的 '${fieldTok.lexeme}(…)' 缺少 ')'")
+                entries.add(CallExpr(fieldTok.lexeme, args, fieldTok.at))
+                match(TokenKind.SEMI)
+                continue
+            }
+            advance()  // 吃掉等号
+            entries.add(
+                CallExpr(
+                    name = "__build_config",
+                    arguments = listOf(
+                        StringLit(nameTok.lexeme, nameTok.at),
+                        StringLit(fieldTok.lexeme, fieldTok.at),
+                        parseExpr(),
+                    ),
+                    at = fieldTok.at,
+                ),
+            )
+            match(TokenKind.SEMI) // 可选分隔符，和别处一致
+        }
+        if (!check(TokenKind.RBRACE)) {
+            throw error(peek(), "配置块 ${nameTok.lexeme} { … } 没有收尾的 '}'")
+        }
+        advance()
+        return ConfigBlock(nameTok.lexeme, entries, nameTok.at)
+    }
+
     private fun parseStmt(): Stmt {
         val t = peek()
+        // 阶段 84：配置块是**顶层声明**。写在函数体里是常见误会（想「在这里配一下」），
+        // 直接说清楚它该待在哪，而不是报「未声明的变量」。
+        if (isConfigBlockAhead()) {
+            throw error(
+                t,
+                "配置块 ${t.lexeme} { … } 只能写在顶层：它是一份构建脚本的声明，" +
+                    "在 globals 之后、规则与 main 之前求值一次",
+            )
+        }
         return when {
             t.kind == TokenKind.LBRACE -> parseBlock()
 
@@ -3261,8 +3419,32 @@ class Parser(
                 "'fail' 后面要跟错误消息，写法是 'fail \"出错了\"'（消息必须是 String 表达式）",
             )
         }
-        val message = parseExpr()
-        return FailStmt(message, failTok.at)
+        val first = parseExpr()
+        // 阶段 84：`fail 种类, 消息`——种类是短标识（io / parse / range / …），
+        // 编译期校验。解糖成 `fail "种类: 消息"`，所以三端与自举都不受影响。
+        if (check(TokenKind.COMMA)) {
+            advance() // ,
+            val kindName = when (first) {
+                is VarExpr -> first.name
+                is StringLit -> first.value
+                else -> throw error(
+                    peek(),
+                    "fail 的两个参数写法是 'fail 种类, 消息'，种类必须是标识符或字符串字面量" +
+                        "（可用的：${org.example.complie.diag.ErrorKinds.ALL.joinToString(" / ")}）",
+                )
+            }
+            if (!org.example.complie.diag.ErrorKinds.isKnown(kindName)) {
+                throw error(
+                    peek(),
+                    "不认识的错误种类 '$kindName'。可用的：${org.example.complie.diag.ErrorKinds.ALL.joinToString(" / ")}",
+                )
+            }
+            val message = parseExpr()
+            val prefix = StringLit(org.example.complie.diag.ErrorKinds.format(kindName, ""), failTok.at)
+            // prefix 形如 "io: "，直接拼上消息
+            return FailStmt(BinaryExpr(TokenKind.PLUS, prefix, message, failTok.at), failTok.at)
+        }
+        return FailStmt(first, failTok.at)
     }
 
     /**
@@ -3279,61 +3461,32 @@ class Parser(
      */
     private fun parseTry(): Stmt {
         val tryTok = advance() // try
-        val body = parseBody("try")
-
-        if (!check(TokenKind.KW_CATCH)) {
-            val t = peek()
+        // 阶段 84：`try { … } catch { … }` 整块退休（用户拍板，见 HANDOFF §10）。
+        // 运行期故障（越界 / `!!` 打到 null / 除零）没有语言内的捕获手段：一律中止程序
+        // 并打一条清晰的错误消息。`!T` 的错误处理只剩下面几种写法。
+        if (check(TokenKind.LBRACE)) {
             throw error(
-                t,
-                "try 块后面必须跟一个 catch，写法是 try { ... } catch (e : String) { ... }" +
-                    "（实际读到 ${t.describe()}）",
+                peek(),
+                "try { ... } catch { ... } 已经移除。错误处理改用这几种写法：" +
+                    "(a) 出错时有值可用就 f(...) ?: 兜底值；" +
+                    "(b) 只要「出错时做点什么」就 f(...) ?: 兜底函数()，兜底写成 -> void 的函数，" +
+                    "消息用 lastErrorMessage() 取；" +
+                    "(c) 往上抛用 f(...)!!（有返回值）或 try f(...)（!void）。" +
+                    "多语句的守卫抽成一个 !T 函数，调用点再用 ?: 兜底",
             )
         }
-        advance() // catch
-
-        expect(
-            TokenKind.LPAREN,
-            "catch 后面需要 '('，写法是 catch (错误变量 : String)，例如 catch (e : String)",
+        // `try 表达式`（Zig 风格）：出错就向上抛，成功就丢掉值。解糖成内部 TryStmt
+        // （`try { 表达式 } catch (e) { fail e }`），三端语义不用改；`!void` 也能用它传播。
+        val expr = parseExpr()
+        val catchName = "e"
+        val bodyStmt = ExprStmt(expr, expr.at)
+        val rethrow = FailStmt(VarExpr(catchName, tryTok.at), tryTok.at)
+        return TryStmt(
+            body = Block(listOf(bodyStmt), tryTok.at),
+            catchName = catchName,
+            catchBody = Block(listOf(rethrow), tryTok.at),
+            at = tryTok.at,
         )
-        val nameTok = expect(
-            TokenKind.IDENT,
-            "catch 里需要错误变量名，写法是 catch (e : String)（也可以写老写法 catch (e String)）",
-        )
-
-        // 两种风格的分流只看名字后面那个记号，和 parseParam 一样无歧义：
-        //   `:` 开头 → Kotlin 风格；直接就是 `String` → Java 风格。
-        if (match(TokenKind.COLON)) {
-            if (!check(TokenKind.KW_STRING)) {
-                throw error(peek(), catchTypeError(nameTok.lexeme))
-            }
-            advance() // String
-        } else if (check(TokenKind.KW_STRING)) {
-            advance() // String（老写法 catch (e String)）
-        } else {
-            throw error(peek(), catchTypeError(nameTok.lexeme))
-        }
-
-        expect(
-            TokenKind.RPAREN,
-            "catch 的参数表没有闭合，缺少 ')'（写法是 catch (e : String)）",
-        )
-        val catchBody = parseBody("catch")
-        return TryStmt(body, nameTok.lexeme, catchBody, tryTok.at)
-    }
-
-    /**
-     * catch 变量的类型写坏了。两种成因（写了别的类型 / 干脆没写类型）共用一段文案，
-     * 因为**两种写法都要给出来**：用户看到的是「这里该怎么写」，不是「你哪里错了」。
-     */
-    private fun catchTypeError(name: String): String {
-        val t = peek()
-        val what = if (t.kind.isTypeKeyword) {
-            "catch 的错误变量类型只能是 String（错误消息本身就是字符串），实际写的是 '${t.lexeme}'"
-        } else {
-            "catch 里缺少错误变量的类型（实际读到 ${t.describe()}）"
-        }
-        return "$what。两种写法都可以：Kotlin 风格 'catch ($name : String)'，" +
-            "或者 Java 风格 'catch ($name String)'"
     }
 
     // ------------------------------------------------------------------ 表达式
